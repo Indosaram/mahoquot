@@ -1,7 +1,37 @@
-//! Gateway binary. Lane owns: axum listener, passthrough relay with pre-byte
-//! failover, health/feedback wiring, env-based bootstrap.
-fn main() {
-    // Lane implements. Scaffold placeholder must not bind anything yet.
-    eprintln!("quotio-gateway: not assembled yet (lane pending)");
-    std::process::exit(78);
+use std::sync::Arc;
+
+use quotio_gateway::config::GatewayConfig;
+use quotio_gateway::routes::create_app;
+use quotio_gateway::server::run_server;
+use quotio_gateway::state::AppState;
+use tokio::net::TcpListener;
+use tracing::info;
+use tracing_subscriber::EnvFilter;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = GatewayConfig::from_env()?;
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+        )
+        .init();
+
+    info!(
+        port = config.port,
+        auth_dir = %config.auth_dir.display(),
+        strategy = ?config.strategy,
+        max_failover = config.max_failover,
+        "starting quotio-gateway"
+    );
+
+    let state = Arc::new(AppState::new(&config)?);
+    let app = create_app(state);
+
+    let addr = format!("0.0.0.0:{}", config.port);
+    let listener = TcpListener::bind(&addr).await?;
+    info!("listening on {}", addr);
+
+    run_server(listener, app).await
 }

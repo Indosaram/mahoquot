@@ -1,0 +1,48 @@
+use quotio_types::Health;
+use serde::Serialize;
+use std::sync::atomic::AtomicU64;
+
+#[derive(Default)]
+pub struct GatewayMetrics {
+    pub served: AtomicU64,
+    pub failed_over: AtomicU64,
+    pub exposed_errors: AtomicU64,
+    pub exposed_client_errors: AtomicU64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountStats {
+    pub id: String,
+    pub health: HealthStats,
+    pub ok: u64,
+    pub fails: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum HealthStats {
+    Available,
+    Cooldown { until_unix_ms: i64 },
+    AuthFailed,
+    Disabled,
+}
+
+impl From<Health> for HealthStats {
+    fn from(h: Health) -> Self {
+        match h {
+            Health::Available => Self::Available,
+            Health::Cooldown { until_unix_ms } => Self::Cooldown { until_unix_ms },
+            Health::AuthFailed => Self::AuthFailed,
+            Health::Disabled => Self::Disabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminStatsResponse {
+    pub served: u64,
+    pub failed_over: u64,
+    pub exposed_errors: u64,
+    pub exposed_client_errors: u64,
+    pub accounts: Vec<AccountStats>,
+}
