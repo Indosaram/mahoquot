@@ -84,8 +84,7 @@ impl CodexAccount {
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&self.expired) {
             return Some(dt.timestamp());
         }
-        if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(&self.expired, "%Y-%m-%dT%H:%M:%S")
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&self.expired, "%Y-%m-%dT%H:%M:%S")
         {
             return Some(naive.and_utc().timestamp());
         }
@@ -105,26 +104,22 @@ impl CodexAccount {
                 "Authorization".to_string(),
                 format!("Bearer {}", self.access_token),
             ),
-            (
-                "chatgpt-account-id".to_string(),
-                self.account_id.clone(),
-            ),
+            ("chatgpt-account-id".to_string(), self.account_id.clone()),
             ("User-Agent".to_string(), USER_AGENT.to_string()),
         ]
     }
 }
 
 pub fn derive_identity_slug(path: &Path) -> String {
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     derive_identity_slug_from_filename(file_name)
 }
 
 pub fn derive_identity_slug_from_filename(file_name: &str) -> String {
     let without_prefix = file_name.strip_prefix("codex-").unwrap_or(file_name);
-    let stem = without_prefix.strip_suffix(".json").unwrap_or(without_prefix);
+    let stem = without_prefix
+        .strip_suffix(".json")
+        .unwrap_or(without_prefix);
     match stem.rfind('-') {
         Some(idx) => stem[..idx].to_string(),
         None => stem.to_string(),
@@ -133,10 +128,11 @@ pub fn derive_identity_slug_from_filename(file_name: &str) -> String {
 
 pub fn load_codex_account(path: &Path) -> Result<CodexAccount, LoadError> {
     let content = std::fs::read_to_string(path).map_err(LoadError::Io)?;
-    let mut account: CodexAccount = serde_json::from_str(&content).map_err(|err| LoadError::Parse {
-        path: path.to_path_buf(),
-        msg: err.to_string(),
-    })?;
+    let mut account: CodexAccount =
+        serde_json::from_str(&content).map_err(|err| LoadError::Parse {
+            path: path.to_path_buf(),
+            msg: err.to_string(),
+        })?;
     account.identity_slug = derive_identity_slug(path);
     Ok(account)
 }

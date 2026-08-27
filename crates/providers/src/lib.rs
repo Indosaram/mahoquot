@@ -51,14 +51,35 @@ mod edge_tests {
 
     #[test]
     fn slug_derivation_edges() {
-        assert_eq!(derive_identity_slug_from_filename("codex-fixture.json"), "fixture");
-        assert_eq!(derive_identity_slug_from_filename("codex-fixtures-plus.json"), "fixtures");
-        assert_eq!(derive_identity_slug_from_filename("codex-team-alpha-plus.json"), "team-alpha");
-        assert_eq!(derive_identity_slug_from_filename("codex-a-b-c-d.json"), "a-b-c");
-        assert_eq!(derive_identity_slug_from_filename("fixture.json"), "fixture");
-        assert_eq!(derive_identity_slug_from_filename("fixtures-plus.json"), "fixtures");
+        assert_eq!(
+            derive_identity_slug_from_filename("codex-fixture.json"),
+            "fixture"
+        );
+        assert_eq!(
+            derive_identity_slug_from_filename("codex-fixtures-plus.json"),
+            "fixtures"
+        );
+        assert_eq!(
+            derive_identity_slug_from_filename("codex-team-alpha-plus.json"),
+            "team-alpha"
+        );
+        assert_eq!(
+            derive_identity_slug_from_filename("codex-a-b-c-d.json"),
+            "a-b-c"
+        );
+        assert_eq!(
+            derive_identity_slug_from_filename("fixture.json"),
+            "fixture"
+        );
+        assert_eq!(
+            derive_identity_slug_from_filename("fixtures-plus.json"),
+            "fixtures"
+        );
         assert_eq!(derive_identity_slug_from_filename("codex-.json"), "");
-        assert_eq!(derive_identity_slug_from_filename("noextension"), "noextension");
+        assert_eq!(
+            derive_identity_slug_from_filename("noextension"),
+            "noextension"
+        );
         assert_eq!(derive_identity_slug_from_filename("no-extension"), "no");
     }
 

@@ -24,7 +24,10 @@ impl std::fmt::Debug for Tokens {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Tokens")
             .field("access_token", &"[REDACTED]")
-            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("id_token", &self.id_token.as_ref().map(|_| "[REDACTED]"))
             .field("token_type", &self.token_type)
             .field("expires_in", &self.expires_in)
