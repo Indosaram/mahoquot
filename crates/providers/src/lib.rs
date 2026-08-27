@@ -7,6 +7,7 @@
 
 pub mod account;
 pub mod refresh;
+pub mod refresh_exec;
 
 pub use account::{
     derive_identity_slug, derive_identity_slug_from_filename, list_codex_auth_files,
