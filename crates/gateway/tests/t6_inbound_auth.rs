@@ -131,4 +131,56 @@ async fn test_inbound_auth_cases() {
 
     let empty_override = model_ids_from_env(Some("  ,  "));
     assert_eq!(empty_override, defaults);
+
+    // (i) full app routing with non-empty API_KEYS: /healthz and /metrics are public (200), /v1/models is protected (401)
+    let temp_dir = std::env::temp_dir().join(format!("qgw-test-t6-exempt-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config = quotio_gateway::config::GatewayConfig {
+        port: 0,
+        auth_dir: temp_dir.clone(),
+        strategy: quotio_types::Strategy::StrictRoundRobin,
+        max_failover: 3,
+        log_level: "info".to_string(),
+        api_keys: ApiKeys::from_env_value("secret_key"),
+        models: model_ids_from_env(None),
+        refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
+        auth_refresh_enabled: true,
+    };
+    let state = Arc::new(quotio_gateway::state::AppState::new(&config).unwrap());
+    let full_app = quotio_gateway::routes::create_app(state);
+
+    // /healthz without key -> 200
+    let req = Request::builder()
+        .uri("/healthz")
+        .body(Body::empty())
+        .unwrap();
+    let resp = full_app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // /metrics without key -> 200
+    let req = Request::builder()
+        .uri("/metrics")
+        .body(Body::empty())
+        .unwrap();
+    let resp = full_app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // /v1/models without key -> 401
+    let req = Request::builder()
+        .uri("/v1/models")
+        .body(Body::empty())
+        .unwrap();
+    let resp = full_app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // /v1/models with key -> 200
+    let req = Request::builder()
+        .uri("/v1/models")
+        .header(header::AUTHORIZATION, "Bearer secret_key")
+        .body(Body::empty())
+        .unwrap();
+    let resp = full_app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    std::fs::remove_dir_all(&temp_dir).ok();
 }

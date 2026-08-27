@@ -2,6 +2,8 @@ use quotio_types::Health;
 use serde::Serialize;
 use std::sync::atomic::AtomicU64;
 
+use crate::monitor::{LastError, TtftSnapshot};
+
 #[derive(Default)]
 pub struct GatewayMetrics {
     pub served: AtomicU64,
@@ -16,6 +18,9 @@ pub struct AccountStats {
     pub health: HealthStats,
     pub ok: u64,
     pub fails: u64,
+    pub reset_at_unix_ms: Option<i64>,
+    pub last_error: Option<LastError>,
+    pub ttft: Option<TtftSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,9 +45,13 @@ impl From<Health> for HealthStats {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AdminStatsResponse {
+    pub uptime_secs: u64,
+    pub in_flight: u64,
     pub served: u64,
     pub failed_over: u64,
+    pub refreshed: u64,
     pub exposed_errors: u64,
     pub exposed_client_errors: u64,
+    pub ttft: TtftSnapshot,
     pub accounts: Vec<AccountStats>,
 }
