@@ -15,8 +15,29 @@ pub enum LoadError {
     Parse { path: PathBuf, msg: String },
 }
 
-/// Placeholder — lane implements full CodexAccount with real fields.
-pub struct CodexAccountPlaceholder;
+/// Loaded codex auth file. Lane replaces the body of every method with a
+/// real implementation (parsing, secrets, header values).
+#[derive(Debug)]
+pub struct CodexAccount {
+    pub email: String,
+}
+
+impl CodexAccount {
+    pub fn id_prefix_fixture(&self) -> String {
+        unimplemented!("lane: derive slug from file name")
+    }
+    pub fn account_id_for_header(&self) -> String {
+        unimplemented!("lane: return account_id field")
+    }
+    pub fn access_token_secret(&self) -> String {
+        unimplemented!("lane: return access_token field")
+    }
+}
+
+pub fn load_codex_account(path: &Path) -> Result<CodexAccount, LoadError> {
+    let _ = path;
+    unimplemented!("lane: parse codex-*.json into CodexAccount")
+}
 
 pub fn list_codex_auth_files(dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
     Ok(std::fs::read_dir(dir)?

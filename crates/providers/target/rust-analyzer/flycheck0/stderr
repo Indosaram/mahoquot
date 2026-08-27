@@ -1,0 +1,37 @@
+   0.089431459s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint: stale: changed "/Users/indo/code/project/quotio-rs/crates/providers/src/lib.rs"
+   0.089445959s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint:           (vs) "/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-providers-669d8a3fd61c99d6/dep-lib-quotio_providers"
+   0.089448625s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1787837792, nanos: 752659752 } < FileTime { seconds: 1787837875, nanos: 432728503 }
+   0.091179917s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint: fingerprint dirty for quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway)/Check { test: false }/TargetInner { name: "quotio-gateway", doc: true, ..: with_path("/Users/indo/code/project/quotio-rs/crates/gateway/src/main.rs", Edition2021) }
+   0.091190292s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "quotio_providers" })
+   0.092662000s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint: fingerprint dirty for quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("quotio_providers", ["lib"], "/Users/indo/code/project/quotio-rs/crates/providers/src/lib.rs", Edition2021) }
+   0.092708625s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-providers-669d8a3fd61c99d6/dep-lib-quotio_providers", reference_mtime: FileTime { seconds: 1787837792, nanos: 752659752 }, stale: "/Users/indo/code/project/quotio-rs/crates/providers/src/lib.rs", stale_mtime: FileTime { seconds: 1787837875, nanos: 432728503 } }))
+   0.095668584s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint: fingerprint dirty for quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway)/Check { test: true }/TargetInner { name: "quotio-gateway", doc: true, ..: with_path("/Users/indo/code/project/quotio-rs/crates/gateway/src/main.rs", Edition2021) }
+   0.095678000s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "quotio_providers" })
+   0.096183000s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("quotio_providers", ["lib"], "/Users/indo/code/project/quotio-rs/crates/providers/src/lib.rs", Edition2021) }
+   0.096189584s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-providers-f93760e6622560f7/test-lib-quotio_providers`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+    Checking quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers)
+    Checking quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
