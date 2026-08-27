@@ -1,0 +1,1664 @@
+   0.067756792s  INFO prepare_target{force=false package_id=bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench) target="bench"}: cargo::core::compiler::fingerprint: fingerprint error for bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench)/Check { test: false }/TargetInner { name: "bench", doc: true, ..: with_path("/Users/indo/code/project/quotio-rs/tools/bench/src/main.rs", Edition2021) }
+   0.067773167s  INFO prepare_target{force=false package_id=bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench) target="bench"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/bench-2935f75b1956da21/bin-bench`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.077528875s  INFO prepare_target{force=false package_id=axum v0.8.9 target="axum"}: cargo::core::compiler::fingerprint: fingerprint error for axum v0.8.9/Check { test: false }/TargetInner { ..: lib_target("axum", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/axum-0.8.9/src/lib.rs", Edition2021) }
+   0.077550875s  INFO prepare_target{force=false package_id=axum v0.8.9 target="axum"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/axum-ea8194cf8398bce2/lib-axum`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.078086458s  INFO prepare_target{force=false package_id=axum-core v0.5.6 target="axum_core"}: cargo::core::compiler::fingerprint: fingerprint error for axum-core v0.5.6/Check { test: false }/TargetInner { ..: lib_target("axum_core", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/axum-core-0.5.6/src/lib.rs", Edition2021) }
+   0.078092833s  INFO prepare_target{force=false package_id=axum-core v0.5.6 target="axum_core"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/axum-core-9508a7308154be4a/lib-axum_core`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.080277417s  INFO prepare_target{force=false package_id=tracing v0.1.44 target="tracing"}: cargo::core::compiler::fingerprint: fingerprint error for tracing v0.1.44/Check { test: false }/TargetInner { ..: lib_target("tracing", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-0.1.44/src/lib.rs", Edition2018) }
+   0.080285417s  INFO prepare_target{force=false package_id=tracing v0.1.44 target="tracing"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tracing-4e9fba90067c9e43/lib-tracing`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.081544625s  INFO prepare_target{force=false package_id=futures-util v0.3.34 target="futures_util"}: cargo::core::compiler::fingerprint: fingerprint error for futures-util v0.3.34/Check { test: false }/TargetInner { ..: lib_target("futures_util", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.34/src/lib.rs", Edition2018) }
+   0.081551292s  INFO prepare_target{force=false package_id=futures-util v0.3.34 target="futures_util"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/futures-util-718dbb6293f07604/lib-futures_util`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.082239500s  INFO prepare_target{force=false package_id=hyper v1.11.0 target="hyper"}: cargo::core::compiler::fingerprint: fingerprint error for hyper v1.11.0/Check { test: false }/TargetInner { ..: lib_target("hyper", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-1.11.0/src/lib.rs", Edition2021) }
+   0.082244333s  INFO prepare_target{force=false package_id=hyper v1.11.0 target="hyper"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/hyper-cd0de781105b1999/lib-hyper`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.082641917s  INFO prepare_target{force=false package_id=httparse v1.10.1 target="httparse"}: cargo::core::compiler::fingerprint: fingerprint error for httparse v1.10.1/Check { test: false }/TargetInner { benched: false, ..: lib_target("httparse", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/httparse-1.10.1/src/lib.rs", Edition2018) }
+   0.082648500s  INFO prepare_target{force=false package_id=httparse v1.10.1 target="httparse"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/httparse-e6e485a263eb8453/lib-httparse`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.083071292s  INFO prepare_target{force=false package_id=tokio v1.53.1 target="tokio"}: cargo::core::compiler::fingerprint: fingerprint error for tokio v1.53.1/Check { test: false }/TargetInner { ..: lib_target("tokio", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/lib.rs", Edition2021) }
+   0.083075917s  INFO prepare_target{force=false package_id=tokio v1.53.1 target="tokio"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tokio-bf2360aff80e1ed8/lib-tokio`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.085129917s  INFO prepare_target{force=false package_id=hyper-util v0.1.20 target="hyper_util"}: cargo::core::compiler::fingerprint: fingerprint error for hyper-util v0.1.20/Check { test: false }/TargetInner { ..: lib_target("hyper_util", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.20/src/lib.rs", Edition2021) }
+   0.085133458s  INFO prepare_target{force=false package_id=hyper-util v0.1.20 target="hyper_util"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/hyper-util-bea6cf8f3baf87e3/lib-hyper_util`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.085886583s  INFO prepare_target{force=false package_id=serde_json v1.0.151 target="serde_json"}: cargo::core::compiler::fingerprint: fingerprint error for serde_json v1.0.151/Check { test: false }/TargetInner { ..: lib_target("serde_json", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/lib.rs", Edition2021) }
+   0.085891750s  INFO prepare_target{force=false package_id=serde_json v1.0.151 target="serde_json"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/serde_json-e3b5dc33fbf61e5b/lib-serde_json`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.086146458s  INFO prepare_target{force=false package_id=zmij v1.0.23 target="zmij"}: cargo::core::compiler::fingerprint: fingerprint error for zmij v1.0.23/Check { test: false }/TargetInner { ..: lib_target("zmij", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zmij-1.0.23/src/lib.rs", Edition2021) }
+   0.086150792s  INFO prepare_target{force=false package_id=zmij v1.0.23 target="zmij"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/zmij-6068e50be521506f/lib-zmij`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.086490333s  INFO prepare_target{force=false package_id=serde_urlencoded v0.7.1 target="serde_urlencoded"}: cargo::core::compiler::fingerprint: fingerprint error for serde_urlencoded v0.7.1/Check { test: false }/TargetInner { name_inferred: true, tested: false, ..: lib_target("serde_urlencoded", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_urlencoded-0.7.1/src/lib.rs", Edition2018) }
+   0.086494750s  INFO prepare_target{force=false package_id=serde_urlencoded v0.7.1 target="serde_urlencoded"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/serde_urlencoded-777a5dea9b0e2e95/lib-serde_urlencoded`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.086792542s  INFO prepare_target{force=false package_id=serde v1.0.229 target="serde"}: cargo::core::compiler::fingerprint: fingerprint error for serde v1.0.229/Check { test: false }/TargetInner { ..: lib_target("serde", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs", Edition2021) }
+   0.086796208s  INFO prepare_target{force=false package_id=serde v1.0.229 target="serde"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/serde-4edadca73fdc3044/lib-serde`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.087060625s  INFO prepare_target{force=false package_id=tower v0.5.3 target="tower"}: cargo::core::compiler::fingerprint: fingerprint error for tower v0.5.3/Check { test: false }/TargetInner { ..: lib_target("tower", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-0.5.3/src/lib.rs", Edition2018) }
+   0.087063667s  INFO prepare_target{force=false package_id=tower v0.5.3 target="tower"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tower-2c3ec519251112e9/lib-tower`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.087295458s  INFO prepare_target{force=false package_id=clap v4.6.6 target="clap"}: cargo::core::compiler::fingerprint: fingerprint error for clap v4.6.6/Check { test: false }/TargetInner { benched: false, ..: lib_target("clap", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clap-4.6.6/src/lib.rs", Edition2024) }
+   0.087298708s  INFO prepare_target{force=false package_id=clap v4.6.6 target="clap"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/clap-1db627571e408b09/lib-clap`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.088652625s  INFO prepare_target{force=false package_id=futures v0.3.34 target="futures"}: cargo::core::compiler::fingerprint: fingerprint error for futures v0.3.34/Check { test: false }/TargetInner { ..: lib_target("futures", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-0.3.34/src/lib.rs", Edition2018) }
+   0.088656333s  INFO prepare_target{force=false package_id=futures v0.3.34 target="futures"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/futures-232fb9036797c8df/lib-futures`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.088856792s  INFO prepare_target{force=false package_id=futures-executor v0.3.34 target="futures_executor"}: cargo::core::compiler::fingerprint: fingerprint error for futures-executor v0.3.34/Check { test: false }/TargetInner { ..: lib_target("futures_executor", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-executor-0.3.34/src/lib.rs", Edition2018) }
+   0.088860458s  INFO prepare_target{force=false package_id=futures-executor v0.3.34 target="futures_executor"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/futures-executor-71ef4c97a04b4647/lib-futures_executor`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.088992875s  INFO prepare_target{force=false package_id=rand v0.8.8 target="rand"}: cargo::core::compiler::fingerprint: fingerprint error for rand v0.8.8/Check { test: false }/TargetInner { ..: lib_target("rand", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.8/src/lib.rs", Edition2018) }
+   0.088996000s  INFO prepare_target{force=false package_id=rand v0.8.8 target="rand"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/rand-0264474b499dae69/lib-rand`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.089122583s  INFO prepare_target{force=false package_id=rand_chacha v0.3.1 target="rand_chacha"}: cargo::core::compiler::fingerprint: fingerprint error for rand_chacha v0.3.1/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("rand_chacha", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_chacha-0.3.1/src/lib.rs", Edition2018) }
+   0.089125583s  INFO prepare_target{force=false package_id=rand_chacha v0.3.1 target="rand_chacha"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/rand_chacha-434c871775745067/lib-rand_chacha`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.089232500s  INFO prepare_target{force=false package_id=ppv-lite86 v0.2.21 target="ppv_lite86"}: cargo::core::compiler::fingerprint: fingerprint error for ppv-lite86 v0.2.21/Check { test: false }/TargetInner { ..: lib_target("ppv_lite86", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ppv-lite86-0.2.21/src/lib.rs", Edition2021) }
+   0.089235292s  INFO prepare_target{force=false package_id=ppv-lite86 v0.2.21 target="ppv_lite86"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/ppv-lite86-906c7ba2e963d820/lib-ppv_lite86`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.089327000s  INFO prepare_target{force=false package_id=zerocopy v0.8.56 target="zerocopy"}: cargo::core::compiler::fingerprint: fingerprint error for zerocopy v0.8.56/Check { test: false }/TargetInner { ..: lib_target("zerocopy", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-0.8.56/src/lib.rs", Edition2021) }
+   0.089330333s  INFO prepare_target{force=false package_id=zerocopy v0.8.56 target="zerocopy"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/zerocopy-8d9ebfea15ef962f/lib-zerocopy`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  12: cargo::ops::cargo_compile::compile_ws
+  13: cargo::ops::cargo_compile::compile_with_exec
+  14: cargo::ops::cargo_compile::compile
+  15: cargo::commands::check::exec
+  16: <cargo::cli::Exec>::exec
+  17: cargo::main
+  18: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  19: std::rt::lang_start::<()>::{closure#0}
+  20: std::rt::lang_start_internal
+  21: _main
+   0.089812042s  INFO prepare_target{force=false package_id=reqwest v0.12.28 target="reqwest"}: cargo::core::compiler::fingerprint: fingerprint error for reqwest v0.12.28/Check { test: false }/TargetInner { ..: lib_target("reqwest", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.28/src/lib.rs", Edition2021) }
+   0.089817542s  INFO prepare_target{force=false package_id=reqwest v0.12.28 target="reqwest"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/reqwest-b32f6209a051b0fb/lib-reqwest`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.090416500s  INFO prepare_target{force=false package_id=hyper-rustls v0.27.9 target="hyper_rustls"}: cargo::core::compiler::fingerprint: fingerprint error for hyper-rustls v0.27.9/Check { test: false }/TargetInner { ..: lib_target("hyper_rustls", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.9/src/lib.rs", Edition2021) }
+   0.090420583s  INFO prepare_target{force=false package_id=hyper-rustls v0.27.9 target="hyper_rustls"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/hyper-rustls-1056b108d6ed755b/lib-hyper_rustls`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.090669042s  INFO prepare_target{force=false package_id=rustls v0.23.43 target="rustls"}: cargo::core::compiler::fingerprint: fingerprint error for rustls v0.23.43/Check { test: false }/TargetInner { ..: lib_target("rustls", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustls-0.23.43/src/lib.rs", Edition2021) }
+   0.090672583s  INFO prepare_target{force=false package_id=rustls v0.23.43 target="rustls"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/rustls-8373dff9189d7912/lib-rustls`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.090866208s  INFO prepare_target{force=false package_id=ring v0.17.14 target="ring"}: cargo::core::compiler::fingerprint: fingerprint error for ring v0.17.14/Check { test: false }/TargetInner { ..: lib_target("ring", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ring-0.17.14/src/lib.rs", Edition2021) }
+   0.090869833s  INFO prepare_target{force=false package_id=ring v0.17.14 target="ring"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/ring-6021cd3efac53d93/lib-ring`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  12: cargo::ops::cargo_compile::compile_ws
+  13: cargo::ops::cargo_compile::compile_with_exec
+  14: cargo::ops::cargo_compile::compile
+  15: cargo::commands::check::exec
+  16: <cargo::cli::Exec>::exec
+  17: cargo::main
+  18: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  19: std::rt::lang_start::<()>::{closure#0}
+  20: std::rt::lang_start_internal
+  21: _main
+   0.092346583s  INFO prepare_target{force=false package_id=rustls-webpki v0.103.15 target="webpki"}: cargo::core::compiler::fingerprint: fingerprint error for rustls-webpki v0.103.15/Check { test: false }/TargetInner { ..: lib_target("webpki", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustls-webpki-0.103.15/src/lib.rs", Edition2021) }
+   0.092350625s  INFO prepare_target{force=false package_id=rustls-webpki v0.103.15 target="webpki"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/rustls-webpki-f56ceb5116e38666/lib-webpki`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  12: cargo::ops::cargo_compile::compile_ws
+  13: cargo::ops::cargo_compile::compile_with_exec
+  14: cargo::ops::cargo_compile::compile
+  15: cargo::commands::check::exec
+  16: <cargo::cli::Exec>::exec
+  17: cargo::main
+  18: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  19: std::rt::lang_start::<()>::{closure#0}
+  20: std::rt::lang_start_internal
+  21: _main
+   0.092548708s  INFO prepare_target{force=false package_id=tokio-rustls v0.26.4 target="tokio_rustls"}: cargo::core::compiler::fingerprint: fingerprint error for tokio-rustls v0.26.4/Check { test: false }/TargetInner { ..: lib_target("tokio_rustls", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-rustls-0.26.4/src/lib.rs", Edition2021) }
+   0.092552458s  INFO prepare_target{force=false package_id=tokio-rustls v0.26.4 target="tokio_rustls"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tokio-rustls-b91a18f68922a2d8/lib-tokio_rustls`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.092732125s  INFO prepare_target{force=false package_id=tokio-util v0.7.19 target="tokio_util"}: cargo::core::compiler::fingerprint: fingerprint error for tokio-util v0.7.19/Check { test: false }/TargetInner { ..: lib_target("tokio_util", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-util-0.7.19/src/lib.rs", Edition2021) }
+   0.092736042s  INFO prepare_target{force=false package_id=tokio-util v0.7.19 target="tokio_util"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tokio-util-f6f18c98d7d4f5d8/lib-tokio_util`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.092909292s  INFO prepare_target{force=false package_id=tower-http v0.6.11 target="tower_http"}: cargo::core::compiler::fingerprint: fingerprint error for tower-http v0.6.11/Check { test: false }/TargetInner { ..: lib_target("tower_http", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.11/src/lib.rs", Edition2018) }
+   0.092913583s  INFO prepare_target{force=false package_id=tower-http v0.6.11 target="tower_http"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tower-http-63d7b57b46f88baa/lib-tower_http`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.093273250s  INFO prepare_target{force=false package_id=url v2.5.8 target="url"}: cargo::core::compiler::fingerprint: fingerprint error for url v2.5.8/Check { test: false }/TargetInner { ..: lib_target("url", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/url-2.5.8/src/lib.rs", Edition2018) }
+   0.093278000s  INFO prepare_target{force=false package_id=url v2.5.8 target="url"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/url-e99b0876cae21e71/lib-url`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.093442083s  INFO prepare_target{force=false package_id=idna v1.1.0 target="idna"}: cargo::core::compiler::fingerprint: fingerprint error for idna v1.1.0/Check { test: false }/TargetInner { doctest: false, ..: lib_target("idna", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/idna-1.1.0/src/lib.rs", Edition2018) }
+   0.093445792s  INFO prepare_target{force=false package_id=idna v1.1.0 target="idna"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/idna-4c50a9b58a1a80db/lib-idna`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  12: cargo::ops::cargo_compile::compile_ws
+  13: cargo::ops::cargo_compile::compile_with_exec
+  14: cargo::ops::cargo_compile::compile
+  15: cargo::commands::check::exec
+  16: <cargo::cli::Exec>::exec
+  17: cargo::main
+  18: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  19: std::rt::lang_start::<()>::{closure#0}
+  20: std::rt::lang_start_internal
+  21: _main
+   0.093604750s  INFO prepare_target{force=false package_id=idna_adapter v1.2.2 target="idna_adapter"}: cargo::core::compiler::fingerprint: fingerprint error for idna_adapter v1.2.2/Check { test: false }/TargetInner { ..: lib_target("idna_adapter", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/idna_adapter-1.2.2/src/lib.rs", Edition2024) }
+   0.093609333s  INFO prepare_target{force=false package_id=idna_adapter v1.2.2 target="idna_adapter"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/idna_adapter-fdd40603130d1cc5/lib-idna_adapter`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  13: cargo::ops::cargo_compile::compile_ws
+  14: cargo::ops::cargo_compile::compile_with_exec
+  15: cargo::ops::cargo_compile::compile
+  16: cargo::commands::check::exec
+  17: <cargo::cli::Exec>::exec
+  18: cargo::main
+  19: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  20: std::rt::lang_start::<()>::{closure#0}
+  21: std::rt::lang_start_internal
+  22: _main
+   0.093743250s  INFO prepare_target{force=false package_id=icu_normalizer v2.3.0 target="icu_normalizer"}: cargo::core::compiler::fingerprint: fingerprint error for icu_normalizer v2.3.0/Check { test: false }/TargetInner { ..: lib_target("icu_normalizer", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_normalizer-2.3.0/src/lib.rs", Edition2024) }
+   0.093747250s  INFO prepare_target{force=false package_id=icu_normalizer v2.3.0 target="icu_normalizer"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/icu_normalizer-f8373926908afcd9/lib-icu_normalizer`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  14: cargo::ops::cargo_compile::compile_ws
+  15: cargo::ops::cargo_compile::compile_with_exec
+  16: cargo::ops::cargo_compile::compile
+  17: cargo::commands::check::exec
+  18: <cargo::cli::Exec>::exec
+  19: cargo::main
+  20: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  21: std::rt::lang_start::<()>::{closure#0}
+  22: std::rt::lang_start_internal
+  23: _main
+   0.094010083s  INFO prepare_target{force=false package_id=icu_collections v2.3.0 target="icu_collections"}: cargo::core::compiler::fingerprint: fingerprint error for icu_collections v2.3.0/Check { test: false }/TargetInner { benched: false, ..: lib_target("icu_collections", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_collections-2.3.0/src/lib.rs", Edition2024) }
+   0.094018333s  INFO prepare_target{force=false package_id=icu_collections v2.3.0 target="icu_collections"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/icu_collections-0acec576e440aa81/lib-icu_collections`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  15: cargo::ops::cargo_compile::compile_ws
+  16: cargo::ops::cargo_compile::compile_with_exec
+  17: cargo::ops::cargo_compile::compile
+  18: cargo::commands::check::exec
+  19: <cargo::cli::Exec>::exec
+  20: cargo::main
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  22: std::rt::lang_start::<()>::{closure#0}
+  23: std::rt::lang_start_internal
+  24: _main
+   0.094335458s  INFO prepare_target{force=false package_id=potential_utf v0.1.6 target="potential_utf"}: cargo::core::compiler::fingerprint: fingerprint error for potential_utf v0.1.6/Check { test: false }/TargetInner { ..: lib_target("potential_utf", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/lib.rs", Edition2021) }
+   0.094340542s  INFO prepare_target{force=false package_id=potential_utf v0.1.6 target="potential_utf"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/potential_utf-e2be736600c36a31/lib-potential_utf`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  16: cargo::ops::cargo_compile::compile_ws
+  17: cargo::ops::cargo_compile::compile_with_exec
+  18: cargo::ops::cargo_compile::compile
+  19: cargo::commands::check::exec
+  20: <cargo::cli::Exec>::exec
+  21: cargo::main
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  23: std::rt::lang_start::<()>::{closure#0}
+  24: std::rt::lang_start_internal
+  25: _main
+   0.094466542s  INFO prepare_target{force=false package_id=zerovec v0.11.8 target="zerovec"}: cargo::core::compiler::fingerprint: fingerprint error for zerovec v0.11.8/Check { test: false }/TargetInner { benched: false, ..: lib_target("zerovec", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerovec-0.11.8/src/lib.rs", Edition2021) }
+   0.094470667s  INFO prepare_target{force=false package_id=zerovec v0.11.8 target="zerovec"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/zerovec-abf869365c8c8abb/lib-zerovec`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: cargo::core::compiler::compile
+  16: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  17: cargo::ops::cargo_compile::compile_ws
+  18: cargo::ops::cargo_compile::compile_with_exec
+  19: cargo::ops::cargo_compile::compile
+  20: cargo::commands::check::exec
+  21: <cargo::cli::Exec>::exec
+  22: cargo::main
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  24: std::rt::lang_start::<()>::{closure#0}
+  25: std::rt::lang_start_internal
+  26: _main
+   0.094639000s  INFO prepare_target{force=false package_id=yoke v0.8.3 target="yoke"}: cargo::core::compiler::fingerprint: fingerprint error for yoke v0.8.3/Check { test: false }/TargetInner { ..: lib_target("yoke", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoke-0.8.3/src/lib.rs", Edition2021) }
+   0.094643125s  INFO prepare_target{force=false package_id=yoke v0.8.3 target="yoke"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/yoke-3631f27139a03a20/lib-yoke`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: cargo::core::compiler::compile
+  16: cargo::core::compiler::compile
+  17: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  18: cargo::ops::cargo_compile::compile_ws
+  19: cargo::ops::cargo_compile::compile_with_exec
+  20: cargo::ops::cargo_compile::compile
+  21: cargo::commands::check::exec
+  22: <cargo::cli::Exec>::exec
+  23: cargo::main
+  24: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  25: std::rt::lang_start::<()>::{closure#0}
+  26: std::rt::lang_start_internal
+  27: _main
+   0.095077000s  INFO prepare_target{force=false package_id=zerofrom v0.1.8 target="zerofrom"}: cargo::core::compiler::fingerprint: fingerprint error for zerofrom v0.1.8/Check { test: false }/TargetInner { ..: lib_target("zerofrom", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerofrom-0.1.8/src/lib.rs", Edition2021) }
+   0.095082917s  INFO prepare_target{force=false package_id=zerofrom v0.1.8 target="zerofrom"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/zerofrom-76a5edff10705412/lib-zerofrom`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: cargo::core::compiler::compile
+  16: cargo::core::compiler::compile
+  17: cargo::core::compiler::compile
+  18: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  19: cargo::ops::cargo_compile::compile_ws
+  20: cargo::ops::cargo_compile::compile_with_exec
+  21: cargo::ops::cargo_compile::compile
+  22: cargo::commands::check::exec
+  23: <cargo::cli::Exec>::exec
+  24: cargo::main
+  25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  26: std::rt::lang_start::<()>::{closure#0}
+  27: std::rt::lang_start_internal
+  28: _main
+   0.095457292s  INFO prepare_target{force=false package_id=icu_normalizer_data v2.3.0 target="icu_normalizer_data"}: cargo::core::compiler::fingerprint: fingerprint error for icu_normalizer_data v2.3.0/Check { test: false }/TargetInner { ..: lib_target("icu_normalizer_data", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_normalizer_data-2.3.0/src/lib.rs", Edition2024) }
+   0.095461792s  INFO prepare_target{force=false package_id=icu_normalizer_data v2.3.0 target="icu_normalizer_data"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/icu_normalizer_data-2b77c1ab49bf313c/lib-icu_normalizer_data`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  15: cargo::ops::cargo_compile::compile_ws
+  16: cargo::ops::cargo_compile::compile_with_exec
+  17: cargo::ops::cargo_compile::compile
+  18: cargo::commands::check::exec
+  19: <cargo::cli::Exec>::exec
+  20: cargo::main
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  22: std::rt::lang_start::<()>::{closure#0}
+  23: std::rt::lang_start_internal
+  24: _main
+   0.095667458s  INFO prepare_target{force=false package_id=icu_provider v2.3.1 target="icu_provider"}: cargo::core::compiler::fingerprint: fingerprint error for icu_provider v2.3.1/Check { test: false }/TargetInner { benched: false, ..: lib_target("icu_provider", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_provider-2.3.1/src/lib.rs", Edition2024) }
+   0.095672042s  INFO prepare_target{force=false package_id=icu_provider v2.3.1 target="icu_provider"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/icu_provider-4c8f76f4e19f0ad6/lib-icu_provider`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  15: cargo::ops::cargo_compile::compile_ws
+  16: cargo::ops::cargo_compile::compile_with_exec
+  17: cargo::ops::cargo_compile::compile
+  18: cargo::commands::check::exec
+  19: <cargo::cli::Exec>::exec
+  20: cargo::main
+  21: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  22: std::rt::lang_start::<()>::{closure#0}
+  23: std::rt::lang_start_internal
+  24: _main
+   0.095934667s  INFO prepare_target{force=false package_id=icu_locale_core v2.3.0 target="icu_locale_core"}: cargo::core::compiler::fingerprint: fingerprint error for icu_locale_core v2.3.0/Check { test: false }/TargetInner { benched: false, ..: lib_target("icu_locale_core", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_locale_core-2.3.0/src/lib.rs", Edition2024) }
+   0.095939083s  INFO prepare_target{force=false package_id=icu_locale_core v2.3.0 target="icu_locale_core"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/icu_locale_core-3135e27f76bd411a/lib-icu_locale_core`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  16: cargo::ops::cargo_compile::compile_ws
+  17: cargo::ops::cargo_compile::compile_with_exec
+  18: cargo::ops::cargo_compile::compile
+  19: cargo::commands::check::exec
+  20: <cargo::cli::Exec>::exec
+  21: cargo::main
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  23: std::rt::lang_start::<()>::{closure#0}
+  24: std::rt::lang_start_internal
+  25: _main
+   0.096385917s  INFO prepare_target{force=false package_id=tinystr v0.8.4 target="tinystr"}: cargo::core::compiler::fingerprint: fingerprint error for tinystr v0.8.4/Check { test: false }/TargetInner { benched: false, ..: lib_target("tinystr", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tinystr-0.8.4/src/lib.rs", Edition2021) }
+   0.096393750s  INFO prepare_target{force=false package_id=tinystr v0.8.4 target="tinystr"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tinystr-d1d9d8cd90325fb2/lib-tinystr`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: cargo::core::compiler::compile
+  16: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  17: cargo::ops::cargo_compile::compile_ws
+  18: cargo::ops::cargo_compile::compile_with_exec
+  19: cargo::ops::cargo_compile::compile
+  20: cargo::commands::check::exec
+  21: <cargo::cli::Exec>::exec
+  22: cargo::main
+  23: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  24: std::rt::lang_start::<()>::{closure#0}
+  25: std::rt::lang_start_internal
+  26: _main
+   0.096698083s  INFO prepare_target{force=false package_id=zerotrie v0.2.5 target="zerotrie"}: cargo::core::compiler::fingerprint: fingerprint error for zerotrie v0.2.5/Check { test: false }/TargetInner { benched: false, ..: lib_target("zerotrie", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerotrie-0.2.5/src/lib.rs", Edition2021) }
+   0.096704167s  INFO prepare_target{force=false package_id=zerotrie v0.2.5 target="zerotrie"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/zerotrie-6d82ed4d3ede01c9/lib-zerotrie`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: cargo::core::compiler::compile
+  14: cargo::core::compiler::compile
+  15: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  16: cargo::ops::cargo_compile::compile_ws
+  17: cargo::ops::cargo_compile::compile_with_exec
+  18: cargo::ops::cargo_compile::compile
+  19: cargo::commands::check::exec
+  20: <cargo::cli::Exec>::exec
+  21: cargo::main
+  22: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  23: std::rt::lang_start::<()>::{closure#0}
+  24: std::rt::lang_start_internal
+  25: _main
+   0.096907833s  INFO prepare_target{force=false package_id=icu_properties v2.3.0 target="icu_properties"}: cargo::core::compiler::fingerprint: fingerprint error for icu_properties v2.3.0/Check { test: false }/TargetInner { ..: lib_target("icu_properties", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_properties-2.3.0/src/lib.rs", Edition2024) }
+   0.096912167s  INFO prepare_target{force=false package_id=icu_properties v2.3.0 target="icu_properties"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/icu_properties-d6c3bfe9bce1f6c1/lib-icu_properties`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: cargo::core::compiler::compile
+  11: cargo::core::compiler::compile
+  12: cargo::core::compiler::compile
+  13: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  14: cargo::ops::cargo_compile::compile_ws
+  15: cargo::ops::cargo_compile::compile_with_exec
+  16: cargo::ops::cargo_compile::compile
+  17: cargo::commands::check::exec
+  18: <cargo::cli::Exec>::exec
+  19: cargo::main
+  20: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  21: std::rt::lang_start::<()>::{closure#0}
+  22: std::rt::lang_start_internal
+  23: _main
+   0.097530250s  INFO prepare_target{force=false package_id=bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench) target="bench"}: cargo::core::compiler::fingerprint: fingerprint error for bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench)/Check { test: true }/TargetInner { name: "bench", doc: true, ..: with_path("/Users/indo/code/project/quotio-rs/tools/bench/src/main.rs", Edition2021) }
+   0.097534333s  INFO prepare_target{force=false package_id=bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench) target="bench"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/bench-8957dc203f8ce9d8/test-bin-bench`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.099302375s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway)/Check { test: false }/TargetInner { name: "quotio-gateway", doc: true, ..: with_path("/Users/indo/code/project/quotio-rs/crates/gateway/src/main.rs", Edition2021) }
+   0.099308000s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-gateway-f08dd317563e5f71/bin-quotio-gateway`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.099668958s  INFO prepare_target{force=false package_id=anyhow v1.0.104 target="anyhow"}: cargo::core::compiler::fingerprint: fingerprint error for anyhow v1.0.104/Check { test: false }/TargetInner { ..: lib_target("anyhow", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anyhow-1.0.104/src/lib.rs", Edition2021) }
+   0.099673292s  INFO prepare_target{force=false package_id=anyhow v1.0.104 target="anyhow"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/anyhow-f9ae0fffe107911c/lib-anyhow`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.099882042s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("quotio_providers", ["lib"], "/Users/indo/code/project/quotio-rs/crates/providers/src/lib.rs", Edition2021) }
+   0.099885833s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-providers-669d8a3fd61c99d6/lib-quotio_providers`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.100078583s  INFO prepare_target{force=false package_id=chrono v0.4.45 target="chrono"}: cargo::core::compiler::fingerprint: fingerprint error for chrono v0.4.45/Check { test: false }/TargetInner { ..: lib_target("chrono", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-0.4.45/src/lib.rs", Edition2021) }
+   0.100081833s  INFO prepare_target{force=false package_id=chrono v0.4.45 target="chrono"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/chrono-4b26a065257f0797/lib-chrono`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.100412958s  INFO prepare_target{force=false package_id=num-traits v0.2.19 target="num_traits"}: cargo::core::compiler::fingerprint: fingerprint error for num-traits v0.2.19/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("num_traits", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-traits-0.2.19/src/lib.rs", Edition2021) }
+   0.100416583s  INFO prepare_target{force=false package_id=num-traits v0.2.19 target="num_traits"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/num-traits-a0aa19a80025389c/lib-num_traits`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: cargo::core::compiler::compile
+  10: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  11: cargo::ops::cargo_compile::compile_ws
+  12: cargo::ops::cargo_compile::compile_with_exec
+  13: cargo::ops::cargo_compile::compile
+  14: cargo::commands::check::exec
+  15: <cargo::cli::Exec>::exec
+  16: cargo::main
+  17: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  18: std::rt::lang_start::<()>::{closure#0}
+  19: std::rt::lang_start_internal
+  20: _main
+   0.100671625s  INFO prepare_target{force=false package_id=thiserror v2.0.20 target="thiserror"}: cargo::core::compiler::fingerprint: fingerprint error for thiserror v2.0.20/Check { test: false }/TargetInner { ..: lib_target("thiserror", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.20/src/lib.rs", Edition2021) }
+   0.100674792s  INFO prepare_target{force=false package_id=thiserror v2.0.20 target="thiserror"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/thiserror-78db60f583ffb778/lib-thiserror`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: cargo::core::compiler::compile
+   9: <cargo::core::compiler::build_runner::BuildRunner>::compile
+  10: cargo::ops::cargo_compile::compile_ws
+  11: cargo::ops::cargo_compile::compile_with_exec
+  12: cargo::ops::cargo_compile::compile
+  13: cargo::commands::check::exec
+  14: <cargo::cli::Exec>::exec
+  15: cargo::main
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: std::rt::lang_start_internal
+  19: _main
+   0.100912958s  INFO prepare_target{force=false package_id=quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router) target="quotio_router"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("quotio_router", ["lib"], "/Users/indo/code/project/quotio-rs/crates/router/src/lib.rs", Edition2021) }
+   0.100916542s  INFO prepare_target{force=false package_id=quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router) target="quotio_router"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-router-fcf9a83178489e36/lib-quotio_router`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.101085125s  INFO prepare_target{force=false package_id=tracing-subscriber v0.3.23 target="tracing_subscriber"}: cargo::core::compiler::fingerprint: fingerprint error for tracing-subscriber v0.3.23/Check { test: false }/TargetInner { ..: lib_target("tracing_subscriber", ["lib"], "/Users/indo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-subscriber-0.3.23/src/lib.rs", Edition2018) }
+   0.101088583s  INFO prepare_target{force=false package_id=tracing-subscriber v0.3.23 target="tracing_subscriber"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/tracing-subscriber-98c5a97907b24cef/lib-tracing_subscriber`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.102019750s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway)/Check { test: true }/TargetInner { name: "quotio-gateway", doc: true, ..: with_path("/Users/indo/code/project/quotio-rs/crates/gateway/src/main.rs", Edition2021) }
+   0.102023625s  INFO prepare_target{force=false package_id=quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway) target="quotio-gateway"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-gateway-bb5c612fe3f3c033/test-bin-quotio-gateway`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.102424042s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("quotio_providers", ["lib"], "/Users/indo/code/project/quotio-rs/crates/providers/src/lib.rs", Edition2021) }
+   0.102429375s  INFO prepare_target{force=false package_id=quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers) target="quotio_providers"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-providers-f93760e6622560f7/test-lib-quotio_providers`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.102677792s  INFO prepare_target{force=false package_id=quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router) target="quotio_router"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("quotio_router", ["lib"], "/Users/indo/code/project/quotio-rs/crates/router/src/lib.rs", Edition2021) }
+   0.102681333s  INFO prepare_target{force=false package_id=quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router) target="quotio_router"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-router-5cbbac534231e1ff/test-lib-quotio_router`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.102813375s  INFO prepare_target{force=false package_id=quotio-types v0.1.0 (/Users/indo/code/project/quotio-rs/crates/types) target="quotio_types"}: cargo::core::compiler::fingerprint: fingerprint error for quotio-types v0.1.0 (/Users/indo/code/project/quotio-rs/crates/types)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("quotio_types", ["lib"], "/Users/indo/code/project/quotio-rs/crates/types/src/lib.rs", Edition2021) }
+   0.102818125s  INFO prepare_target{force=false package_id=quotio-types v0.1.0 (/Users/indo/code/project/quotio-rs/crates/types) target="quotio_types"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/indo/code/project/quotio-rs/target/debug/.fingerprint/quotio-types-016ae9cb227430db/test-lib-quotio_types`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+    Checking httparse v1.10.1
+    Checking zmij v1.0.23
+    Checking tracing v0.1.44
+    Checking tokio v1.53.1
+    Checking futures-util v0.3.34
+    Checking serde v1.0.229
+    Checking icu_normalizer_data v2.3.0
+    Checking zerofrom v0.1.8
+    Checking ring v0.17.14
+    Checking num-traits v0.2.19
+    Checking zerocopy v0.8.56
+    Checking thiserror v2.0.20
+    Checking anyhow v1.0.104
+    Checking clap v4.6.6
+    Checking quotio-router v0.1.0 (/Users/indo/code/project/quotio-rs/crates/router)
+    Checking quotio-types v0.1.0 (/Users/indo/code/project/quotio-rs/crates/types)
+    Checking yoke v0.8.3
+    Checking axum-core v0.5.6
+    Checking tracing-subscriber v0.3.23
+    Checking serde_json v1.0.151
+    Checking zerovec v0.11.8
+    Checking zerotrie v0.2.5
+    Checking serde_urlencoded v0.7.1
+    Checking chrono v0.4.45
+    Checking tinystr v0.8.4
+    Checking potential_utf v0.1.6
+    Checking icu_collections v2.3.0
+    Checking icu_locale_core v2.3.0
+    Checking rustls-webpki v0.103.15
+    Checking quotio-providers v0.1.0 (/Users/indo/code/project/quotio-rs/crates/providers)
+    Checking icu_provider v2.3.1
+error: could not compile `quotio-providers` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+    Checking rustls v0.23.43
+    Checking icu_normalizer v2.3.0
+    Checking icu_properties v2.3.0
+    Checking futures-executor v0.3.34
+    Checking futures v0.3.34
+    Checking idna_adapter v1.2.2
+    Checking idna v1.1.0
+    Checking url v2.5.8
+    Checking ppv-lite86 v0.2.21
+    Checking rand_chacha v0.3.1
+    Checking rand v0.8.8
+    Checking hyper v1.11.0
+    Checking tower v0.5.3
+    Checking tokio-util v0.7.19
+    Checking tower-http v0.6.11
+    Checking tokio-rustls v0.26.4
+    Checking hyper-util v0.1.20
+    Checking axum v0.8.9
+    Checking hyper-rustls v0.27.9
+    Checking reqwest v0.12.28
+    Checking quotio-gateway v0.1.0 (/Users/indo/code/project/quotio-rs/crates/gateway)
+    Checking bench v0.1.0 (/Users/indo/code/project/quotio-rs/tools/bench)

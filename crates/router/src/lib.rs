@@ -33,7 +33,7 @@ impl Router {
 
     /// Index into `members` of the next member to serve, or None if none available.
     pub fn select(&self, members: &[Arc<dyn PoolMember>], _hint: &SessionHint) -> Option<usize> {
-        let _ = (&mut self.last_served, self.seq); // placeholder silence; lane rewrites body
+        let _ = (&self.last_served, self.seq); // placeholder; lane rewrites body
         None
     }
 
