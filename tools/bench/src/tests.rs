@@ -27,6 +27,60 @@ fn test_nearest_rank_percentile_pure_fn() {
 }
 
 #[tokio::test]
+async fn test_codex_protocol_mock_emits_responses_event_sequence() {
+    let cfg = MockConfig {
+        port: 0,
+        ttft_ms: 0,
+        chunks: 3,
+        fail_first_n: 0,
+        fail_status: 429,
+        protocol: crate::mock::MockProtocol::Codex,
+    };
+    let state = Arc::new(MockState::new(&cfg));
+    let app = create_mock_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral");
+    let port = listener.local_addr().expect("local addr").port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve mock");
+    });
+
+    let body = reqwest::Client::new()
+        .post(format!(
+            "http://127.0.0.1:{port}/backend-api/codex/responses"
+        ))
+        .body(r#"{"model":"gpt-bench"}"#)
+        .send()
+        .await
+        .expect("send codex req")
+        .text()
+        .await
+        .expect("codex body");
+
+    let events: Vec<&str> = body
+        .lines()
+        .filter_map(|l| l.strip_prefix("event: "))
+        .collect();
+    assert_eq!(
+        events,
+        vec![
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.delta",
+            "response.output_text.delta",
+            "response.output_item.done",
+            "response.completed",
+        ]
+    );
+    assert!(!body.contains("chat.completion.chunk"));
+    assert!(!body.contains("data: [DONE]"));
+    assert!(body.contains(r#""usage":{"input_tokens":16,"output_tokens":20,"total_tokens":36}"#));
+}
+
+#[tokio::test]
 async fn test_in_process_mock_ephemeral_port() {
     // Given: an ephemeral mock server with ttft_ms = 40, chunks = 3, fail_first_n = 1, fail_status = 429
     let cfg = MockConfig {
@@ -35,6 +89,7 @@ async fn test_in_process_mock_ephemeral_port() {
         chunks: 3,
         fail_first_n: 1,
         fail_status: 429,
+        protocol: crate::mock::MockProtocol::OpenAi,
     };
     let state = Arc::new(MockState::new(&cfg));
     let app = create_mock_router(state);
@@ -113,6 +168,7 @@ async fn test_50req_10conc_zero_error_run() {
         chunks: 2,
         fail_first_n: 0,
         fail_status: 429,
+        protocol: crate::mock::MockProtocol::OpenAi,
     };
     let state = Arc::new(MockState::new(&cfg));
     let app = create_mock_router(state);
@@ -192,6 +248,7 @@ async fn test_headers_and_body_json_literal_pinning() {
         chunks: 1,
         fail_first_n: 0,
         fail_status: 429,
+        protocol: crate::mock::MockProtocol::OpenAi,
     };
     let state = Arc::new(MockState::new(&cfg));
     let app = create_mock_router(state);

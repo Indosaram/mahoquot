@@ -14,7 +14,7 @@ use quotio_types::{Health, PoolMember};
 use crate::inbound::require_api_key;
 use crate::models_route::models_payload;
 use crate::monitor::PromAccount;
-use crate::relay::handle_relay;
+use crate::relay::{handle_relay, RelayMode};
 use crate::state::AppState;
 
 pub fn create_app(state: Arc<AppState>) -> Router {
@@ -86,7 +86,14 @@ async fn chat_completions_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    handle_relay(state, "/v1/chat/completions", &headers, body).await
+    handle_relay(
+        state,
+        RelayMode::OpenAiCompat,
+        "/v1/chat/completions",
+        &headers,
+        body,
+    )
+    .await
 }
 
 async fn codex_responses_handler(
@@ -94,5 +101,12 @@ async fn codex_responses_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    handle_relay(state, "/backend-api/codex/responses", &headers, body).await
+    handle_relay(
+        state,
+        RelayMode::Native,
+        "/backend-api/codex/responses",
+        &headers,
+        body,
+    )
+    .await
 }

@@ -10,6 +10,17 @@ use common::{create_auth_file_json, unique_temp_dir};
 use quotio_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
 use quotio_types::Strategy;
 
+const CODEX_SSE: &str = concat!(
+    "event: response.created\n",
+    "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_rr\"}}\n\n",
+    "event: response.output_item.added\n",
+    "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_rr\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+    "event: response.output_text.delta\n",
+    "data: {\"type\":\"response.output_text.delta\",\"content_index\":0,\"delta\":\"ok\",\"item_id\":\"msg_rr\",\"output_index\":0}\n\n",
+    "event: response.completed\n",
+    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_rr\",\"status\":\"completed\"}}\n\n",
+);
+
 #[tokio::test]
 async fn test_t1_rr_fairness() {
     // Given: 4 upstream mock servers and 4 account fixtures
@@ -19,12 +30,16 @@ async fn test_t1_rr_fairness() {
     for count in &counts {
         let count_clone = count.clone();
         let mock_app = Router::new().route(
-            "/v1/chat/completions",
+            "/backend-api/codex/responses",
             post(move || {
                 let c = count_clone.clone();
                 async move {
                     c.fetch_add(1, Ordering::SeqCst);
-                    (StatusCode::OK, "{\"result\":\"ok\"}")
+                    (
+                        StatusCode::OK,
+                        [("Content-Type", "text/event-stream")],
+                        CODEX_SSE,
+                    )
                 }
             }),
         );
@@ -77,7 +92,7 @@ async fn test_t1_rr_fairness() {
         let res = client
             .post(&gw_url)
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(r#"{"model":"codex","stream":true,"messages":[{"role":"user","content":"hi"}]}"#)
             .send()
             .await
             .unwrap();

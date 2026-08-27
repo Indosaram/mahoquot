@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -32,4 +34,25 @@ pub fn create_auth_file_json(
         obj["upstream_override"] = serde_json::Value::String(url.to_string());
     }
     serde_json::to_string(&obj).unwrap()
+}
+
+pub const CODEX_PATH: &str = "/backend-api/codex/responses";
+
+pub const OPENAI_REQUEST: &str =
+    r#"{"model":"codex","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+
+pub fn codex_sse(text: &str) -> String {
+    format!(
+        concat!(
+            "event: response.created\n",
+            "data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"resp_fixture\"}}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{{\"id\":\"msg_fixture\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {{\"type\":\"response.output_text.delta\",\"content_index\":0,\"delta\":\"{text}\",\"item_id\":\"msg_fixture\",\"output_index\":0}}\n\n",
+            "event: response.completed\n",
+            "data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_fixture\",\"status\":\"completed\"}}}}\n\n",
+        ),
+        text = text
+    )
 }

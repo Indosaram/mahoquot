@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -24,6 +24,7 @@ pub struct AppState {
     pub auth_refresh_enabled: bool,
     pub refreshed: AtomicU64,
     pub max_failover: usize,
+    pub model_restrictions: AtomicBool,
 }
 
 impl AppState {
@@ -60,6 +61,7 @@ impl AppState {
             auth_refresh_enabled,
             refreshed: AtomicU64::new(0),
             max_failover: config.max_failover,
+            model_restrictions: AtomicBool::new(false),
         })
     }
 

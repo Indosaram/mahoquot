@@ -1,0 +1,36 @@
+gateway up on 18874 with 5 accounts
+
+### 1. streaming, no system message (bare omo-style request)
+  status: HTTP/1.1 200 OK  content-type: content-type: text/event-stream  bytes: 1076
+  chunks: 4  text: 'alpha bravo'
+  finish_reason: "finish_reason":"stop"
+
+### 2. streaming with system message + stream_options.include_usage
+  status: HTTP/1.1 200 OK  content-type: content-type: text/event-stream  bytes: 1081
+  usage frame: "usage":{"completion_tokens":5,"prompt_tokens":16,"total_tokens":21}
+
+### 3. non-streaming
+  status: HTTP/1.1 200 OK  content-type: content-type: application/json  bytes: 413
+  object: chat.completion | content: 'OK' | finish: stop | usage: {'completion_tokens': 5, 'prompt_tokens': 8, 'total_tokens': 13}
+
+### 4. streaming with tools (omo agent path)
+  status: HTTP/1.1 200 OK  content-type: content-type: text/event-stream  bytes: 2586
+  tool_call id: call_frxyuwrfPpzno9XrkXmkvttk name: get_weather arguments: '{"city":"Seoul"}' finish_reason: tool_calls
+
+### 5. multi-turn with tool result fed back
+  status: HTTP/1.1 200 OK  content-type: content-type: text/event-stream  bytes: 2892
+  text: 'Seoul: **21°C and sunny.**'
+
+### 6. admin stats (capability failover evidence)
+  served=5 failed_over=2 exposed_errors=0 exposed_client_errors=0 refreshed=0
+   - 565c2911-account-f@example.com    ok=0   fails=1   last_error= model not supported by account
+   - account-g@example.com                ok=0   fails=1   last_error= upstream error
+   - a9d2af16-account-h@example.com        ok=5   fails=0   last_error= None
+   - ab53e014-account-a@gmail.com     ok=0   fails=0   last_error= None
+   - account-b@example.com               ok=0   fails=0   last_error= None
+
+### 7. receipts
+  listeners 18840-18899: 8
+  live Quotio config md5 before/after: 08395756cd71f4cf4aa905e16087dada / 08395756cd71f4cf4aa905e16087dada
+  ~/.cli-proxy-api codex-*.json mtime-hash before/after: 5c797d0d41c60f35743eab5b6e26164c / 5c797d0d41c60f35743eab5b6e26164c
+DONE

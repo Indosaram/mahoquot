@@ -1,6 +1,13 @@
 # Lead Verification & Final Verdict — quotio-gateway vs CLIProxyAPI
 
 Every result below was executed by the lead directly (not delegated), on 2026-08-28 KST.
+
+> **Status update.** C6 and the C4 fairness caveat recorded here were both addressed in a later
+> session. The OpenAI<->Codex translation layer this document identified as missing now exists
+> (`crates/gateway/src/compat/`), C6 passes against real credentials, and the benchmark was
+> re-run with both proxies doing equal translation work. This file is preserved as the record of
+> the state that motivated that work; see `OMO-LEAD-VERIFICATION-C6-RESOLVED.md` and
+> `FAIR-TRANSLATION-BENCH.md` for current results.
 Isolated fixtures only: ports 18850-18857 and 18871-18872, `/tmp/qe2e2`, `/tmp/qbench_omo`.
 Live CLIProxyAPI (18317), Quotio mgmt (8317), `~/.cli-proxy-api` and the live Quotio config were never written to.
 
@@ -13,7 +20,7 @@ Live CLIProxyAPI (18317), Quotio mgmt (8317), `~/.cli-proxy-api` and the live Qu
 | C3 monitoring | PASS (1 deviation) | `/metrics` public with 20 `quotio_` lines, `/admin/stats` fields present |
 | C4 performance gate | PASS (scope caveat) | 6-round paired matrix recomputed from raw + independent 2-round re-run |
 | C5 no regression | PASS | `clippy -D warnings` exit 0, `cargo test --workspace` 34 tests green |
-| C6 real-credential E2E | **FAIL** | `/v1/chat/completions` returns chatgpt.com HTML, not SSE |
+| C6 real-credential E2E | **FAIL (superseded — now PASS)** | HTML defect fixed by the compat translation layer; see `OMO-LEAD-VERIFICATION-C6-RESOLVED.md` |
 | C7 teardown receipts | PASS | 0 listeners, guard hashes unchanged |
 
 ## C1 — Automatic token refresh: PASS

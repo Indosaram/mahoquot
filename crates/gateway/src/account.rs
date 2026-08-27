@@ -16,6 +16,7 @@ pub struct AccountMember {
     pub ok_count: AtomicU64,
     pub fail_count: AtomicU64,
     pub refresh_lock: tokio::sync::Mutex<()>,
+    pub unsupported_models: RwLock<Vec<String>>,
 }
 
 impl PoolMember for AccountMember {
@@ -49,6 +50,24 @@ impl AccountMember {
 
     pub fn record_fail(&self) {
         self.fail_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn supports_model(&self, model: &str) -> bool {
+        let guard = self
+            .unsupported_models
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        !guard.iter().any(|m| m == model)
+    }
+
+    pub fn mark_model_unsupported(&self, model: &str) {
+        let mut guard = self
+            .unsupported_models
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !guard.iter().any(|m| m == model) {
+            guard.push(model.to_string());
+        }
     }
 
     pub fn set_health(&self, health: Health) {
@@ -183,6 +202,7 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             ok_count: AtomicU64::new(0),
             fail_count: AtomicU64::new(0),
             refresh_lock: tokio::sync::Mutex::new(()),
+            unsupported_models: RwLock::new(Vec::new()),
         }));
     }
 

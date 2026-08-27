@@ -19,12 +19,16 @@ async fn test_t2_churn_via_force_health() {
     for count in &counts {
         let count_clone = count.clone();
         let mock_app = Router::new().route(
-            "/v1/chat/completions",
+            common::CODEX_PATH,
             post(move || {
                 let c = count_clone.clone();
                 async move {
                     c.fetch_add(1, Ordering::SeqCst);
-                    (StatusCode::OK, "{\"result\":\"ok\"}")
+                    (
+                        StatusCode::OK,
+                        [("Content-Type", "text/event-stream")],
+                        common::codex_sse("ok"),
+                    )
                 }
             }),
         );
@@ -77,7 +81,7 @@ async fn test_t2_churn_via_force_health() {
         let res = client
             .post(&gw_url)
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(common::OPENAI_REQUEST)
             .send()
             .await
             .unwrap();
@@ -100,7 +104,7 @@ async fn test_t2_churn_via_force_health() {
         let res = client
             .post(&gw_url)
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(common::OPENAI_REQUEST)
             .send()
             .await
             .unwrap();
@@ -118,7 +122,7 @@ async fn test_t2_churn_via_force_health() {
         let res = client
             .post(&gw_url)
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(common::OPENAI_REQUEST)
             .send()
             .await
             .unwrap();

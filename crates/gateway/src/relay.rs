@@ -11,13 +11,29 @@ use bytes::Bytes;
 use quotio_types::{Health, Outcome, PoolMember, SessionHint};
 
 use crate::account::AccountMember;
+use crate::compat;
 use crate::state::AppState;
 use crate::url::build_target_url;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RelayMode {
+    Native,
+    OpenAiCompat,
+}
 
 struct FinalFailure {
     status: StatusCode,
     content_type: Option<String>,
     body: Bytes,
+}
+
+struct RelayPlan {
+    upstream_path: String,
+    body: Bytes,
+    model: Option<String>,
+    mode: RelayMode,
+    client_stream: bool,
+    include_usage: bool,
 }
 
 async fn send_upstream(
@@ -101,6 +117,13 @@ async fn record_auth_failure(
     extract_failure(resp, status_code).await
 }
 
+fn content_type_of(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(ToString::to_string)
+}
+
 fn stream_response(resp: reqwest::Response, status_code: u16) -> Response {
     let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::OK);
     let mut res_builder = Response::builder().status(status);
@@ -128,8 +151,152 @@ fn body_response(status: StatusCode, content_type: Option<&str>, body: Bytes) ->
         .unwrap_or_else(|_| (status, "error").into_response())
 }
 
+fn json_error(status: StatusCode, message: &str) -> Response {
+    let payload = serde_json::json!({
+        "error": {"message": message, "type": "invalid_request_error"}
+    });
+    body_response(
+        status,
+        Some("application/json"),
+        Bytes::from(payload.to_string()),
+    )
+}
+
+fn is_account_scoped_model_rejection(status_code: u16, body: &[u8]) -> bool {
+    if status_code != 400 {
+        return false;
+    }
+    let text = String::from_utf8_lossy(body);
+    text.contains("is not supported when using Codex") || text.contains("model is not supported")
+}
+
+fn build_plan(
+    mode: RelayMode,
+    req_path: &str,
+    body_bytes: Bytes,
+    restricted: bool,
+) -> Result<RelayPlan, String> {
+    match mode {
+        RelayMode::Native => Ok(RelayPlan {
+            upstream_path: req_path.to_string(),
+            model: if restricted {
+                compat::extract_model(&body_bytes)
+            } else {
+                None
+            },
+            body: body_bytes,
+            mode,
+            client_stream: true,
+            include_usage: false,
+        }),
+        RelayMode::OpenAiCompat => match compat::openai_to_codex(&body_bytes) {
+            Ok(translated) => Ok(RelayPlan {
+                upstream_path: compat::CODEX_PATH.to_string(),
+                body: Bytes::from(translated.body),
+                model: Some(translated.model),
+                mode,
+                client_stream: translated.stream,
+                include_usage: translated.include_usage,
+            }),
+            Err(err) => Err(err.to_string()),
+        },
+    }
+}
+
+fn eligible_indices(state: &AppState, model: Option<&str>, now_ms: i64) -> Vec<usize> {
+    state
+        .members
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.health().is_available(now_ms))
+        .filter(|(_, m)| model.is_none_or(|model| m.supports_model(model)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn select_index(state: &AppState, hint: &SessionHint, model: Option<&str>) -> Option<usize> {
+    let restricted = state.model_restrictions.load(Ordering::Relaxed);
+    let Some(model) = model.filter(|_| restricted) else {
+        return state.router.select(&state.pool_members, hint);
+    };
+
+    let mut candidates: Vec<Arc<dyn PoolMember>> = Vec::with_capacity(state.members.len());
+    let mut origin: Vec<usize> = Vec::with_capacity(state.members.len());
+    for (index, member) in state.members.iter().enumerate() {
+        if member.supports_model(model) {
+            candidates.push(state.pool_members[index].clone());
+            origin.push(index);
+        }
+    }
+    state
+        .router
+        .select(&candidates, hint)
+        .and_then(|idx| origin.get(idx).copied())
+}
+
+async fn finish_success(
+    state: &AppState,
+    member: &AccountMember,
+    plan: &RelayPlan,
+    resp: reqwest::Response,
+    status_code: u16,
+    created: i64,
+) -> Result<Response, String> {
+    let content_type = content_type_of(&resp);
+
+    if plan.mode == RelayMode::Native {
+        if content_type
+            .as_deref()
+            .is_some_and(|ct| ct.trim_start().starts_with("text/html"))
+        {
+            return Err("upstream returned html instead of an api response".to_string());
+        }
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
+        return Ok(stream_response(resp, status_code));
+    }
+
+    if content_type
+        .as_deref()
+        .is_some_and(|ct| ct.trim_start().starts_with("text/html"))
+    {
+        return Err("upstream body is not an event stream: html response".to_string());
+    }
+
+    let (first, stream) = compat::open_stream(resp).await?;
+    let model = plan.model.clone().unwrap_or_default();
+
+    if plan.client_stream {
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
+        let body = compat::streaming_body(first, stream, model, created, plan.include_usage);
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(body)
+            .unwrap_or_else(|_| {
+                (StatusCode::INTERNAL_SERVER_ERROR, "failed to build body").into_response()
+            }));
+    }
+
+    let raw = compat::collect_stream(first, stream).await?;
+    let completion = compat::aggregate(&raw, model, created)?;
+    member.record_ok();
+    state.metrics.served.fetch_add(1, Ordering::Relaxed);
+    state.router.feedback(member.id(), Outcome::Success);
+    Ok(body_response(
+        StatusCode::OK,
+        Some("application/json"),
+        Bytes::from(completion.to_string()),
+    ))
+}
+
 pub async fn handle_relay(
     state: Arc<AppState>,
+    mode: RelayMode,
     req_path: &str,
     headers: &HeaderMap,
     body_bytes: Bytes,
@@ -139,28 +306,28 @@ pub async fn handle_relay(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
         .unwrap_or(0);
+    let created = now_ms / 1000;
 
-    let available_count = state
-        .pool_members
-        .iter()
-        .filter(|m| m.health().is_available(now_ms))
-        .count();
+    let restricted = state.model_restrictions.load(Ordering::Relaxed);
+    let plan = match build_plan(mode, req_path, body_bytes, restricted) {
+        Ok(plan) => plan,
+        Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
+    };
 
+    let available_count = eligible_indices(&state, plan.model.as_deref(), now_ms).len();
     let max_attempts = std::cmp::min(available_count, state.max_failover);
     if max_attempts == 0 {
-        return (
+        return json_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            [("Content-Type", "application/json")],
-            r#"{"error":"no available accounts"}"#,
-        )
-            .into_response();
+            "no available accounts for this model",
+        );
     }
 
     let mut last_failure: Option<FinalFailure> = None;
     let hint = SessionHint::default();
 
     for _ in 0..max_attempts {
-        let chosen_idx = match state.router.select(&state.pool_members, &hint) {
+        let chosen_idx = match select_index(&state, &hint, plan.model.as_deref()) {
             Some(idx) => idx,
             None => break,
         };
@@ -191,8 +358,8 @@ pub async fn handle_relay(
             }
         }
 
-        let target_url = build_target_url(member.upstream_override.as_deref(), req_path);
-        let mut resp = match send_upstream(&state, &target_url, &member, headers, &body_bytes).await
+        let target_url = build_target_url(member.upstream_override.as_deref(), &plan.upstream_path);
+        let mut resp = match send_upstream(&state, &target_url, &member, headers, &plan.body).await
         {
             Ok(r) => r,
             Err(e) => {
@@ -213,7 +380,7 @@ pub async fn handle_relay(
         {
             match state.refresh_member(&member, Some(&member_at)).await {
                 Ok(_) => {
-                    match send_upstream(&state, &target_url, &member, headers, &body_bytes).await {
+                    match send_upstream(&state, &target_url, &member, headers, &plan.body).await {
                         Ok(retry_resp) => {
                             resp = retry_resp;
                             status_code = resp.status().as_u16();
@@ -247,10 +414,23 @@ pub async fn handle_relay(
         }
 
         if (200..=399).contains(&status_code) {
-            member.record_ok();
-            state.metrics.served.fetch_add(1, Ordering::Relaxed);
-            state.router.feedback(member.id(), Outcome::Success);
-            return stream_response(resp, status_code);
+            match finish_success(&state, &member, &plan, resp, status_code, created).await {
+                Ok(response) => return response,
+                Err(reason) => {
+                    member.record_fail();
+                    state.metrics.failed_over.fetch_add(1, Ordering::Relaxed);
+                    state.monitor.record_error(member.id(), 502, &reason);
+                    last_failure = Some(FinalFailure {
+                        status: StatusCode::BAD_GATEWAY,
+                        content_type: Some("application/json".to_string()),
+                        body: Bytes::from(
+                            serde_json::json!({"error": {"message": reason, "type": "upstream_error"}})
+                                .to_string(),
+                        ),
+                    });
+                    continue;
+                }
+            }
         }
 
         if status_code == 429 || (500..=504).contains(&status_code) {
@@ -263,6 +443,24 @@ pub async fn handle_relay(
             continue;
         }
 
+        let failure = extract_failure(resp, status_code).await;
+
+        if let Some(model) = plan.model.as_deref() {
+            if is_account_scoped_model_rejection(status_code, &failure.body) {
+                member.mark_model_unsupported(model);
+                state.model_restrictions.store(true, Ordering::Relaxed);
+                member.record_fail();
+                state.metrics.failed_over.fetch_add(1, Ordering::Relaxed);
+                state.monitor.record_error(
+                    member.id(),
+                    status_code,
+                    "model not supported by account",
+                );
+                last_failure = Some(failure);
+                continue;
+            }
+        }
+
         state
             .metrics
             .exposed_client_errors
@@ -270,31 +468,26 @@ pub async fn handle_relay(
         state
             .monitor
             .record_error(member.id(), status_code, "client error");
-
-        let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::BAD_REQUEST);
-        let ct = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(ToString::to_string);
-        let body = resp.bytes().await.unwrap_or_default();
-        return body_response(status, ct.as_deref(), body);
+        return body_response(
+            failure.status,
+            failure.content_type.as_deref(),
+            failure.body,
+        );
     }
 
     state.metrics.exposed_errors.fetch_add(1, Ordering::Relaxed);
 
-    if let Some(final_fail) = last_failure {
-        body_response(
+    match last_failure {
+        Some(final_fail) => body_response(
             final_fail.status,
             final_fail.content_type.as_deref(),
             final_fail.body,
-        )
-    } else {
-        (
-            StatusCode::BAD_GATEWAY,
-            [("Content-Type", "application/json")],
-            r#"{"error":"all failover attempts failed"}"#,
-        )
-            .into_response()
+        ),
+        None if plan.mode == RelayMode::OpenAiCompat && plan.client_stream => Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(compat::error_stream_body("all failover attempts failed"))
+            .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "upstream failure").into_response()),
+        None => json_error(StatusCode::BAD_GATEWAY, "all failover attempts failed"),
     }
 }

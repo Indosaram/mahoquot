@@ -1,5 +1,13 @@
 # Architecture Re-validation (tightened benchmark)
 
+> **SUPERSEDED for the keep-vs-replace decision.** The "H1 passthrough is the whole story"
+> finding below was measured with tier C doing byte passthrough and tier B doing full
+> OpenAI<->upstream translation. The per-chunk cost gap it attributes to architecture is
+> therefore confounded with a workload difference. `FAIR-TRANSLATION-BENCH.md` re-runs the
+> same paired matrix with **both** proxies translating OpenAI <-> Codex Responses against the
+> same mock upstream; use it for the verdict. The methodology here (paired within-round,
+> randomized tier order, load/stream-length sweep) remains sound and is reused there.
+
 Rounds kept: 6 (round 0 discarded as warmup) · tier order randomized per round · paired within-round comparison · mock TTFT floor 40ms
 
 ## Absolute medians per load point (median of paired rounds)

@@ -39,6 +39,9 @@ pub struct MockArgs {
 
     #[arg(long, default_value_t = 429)]
     pub fail_status: u16,
+
+    #[arg(long, default_value = "openai")]
+    pub protocol: mock::MockProtocol,
 }
 
 #[derive(Args, Debug)]
@@ -76,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 chunks: args.chunks,
                 fail_first_n: args.fail_first_n,
                 fail_status: args.fail_status,
+                protocol: args.protocol,
             };
             mock::run_mock_server(cfg).await?;
         }

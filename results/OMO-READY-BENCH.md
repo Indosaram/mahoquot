@@ -1,5 +1,13 @@
 # OMO Ready Benchmark: quotio-gateway vs CLIProxyAPI
 
+> **SUPERSEDED — this comparison is not apples-to-apples.** In this matrix tier C
+> (quotio-gateway) performed byte passthrough while tier B (CLIProxyAPI) performed full
+> OpenAI<->upstream translation, so the margins below partly measure *unequal work* rather
+> than superior implementation. The note about "zero-copy passthrough" vs "chunk re-parsing
+> overhead" is precisely that artifact. Use `FAIR-TRANSLATION-BENCH.md`, where both proxies
+> translate OpenAI <-> Codex Responses against the same mock upstream, for the real verdict.
+> Retained as the record of the passthrough-era measurement.
+
 Rounds kept: 6 (round 0 discarded as warmup) · tier order randomized per round · paired within-round comparison · mock TTFT floor 40ms
 
 ## Production Configuration Under Test (Tier C)

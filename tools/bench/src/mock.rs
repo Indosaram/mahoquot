@@ -20,6 +20,31 @@ use std::{
 const CHUNK_PAYLOAD: &[u8] = b"data: {\"id\":\"chatcmpl-bench\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n";
 const DONE_PAYLOAD: &[u8] = b"data: [DONE]\n\n";
 
+const CODEX_CREATED: &[u8] = b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_bench\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-5.6-sol\"}}\n\n";
+const CODEX_ITEM_ADDED: &[u8] = b"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_bench\",\"type\":\"message\",\"status\":\"in_progress\",\"content\":[],\"role\":\"assistant\"}}\n\n";
+const CODEX_PART_ADDED: &[u8] = b"event: response.content_part.added\ndata: {\"type\":\"response.content_part.added\",\"content_index\":0,\"item_id\":\"msg_bench\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n";
+const CODEX_DELTA: &[u8] = b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"content_index\":0,\"delta\":\"x\",\"item_id\":\"msg_bench\",\"output_index\":0}\n\n";
+const CODEX_ITEM_DONE: &[u8] = b"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_bench\",\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"x\"}],\"role\":\"assistant\"}}\n\n";
+const CODEX_COMPLETED: &[u8] = b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_bench\",\"object\":\"response\",\"status\":\"completed\",\"usage\":{\"input_tokens\":16,\"output_tokens\":20,\"total_tokens\":36}}}\n\n";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MockProtocol {
+    OpenAi,
+    Codex,
+}
+
+impl std::str::FromStr for MockProtocol {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "openai" => Ok(Self::OpenAi),
+            "codex" => Ok(Self::Codex),
+            other => Err(format!("unknown protocol: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MockConfig {
     pub port: u16,
@@ -27,6 +52,7 @@ pub struct MockConfig {
     pub chunks: usize,
     pub fail_first_n: usize,
     pub fail_status: u16,
+    pub protocol: MockProtocol,
 }
 
 pub struct MockState {
@@ -35,6 +61,7 @@ pub struct MockState {
     pub chunks: usize,
     pub fail_first_n: usize,
     pub fail_status: u16,
+    pub protocol: MockProtocol,
 }
 
 impl MockState {
@@ -45,6 +72,7 @@ impl MockState {
             chunks: cfg.chunks,
             fail_first_n: cfg.fail_first_n,
             fail_status: cfg.fail_status,
+            protocol: cfg.protocol,
         }
     }
 }
@@ -53,6 +81,8 @@ pub fn create_mock_router(state: Arc<MockState>) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(handle_mock_request))
         .route("/chat/completions", post(handle_mock_request))
+        .route("/responses", post(handle_mock_request))
+        .route("/v1/responses", post(handle_mock_request))
         .route("/backend-api/codex/responses", post(handle_mock_request))
         .with_state(state)
 }
@@ -82,11 +112,18 @@ async fn handle_mock_request(State(state): State<Arc<MockState>>) -> Response {
         tokio::time::sleep(Duration::from_millis(state.ttft_ms)).await;
     }
 
-    let mut chunks: Vec<Result<Bytes, Infallible>> = Vec::with_capacity(state.chunks + 1);
-    for _ in 0..state.chunks {
-        chunks.push(Ok(Bytes::from_static(CHUNK_PAYLOAD)));
-    }
-    chunks.push(Ok(Bytes::from_static(DONE_PAYLOAD)));
+    let chunks: Vec<Result<Bytes, Infallible>> = match state.protocol {
+        MockProtocol::OpenAi => std::iter::repeat_n(CHUNK_PAYLOAD, state.chunks)
+            .chain(std::iter::once(DONE_PAYLOAD))
+            .map(|frame| Ok(Bytes::from_static(frame)))
+            .collect(),
+        MockProtocol::Codex => [CODEX_CREATED, CODEX_ITEM_ADDED, CODEX_PART_ADDED]
+            .into_iter()
+            .chain(std::iter::repeat_n(CODEX_DELTA, state.chunks))
+            .chain([CODEX_ITEM_DONE, CODEX_COMPLETED])
+            .map(|frame| Ok(Bytes::from_static(frame)))
+            .collect(),
+    };
 
     let body = Body::from_stream(stream::iter(chunks));
     Response::builder()

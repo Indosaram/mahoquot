@@ -82,7 +82,7 @@ async fn test_t7_refresh_lifecycle() {
 
     let upstream_app = Router::new()
         .route(
-            "/v1/chat/completions",
+            common::CODEX_PATH,
             post(
                 |State(state): State<MockUpstreamState>, headers: HeaderMap| async move {
                     let call = state.call_count.fetch_add(1, Ordering::SeqCst);
@@ -91,7 +91,7 @@ async fn test_t7_refresh_lifecycle() {
                         return (
                             StatusCode::UNAUTHORIZED,
                             [("content-type", "application/json")],
-                            r#"{"error":{"message":"unauthorized_custom_body"}}"#,
+                            r#"{"error":{"message":"unauthorized_custom_body"}}"#.to_string(),
                         );
                     }
 
@@ -99,7 +99,7 @@ async fn test_t7_refresh_lifecycle() {
                         return (
                             StatusCode::UNAUTHORIZED,
                             [("content-type", "application/json")],
-                            r#"{"error":{"message":"token_expired_first_call"}}"#,
+                            r#"{"error":{"message":"token_expired_first_call"}}"#.to_string(),
                         );
                     }
 
@@ -110,14 +110,14 @@ async fn test_t7_refresh_lifecycle() {
                     if auth == "Bearer refreshed_at_123" {
                         (
                             StatusCode::OK,
-                            [("content-type", "application/json")],
-                            r#"{"choices":[{"message":{"content":"ok"}}]}"#,
+                            [("content-type", "text/event-stream")],
+                            common::codex_sse("ok"),
                         )
                     } else {
                         (
                             StatusCode::UNAUTHORIZED,
                             [("content-type", "application/json")],
-                            r#"{"error":{"message":"stale_token"}}"#,
+                            r#"{"error":{"message":"stale_token"}}"#.to_string(),
                         )
                     }
                 },
@@ -186,7 +186,7 @@ async fn test_t7_refresh_lifecycle() {
         let res = client
             .post(format!("http://127.0.0.1:{gw_port}/v1/chat/completions"))
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(common::OPENAI_REQUEST)
             .send()
             .await
             .unwrap();
@@ -286,7 +286,7 @@ async fn test_t7_refresh_lifecycle() {
         let res = client
             .post(format!("http://127.0.0.1:{gw_port}/v1/chat/completions"))
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(common::OPENAI_REQUEST)
             .send()
             .await
             .unwrap();
@@ -355,7 +355,7 @@ async fn test_t7_refresh_lifecycle() {
         let res = client
             .post(format!("http://127.0.0.1:{gw_port}/v1/chat/completions"))
             .header("Content-Type", "application/json")
-            .body(r#"{"model":"codex"}"#)
+            .body(common::OPENAI_REQUEST)
             .send()
             .await
             .unwrap();
@@ -364,7 +364,8 @@ async fn test_t7_refresh_lifecycle() {
         assert_eq!(res.status(), reqwest::StatusCode::UNAUTHORIZED);
         let body = res.text().await.unwrap();
         assert_eq!(
-            body, r#"{"error":{"message":"unauthorized_custom_body"}}"#,
+            body,
+            r#"{"error":{"message":"unauthorized_custom_body"}}"#.to_string(),
             "client must receive upstream's 401 body verbatim"
         );
 
@@ -409,7 +410,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
 
     // Mock Upstream server accepting only the refreshed token
     let upstream_app = Router::new().route(
-        "/v1/chat/completions",
+        common::CODEX_PATH,
         post(|headers: HeaderMap| async move {
             let auth = headers
                 .get("Authorization")
@@ -418,14 +419,14 @@ async fn test_t7_concurrent_single_flight_refresh() {
             if auth == "Bearer refreshed_at_burst" {
                 (
                     StatusCode::OK,
-                    [("content-type", "application/json")],
-                    r#"{"choices":[{"message":{"content":"burst_ok"}}]}"#,
+                    [("content-type", "text/event-stream")],
+                    common::codex_sse("burst_ok"),
                 )
             } else {
                 (
                     StatusCode::UNAUTHORIZED,
                     [("content-type", "application/json")],
-                    r#"{"error":{"message":"stale_token"}}"#,
+                    r#"{"error":{"message":"stale_token"}}"#.to_string(),
                 )
             }
         }),
@@ -491,7 +492,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
         handles.push(tokio::spawn(async move {
             cl.post(&url)
                 .header("Content-Type", "application/json")
-                .body(r#"{"model":"codex"}"#)
+                .body(common::OPENAI_REQUEST)
                 .send()
                 .await
         }));

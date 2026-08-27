@@ -15,7 +15,7 @@ async fn test_t3_failover() {
     let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port_a = listener_a.local_addr().unwrap().port();
     let app_a = Router::new().route(
-        "/v1/chat/completions",
+        common::CODEX_PATH,
         post(|| async {
             (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -31,12 +31,12 @@ async fn test_t3_failover() {
     let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port_b = listener_b.local_addr().unwrap().port();
     let app_b = Router::new().route(
-        "/v1/chat/completions",
+        common::CODEX_PATH,
         post(|| async {
             (
                 StatusCode::OK,
                 [("Content-Type", "text/event-stream")],
-                "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
+                common::codex_sse("hello"),
             )
         }),
     );
@@ -88,7 +88,7 @@ async fn test_t3_failover() {
     let res = client
         .post(&gw_url)
         .header("Content-Type", "application/json")
-        .body(r#"{"model":"codex"}"#)
+        .body(common::OPENAI_REQUEST)
         .send()
         .await
         .unwrap();
