@@ -1,5 +1,7 @@
 # Quotio A/B/C Proxy-Overhead Benchmark Report
 
+> **Partially superseded by [`ARCH-REVALIDATION.md`](./ARCH-REVALIDATION.md).** That run pairs tiers inside each round, randomizes tier order, and sweeps load and stream length. It confirms the C-over-B conclusion (and strengthens it) but **withdraws the `PERF: PASS (delta -9.00 ms <= 2ms)` verdict on line 78**: paired measurement puts gateway p99 overhead at +18.59 ms median @500 concurrent, with p50 overhead of +1.31 ms. The tier medians below come from unpaired runs in a fixed order and should not be differenced.
+
 ## 1. Environment
 
 - **Host & Architecture**: Apple M4 Max (16 physical/performance-efficient cores), macOS arm64 (kernel Darwin 25.6.0)
