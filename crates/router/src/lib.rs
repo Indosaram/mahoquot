@@ -10,31 +10,80 @@
 //! - Router is pure selection: health transitions are owned by the caller.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use quotio_types::{PoolMember, SessionHint, Strategy};
 
-#[derive(Default)]
-pub struct Router {
-    strategy: Strategy,
+#[derive(Default, Debug)]
+struct RouterState {
     /// member id -> last assigned sequence number
     last_served: HashMap<String, u64>,
     /// monotonically increasing global service counter
     seq: u64,
 }
 
+#[derive(Default, Debug)]
+pub struct Router {
+    strategy: Strategy,
+    state: Mutex<RouterState>,
+}
+
 impl Router {
     pub fn new(strategy: Strategy) -> Self {
         Self {
             strategy,
-            ..Default::default()
+            state: Mutex::new(RouterState::default()),
         }
     }
 
     /// Index into `members` of the next member to serve, or None if none available.
     pub fn select(&self, members: &[Arc<dyn PoolMember>], _hint: &SessionHint) -> Option<usize> {
-        let _ = (&self.last_served, self.seq); // placeholder; lane rewrites body
-        None
+        let now_unix_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => duration.as_millis().min(i64::MAX as u128) as i64,
+            Err(_) => 0,
+        };
+
+        match self.strategy {
+            Strategy::FillFirst => members
+                .iter()
+                .position(|m| m.health().is_available(now_unix_ms)),
+            Strategy::StrictRoundRobin => {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+                let mut best: Option<(usize, u64)> = None;
+
+                for (idx, member) in members.iter().enumerate() {
+                    if !member.health().is_available(now_unix_ms) {
+                        continue;
+                    }
+
+                    let last_seq = state.last_served.get(member.id()).copied().unwrap_or(0);
+
+                    match best {
+                        None => {
+                            best = Some((idx, last_seq));
+                        }
+                        Some((_, min_seq)) if last_seq < min_seq => {
+                            best = Some((idx, last_seq));
+                        }
+                        _ => {}
+                    }
+                }
+
+                let (chosen_idx, _) = best?;
+                state.seq = state.seq.wrapping_add(1);
+                let next_seq = state.seq;
+                state
+                    .last_served
+                    .insert(members[chosen_idx].id().to_string(), next_seq);
+
+                Some(chosen_idx)
+            }
+        }
     }
 
     /// Report the result of serving member `id`. Reserved for future weighting.
@@ -46,6 +95,7 @@ impl Router {
 }
 
 #[cfg(test)]
+#[allow(clippy::new_ret_no_self)]
 mod red_tests {
     //! INTENTIONALLY FAILING at scaffold (documented RED baseline).
     use super::*;
