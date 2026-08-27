@@ -1,0 +1,18 @@
+[package]
+name = "bench"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"

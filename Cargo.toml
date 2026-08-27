@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/types",
+    "crates/router",
+    "crates/providers",
+    "crates/gateway",
+    "tools/bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+quotio-types = { path = "crates/types" }
+quotio-router = { path = "crates/router" }
+quotio-providers = { path = "crates/providers" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tower = "0.5"
