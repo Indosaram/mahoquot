@@ -52,6 +52,7 @@ impl MockState {
 pub fn create_mock_router(state: Arc<MockState>) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(handle_mock_request))
+        .route("/chat/completions", post(handle_mock_request))
         .route("/backend-api/codex/responses", post(handle_mock_request))
         .with_state(state)
 }
