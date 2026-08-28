@@ -9,8 +9,10 @@
 pub mod apikeys;
 pub mod auth;
 pub mod core;
+pub mod creds;
 pub mod gate;
 pub mod lists;
+pub mod oauth;
 pub mod scalar_table;
 pub mod scalars;
 pub mod settings;
@@ -25,6 +27,7 @@ use crate::state::AppState;
 pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .merge(apikeys::apikeys_routes())
+        .merge(creds::creds_routes())
         .merge(core::core_routes())
         .merge(scalars::scalars_routes())
         .layer(axum::middleware::from_fn_with_state(
