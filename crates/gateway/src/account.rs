@@ -21,6 +21,15 @@ pub enum ProviderAccount {
     Antigravity(AntigravityAccount),
 }
 
+impl ProviderKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProviderKind::Codex => "codex",
+            ProviderKind::Antigravity => "antigravity",
+        }
+    }
+}
+
 impl ProviderAccount {
     pub fn kind(&self) -> ProviderKind {
         match self {
@@ -84,6 +93,7 @@ pub struct AccountMember {
     pub fail_count: AtomicU64,
     pub refresh_lock: tokio::sync::Mutex<()>,
     pub unsupported_models: RwLock<Vec<String>>,
+    pub usage: RwLock<crate::usage::AccountUsage>,
 }
 
 impl PoolMember for AccountMember {
@@ -111,8 +121,37 @@ impl PoolMember for AccountMember {
 }
 
 impl AccountMember {
+    #[cfg(test)]
+    pub fn for_test(inner: ProviderAccount) -> Self {
+        Self {
+            id: "test".to_string(),
+            file_path: PathBuf::from("/dev/null"),
+            inner: RwLock::new(inner),
+            health: RwLock::new(Health::Available),
+            upstream_override: None,
+            ok_count: AtomicU64::new(0),
+            fail_count: AtomicU64::new(0),
+            refresh_lock: tokio::sync::Mutex::new(()),
+            unsupported_models: RwLock::new(Vec::new()),
+            usage: RwLock::new(Default::default()),
+        }
+    }
+
     pub fn record_ok(&self) {
         self.ok_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn usage_snapshot(&self) -> crate::usage::AccountUsage {
+        self.usage
+            .read()
+            .map(|u| u.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_usage(&self, usage: crate::usage::AccountUsage) {
+        if let Ok(mut slot) = self.usage.write() {
+            *slot = usage;
+        }
     }
 
     pub fn record_fail(&self) {
@@ -311,6 +350,7 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             fail_count: AtomicU64::new(0),
             refresh_lock: tokio::sync::Mutex::new(()),
             unsupported_models: RwLock::new(Vec::new()),
+            usage: RwLock::new(Default::default()),
         }));
     }
 
@@ -340,6 +380,7 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             fail_count: AtomicU64::new(0),
             refresh_lock: tokio::sync::Mutex::new(()),
             unsupported_models: RwLock::new(Vec::new()),
+            usage: RwLock::new(Default::default()),
         }));
     }
 

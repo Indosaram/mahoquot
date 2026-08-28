@@ -21,7 +21,15 @@ struct RouterState {
     last_served: HashMap<String, u64>,
     /// monotonically increasing global service counter
     seq: u64,
+    /// affinity key -> member id, so a conversation keeps hitting one account
+    /// instead of hopping every turn. Entries carry the sequence number at which
+    /// they were last used so idle sessions can be evicted.
+    affinity: HashMap<String, (String, u64)>,
 }
+
+/// Sessions idle for this many selections are dropped, bounding the map on a
+/// long-lived proxy without needing a timer.
+const AFFINITY_MAX_IDLE: u64 = 10_000;
 
 #[derive(Default, Debug)]
 pub struct Router {
@@ -38,7 +46,7 @@ impl Router {
     }
 
     /// Index into `members` of the next member to serve, or None if none available.
-    pub fn select(&self, members: &[Arc<dyn PoolMember>], _hint: &SessionHint) -> Option<usize> {
+    pub fn select(&self, members: &[Arc<dyn PoolMember>], hint: &SessionHint) -> Option<usize> {
         let now_unix_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(duration) => duration.as_millis().min(i64::MAX as u128) as i64,
             Err(_) => 0,
@@ -53,6 +61,23 @@ impl Router {
                     .state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+                // Stick to the account this conversation already used, as long as
+                // it is still healthy; only fall through to round-robin when it
+                // is not, so a session never hops accounts unnecessarily.
+                if let Some(key) = hint.affinity_key.as_deref() {
+                    if let Some((bound_id, _)) = state.affinity.get(key).cloned() {
+                        if let Some(idx) = members.iter().position(|m| {
+                            m.id() == bound_id && m.health().is_available(now_unix_ms)
+                        }) {
+                            let seq = state.seq.wrapping_add(1);
+                            state.seq = seq;
+                            state.last_served.insert(bound_id.clone(), seq);
+                            state.affinity.insert(key.to_string(), (bound_id, seq));
+                            return Some(idx);
+                        }
+                    }
+                }
 
                 let mut best: Option<(usize, u64)> = None;
 
@@ -77,9 +102,18 @@ impl Router {
                 let (chosen_idx, _) = best?;
                 state.seq = state.seq.wrapping_add(1);
                 let next_seq = state.seq;
-                state
-                    .last_served
-                    .insert(members[chosen_idx].id().to_string(), next_seq);
+                let chosen_id = members[chosen_idx].id().to_string();
+                state.last_served.insert(chosen_id.clone(), next_seq);
+
+                if let Some(key) = hint.affinity_key.as_deref() {
+                    state
+                        .affinity
+                        .insert(key.to_string(), (chosen_id, next_seq));
+                    if state.affinity.len() > 1024 {
+                        let cutoff = next_seq.saturating_sub(AFFINITY_MAX_IDLE);
+                        state.affinity.retain(|_, (_, seq)| *seq >= cutoff);
+                    }
+                }
 
                 Some(chosen_idx)
             }
@@ -225,5 +259,55 @@ mod red_tests {
         let r = Router::new(Strategy::StrictRoundRobin);
         assert_eq!(r.select(&p, &SessionHint::default()), None);
         assert_eq!(r.select(&[], &SessionHint::default()), None);
+    }
+
+    fn keyed(k: &str) -> SessionHint {
+        SessionHint {
+            affinity_key: Some(k.to_string()),
+        }
+    }
+
+    fn avail3() -> Vec<Arc<dyn PoolMember>> {
+        pool(&[
+            ("a", Health::Available),
+            ("b", Health::Available),
+            ("c", Health::Available),
+        ])
+    }
+
+    #[test]
+    fn session_sticks_to_one_account_across_turns() {
+        let r = Router::new(Strategy::StrictRoundRobin);
+        let p = avail3();
+        let first = r.select(&p, &keyed("conv-1")).expect("first");
+        for _ in 0..12 {
+            assert_eq!(r.select(&p, &keyed("conv-1")), Some(first));
+        }
+    }
+
+    #[test]
+    fn distinct_sessions_spread_across_accounts() {
+        let r = Router::new(Strategy::StrictRoundRobin);
+        let p = avail3();
+        let picked: Vec<usize> = (0..3)
+            .filter_map(|i| r.select(&p, &keyed(&format!("conv-{i}"))))
+            .collect();
+        let mut uniq = picked.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 3, "each new session should take a fresh account");
+    }
+
+    #[test]
+    fn session_moves_off_an_unhealthy_account() {
+        let r = Router::new(Strategy::StrictRoundRobin);
+        let p = pool(&[("a", Health::Available), ("b", Health::Available)]);
+        let first = r.select(&p, &keyed("conv-1")).expect("first");
+        let healthy = pool(&[
+            ("a", if first == 0 { Health::AuthFailed } else { Health::Available }),
+            ("b", if first == 1 { Health::AuthFailed } else { Health::Available }),
+        ]);
+        let next = r.select(&healthy, &keyed("conv-1")).expect("failover");
+        assert_ne!(next, first);
     }
 }

@@ -2,109 +2,139 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Quotio Monitor</title>
+<title>Quotio Usage</title>
 <style>
   :root {
-    --bg: #0f1115; --panel: #171a21; --line: #262b36;
-    --text: #e6e9ef; --dim: #8b94a7;
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --line2: #1e222b;
+    --text: #e6e9ef; --dim: #8b94a7; --faint: #5d6678;
     --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #58a6ff;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-    padding: 20px;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 18px;
   }
-  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
-  h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  .url { color: var(--dim); font-size: 12px; }
-  .status { margin-left: auto; font-size: 12px; color: var(--dim); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 18px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-  .card .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-  .card .value { font-size: 20px; margin-top: 4px; font-variant-numeric: tabular-nums; }
-  table { width: 100%; border-collapse: collapse; background: var(--panel);
-          border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); }
-  th { color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-  tr:last-child td { border-bottom: none; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pill { padding: 2px 8px; border-radius: 99px; font-size: 11px; border: 1px solid; }
-  .pill.available { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-  .pill.cooldown  { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
-  .pill.authfailed, .pill.unknown { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
-  .prov { color: var(--dim); font-size: 11px; }
-  .err { color: var(--bad); font-size: 11px; }
-  .rate-bad { color: var(--bad); }
-  .rate-warn { color: var(--warn); }
-  .banner { background: color-mix(in srgb, var(--bad) 12%, transparent);
-            border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
-            color: var(--bad); padding: 9px 12px; border-radius: 8px; margin-bottom: 14px; font-size: 12px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  .url { color: var(--faint); font-size: 11px; }
+  .status { margin-left: auto; font-size: 11px; color: var(--dim); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 9px; margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .card .label { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+  .card .value { font-size: 19px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .acct { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+          padding: 12px 14px; margin-bottom: 9px; }
+  .acct-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; flex-wrap: wrap; }
+  .email { font-weight: 600; }
+  .pill { padding: 1px 7px; border-radius: 99px; font-size: 10px; border: 1px solid; text-transform: uppercase; letter-spacing: .04em; }
+  .pill.available { color: var(--ok); border-color: #246030; }
+  .pill.cooldown  { color: var(--warn); border-color: #6b4e12; }
+  .pill.authfailed, .pill.unknown, .pill.disabled { color: var(--bad); border-color: #7a2822; }
+  .tag { font-size: 10px; color: var(--dim); background: var(--line2);
+         border: 1px solid var(--line); padding: 1px 7px; border-radius: 4px; }
+  .spacer { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .win { display: grid; grid-template-columns: 84px 1fr 128px; gap: 10px;
+         align-items: center; margin-top: 6px; }
+  .win-name { color: var(--dim); font-size: 11px; }
+  .bar { height: 7px; background: var(--line2); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
+  .fill { height: 100%; border-radius: 99px; transition: width .35s ease; }
+  .fill.low  { background: var(--ok); }
+  .fill.mid  { background: var(--warn); }
+  .fill.high { background: var(--bad); }
+  .win-meta { text-align: right; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .pct { color: var(--text); }
+  .unknown { color: var(--faint); font-size: 11px; font-style: italic; }
+  .err { color: var(--bad); font-size: 11px; margin-top: 7px; }
+  .stat { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  button { background: var(--line2); color: var(--text); border: 1px solid var(--line);
+           border-radius: 5px; padding: 3px 9px; font: inherit; font-size: 11px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  .banner { background: #2a1614; border: 1px solid #7a2822; color: var(--bad);
+            padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 12px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Quotio Monitor</h1>
+  <h1>Quotio Usage</h1>
   <span class="url" id="url"></span>
   <span class="status" id="status">connecting…</span>
 </header>
 <div id="banner"></div>
 <div class="cards" id="cards"></div>
-<table>
-  <thead><tr>
-    <th>Account</th><th>Status</th>
-    <th class="num">OK</th><th class="num">Fails</th><th class="num">Fail&nbsp;%</th>
-    <th class="num">p50&nbsp;ms</th><th class="num">p99&nbsp;ms</th><th>Last error</th>
-  </tr></thead>
-  <tbody id="rows"></tbody>
-</table>
+<div id="accounts"></div>
 
 <script type="module">
 const invoke = window.__TAURI__.core.invoke;
 const $ = (id) => document.getElementById(id);
-const num = (v, d = 0) => Number(v ?? 0).toFixed(d);
+const n = (v, d = 0) => Number(v ?? 0).toFixed(d);
 
 invoke("gateway_url").then((u) => { $("url").textContent = u; });
 
-function card(label, value) {
-  return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+function dur(secs) {
+  if (secs == null) return "–";
+  if (secs <= 0) return "now";
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
-function rateClass(r) {
-  if (r >= 0.5) return "rate-bad";
-  if (r > 0) return "rate-warn";
-  return "";
+function windowRow(name, w) {
+  if (!w || w.used_percent == null) {
+    return `<div class="win"><div class="win-name">${name}</div>
+            <div class="unknown">not reported</div><div></div></div>`;
+  }
+  const pct = Math.max(0, Math.min(100, w.used_percent));
+  const cls = pct >= 80 ? "high" : pct >= 50 ? "mid" : "low";
+  const label = w.window_minutes >= 10080 ? "weekly"
+              : w.window_minutes >= 1440 ? `${Math.round(w.window_minutes / 1440)}d`
+              : `${Math.round(w.window_minutes / 60)}h`;
+  return `<div class="win">
+    <div class="win-name">${name} <span style="color:var(--faint)">${label}</span></div>
+    <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>
+    <div class="win-meta"><span class="pct">${n(pct)}%</span> · resets ${dur(w.reset_in_secs)}</div>
+  </div>`;
 }
 
 function render(v) {
+  const known = v.accounts.filter((a) => a.usage_known);
+  const avg = known.length
+    ? known.reduce((s, a) => s + (a.primary?.used_percent ?? 0), 0) / known.length : null;
+
   $("cards").innerHTML = [
-    card("Served", v.served),
-    card("In flight", v.in_flight),
-    card("Failed over", v.failed_over),
-    card("Failover %", num(v.failover_rate * 100, 1) + "%"),
-    card("Refreshed", v.refreshed),
-    card("p50 ms", num(v.p50_ms, 1)),
-    card("p99 ms", num(v.p99_ms, 1)),
-    card("Uptime s", v.uptime_secs),
-  ].join("");
+    ["Accounts", v.accounts.length],
+    ["Available", v.accounts.filter((a) => a.status === "available").length],
+    ["Quota known", `${known.length}/${v.accounts.length}`],
+    ["Avg session use", avg == null ? "–" : n(avg, 1) + "%"],
+    ["Served", v.served],
+    ["Failover %", n(v.failover_rate * 100, 1) + "%"],
+    ["p50 ms", n(v.p50_ms, 1)],
+  ].map(([l, val]) => `<div class="card"><div class="label">${l}</div><div class="value">${val}</div></div>`).join("");
 
   $("banner").innerHTML = v.degraded.length
-    ? `<div class="banner">degraded: ${v.degraded.join(", ")}</div>`
-    : "";
+    ? `<div class="banner">degraded: ${v.degraded.join(", ")}</div>` : "";
 
-  $("rows").innerHTML = v.accounts.map((a) => {
-    const cd = a.cooldown_remaining_secs != null && a.cooldown_remaining_secs > 0
-      ? ` <span class="prov">${a.cooldown_remaining_secs}s</span>` : "";
-    return `<tr>
-      <td>${a.id}<div class="prov">${a.provider}</div></td>
-      <td><span class="pill ${a.status.replace(/[^a-z]/gi, "").toLowerCase()}">${a.status}</span>${cd}</td>
-      <td class="num">${a.ok}</td>
-      <td class="num">${a.fails}</td>
-      <td class="num ${rateClass(a.failure_rate)}">${num(a.failure_rate * 100, 1)}%</td>
-      <td class="num">${a.samples ? num(a.p50_ms, 1) : "–"}</td>
-      <td class="num">${a.samples ? num(a.p99_ms, 1) : "–"}</td>
-      <td class="err">${a.last_error ?? ""}</td>
-    </tr>`;
+  $("accounts").innerHTML = v.accounts.map((a) => {
+    const cd = a.cooldown_remaining_secs > 0
+      ? `<span class="tag">cooldown ${dur(a.cooldown_remaining_secs)}</span>` : "";
+    const plan = a.plan_type ? `<span class="tag">${a.plan_type}</span>` : "";
+    const credits = a.credits_unlimited ? `<span class="tag">credits ∞</span>`
+      : a.credits_balance ? `<span class="tag">credits ${a.credits_balance}</span>` : "";
+    return `<div class="acct">
+      <div class="acct-head">
+        <span class="email">${a.id}</span>
+        <span class="pill ${a.status.replace(/[^a-z]/gi, "").toLowerCase()}">${a.status}</span>
+        <span class="tag">${a.provider}</span>${plan}${credits}${cd}
+        <span class="spacer">
+          <span class="stat">ok ${a.ok} · fail ${n(a.failure_rate * 100, 0)}% · p50 ${a.samples ? n(a.p50_ms, 0) + "ms" : "–"}</span>
+        </span>
+      </div>
+      ${a.usage_known
+        ? windowRow("session", a.primary) + windowRow("weekly", a.secondary)
+        : `<div class="unknown">${a.provider} reports no quota headers</div>`}
+      ${a.last_error ? `<div class="err">${a.last_error}</div>` : ""}
+    </div>`;
   }).join("");
 }
 
@@ -116,9 +146,8 @@ async function tick() {
     $("status").textContent = "error: " + e;
   }
 }
-
 tick();
-setInterval(tick, 2000);
+setInterval(tick, 3000);
 </script>
 </body>
 </html>

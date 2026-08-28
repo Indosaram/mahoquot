@@ -12,6 +12,7 @@ use quotio_types::{Health, Outcome, PoolMember, SessionHint};
 
 use crate::account::AccountMember;
 use crate::compat;
+use crate::usage::parse_codex_headers;
 use crate::state::AppState;
 use crate::url::build_target_url;
 
@@ -286,6 +287,32 @@ fn select_index(state: &AppState, hint: &SessionHint, model: Option<&str>) -> Op
         .and_then(|idx| origin.get(idx).copied())
 }
 
+/// Codex reports quota state on every response; antigravity sends none, so its
+/// accounts stay "unknown" rather than being reported as having full quota.
+fn capture_usage(member: &AccountMember, headers: &HeaderMap) {
+    if member.kind() != crate::account::ProviderKind::Codex {
+        return;
+    }
+    let map: std::collections::HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            let name = k.as_str();
+            if !name.starts_with("x-codex-") {
+                return None;
+            }
+            Some((name.to_string(), v.to_str().ok()?.to_string()))
+        })
+        .collect();
+    if map.is_empty() {
+        return;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    member.set_usage(parse_codex_headers(&map, now));
+}
+
 async fn finish_success(
     state: &AppState,
     member: &AccountMember,
@@ -296,6 +323,7 @@ async fn finish_success(
     protocol: compat::Protocol,
 ) -> Result<Response, String> {
     let content_type = content_type_of(&resp);
+    capture_usage(member, resp.headers());
 
     if plan.mode == RelayMode::Native {
         if content_type
@@ -368,6 +396,27 @@ async fn finish_success(
     ))
 }
 
+/// Identify the conversation a request belongs to, so successive turns keep
+/// landing on the same upstream account. Codex and Anthropic clients both send a
+/// stable per-session id; without one the request routes by plain round-robin.
+fn affinity_key(headers: &HeaderMap) -> Option<String> {
+    for name in [
+        "session_id",
+        "x-session-id",
+        "conversation_id",
+        "x-conversation-id",
+        "anthropic-client-session",
+    ] {
+        if let Some(v) = headers.get(name).and_then(|v| v.to_str().ok()) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub async fn handle_relay(
     state: Arc<AppState>,
     mode: RelayMode,
@@ -398,7 +447,9 @@ pub async fn handle_relay(
     }
 
     let mut last_failure: Option<FinalFailure> = None;
-    let hint = SessionHint::default();
+    let hint = SessionHint {
+        affinity_key: affinity_key(headers),
+    };
 
     for _ in 0..max_attempts {
         let chosen_idx = match select_index(&state, &hint, plan.model.as_deref()) {

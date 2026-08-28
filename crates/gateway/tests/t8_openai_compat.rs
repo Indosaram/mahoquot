@@ -110,6 +110,7 @@ async fn spawn_upstream(behavior: UpstreamBehavior) -> String {
 
 async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
     let config = GatewayConfig {
+            usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.to_path_buf(),
         strategy: Strategy::StrictRoundRobin,

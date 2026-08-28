@@ -16,6 +16,7 @@ pub struct GatewayConfig {
     pub models_env: Option<String>,
     pub refresh_url: String,
     pub auth_refresh_enabled: bool,
+    pub usage_poll_secs: u64,
 }
 
 impl GatewayConfig {
@@ -54,7 +55,14 @@ impl GatewayConfig {
         let auth_refresh_enabled =
             !matches!(std::env::var("AUTH_REFRESH").as_deref(), Ok("false" | "0"));
 
+        let usage_poll_secs = std::env::var("USAGE_POLL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(120);
+
         Ok(Self {
+            usage_poll_secs,
             port,
             auth_dir,
             strategy,

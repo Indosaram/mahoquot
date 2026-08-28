@@ -42,7 +42,7 @@ pub fn is_antigravity_model(model: &str) -> bool {
     ANTIGRAVITY_MODELS.contains(&model)
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct AntigravityAccount {
     #[serde(default)]
     pub identity_slug: String,

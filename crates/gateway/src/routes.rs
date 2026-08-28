@@ -22,6 +22,11 @@ pub fn create_app(state: Arc<AppState>) -> Router {
     let authed_routes = Router::new()
         .route("/v1/models", get(models_handler))
         .route("/admin/stats", get(admin_stats_handler))
+        .route("/admin/usage", get(admin_usage_handler))
+        .route("/admin/warmup", post(admin_warmup_handler))
+        .route("/admin/accounts/{id}/warmup", post(admin_warmup_one_handler))
+        .route("/admin/usage/refresh", post(admin_usage_refresh_handler))
+        .route("/admin/accounts/{id}/reset", post(admin_reset_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/v1/completions", post(completions_handler))
         .route("/v1/messages", post(messages_handler))
@@ -82,6 +87,59 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
 
 async fn admin_stats_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(state.get_stats())
+}
+
+async fn admin_usage_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(state.get_stats())
+}
+
+async fn admin_warmup_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(serde_json::json!({ "results": crate::warmup::warm_all(&state).await }))
+}
+
+async fn admin_warmup_one_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match state.find_member(&id) {
+        Some(member) => Json(crate::warmup::warm_account(&state, &member).await).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown account" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn admin_usage_refresh_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    crate::quota::refresh_all_usage(&state).await;
+    Json(state.get_stats())
+}
+
+async fn admin_reset_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(member) = state.find_member(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown account" })),
+        )
+            .into_response();
+    };
+    match crate::quota::consume_reset_credit(&state, &member).await {
+        Ok(()) => Json(serde_json::json!({
+            "ok": true,
+            "id": id,
+            "usage": member.usage_snapshot(),
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn chat_completions_handler(

@@ -65,6 +65,7 @@ async fn test_t1_rr_fairness() {
     }
 
     let config = GatewayConfig {
+            usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: Strategy::StrictRoundRobin,

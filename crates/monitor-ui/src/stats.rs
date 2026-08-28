@@ -27,6 +27,8 @@ pub struct AccountStats {
     pub id: String,
     #[serde(default)]
     pub provider: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub usage: Usage,
     #[serde(default)]
     pub health: serde_json::Value,
     #[serde(default)]
@@ -70,11 +72,47 @@ pub struct AdminStats {
     pub accounts: Vec<AccountStats>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct QuotaWindow {
+    pub used_percent: Option<f64>,
+    pub window_minutes: Option<i64>,
+    pub reset_after_seconds: Option<i64>,
+    pub reset_at_unix: Option<i64>,
+    pub limit_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct Usage {
+    pub plan_type: Option<String>,
+    pub active_limit: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub primary: QuotaWindow,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub secondary: QuotaWindow,
+    pub credits_balance: Option<f64>,
+    pub credits_unlimited: Option<bool>,
+    pub has_credits: Option<bool>,
+    pub observed_at_unix: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WindowView {
+    pub used_percent: Option<f64>,
+    pub window_minutes: Option<i64>,
+    pub reset_in_secs: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct AccountView {
     pub id: String,
     pub provider: String,
     pub status: String,
+    pub usage_known: bool,
+    pub plan_type: Option<String>,
+    pub credits_balance: Option<f64>,
+    pub credits_unlimited: Option<bool>,
+    pub primary: WindowView,
+    pub secondary: WindowView,
     pub ok: u64,
     pub fails: u64,
     pub failure_rate: f64,
@@ -107,6 +145,24 @@ fn status_of(health: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// Resolve a window to a countdown, preferring the absolute reset timestamp
+/// because the relative one ages while the snapshot sits in gateway memory.
+fn window_view(w: &QuotaWindow, observed_at: Option<i64>, now_secs: i64) -> WindowView {
+    let reset_in_secs = if let Some(at) = w.reset_at_unix.filter(|v| *v > 0) {
+        Some((at - now_secs).max(0))
+    } else {
+        w.reset_after_seconds
+            .filter(|v| *v > 0)
+            .zip(observed_at)
+            .map(|(after, obs)| (after - (now_secs - obs)).max(0))
+    };
+    WindowView {
+        used_percent: w.used_percent,
+        window_minutes: w.window_minutes,
+        reset_in_secs,
+    }
+}
+
 fn rate(fails: u64, ok: u64) -> f64 {
     let total = ok + fails;
     if total == 0 {
@@ -130,6 +186,12 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
             ok: a.ok,
             fails: a.fails,
             failure_rate: rate(a.fails, a.ok),
+            usage_known: a.usage.observed_at_unix.is_some(),
+            plan_type: a.usage.plan_type.clone(),
+            credits_balance: a.usage.credits_balance,
+            credits_unlimited: a.usage.credits_unlimited,
+            primary: window_view(&a.usage.primary, a.usage.observed_at_unix, now_unix_ms / 1000),
+            secondary: window_view(&a.usage.secondary, a.usage.observed_at_unix, now_unix_ms / 1000),
             p50_ms: a.ttft.p50_ms,
             p99_ms: a.ttft.p99_ms,
             samples: a.ttft.samples,
@@ -221,6 +283,42 @@ mod tests {
         assert_eq!(s.accounts[0].ttft.samples, 0);
         let v = build_view(&s, 0);
         assert_eq!(v.accounts[0].p50_ms, 0.0);
+    }
+
+    #[test]
+    fn surfaces_quota_windows_and_marks_unknown_providers() {
+        let s: AdminStats = serde_json::from_str(
+            r#"{"accounts":[
+              {"id":"cx@x.io","provider":"codex","health":{"status":"available"},
+               "ok":1,"fails":0,"ttft":null,
+               "usage":{"plan_type":"plus","credits_unlimited":false,
+                 "primary":{"used_percent":3.0,"window_minutes":300,"reset_at_unix":2000},
+                 "secondary":{"used_percent":25.0,"window_minutes":10080,"reset_at_unix":9000},
+                 "observed_at_unix":1000}},
+              {"id":"ag@x.io","provider":"antigravity","health":{"status":"available"},
+               "ok":1,"fails":0,"ttft":null,"usage":null}]}"#,
+        )
+        .expect("parse");
+        let v = build_view(&s, 1_500_000);
+
+        let cx = &v.accounts[0];
+        assert!(cx.usage_known);
+        assert_eq!(cx.plan_type.as_deref(), Some("plus"));
+        assert_eq!(cx.primary.used_percent, Some(3.0));
+        assert_eq!(cx.primary.window_minutes, Some(300));
+        assert_eq!(cx.primary.reset_in_secs, Some(500));
+        assert_eq!(cx.secondary.used_percent, Some(25.0));
+
+        // A provider with no quota headers must read as unknown, never as 0%.
+        let ag = &v.accounts[1];
+        assert!(!ag.usage_known);
+        assert_eq!(ag.primary.used_percent, None);
+    }
+
+    #[test]
+    fn expired_reset_clamps_to_zero_not_negative() {
+        let w = QuotaWindow { reset_at_unix: Some(100), ..Default::default() };
+        assert_eq!(window_view(&w, Some(0), 9_999).reset_in_secs, Some(0));
     }
 
     #[test]

@@ -16,6 +16,8 @@ pub struct GatewayMetrics {
 pub struct AccountStats {
     pub id: String,
     pub provider: String,
+    #[serde(default)]
+    pub usage: crate::usage::AccountUsage,
     pub health: HealthStats,
     pub ok: u64,
     pub fails: u64,

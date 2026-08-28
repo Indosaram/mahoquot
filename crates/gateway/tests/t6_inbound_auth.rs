@@ -142,6 +142,7 @@ async fn test_inbound_auth_cases() {
     let temp_dir = std::env::temp_dir().join(format!("qgw-test-t6-exempt-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).unwrap();
     let config = quotio_gateway::config::GatewayConfig {
+            usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: quotio_types::Strategy::StrictRoundRobin,

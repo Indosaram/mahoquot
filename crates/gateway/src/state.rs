@@ -121,6 +121,7 @@ impl AppState {
                     reset_at_unix_ms,
                     last_error: self.monitor.last_error(&m.id),
                     ttft: self.monitor.account_ttft(&m.id),
+                    usage: m.usage_snapshot(),
                 }
             })
             .collect();

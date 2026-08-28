@@ -160,6 +160,7 @@ async fn test_t7_refresh_lifecycle() {
         .unwrap();
 
         let config = GatewayConfig {
+            usage_poll_secs: 120,
             port: 0,
             auth_dir: temp_dir.clone(),
             strategy: Strategy::StrictRoundRobin,
@@ -258,6 +259,7 @@ async fn test_t7_refresh_lifecycle() {
         .unwrap();
 
         let config = GatewayConfig {
+            usage_poll_secs: 120,
             port: 0,
             auth_dir: temp_dir.clone(),
             strategy: Strategy::StrictRoundRobin,
@@ -327,6 +329,7 @@ async fn test_t7_refresh_lifecycle() {
         std::fs::write(&file_path, json_content).unwrap();
 
         let config = GatewayConfig {
+            usage_poll_secs: 120,
             port: 0,
             auth_dir: temp_dir.clone(),
             strategy: Strategy::StrictRoundRobin,
@@ -461,6 +464,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
     .unwrap();
 
     let config = GatewayConfig {
+            usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: Strategy::StrictRoundRobin,

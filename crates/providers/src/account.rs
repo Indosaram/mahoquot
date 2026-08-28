@@ -12,7 +12,7 @@ pub enum LoadError {
 }
 
 /// Loaded codex auth file.
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct CodexAccount {
     #[serde(default)]
     pub identity_slug: String,

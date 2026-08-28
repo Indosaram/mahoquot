@@ -27,6 +27,10 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let state = Arc::new(AppState::new(&config)?);
+    quotio_gateway::quota::spawn_usage_poller(
+        Arc::clone(&state),
+        std::time::Duration::from_secs(config.usage_poll_secs),
+    );
     let app = create_app(state);
 
     let addr = format!("0.0.0.0:{}", config.port);
