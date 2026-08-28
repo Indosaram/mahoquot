@@ -4,6 +4,7 @@ pub mod compat;
 pub mod config;
 pub mod cp_routes;
 pub mod inbound;
+pub mod management;
 pub mod metrics;
 pub mod models_route;
 pub mod monitor;
