@@ -7,7 +7,7 @@ Rust implementation with live evidence. Verified 2026-08-28 against the migrated
 | # | Pain point | Status | Evidence |
 |---|---|---|---|
 | 1 | warm-up only on antigravity | **Fixed** | `/admin/warmup` warms every provider; 4/5 codex → HTTP 200 live |
-| 2 | round robin uneven, hops accounts | **Fixed** | `select` now honours `affinity_key`; 3 router tests |
+| 2 | round robin uneven, hops accounts | **Fixed** | live: 1 session → 1 account (6/6); 9 sessions → 3/3/3 |
 | 3 | codex reset impossible from app | **Fixed** | live reset on `ab53e014`: credits 1→0, 5h usage 16%→0% |
 | 4 | cannot add providers freely | **Already OK** | compiler-measured: 2 files to add a variant |
 | 5 | usage query | **Fixed** | `/admin/usage` from `wham/usage`, 5/5 codex accounts |
@@ -60,6 +60,15 @@ that already exists. Covered by three tests:
 `session_sticks_to_one_account_across_turns`,
 `distinct_sessions_spread_across_accounts`, `session_moves_off_an_unhealthy_account`,
 alongside the pre-existing fairness test.
+
+Verified live against the real pool, since both halves of this pain point must
+hold at the same time — unit tests alone would not prove it:
+
+```
+6 requests, one session_id      -> account-e 6            (sticky, no hopping)
+9 requests, 9 distinct sessions -> augustine 3, buzzi 3,
+                                   account-e 3            (even, all accounts)
+```
 
 ## 3. Codex reset from the app
 
@@ -142,6 +151,21 @@ credentials and a licensing decision exist.
 
 Recommended next step: obtain one kiro credential and confirm whether a
 clean-room implementation is required, or whether AGPL is acceptable.
+
+## Cheap-model verification
+
+Required by the objective: migrate the existing `~/.cli-proxy-api` credentials
+and verify with `gemini-3.7-flash-high`. Verified live through the proxy against
+the migrated pool:
+
+```
+non-stream  HTTP 200  model=gemini-3.7-flash-high  content='QUOTIO_OK'
+            usage: prompt 10, completion 5, reasoning 114, total 129
+stream      3 SSE chunks, [DONE] terminator, text='STREAM_OK'
+```
+
+The antigravity 429s seen during the warm-up sweep were a transient cooldown,
+not a broken path: the same accounts serve `gemini-3.7-flash-high` normally.
 
 ## Gates
 
