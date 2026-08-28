@@ -13,6 +13,8 @@ pub mod creds;
 pub mod gate;
 pub mod lists;
 pub mod oauth;
+pub mod observability;
+pub mod plugins;
 pub mod scalar_table;
 pub mod scalars;
 pub mod settings;
@@ -28,6 +30,8 @@ pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .merge(apikeys::apikeys_routes())
         .merge(creds::creds_routes())
+        .merge(observability::observability_routes())
+        .merge(plugins::plugins_routes())
         .merge(core::core_routes())
         .merge(scalars::scalars_routes())
         .layer(axum::middleware::from_fn_with_state(

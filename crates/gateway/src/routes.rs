@@ -123,6 +123,11 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/anthropic/callback", get(cp_routes::oauth_callback))
         .route("/codex/callback", get(cp_routes::oauth_callback))
         .route("/antigravity/callback", get(cp_routes::oauth_callback))
+        .route(
+            "/v0/management/oauth-callback",
+            get(crate::management::oauth::oauth_callback)
+                .post(crate::management::oauth::oauth_callback),
+        )
         .nest(
             "/v0/management",
             crate::management::management_router(Arc::clone(&state)),

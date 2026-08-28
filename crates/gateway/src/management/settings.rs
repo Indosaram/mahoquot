@@ -15,6 +15,14 @@ pub struct RemoteManagement {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginsSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub dir: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoutingSettings {
     #[serde(default)]
     pub strategy: String,
@@ -87,6 +95,8 @@ pub struct Settings {
     pub ws_auth: bool,
     #[serde(default)]
     pub routing: RoutingSettings,
+    #[serde(default)]
+    pub plugins: PluginsSettings,
     #[serde(rename = "quota-exceeded", default)]
     pub quota_exceeded: QuotaExceededSettings,
     #[serde(rename = "remote-management", default)]
@@ -136,6 +146,7 @@ impl Default for Settings {
             force_model_prefix: false,
             ws_auth: false,
             routing: RoutingSettings::default(),
+            plugins: PluginsSettings::default(),
             quota_exceeded: QuotaExceededSettings::default(),
             remote_management: RemoteManagement::default(),
             api_keys: Vec::new(),
