@@ -188,6 +188,36 @@ stream      3 SSE chunks, [DONE] terminator, text='STREAM_OK'
 The antigravity 429s seen during the warm-up sweep were a transient cooldown,
 not a broken path: the same accounts serve `gemini-3.7-flash-high` normally.
 
+## Monitor UI
+
+The objective's completion condition is that usage data collected from real
+accounts is *displayed in the Tauri UI*, so the UI was verified running against
+the live pool rather than against a fixture. Screenshot:
+`results/monitor-ui-usage.png`.
+
+`crates/monitor-ui` is a Tauri shell over `/admin/*`; the whole surface is
+188 lines of `ui/index.html` plus 104 lines of `src/main.rs` (commands) and
+401 lines of `src/stats.rs` (typed view model). What the screenshot shows,
+against the migrated 8-credential pool:
+
+- summary row — 8 accounts, 8 available, **quota known 5/8**, avg session use
+  29.8%. The 5/8 is the honest count: the 3 antigravity accounts have no quota
+  API and are excluded from the average rather than counted as 0%.
+- per account — plan badge (`free` / `plus` / `prolite`), provider, health pill,
+  and one bar per reported window with percentage and reset countdown.
+- windows are labelled from `window_minutes`, not from slot order, which is why
+  `565c2911-account-f` correctly renders **30d 100%** instead of mislabelling a
+  30-day window as "5h". Bars go green/amber/red at 50% and 80%.
+- `reset 5h (n)` is enabled only where a reset credit exists — in the screenshot
+  only `ab53e014-account-a` shows `(1)`, every other account shows `(0)` and is
+  disabled. It confirms before spending the credit.
+- antigravity accounts render "antigravity exposes no quota API" in place of
+  bars, for the same reason as above.
+
+This is the `额度监控` view from the `quotio-desktop` reference — per-account
+plan, session window, weekly window, and one-click 5h reset — plus the warm-up
+controls pain point 1 needed.
+
 ## Gates
 
 - `cargo test --workspace`: 92 passed, 0 failed
