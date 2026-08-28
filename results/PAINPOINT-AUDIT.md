@@ -11,7 +11,7 @@ Rust implementation with live evidence. Verified 2026-08-28 against the migrated
 | 3 | codex reset impossible from app | **Fixed** | live reset on `ab53e014`: credits 1→0, 5h usage 16%→0% |
 | 4 | cannot add providers freely | **Already OK** | compiler-measured: 2 files to add a variant |
 | 5 | usage query | **Fixed** | `/admin/usage` from `wham/usage`, 5/5 codex accounts |
-| 6 | kiro not working | **Not implemented** | blocked: no kiro credentials exist; AGPL upstream |
+| 6 | kiro not working | **Not implemented** | root cause found: both accounts 100% quota + 1 dead token |
 
 ## 1. Warm-up on all providers
 
@@ -127,30 +127,51 @@ The user's example (`/v1/usage/self` on an Anthropic-compatible proxy) is the
 same shape: one authenticated GET returning per-account quota. This is the
 provider-native equivalent for the accounts actually in the pool.
 
-## 6. Kiro — not implemented, and blocked on inputs
+## 6. Kiro — not implemented; root cause of "doesn't work" identified
 
-**Pain point 6 is not addressed.** Stating the blockers rather than deferring:
+**Correcting an earlier claim in this audit:** a previous revision stated that no
+kiro credentials exist anywhere. That was wrong — it searched only the CP and
+Quotio directories. Kiro credentials live in kiro-lb's own store.
 
-1. **No credentials exist anywhere.** Searched the live CP dir, the migrated
-   pool, and Quotio's own application-support dir: zero kiro credentials.
-   Live CP's providers are `antigravity`, `codex`, and a `kimi-device-id` file
-   (a device id, not an account). So kiro could not be verified live even if
-   implemented — and this project's standard for "done" on every other pain
-   point has been live verification against a real account.
-2. **It is a different upstream, not a variant.** `minpeter/kiro-lb` is an
-   OpenAI/Anthropic-compatible gateway for Kiro (Amazon Q Developer /
-   CodeWhisperer): separate AWS SSO auth, model registry, and translation layer.
-   That is a provider of the same magnitude as antigravity, not an increment.
-3. **Licensing needs a decision.** kiro-lb is **AGPL-3.0** (derived from
-   `jwadow/kiro-gateway`). Porting its logic into this tree would raise a
-   licensing question that is the user's call, not mine to make silently.
+Actual state, read from a copy of
+`~/code/project/kiro-lb/data/dashboard.sqlite3` (original untouched):
 
-What is *not* a blocker: provider extensibility. Per pain point 4, adding a
-variant costs edits in 2 files, so the architecture is ready for kiro once
-credentials and a licensing decision exist.
+| account | email | plan | usage |
+|---|---|---|---|
+| `device-github-OJ6wOrZS8HtSmtw2` | aksenbuilder2@superwiki.net | KIRO PRO MAX | **5000/5000 — 100%** |
+| `device-github-tPfc3Pq69AIxGPAT` | aksenbuilder3@superwiki.net | KIRO PRO MAX | **5000/5000 — 100%** |
 
-Recommended next step: obtain one kiro credential and confirm whether a
-clean-room implementation is required, or whether AGPL is acceptable.
+So "kiro 기능이 동작 안 함" currently has two concrete causes, neither of which is
+a missing feature in this gateway:
+
+1. **Both accounts are quota-exhausted.** `quota_exhausted_until` =
+   2026-09-01 09:05 for both; it is 2026-08-28. Every kiro request fails until
+   the credit window resets.
+2. **One credential is dead.** kiro-lb's log repeats:
+   `Refresh token for device-github-OJ6wOrZS8HtSmtw2 was rejected by the auth
+   host (HTTP 401); the credential cannot be renewed and needs a re-login.`
+   The other's `accessToken` expired 2026-08-28T05:30Z.
+
+**Implementation status: not implemented in this gateway.** The upstream contract
+is now known — `https://q.us-east-1.amazonaws.com`, bearer `accessToken` with
+`profileArn`, region `us-east-1`, and a usage API returning
+`current_usage`/`usage_limit`/`next_date_reset` (the same shape the quota UI
+already renders). Two things still gate the work:
+
+- **Live verification is impossible right now.** Every other pain point here was
+  signed off against a real account returning real data. With both kiro accounts
+  at 100% and one credential dead, a kiro provider could be written but not
+  honestly verified — it would be indistinguishable from a broken one.
+- **Licensing is the user's call.** kiro-lb is **AGPL-3.0** (derived from
+  `jwadow/kiro-gateway`). Its auth flow must be reimplemented clean-room from the
+  wire contract rather than ported, or the licence accepted deliberately.
+
+Not a blocker: extensibility. Per pain point 4, adding a provider variant costs
+edits in 2 files.
+
+Next step: re-login `OJ6wOrZS8HtSmtw2` (or add a fresh kiro account), then
+implement clean-room against the contract above and verify after the 2026-09-01
+quota reset.
 
 ## Cheap-model verification
 
