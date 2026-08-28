@@ -195,22 +195,21 @@ is a design-system decision, not part of exposing the management surface.
   path, the only identifier shared between the directory listing and the loaded
   pool.
 
-### Limitation on C5
+### Independent reviewer
 
-C5 asks for an **independent visual-QA reviewer** returning PASS. Subagent
-dispatch failed with a provider connection error on every attempt this session
-(10+, across every category and through two separate dispatch paths), so no
-independent reviewer ran.
+An independent visual-QA reviewer reviewed all 8 fresh captures and returned
+**VERDICT: PASS with zero BLOCKING and zero NON-BLOCKING findings**, confirming
+each of the four required capabilities present and usable, consistent control
+styling, destructive actions (Remove, Clear) visually distinct in both themes,
+and no layout defects. It explicitly considered flagging the dark-theme helper
+text as a contrast BLOCKER and withdrew that on closer comparison — which is the
+text fixed earlier in this work by moving `.sethint` off `--fg-faint`.
 
-What stands in its place is weaker in one way and stronger in another: the
-mechanical audit above is objective and reproducible, but it cannot judge taste,
-layout intent, or whether a screen communicates well. The remaining judgement
-came from the same agent that wrote the UI. **This section is not an
-independent PASS and should not be read as one.**
+Reaching a reviewer took 13 failed dispatch attempts and a diagnosis:
 
-### Root cause of the dispatch failure
+### Root cause of the earlier dispatch failures
 
-Worth recording, because it is fixable and it is not a code problem here:
+Worth recording, because it is configuration rather than a code problem here:
 
 - Every subagent category in `~/.omo/omo.json` routes to
   `quotio/gemini-3.7-flash-high`.
@@ -225,13 +224,15 @@ Worth recording, because it is fixable and it is not a code problem here:
 - The session's own default model is reachable (`completion(model="default")`
   answers), but that path is text-only and cannot read a screenshot.
 
-So the visual reviewer is unreachable until either the Quotio gateway is
-running on 8317 or the `opengateway` key is refreshed. Note the irony: the
-delegation path depends on the very gateway this work is building.
+Note the irony: the default delegation path depends on the very gateway this
+work is building.
 
-Starting a gateway on 8317 was not attempted: the invariants confine test
-gateways to 18840-18899 and forbid writing the live Quotio state, and 8317 is
-the user's live port.
+The fix was to bypass the category-to-model mapping entirely with an explicit
+`model` override on a `subagent_type` spawn, routed to the oauth-authenticated
+`anthropic` provider, which is image-capable and reachable. Starting a gateway
+on 8317 was never attempted: the invariants confine test gateways to
+18840-18899 and forbid writing live Quotio state, and 8317 is the user's live
+port.
 
 ## Invariants
 
