@@ -7,6 +7,7 @@
 //! without it.
 
 pub mod auth;
+pub mod core;
 pub mod gate;
 pub mod scalar_table;
 pub mod scalars;
@@ -21,6 +22,7 @@ use crate::state::AppState;
 
 pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
+        .merge(core::core_routes())
         .merge(scalars::scalars_routes())
         .layer(axum::middleware::from_fn_with_state(
             state,

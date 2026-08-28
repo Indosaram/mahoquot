@@ -19,6 +19,10 @@ const CPA_SUPPORT_PLUGIN: &str = "1";
 
 const EXPOSE_HEADERS: &str = "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id";
 
+pub fn cpa_version() -> &'static str {
+    CPA_VERSION
+}
+
 fn stamp(headers: &mut HeaderMap) {
     headers.insert("X-CPA-VERSION", HeaderValue::from_static(CPA_VERSION));
     headers.insert("X-CPA-COMMIT", HeaderValue::from_static(CPA_COMMIT));
