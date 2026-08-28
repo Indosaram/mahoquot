@@ -34,6 +34,38 @@ struct RelayPlan {
     mode: RelayMode,
     client_stream: bool,
     include_usage: bool,
+    openai_body: Option<serde_json::Value>,
+}
+
+struct UpstreamTarget {
+    url: String,
+    body: Bytes,
+    protocol: compat::Protocol,
+}
+
+fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTarget, String> {
+    if member.kind() != crate::account::ProviderKind::Antigravity {
+        return Ok(UpstreamTarget {
+            url: build_target_url(member.upstream_override.as_deref(), &plan.upstream_path),
+            body: plan.body.clone(),
+            protocol: compat::Protocol::Codex,
+        });
+    }
+
+    let openai_body = plan
+        .openai_body
+        .as_ref()
+        .ok_or_else(|| "antigravity requires an openai-shaped request".to_string())?;
+    let project = member
+        .project_id()
+        .ok_or_else(|| "antigravity account missing project_id".to_string())?;
+    let translated = compat::openai_to_antigravity(openai_body, &project)?;
+
+    Ok(UpstreamTarget {
+        url: crate::url::build_antigravity_url(member.upstream_override.as_deref()),
+        body: Bytes::from(translated.to_string()),
+        protocol: compat::Protocol::Antigravity,
+    })
 }
 
 async fn send_upstream(
@@ -188,6 +220,7 @@ fn build_plan(
             mode,
             client_stream: true,
             include_usage: false,
+            openai_body: None,
         }),
         RelayMode::OpenAiCompat => match compat::openai_to_codex(&body_bytes) {
             Ok(translated) => Ok(RelayPlan {
@@ -197,6 +230,7 @@ fn build_plan(
                 mode,
                 client_stream: translated.stream,
                 include_usage: translated.include_usage,
+                openai_body: serde_json::from_slice(&body_bytes).ok(),
             }),
             Err(err) => Err(err.to_string()),
         },
@@ -241,6 +275,7 @@ async fn finish_success(
     resp: reqwest::Response,
     status_code: u16,
     created: i64,
+    protocol: compat::Protocol,
 ) -> Result<Response, String> {
     let content_type = content_type_of(&resp);
 
@@ -271,7 +306,14 @@ async fn finish_success(
         member.record_ok();
         state.metrics.served.fetch_add(1, Ordering::Relaxed);
         state.router.feedback(member.id(), Outcome::Success);
-        let body = compat::streaming_body(first, stream, model, created, plan.include_usage);
+        let body = compat::streaming_body(
+            first,
+            stream,
+            model,
+            created,
+            plan.include_usage,
+            protocol,
+        );
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
@@ -283,7 +325,7 @@ async fn finish_success(
     }
 
     let raw = compat::collect_stream(first, stream).await?;
-    let completion = compat::aggregate(&raw, model, created)?;
+    let completion = compat::aggregate(&raw, model, created, protocol)?;
     member.record_ok();
     state.metrics.served.fetch_add(1, Ordering::Relaxed);
     state.router.feedback(member.id(), Outcome::Success);
@@ -358,8 +400,12 @@ pub async fn handle_relay(
             }
         }
 
-        let target_url = build_target_url(member.upstream_override.as_deref(), &plan.upstream_path);
-        let mut resp = match send_upstream(&state, &target_url, &member, headers, &plan.body).await
+        let target = match resolve_target(&member, &plan) {
+            Ok(t) => t,
+            Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
+        };
+        let target_url = target.url;
+        let mut resp = match send_upstream(&state, &target_url, &member, headers, &target.body).await
         {
             Ok(r) => r,
             Err(e) => {
@@ -380,7 +426,7 @@ pub async fn handle_relay(
         {
             match state.refresh_member(&member, Some(&member_at)).await {
                 Ok(_) => {
-                    match send_upstream(&state, &target_url, &member, headers, &plan.body).await {
+                    match send_upstream(&state, &target_url, &member, headers, &target.body).await {
                         Ok(retry_resp) => {
                             resp = retry_resp;
                             status_code = resp.status().as_u16();
@@ -414,7 +460,17 @@ pub async fn handle_relay(
         }
 
         if (200..=399).contains(&status_code) {
-            match finish_success(&state, &member, &plan, resp, status_code, created).await {
+            match finish_success(
+                &state,
+                &member,
+                &plan,
+                resp,
+                status_code,
+                created,
+                target.protocol,
+            )
+            .await
+            {
                 Ok(response) => return response,
                 Err(reason) => {
                     member.record_fail();

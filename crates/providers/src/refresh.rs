@@ -47,6 +47,24 @@ pub fn build_refresh_request(refresh_token: &str) -> RefreshRequest {
     }
 }
 
+pub fn build_antigravity_refresh_request(refresh_token: &str) -> RefreshRequest {
+    RefreshRequest {
+        url: crate::antigravity::ANTIGRAVITY_TOKEN_URL.to_string(),
+        form_fields: vec![
+            (
+                "client_id".to_string(),
+                crate::antigravity::ANTIGRAVITY_CLIENT_ID.to_string(),
+            ),
+            (
+                "client_secret".to_string(),
+                crate::antigravity::ANTIGRAVITY_CLIENT_SECRET.to_string(),
+            ),
+            ("grant_type".to_string(), "refresh_token".to_string()),
+            ("refresh_token".to_string(), refresh_token.to_string()),
+        ],
+    }
+}
+
 pub fn parse_refresh_response(json_str: &str) -> Result<Tokens, String> {
     serde_json::from_str::<Tokens>(json_str).map_err(|e| e.to_string())
 }

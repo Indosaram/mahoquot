@@ -59,12 +59,11 @@ pub fn openai_to_codex(raw: &[u8]) -> Result<TranslatedRequest, TranslateError> 
             out.insert(key.into(), v.clone());
         }
     }
-    if let Some(limit) = obj
-        .get("max_completion_tokens")
-        .or_else(|| obj.get("max_tokens"))
-    {
-        out.insert("max_output_tokens".into(), limit.clone());
-    }
+    // The Codex backend rejects max_output_tokens with
+    // `400 Unsupported parameter: max_output_tokens`, verified against 4 live
+    // accounts. OpenAI clients routinely send max_tokens, so forwarding it would
+    // fail those requests outright; CLIProxyAPI drops it for the same reason.
+    // Deliberately not translated.
 
     let body =
         serde_json::to_vec(&Value::Object(out)).map_err(|e| TranslateError::Json(e.to_string()))?;

@@ -6,16 +6,24 @@
 //! id_token:string, last_refresh:string, refresh_token:string, type:string
 
 pub mod account;
+pub mod antigravity;
 pub mod refresh;
 pub mod refresh_exec;
 
+pub use antigravity::{
+    antigravity_stream_url, derive_antigravity_slug_from_filename, is_antigravity_model,
+    list_antigravity_auth_files, load_antigravity_account, AntigravityAccount,
+    ANTIGRAVITY_API_VERSION, ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET,
+    ANTIGRAVITY_LOAD_BASE, ANTIGRAVITY_MODELS, ANTIGRAVITY_TOKEN_URL, ANTIGRAVITY_UPSTREAM_BASE,
+    ANTIGRAVITY_USER_AGENT,
+};
 pub use account::{
     derive_identity_slug, derive_identity_slug_from_filename, list_codex_auth_files,
     load_codex_account, CodexAccount, LoadError, UPSTREAM_BASE, USER_AGENT,
 };
 pub use refresh::{
-    build_refresh_request, parse_refresh_response, RefreshRequest, Tokens, REFRESH_CLIENT_ID,
-    REFRESH_TOKEN_URL,
+    build_antigravity_refresh_request, build_refresh_request, parse_refresh_response,
+    RefreshRequest, Tokens, REFRESH_CLIENT_ID, REFRESH_TOKEN_URL,
 };
 
 #[cfg(test)]

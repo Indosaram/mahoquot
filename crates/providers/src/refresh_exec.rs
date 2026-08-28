@@ -26,6 +26,14 @@ pub async fn execute_refresh(
     refresh_token: &str,
 ) -> Result<Tokens, RefreshError> {
     let req_spec = crate::refresh::build_refresh_request(refresh_token);
+    execute_refresh_spec(client, url, &req_spec).await
+}
+
+pub async fn execute_refresh_spec(
+    client: &reqwest::Client,
+    url: &str,
+    req_spec: &crate::refresh::RefreshRequest,
+) -> Result<Tokens, RefreshError> {
     let resp = client.post(url).form(&req_spec.form_fields).send().await?;
 
     let status = resp.status();

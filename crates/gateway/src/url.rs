@@ -1,4 +1,8 @@
-use quotio_providers::UPSTREAM_BASE;
+use quotio_providers::{antigravity_stream_url, ANTIGRAVITY_UPSTREAM_BASE, UPSTREAM_BASE};
+
+pub fn build_antigravity_url(upstream_override: Option<&str>) -> String {
+    antigravity_stream_url(upstream_override.unwrap_or(ANTIGRAVITY_UPSTREAM_BASE))
+}
 
 pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> String {
     let raw_base = upstream_override.unwrap_or(UPSTREAM_BASE);
@@ -25,6 +29,18 @@ pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_antigravity_url_construction() {
+        assert_eq!(
+            build_antigravity_url(None),
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(
+            build_antigravity_url(Some("http://127.0.0.1:18890")),
+            "http://127.0.0.1:18890/v1internal:streamGenerateContent?alt=sse"
+        );
+    }
 
     #[test]
     fn test_url_construction() {

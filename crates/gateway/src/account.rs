@@ -3,14 +3,81 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use quotio_providers::refresh_exec::{apply_refresh_to_file, execute_refresh, RefreshError};
-use quotio_providers::{derive_identity_slug, list_codex_auth_files, CodexAccount, LoadError};
+use quotio_providers::refresh_exec::{apply_refresh_to_file, execute_refresh_spec, RefreshError};
+use quotio_providers::{
+    derive_identity_slug, is_antigravity_model, list_antigravity_auth_files, list_codex_auth_files,
+    load_antigravity_account, AntigravityAccount, CodexAccount, LoadError,
+};
 use quotio_types::{Health, PoolMember};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProviderKind {
+    Codex,
+    Antigravity,
+}
+
+pub enum ProviderAccount {
+    Codex(CodexAccount),
+    Antigravity(AntigravityAccount),
+}
+
+impl ProviderAccount {
+    pub fn kind(&self) -> ProviderKind {
+        match self {
+            Self::Codex(_) => ProviderKind::Codex,
+            Self::Antigravity(_) => ProviderKind::Antigravity,
+        }
+    }
+
+    fn access_token(&self) -> String {
+        match self {
+            Self::Codex(a) => a.access_token.clone(),
+            Self::Antigravity(a) => a.access_token.clone(),
+        }
+    }
+
+    fn refresh_token(&self) -> String {
+        match self {
+            Self::Codex(a) => a.refresh_token.clone(),
+            Self::Antigravity(a) => a.refresh_token.clone(),
+        }
+    }
+
+    fn is_expired(&self, now_unix: i64) -> bool {
+        match self {
+            Self::Codex(a) => a.is_expired(now_unix),
+            Self::Antigravity(a) => a.is_expired(now_unix),
+        }
+    }
+
+    fn build_upstream_headers(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Codex(a) => a.build_upstream_headers(),
+            Self::Antigravity(a) => a.build_upstream_headers(),
+        }
+    }
+
+    fn project_id(&self) -> Option<String> {
+        match self {
+            Self::Codex(_) => None,
+            Self::Antigravity(a) => Some(a.project_id.clone()),
+        }
+    }
+
+    fn refresh_request(&self) -> quotio_providers::RefreshRequest {
+        match self {
+            Self::Codex(a) => quotio_providers::build_refresh_request(&a.refresh_token),
+            Self::Antigravity(a) => {
+                quotio_providers::build_antigravity_refresh_request(&a.refresh_token)
+            }
+        }
+    }
+}
 
 pub struct AccountMember {
     pub id: String,
     pub file_path: PathBuf,
-    pub inner: RwLock<CodexAccount>,
+    pub inner: RwLock<ProviderAccount>,
     pub health: RwLock<Health>,
     pub upstream_override: Option<String>,
     pub ok_count: AtomicU64,
@@ -52,7 +119,24 @@ impl AccountMember {
         self.fail_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn kind(&self) -> ProviderKind {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .kind()
+    }
+
+    pub fn project_id(&self) -> Option<String> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .project_id()
+    }
+
     pub fn supports_model(&self, model: &str) -> bool {
+        if is_antigravity_model(model) != (self.kind() == ProviderKind::Antigravity) {
+            return false;
+        }
         let guard = self
             .unsupported_models
             .read()
@@ -99,7 +183,7 @@ impl AccountMember {
             .inner
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.access_token.clone()
+        guard.access_token()
     }
 
     pub fn refresh_token(&self) -> String {
@@ -107,14 +191,26 @@ impl AccountMember {
             .inner
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.refresh_token.clone()
+        guard.refresh_token()
     }
 
     pub fn reload_from_file(&self) -> Result<(), LoadError> {
-        let mut reloaded = quotio_providers::load_codex_account(&self.file_path)?;
-        if reloaded.identity_slug.is_empty() {
-            reloaded.identity_slug = self.id.clone();
-        }
+        let reloaded = match self.kind() {
+            ProviderKind::Codex => {
+                let mut a = quotio_providers::load_codex_account(&self.file_path)?;
+                if a.identity_slug.is_empty() {
+                    a.identity_slug = self.id.clone();
+                }
+                ProviderAccount::Codex(a)
+            }
+            ProviderKind::Antigravity => {
+                let mut a = load_antigravity_account(&self.file_path)?;
+                if a.identity_slug.is_empty() {
+                    a.identity_slug = self.id.clone();
+                }
+                ProviderAccount::Antigravity(a)
+            }
+        };
         let mut guard = self
             .inner
             .write()
@@ -144,8 +240,17 @@ impl AccountMember {
             return Ok(false);
         }
 
-        let rt = self.refresh_token();
-        let tokens = execute_refresh(client, refresh_url, &rt).await?;
+        let spec = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .refresh_request();
+        let url = if self.kind() == ProviderKind::Codex {
+            refresh_url
+        } else {
+            spec.url.as_str()
+        };
+        let tokens = execute_refresh_spec(client, url, &spec).await?;
         apply_refresh_to_file(&self.file_path, &tokens, now_unix)?;
         if let Err(e) = self.reload_from_file() {
             return Err(RefreshError::Parse(e.to_string()));
@@ -183,8 +288,11 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             inner.identity_slug = derive_identity_slug(&file_path);
         }
 
-        let id = if !inner.identity_slug.is_empty() {
-            inner.identity_slug.clone()
+        let slug = inner.identity_slug.clone();
+        let inner = ProviderAccount::Codex(inner);
+
+        let id = if !slug.is_empty() {
+            slug
         } else {
             file_path
                 .file_stem()
@@ -199,6 +307,35 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             inner: RwLock::new(inner),
             health: RwLock::new(Health::Available),
             upstream_override,
+            ok_count: AtomicU64::new(0),
+            fail_count: AtomicU64::new(0),
+            refresh_lock: tokio::sync::Mutex::new(()),
+            unsupported_models: RwLock::new(Vec::new()),
+        }));
+    }
+
+    for file_path in list_antigravity_auth_files(auth_dir)
+        .map_err(|e| anyhow::anyhow!("failed to list antigravity files in {:?}: {}", auth_dir, e))?
+    {
+        let account = load_antigravity_account(&file_path)
+            .map_err(|e| anyhow::anyhow!("failed to load {:?}: {}", file_path, e))?;
+
+        let id = if account.identity_slug.is_empty() {
+            file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("antigravity")
+                .to_string()
+        } else {
+            account.identity_slug.clone()
+        };
+
+        members.push(Arc::new(AccountMember {
+            id,
+            file_path,
+            inner: RwLock::new(ProviderAccount::Antigravity(account)),
+            health: RwLock::new(Health::Available),
+            upstream_override: None,
             ok_count: AtomicU64::new(0),
             fail_count: AtomicU64::new(0),
             refresh_lock: tokio::sync::Mutex::new(()),

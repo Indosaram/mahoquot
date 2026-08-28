@@ -169,7 +169,13 @@ fn test_t8_request_translation_shape() {
     assert_eq!(body["instructions"], "be terse");
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
-    assert_eq!(body["max_output_tokens"], 128);
+    assert!(
+        body.get("max_output_tokens").is_none(),
+        "codex upstream answers 400 `Unsupported parameter: max_output_tokens` \
+         (verified on 4 live accounts); forwarding it breaks every client that \
+         sends max_tokens, so it must be dropped"
+    );
+    assert!(body.get("max_tokens").is_none());
 
     let input = body["input"].as_array().unwrap();
     assert_eq!(input.len(), 3);

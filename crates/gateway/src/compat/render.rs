@@ -20,6 +20,12 @@ fn usage_value(usage: &Usage) -> Value {
         "prompt_tokens": usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
         "total_tokens": usage.total_tokens,
+        "prompt_tokens_details": {
+            "cached_tokens": usage.cached_tokens,
+        },
+        "completion_tokens_details": {
+            "reasoning_tokens": usage.reasoning_tokens,
+        },
     })
 }
 

@@ -5,6 +5,8 @@ pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    pub cached_tokens: u64,
+    pub reasoning_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,24 +39,40 @@ pub struct SseParser {
 
 impl SseParser {
     pub fn push(&mut self, chunk: &[u8], out: &mut Vec<CodexEvent>) {
+        let mut frames = Vec::new();
+        self.push_raw_data(chunk, &mut frames);
+        for frame in frames {
+            Self::decode(&frame, out);
+        }
+    }
+
+    pub fn finish(&mut self, out: &mut Vec<CodexEvent>) {
+        let mut frames = Vec::new();
+        self.finish_raw_data(&mut frames);
+        for frame in frames {
+            Self::decode(&frame, out);
+        }
+    }
+
+    pub fn push_raw_data(&mut self, chunk: &[u8], out: &mut Vec<Vec<u8>>) {
         self.buf.extend_from_slice(chunk);
         while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
             let line: Vec<u8> = self.buf.drain(..=pos).collect();
             let line = strip_eol(&line);
             if let Some(payload) = line.strip_prefix(b"data: ") {
-                Self::decode(payload, out);
+                out.push(payload.to_vec());
             }
         }
     }
 
-    pub fn finish(&mut self, out: &mut Vec<CodexEvent>) {
+    pub fn finish_raw_data(&mut self, out: &mut Vec<Vec<u8>>) {
         if self.buf.is_empty() {
             return;
         }
         let line: Vec<u8> = std::mem::take(&mut self.buf);
         let line = strip_eol(&line);
         if let Some(payload) = line.strip_prefix(b"data: ") {
-            Self::decode(payload, out);
+            out.push(payload.to_vec());
         }
     }
 
@@ -169,5 +187,15 @@ fn parse_usage(usage: &Value) -> Usage {
             .get("total_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(prompt_tokens + completion_tokens),
+        cached_tokens: usage
+            .get("input_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        reasoning_tokens: usage
+            .get("output_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
     }
 }

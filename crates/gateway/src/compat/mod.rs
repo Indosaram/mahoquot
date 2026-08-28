@@ -1,4 +1,5 @@
 pub mod events;
+pub mod gemini;
 pub mod render;
 pub mod request;
 
@@ -13,6 +14,7 @@ use serde_json::{json, Value};
 use events::{CodexEvent, SseParser};
 use render::{Aggregator, ChunkRenderer, DONE_FRAME};
 
+pub use gemini::{openai_to_antigravity, GeminiDecoder};
 pub use request::{extract_model, openai_to_codex, TranslateError, TranslatedRequest};
 
 pub const CODEX_PATH: &str = "/backend-api/codex/responses";
@@ -61,9 +63,60 @@ pub async fn collect_stream(first: Bytes, mut stream: UpstreamStream) -> Result<
     Ok(raw)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Protocol {
+    Codex,
+    Antigravity,
+}
+
+#[derive(Default)]
+struct ProtocolParser {
+    sse: SseParser,
+    gemini: Option<gemini::GeminiDecoder>,
+}
+
+impl ProtocolParser {
+    fn new(protocol: Protocol) -> Self {
+        Self {
+            sse: SseParser::default(),
+            gemini: match protocol {
+                Protocol::Codex => None,
+                Protocol::Antigravity => Some(gemini::GeminiDecoder::new()),
+            },
+        }
+    }
+
+    fn push(&mut self, chunk: &[u8], events: &mut Vec<CodexEvent>) {
+        match self.gemini.as_mut() {
+            None => self.sse.push(chunk, events),
+            Some(decoder) => {
+                let mut frames = Vec::new();
+                self.sse.push_raw_data(chunk, &mut frames);
+                for frame in frames {
+                    decoder.decode(&frame, events);
+                }
+            }
+        }
+    }
+
+    fn finish(&mut self, events: &mut Vec<CodexEvent>) {
+        match self.gemini.as_mut() {
+            None => self.sse.finish(events),
+            Some(decoder) => {
+                let mut frames = Vec::new();
+                self.sse.finish_raw_data(&mut frames);
+                for frame in frames {
+                    decoder.decode(&frame, events);
+                }
+                decoder.finish(events);
+            }
+        }
+    }
+}
+
 struct TranslateState {
     upstream: UpstreamStream,
-    parser: SseParser,
+    parser: ProtocolParser,
     renderer: ChunkRenderer,
     pending: VecDeque<Bytes>,
     drained: bool,
@@ -75,10 +128,11 @@ pub fn streaming_body(
     model: String,
     created: i64,
     include_usage: bool,
+    protocol: Protocol,
 ) -> Body {
     let mut state = TranslateState {
         upstream,
-        parser: SseParser::default(),
+        parser: ProtocolParser::new(protocol),
         renderer: ChunkRenderer::new(model, created, include_usage),
         pending: VecDeque::new(),
         drained: false,
@@ -134,8 +188,13 @@ fn error_frames(renderer: &mut ChunkRenderer, message: &str) -> Vec<Bytes> {
     })
 }
 
-pub fn aggregate(raw: &[u8], model: String, created: i64) -> Result<Value, String> {
-    let mut parser = SseParser::default();
+pub fn aggregate(
+    raw: &[u8],
+    model: String,
+    created: i64,
+    protocol: Protocol,
+) -> Result<Value, String> {
+    let mut parser = ProtocolParser::new(protocol);
     let mut events = Vec::new();
     parser.push(raw, &mut events);
     parser.finish(&mut events);
