@@ -106,6 +106,18 @@
   table.acctbl td { padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
   table.acctbl tr:last-child td { border-bottom: 0; }
   table.acctbl .num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 11px; }
+
+  .setgroup { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; padding: 4px 14px 10px; max-width: 640px; }
+  .setgroup-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-faint); font-weight: 600; padding: 11px 0 6px; }
+  .setrow { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
+  .setrow:first-of-type { border-top: 0; }
+  .setlabel { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+  .sethint { font-size: 10.5px; color: var(--fg-faint); font-family: var(--mono); }
+  .setfail { font-size: 11px; color: var(--bad); font-family: var(--mono); }
+  .setrow input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  .savenote { border-radius: 8px; padding: 7px 11px; margin-bottom: 12px; font-size: 12px; max-width: 640px; }
+  .savenote.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); color: var(--ok); }
+  .savenote.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); color: var(--bad); }
 </style>
 </head>
 <body>
@@ -209,6 +221,7 @@ function provLabel(p) {
 const ICO = {
   quota: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   all:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></svg>',
+  cog:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
 };
 
@@ -239,6 +252,132 @@ async function api(path, method = "GET") {
   const r = await fetch(BASE + path, { method, headers: { Authorization: "Bearer " + KEY } });
   if (!r.ok) throw new Error(path + " -> " + r.status);
   return r.json();
+}
+
+/* The management API authenticates with the management password, which is a
+   different secret from the relay API key above, so it gets its own client and
+   its own storage slot. */
+const MGMT_KEY = () => localStorage.getItem("quotio.mgmt") || "";
+async function mgmt(path, method = "GET", body) {
+  const headers = { Authorization: "Bearer " + MGMT_KEY() };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const r = await fetch(BASE + "/v0/management" + path, {
+    method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await r.text();
+  let parsed = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text }; }
+  if (!r.ok) {
+    const detail = parsed && (parsed.error || parsed.detail);
+    throw new Error(detail || `${path} -> ${r.status}`);
+  }
+  return parsed;
+}
+
+/* Each row is one management scalar: the route under /v0/management, the label,
+   and how to render it. `bool` renders a checkbox, everything else a text box.
+   Reads come back keyed by the route name, which is how upstream shapes the
+   response, so the key is derived rather than repeated. */
+const SETTINGS_FIELDS = [
+  { group: "Server", items: [
+    { path: "/debug", label: "Debug logging", kind: "bool" },
+    { path: "/logging-to-file", label: "Log to file", kind: "bool" },
+    { path: "/usage-statistics-enabled", label: "Usage statistics", kind: "bool" },
+    { path: "/request-log", label: "Request log", kind: "bool" },
+    { path: "/logs-max-total-size-mb", label: "Log cap (MB)", kind: "number" },
+  ]},
+  { group: "Proxy", items: [
+    { path: "/proxy-url", label: "Proxy URL", kind: "text", hint: "http:// socks5:// — blank disables" },
+    { path: "/request-retry", label: "Request retries", kind: "number" },
+    { path: "/max-retry-credentials", label: "Max credentials per retry", kind: "number" },
+    { path: "/max-retry-interval", label: "Max retry interval", kind: "number" },
+    { path: "/ws-auth", label: "WebSocket auth", kind: "bool" },
+  ]},
+  { group: "Routing", items: [
+    { path: "/routing/strategy", label: "Strategy", kind: "text", hint: "strict-round-robin | …" },
+    { path: "/force-model-prefix", label: "Force model prefix", kind: "bool" },
+    { path: "/error-logs-max-files", label: "Error log file cap", kind: "number" },
+  ]},
+  { group: "Quota", items: [
+    { path: "/quota-exceeded/switch-project", label: "Switch project on quota exceeded", kind: "bool" },
+    { path: "/quota-exceeded/switch-preview-model", label: "Switch preview model", kind: "bool" },
+  ]},
+];
+
+function settingsKey(path) { return path.split("/").filter(Boolean).pop(); }
+
+let settingsState = { loaded: false, values: {}, errors: {}, notice: null };
+
+async function loadSettings() {
+  const flat = SETTINGS_FIELDS.flatMap(g => g.items);
+  const results = await Promise.all(flat.map(async f => {
+    try {
+      const body = await mgmt(f.path);
+      const key = settingsKey(f.path);
+      const value = body && (key in body) ? body[key] : (body && body.value);
+      return [f.path, { value }];
+    } catch (e) {
+      return [f.path, { error: e.message }];
+    }
+  }));
+  settingsState.values = {};
+  settingsState.errors = {};
+  for (const [path, r] of results) {
+    if (r.error) settingsState.errors[path] = r.error;
+    else settingsState.values[path] = r.value;
+  }
+  settingsState.loaded = true;
+}
+
+function settingsHtml() {
+  if (!MGMT_KEY()) {
+    return `<div class="setgroup"><div class="setgroup-head">Management access</div>
+      <div class="note" style="padding:0 0 10px">These settings are served by the gateway's management API, which needs the management password.</div>
+      <div class="setrow"><label class="setlabel" for="mgmtKey">Management password</label>
+        <input class="search" id="mgmtKey" type="password" style="width:230px" placeholder="MANAGEMENT_PASSWORD" />
+        <button type="button" class="btn" id="mgmtSave">Connect</button></div></div>`;
+  }
+  if (!settingsState.loaded) return `<div class="empty">Loading settings...</div>`;
+
+  const unreachable = Object.keys(settingsState.errors).length;
+  const head = unreachable === SETTINGS_FIELDS.flatMap(g => g.items).length
+    ? `<div class="banner">Management API unreachable or rejected the password. <button type="button" class="btn" id="mgmtForget" style="margin-left:8px">Change password</button></div>`
+    : "";
+  const notice = settingsState.notice
+    ? `<div class="savenote ${settingsState.notice.bad ? "bad" : "ok"}">${esc(settingsState.notice.text)}</div>` : "";
+
+  const groups = SETTINGS_FIELDS.map(g => {
+    const rows = g.items.map(f => {
+      const err = settingsState.errors[f.path];
+      const value = settingsState.values[f.path];
+      const control = err
+        ? `<span class="setfail">${esc(err)}</span>`
+        : f.kind === "bool"
+          ? `<input type="checkbox" data-set="${f.path}" ${value ? "checked" : ""} />`
+          : `<input class="search" style="width:220px" data-set="${f.path}"
+               data-kind="${f.kind}" value="${esc(value ?? "")}" />`;
+      return `<div class="setrow">
+        <label class="setlabel">${esc(f.label)}${f.hint ? `<span class="sethint">${esc(f.hint)}</span>` : ""}</label>
+        ${control}</div>`;
+    }).join("");
+    return `<div class="setgroup"><div class="setgroup-head">${esc(g.group)}</div>${rows}</div>`;
+  }).join("");
+
+  return head + notice + groups + `<div class="note" style="padding:12px 0 0">
+    Changes are written to the gateway's config file immediately.</div>`;
+}
+
+async function writeSetting(path, value) {
+  settingsState.notice = null;
+  try {
+    await mgmt(path, "PUT", { value });
+    settingsState.values[path] = value;
+    settingsState.notice = { text: "Saved." };
+  } catch (e) {
+    settingsState.notice = { text: e.message, bad: true };
+    await loadSettings();
+  }
+  render();
 }
 
 function windowLabel(b) {
@@ -317,15 +456,20 @@ function accountCard(a) {
   return `<div class="acct">${head}${body}</div>`;
 }
 
+/* Settings must stay reachable when the quota fetch fails: an unreachable or
+   unauthenticated relay is exactly when a user needs to correct the settings.
+   Rendering therefore proceeds with no account data rather than returning
+   early, which previously left the whole window blank. */
 function render() {
-  if (!data) return;
-  const accounts = data.accounts || [];
+  const accounts = (data && data.accounts) || [];
   const byProv = groupByProvider(accounts);
 
   const navItems = [`<button type="button" data-view="quota" ${view === "quota" ? 'aria-current="page"' : ""}>
       <span class="ico">${ICO.quota}</span><span>Quota</span><span class="n">${accounts.length}</span></button>`,
     `<button type="button" data-view="table" ${view === "table" ? 'aria-current="page"' : ""}>
       <span class="ico">${ICO.all}</span><span>All accounts</span></button>`,
+    `<button type="button" data-view="settings" ${view === "settings" ? 'aria-current="page"' : ""}>
+      <span class="ico">${ICO.cog}</span><span>Settings</span></button>`,
     `<div class="nav-label">Providers</div>`];
   for (const [p, list] of byProv) {
     const bad = list.filter(a => healthClass(a.health) !== "ok").length;
@@ -338,19 +482,25 @@ function render() {
   document.getElementById("nav").innerHTML = navItems.join("");
   document.getElementById("nav").onclick = e => {
     const b = e.target.closest("button[data-view]");
-    if (b) { view = b.dataset.view; render(); }
+    if (!b) return;
+    view = b.dataset.view;
+    render();
+    if (view === "settings" && MGMT_KEY() && !settingsState.loaded) {
+      loadSettings().then(render);
+    }
   };
 
   const selProv = view.startsWith("p:") ? view.slice(2) : null;
   document.getElementById("title").innerHTML = selProv
     ? `${brandIcon(selProv, 19)}${provLabel(selProv)} <span class="sub">${(byProv.find(x => x[0] === selProv) || [0, []])[1].length} accounts</span>`
-    : view === "table" ? "All accounts" : "Quota";
+    : view === "table" ? "All accounts" : view === "settings" ? "Settings" : "Quota";
 
   const withQuota = accounts.filter(a => quotaRows(a.usage).length).length;
   document.getElementById("strip").innerHTML = [
     ["Providers", byProv.length], ["Accounts", accounts.length],
-    ["Quota known", `${withQuota}/${accounts.length}`], ["Served", data.served ?? 0],
-    ["Failover", data.failed_over ?? 0], ["Uptime", Math.floor((data.uptime_secs ?? 0) / 60) + "m"],
+    ["Quota known", `${withQuota}/${accounts.length}`], ["Served", (data && data.served) ?? 0],
+    ["Failover", (data && data.failed_over) ?? 0],
+    ["Uptime", Math.floor(((data && data.uptime_secs) ?? 0) / 60) + "m"],
   ].map(([k, v]) => `<span><span class="k">${k}</span><span class="v">${v}</span></span>`).join("");
 
   const degraded = accounts.filter(a => healthClass(a.health) === "bad").length;
@@ -361,7 +511,44 @@ function render() {
   const match = a => !q || a.id.toLowerCase().includes(q) || String(a.provider || "").toLowerCase().includes(q);
   const body = document.getElementById("body");
 
-  if (view === "table") {
+  if (view === "settings") {
+    body.innerHTML = settingsHtml();
+    const save = document.getElementById("mgmtSave");
+    if (save) {
+      const input = document.getElementById("mgmtKey");
+      const connect = async () => {
+        localStorage.setItem("quotio.mgmt", input.value);
+        settingsState.loaded = false;
+        render();
+        await loadSettings();
+        render();
+      };
+      save.onclick = connect;
+      input.onkeydown = e => { if (e.key === "Enter") connect(); };
+    }
+    const forget = document.getElementById("mgmtForget");
+    if (forget) forget.onclick = () => {
+      localStorage.removeItem("quotio.mgmt");
+      settingsState = { loaded: false, values: {}, errors: {}, notice: null };
+      render();
+    };
+    body.querySelectorAll("[data-set]").forEach(el => {
+      if (el.type === "checkbox") {
+        el.onchange = () => writeSetting(el.dataset.set, el.checked);
+      } else {
+        el.onchange = () => {
+          const raw = el.value.trim();
+          const value = el.dataset.kind === "number" ? Number(raw) : raw;
+          if (el.dataset.kind === "number" && !Number.isFinite(value)) {
+            settingsState.notice = { text: "Not a number.", bad: true };
+            render();
+            return;
+          }
+          writeSetting(el.dataset.set, value);
+        };
+      }
+    });
+  } else if (view === "table") {
     const rows = accounts.filter(match);
     body.innerHTML = rows.length ? `<table class="acctbl">
       <thead><tr><th>Provider</th><th>Account</th><th>Plan</th><th>Health</th><th>OK</th><th>Fail</th><th>p50</th></tr></thead>
@@ -402,7 +589,7 @@ function render() {
     catch { w.textContent = "Warm"; w.disabled = false; }
   };
 
-  const up = data.uptime_secs != null;
+  const up = data != null && data.uptime_secs != null;
   document.getElementById("proxyDot").style.background = up ? "var(--ok)" : "var(--bad)";
   document.getElementById("proxyVal").textContent = BASE.replace(/^https?:\/\//, "") + (up ? " · Running" : " · Down");
 }
