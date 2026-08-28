@@ -1,7 +1,13 @@
-use quotio_providers::{antigravity_stream_url, ANTIGRAVITY_UPSTREAM_BASE, UPSTREAM_BASE};
+use quotio_providers::{
+    antigravity_count_tokens_url, antigravity_stream_url, ANTIGRAVITY_UPSTREAM_BASE, UPSTREAM_BASE,
+};
 
 pub fn build_antigravity_url(upstream_override: Option<&str>) -> String {
     antigravity_stream_url(upstream_override.unwrap_or(ANTIGRAVITY_UPSTREAM_BASE))
+}
+
+pub fn build_antigravity_count_tokens_url(upstream_override: Option<&str>) -> String {
+    antigravity_count_tokens_url(upstream_override.unwrap_or(ANTIGRAVITY_UPSTREAM_BASE))
 }
 
 pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> String {

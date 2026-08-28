@@ -466,20 +466,21 @@ pub async fn v1beta_action(
             .await
         }
         GeminiAction::CountTokens => {
-            let chars: usize = parsed
-                .get("contents")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|c| c.get("parts").and_then(Value::as_array))
-                        .flatten()
-                        .filter_map(|p| p.get("text").and_then(Value::as_str))
-                        .map(str::len)
-                        .sum()
-                })
-                .unwrap_or(0);
-            Json(json!({ "totalTokens": chars.div_ceil(4).max(1) })).into_response()
+            if !parsed.get("contents").map(Value::is_array).unwrap_or(false) {
+                return json_status(StatusCode::BAD_REQUEST, v1beta::contents_not_specified());
+            }
+            let mut req = parsed.clone();
+            if let Some(obj) = req.as_object_mut() {
+                obj.insert("model".into(), json!(model));
+            }
+            handle_relay(
+                state,
+                RelayMode::GeminiCountTokens,
+                "/v1beta/models",
+                &headers,
+                Bytes::from(req.to_string()),
+            )
+            .await
         }
         GeminiAction::Unknown(verb) => json_status(
             StatusCode::BAD_REQUEST,

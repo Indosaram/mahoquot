@@ -29,6 +29,125 @@ fn usage_value(usage: &Usage) -> Value {
     })
 }
 
+/// Gemini-native SSE. CP streams upstream-shaped frames here rather than
+/// OpenAI chunks: every frame carries `candidates`/`modelVersion`/`responseId`,
+/// usage rides on the terminal frame, and the stream ends without `[DONE]`.
+pub struct GeminiChunkRenderer {
+    id: String,
+    model: String,
+    terminated: bool,
+    /// CP repeats the same final usage on every frame, including the first, but
+    /// upstream only reports totals at completion. Frames are therefore held
+    /// until usage is known and flushed together.
+    pending: Vec<Value>,
+}
+
+impl GeminiChunkRenderer {
+    pub fn new(model: String, created: i64) -> Self {
+        Self {
+            id: format!("resp-{created}"),
+            model,
+            terminated: false,
+            pending: Vec::new(),
+        }
+    }
+
+    pub fn terminated(&self) -> bool {
+        self.terminated
+    }
+
+    fn candidate(parts: Value, finish: Option<&str>) -> Value {
+        let mut candidate = json!({"content": {"role": "model", "parts": parts}});
+        if let Some(reason) = finish {
+            candidate["finishReason"] = Value::String(reason.to_string());
+            candidate["index"] = json!(0);
+        }
+        candidate
+    }
+
+    fn flush(&mut self, usage: Option<&Usage>) -> Vec<Bytes> {
+        let usage_meta = usage.map(|u| {
+            json!({
+                "promptTokenCount": u.prompt_tokens,
+                "candidatesTokenCount": u.completion_tokens,
+                "totalTokenCount": u.total_tokens,
+                "thoughtsTokenCount": u.reasoning_tokens,
+            })
+        });
+        self.pending
+            .drain(..)
+            .map(|candidate| {
+                let mut payload = json!({
+                    "candidates": [candidate],
+                    "modelVersion": self.model,
+                    "responseId": self.id,
+                });
+                if let Some(meta) = usage_meta.clone() {
+                    payload["usageMetadata"] = meta;
+                }
+                frame(&payload)
+            })
+            .collect()
+    }
+
+    pub fn render(&mut self, event: CodexEvent) -> Vec<Bytes> {
+        match event {
+            CodexEvent::Created { response_id } => {
+                if !response_id.is_empty() {
+                    self.id = response_id;
+                }
+                Vec::new()
+            }
+            CodexEvent::TextDelta(text) => {
+                self.pending
+                    .push(Self::candidate(json!([{"text": text}]), None));
+                Vec::new()
+            }
+            CodexEvent::ReasoningSignature(sig) => {
+                self.pending
+                    .push(Self::candidate(json!([{"thoughtSignature": sig}]), None));
+                Vec::new()
+            }
+            CodexEvent::Completed { usage } => {
+                self.terminated = true;
+                if let Some(last) = self.pending.last_mut() {
+                    last["finishReason"] = Value::String("STOP".into());
+                    last["index"] = json!(0);
+                } else {
+                    self.pending
+                        .push(Self::candidate(json!([{"text": ""}]), Some("STOP")));
+                }
+                self.flush(usage.as_ref())
+            }
+            CodexEvent::Failed { message } => {
+                self.terminated = true;
+                self.pending.clear();
+                vec![frame(&json!({
+                    "error": {"code": 500, "message": message, "status": "INTERNAL"},
+                }))]
+            }
+            // Gemini streams tool calls as functionCall parts, which this pool's
+            // upstream does not emit on this route; nothing to render.
+            CodexEvent::ToolCallBegin { .. } | CodexEvent::ToolArgsDelta { .. } => Vec::new(),
+        }
+    }
+
+    pub fn close_unterminated(&mut self) -> Vec<Bytes> {
+        if self.terminated {
+            return Vec::new();
+        }
+        self.terminated = true;
+        if let Some(last) = self.pending.last_mut() {
+            last["finishReason"] = Value::String("STOP".into());
+            last["index"] = json!(0);
+        } else {
+            self.pending
+                .push(Self::candidate(json!([{"text": ""}]), Some("STOP")));
+        }
+        self.flush(None)
+    }
+}
+
 pub struct ChunkRenderer {
     id: String,
     model: String,
@@ -333,5 +452,88 @@ impl Aggregator {
             payload["usage"] = usage_value(usage);
         }
         payload
+    }
+}
+
+#[cfg(test)]
+mod gemini_stream_tests {
+    use super::*;
+
+    fn payloads(frames: Vec<Bytes>) -> Vec<Value> {
+        frames
+            .iter()
+            .filter_map(|f| {
+                let text = String::from_utf8_lossy(f);
+                let body = text.strip_prefix("data: ")?.trim();
+                serde_json::from_str(body).ok()
+            })
+            .collect()
+    }
+
+    fn usage() -> Usage {
+        Usage {
+            prompt_tokens: 5,
+            completion_tokens: 1,
+            total_tokens: 92,
+            cached_tokens: 0,
+            reasoning_tokens: 86,
+        }
+    }
+
+    // CP repeats the final usageMetadata on every frame, including the first.
+    #[test]
+    fn every_frame_carries_usage_metadata() {
+        let mut r = GeminiChunkRenderer::new("gemini-3-flash".into(), 1);
+        assert!(r.render(CodexEvent::TextDelta("OK".into())).is_empty());
+        let out = payloads(r.render(CodexEvent::Completed {
+            usage: Some(usage()),
+        }));
+        assert_eq!(out.len(), 1);
+        for frame in &out {
+            assert_eq!(frame["usageMetadata"]["promptTokenCount"], 5);
+            assert_eq!(frame["usageMetadata"]["thoughtsTokenCount"], 86);
+            assert_eq!(frame["modelVersion"], "gemini-3-flash");
+            assert!(frame.get("responseId").is_some());
+            assert!(frame.get("choices").is_none());
+        }
+    }
+
+    #[test]
+    fn terminal_frame_sets_stop_and_stream_has_no_done_sentinel() {
+        let mut r = GeminiChunkRenderer::new("gemini-3-flash".into(), 1);
+        r.render(CodexEvent::TextDelta("a".into()));
+        r.render(CodexEvent::TextDelta("b".into()));
+        let frames = r.render(CodexEvent::Completed {
+            usage: Some(usage()),
+        });
+        let rendered: Vec<String> = frames
+            .iter()
+            .map(|f| String::from_utf8_lossy(f).to_string())
+            .collect();
+        assert!(!rendered.iter().any(|f| f.contains("[DONE]")));
+        let out = payloads(frames);
+        assert_eq!(out.len(), 2);
+        assert!(out[0]["candidates"][0].get("finishReason").is_none());
+        assert_eq!(out[1]["candidates"][0]["finishReason"], "STOP");
+        assert!(r.terminated());
+    }
+
+    #[test]
+    fn reasoning_signature_is_emitted_as_thought_signature_part() {
+        let mut r = GeminiChunkRenderer::new("m".into(), 1);
+        r.render(CodexEvent::ReasoningSignature("SIG".into()));
+        let out = payloads(r.render(CodexEvent::Completed { usage: None }));
+        assert_eq!(out[0]["candidates"][0]["content"]["parts"][0]["thoughtSignature"], "SIG");
+    }
+
+    #[test]
+    fn created_event_overrides_response_id() {
+        let mut r = GeminiChunkRenderer::new("m".into(), 1);
+        r.render(CodexEvent::Created {
+            response_id: "resp-xyz".into(),
+        });
+        r.render(CodexEvent::TextDelta("x".into()));
+        let out = payloads(r.render(CodexEvent::Completed { usage: None }));
+        assert_eq!(out[0]["responseId"], "resp-xyz");
     }
 }

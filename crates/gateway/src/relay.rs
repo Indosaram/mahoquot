@@ -24,6 +24,9 @@ pub enum RelayMode {
     GeminiNative,
     /// Same upstream request as `OpenAiCompat`; only the reply envelope differs.
     LegacyCompletions,
+    /// Non-streaming Gemini token count; the upstream reply is passed through
+    /// verbatim so its `promptTokensDetails` reach the client unmodified.
+    GeminiCountTokens,
 }
 
 struct FinalFailure {
@@ -49,6 +52,30 @@ struct UpstreamTarget {
 }
 
 fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTarget, String> {
+    if plan.mode == RelayMode::GeminiCountTokens {
+        if member.kind() != crate::account::ProviderKind::Antigravity {
+            return Err("gemini-native requests need an antigravity account".to_string());
+        }
+        let mut gemini: serde_json::Value = serde_json::from_slice(&plan.body)
+            .map_err(|e| format!("invalid gemini request: {e}"))?;
+        // Probed against cloudcode-pa v1internal:countTokens: it accepts only
+        // {"request": GenerateContentRequest}. A bare body, a
+        // "generateContentRequest" key, or a sibling model/project field are
+        // all rejected as unknown fields.
+        if let Some(obj) = gemini.as_object_mut() {
+            obj.remove("model");
+            obj.remove("stream");
+        }
+        let wrapped = serde_json::json!({ "request": gemini });
+        return Ok(UpstreamTarget {
+            url: crate::url::build_antigravity_count_tokens_url(
+                member.upstream_override.as_deref(),
+            ),
+            body: Bytes::from(wrapped.to_string()),
+            protocol: compat::Protocol::Antigravity,
+        });
+    }
+
     if plan.mode == RelayMode::GeminiNative {
         // The client already speaks Gemini, so only the envelope is added.
         if member.kind() != crate::account::ProviderKind::Antigravity {
@@ -255,6 +282,15 @@ fn build_plan(
             include_usage: false,
             openai_body: None,
         }),
+        RelayMode::GeminiCountTokens => Ok(RelayPlan {
+            upstream_path: req_path.to_string(),
+            model: compat::extract_model(&body_bytes),
+            body: body_bytes,
+            mode,
+            client_stream: false,
+            include_usage: false,
+            openai_body: None,
+        }),
         RelayMode::Anthropic => {
             let anthropic: serde_json::Value = serde_json::from_slice(&body_bytes)
                 .map_err(|e| format!("invalid anthropic request: {e}"))?;
@@ -304,6 +340,14 @@ fn build_plan(
     }
 }
 
+fn reply_shape(mode: RelayMode) -> compat::ReplyShape {
+    match mode {
+        RelayMode::GeminiNative => compat::ReplyShape::Gemini,
+        RelayMode::LegacyCompletions => compat::ReplyShape::TextCompletion,
+        _ => compat::ReplyShape::Chat,
+    }
+}
+
 fn eligible_indices(state: &AppState, model: Option<&str>, now_ms: i64) -> Vec<usize> {
     state
         .members
@@ -315,9 +359,14 @@ fn eligible_indices(state: &AppState, model: Option<&str>, now_ms: i64) -> Vec<u
         .collect()
 }
 
-fn select_index(state: &AppState, hint: &SessionHint, model: Option<&str>) -> Option<usize> {
+fn select_index(
+    state: &AppState,
+    hint: &SessionHint,
+    model: Option<&str>,
+    require_model_support: bool,
+) -> Option<usize> {
     let restricted = state.model_restrictions.load(Ordering::Relaxed);
-    let Some(model) = model.filter(|_| restricted) else {
+    let Some(model) = model.filter(|_| restricted || require_model_support) else {
         return state.router.select(&state.pool_members, hint);
     };
 
@@ -373,7 +422,7 @@ async fn finish_success(
     let content_type = content_type_of(&resp);
     capture_usage(member, resp.headers());
 
-    if plan.mode == RelayMode::Native {
+    if plan.mode == RelayMode::Native || plan.mode == RelayMode::GeminiCountTokens {
         if content_type
             .as_deref()
             .is_some_and(|ct| ct.trim_start().starts_with("text/html"))
@@ -421,6 +470,7 @@ async fn finish_success(
             created,
             plan.include_usage,
             protocol,
+            reply_shape(plan.mode),
         );
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -433,12 +483,7 @@ async fn finish_success(
     }
 
     let raw = compat::collect_stream(first, stream).await?;
-    let shape = match plan.mode {
-        RelayMode::GeminiNative => compat::ReplyShape::Gemini,
-        RelayMode::LegacyCompletions => compat::ReplyShape::TextCompletion,
-        _ => compat::ReplyShape::Chat,
-    };
-    let completion = compat::aggregate(&raw, model, created, protocol, shape)?;
+    let completion = compat::aggregate(&raw, model, created, protocol, reply_shape(plan.mode))?;
     member.record_ok();
     state.metrics.served.fetch_add(1, Ordering::Relaxed);
     state.router.feedback(member.id(), Outcome::Success);
@@ -505,7 +550,18 @@ pub async fn handle_relay(
     };
 
     for _ in 0..max_attempts {
-        let chosen_idx = match select_index(&state, &hint, plan.model.as_deref()) {
+        // Gemini-native verbs only exist on antigravity, so the pool must be
+        // narrowed by model support even when restrictions are globally off.
+        let require_model_support = matches!(
+            plan.mode,
+            RelayMode::GeminiNative | RelayMode::GeminiCountTokens
+        );
+        let chosen_idx = match select_index(
+            &state,
+            &hint,
+            plan.model.as_deref(),
+            require_model_support,
+        ) {
             Some(idx) => idx,
             None => break,
         };

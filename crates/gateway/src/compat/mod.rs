@@ -13,7 +13,7 @@ use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 
 use events::{CodexEvent, SseParser};
-use render::{Aggregator, ChunkRenderer, DONE_FRAME};
+use render::{Aggregator, ChunkRenderer, GeminiChunkRenderer, DONE_FRAME};
 
 pub use claude::{anthropic_to_openai, estimate_input_tokens, messages_payload};
 pub use gemini::{openai_to_antigravity, GeminiDecoder};
@@ -119,9 +119,39 @@ impl ProtocolParser {
 struct TranslateState {
     upstream: UpstreamStream,
     parser: ProtocolParser,
-    renderer: ChunkRenderer,
+    renderer: StreamRenderer,
     pending: VecDeque<Bytes>,
     drained: bool,
+}
+
+/// Streaming surfaces differ per client protocol: OpenAI chunk objects versus
+/// Gemini `candidates` envelopes. Upstream parsing is shared.
+enum StreamRenderer {
+    OpenAi(Box<ChunkRenderer>),
+    Gemini(Box<GeminiChunkRenderer>),
+}
+
+impl StreamRenderer {
+    fn render(&mut self, event: CodexEvent) -> Vec<Bytes> {
+        match self {
+            Self::OpenAi(r) => r.render(event),
+            Self::Gemini(r) => r.render(event),
+        }
+    }
+
+    fn close_unterminated(&mut self) -> Vec<Bytes> {
+        match self {
+            Self::OpenAi(r) => r.close_unterminated(),
+            Self::Gemini(r) => r.close_unterminated(),
+        }
+    }
+
+    fn terminated(&self) -> bool {
+        match self {
+            Self::OpenAi(r) => r.terminated(),
+            Self::Gemini(r) => r.terminated(),
+        }
+    }
 }
 
 pub fn streaming_body(
@@ -131,11 +161,17 @@ pub fn streaming_body(
     created: i64,
     include_usage: bool,
     protocol: Protocol,
+    shape: ReplyShape,
 ) -> Body {
+    let renderer = if shape == ReplyShape::Gemini {
+        StreamRenderer::Gemini(Box::new(GeminiChunkRenderer::new(model, created)))
+    } else {
+        StreamRenderer::OpenAi(Box::new(ChunkRenderer::new(model, created, include_usage)))
+    };
     let mut state = TranslateState {
         upstream,
         parser: ProtocolParser::new(protocol),
-        renderer: ChunkRenderer::new(model, created, include_usage),
+        renderer,
         pending: VecDeque::new(),
         drained: false,
     };
@@ -181,7 +217,7 @@ pub fn streaming_body(
     }))
 }
 
-fn error_frames(renderer: &mut ChunkRenderer, message: &str) -> Vec<Bytes> {
+fn error_frames(renderer: &mut StreamRenderer, message: &str) -> Vec<Bytes> {
     if renderer.terminated() {
         return Vec::new();
     }

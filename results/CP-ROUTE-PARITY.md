@@ -139,3 +139,74 @@ python3 scripts/route_probe.py --target 127.0.0.1:18871:qkey  --out qt.json
 
 Captures used for this report: `/tmp/qcp2/cp_final2.json`,
 `/tmp/qmig/quotio_final2.json`.
+
+## Second audit pass (re-verification)
+
+The first pass compared status + body shape only. Re-auditing against the
+objective's explicitly enumerated `/v1beta/models/*action` list
+(`generateContent` / `streamGenerateContent` / `countTokens`) showed the probe
+suite only exercised `generateContent`. Probing the other two, plus response
+headers, found **four real defects** that a body-only comparison had hidden.
+
+### Oracle correctness
+
+`/Applications/Quotio.app/Contents/Resources/cli-proxy-api-plus` is **v6.9.28**
+and registers only 3 of the 44 routes, so measuring against it produced a
+meaningless 9/49. The oracle for every number in this document is the binary
+backing the live install:
+
+    ~/Library/Application Support/Quotio/proxy/upstream/current/CLIProxyAPI  (v7.2.140)
+
+Captures are committed next to this file as `cp-route-capture.json` and
+`quotio-route-capture.json` rather than left in `/tmp`.
+
+### Defects found and fixed
+
+1. **`countTokens` returned a fabricated number.** It estimated `chars / 4`
+   locally instead of asking upstream. Real tokenizer vs old estimate:
+   12 vs 16, 13 vs 7 (Korean), 50 vs 100. It only matched CP on short ASCII
+   strings by coincidence. Now relayed to
+   `cloudcode-pa v1internal:countTokens`, which accepts exactly
+   `{"request": GenerateContentRequest}` — a bare body, a
+   `generateContentRequest` key, and a sibling `model`/`project` field are all
+   rejected as unknown fields (probed directly).
+
+2. **`streamGenerateContent` streamed the wrong protocol.** It emitted OpenAI
+   `chat.completion.chunk` frames (`choices`/`delta`) plus a `[DONE]` sentinel.
+   CP streams Gemini frames: `candidates`/`modelVersion`/`responseId`/
+   `usageMetadata`, terminal `finishReason: STOP`, and no `[DONE]`. Added
+   `GeminiChunkRenderer`. CP repeats the same final usage on *every* frame
+   including the first, so frames are buffered until usage is known. This
+   buffering is reachable only via `ReplyShape::Gemini`; codex and OpenAI
+   streaming keep the original incremental renderer.
+
+3. **Gemini-native routes depended on rotation luck.** `select_index` skipped
+   model-based filtering whenever `model_restrictions` was off, so a Gemini
+   request could be dispatched to a codex account and fail with
+   "gemini-native requests need an antigravity account". These verbs exist only
+   on antigravity, so provider filtering is now unconditional for them.
+
+4. **No CORS headers on any route.** CP sets
+   `Access-Control-Allow-Origin/Methods/Headers` on every response and answers
+   `OPTIONS` with 204; quotio sent none, which breaks any browser client. Added
+   as middleware with CP's exact values.
+
+### Result after fixes
+
+**48/49 probes match** (44 routes). Verified with the v7.2.140 oracle and the
+same 8-credential pool. The only divergence is the pre-existing
+`codex_alpha_search` Cloudflare case documented above.
+
+### Measurement errors in the audit itself
+
+Three apparent failures were mine, not the product's, and are recorded so the
+numbers can be trusted:
+
+- `Content-Type: None` on Gemini responses — my probe read a capitalised header
+  key against quotio's lowercase headers. Raw socket dump confirms
+  `content-type: text/event-stream` is present.
+- `live_post` 404 vs 400 — the probe ran ~3s after oracle start, before route
+  registration completed. Three replays of the identical payload return 400 from
+  both proxies with byte-identical bodies.
+- A CP-side `auth_unavailable` run was caused by my copied auth dir carrying a
+  stale `expired` timestamp CP would not refresh, not by rate limiting.

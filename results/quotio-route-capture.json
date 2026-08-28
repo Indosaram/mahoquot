@@ -1,0 +1,296 @@
+{
+  "alpha_search": {
+    "body": "{\"error\":\"auth_not_found: no auth available\"}",
+    "method": "POST",
+    "path": "/v1/alpha/search",
+    "status": 503
+  },
+  "anthropic_callback": {
+    "body": "<html><head><meta charset=\"utf-8\"><title>Authentication successful</title><script>setTimeout(function(){window.close();},5000);</script></head><body><h1>Authentication successful!</h1><p>You can close this window.</p><p>This window will close automatically in 5 seconds.</p></body></html>",
+    "method": "GET",
+    "path": "/anthropic/callback?code=probe&state=probe",
+    "status": 200
+  },
+  "antigravity_callback": {
+    "body": "<html><head><meta charset=\"utf-8\"><title>Authentication successful</title><script>setTimeout(function(){window.close();},5000);</script></head><body><h1>Authentication successful!</h1><p>You can close this window.</p><p>This window will close automatically in 5 seconds.</p></body></html>",
+    "method": "GET",
+    "path": "/antigravity/callback?code=probe&state=probe",
+    "status": 200
+  },
+  "chat_completions": {
+    "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"Hello! How can I help you today?\",\"role\":\"assistant\"}}],\"created\":1787907690,\"id\":\"chatcmpl-a06RasGKIK3q2roPgpzBmAg\",\"model\":\"gemini-3.7-flash-high\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":9,\"completion_tokens_details\":{\"reasoning_tokens\":116},\"prompt_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":0},\"total_tok",
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "status": 200
+  },
+  "codex_alpha_search": {
+    "body": "{\n  \"error\": {\n    \"message\": \"Missing required parameter: 'id'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"id\",\n    \"code\": \"missing_required_parameter\"\n  }\n}",
+    "method": "POST",
+    "path": "/backend-api/codex/alpha/search",
+    "status": 400
+  },
+  "codex_callback": {
+    "body": "<html><head><meta charset=\"utf-8\"><title>Authentication successful</title><script>setTimeout(function(){window.close();},5000);</script></head><body><h1>Authentication successful!</h1><p>You can close this window.</p><p>This window will close automatically in 5 seconds.</p></body></html>",
+    "method": "GET",
+    "path": "/codex/callback?code=probe&state=probe",
+    "status": 200
+  },
+  "codex_responses_compact": {
+    "body": "{\"detail\":\"Not Found\"}",
+    "method": "POST",
+    "path": "/backend-api/codex/responses/compact",
+    "status": 404
+  },
+  "codex_responses_post": {
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_01745863c08bdfe8016a914e744ca087d09a52836a14dbcdbf\",\"object\":\"response\",\"created_at\":1787907700,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":\"Output only: OK\",\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.6-so",
+    "method": "POST",
+    "path": "/backend-api/codex/responses",
+    "status": 200
+  },
+  "codex_responses_ws": {
+    "body": "",
+    "method": "WS",
+    "path": "/backend-api/codex/responses",
+    "status": 101
+  },
+  "completions": {
+    "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"text\":\"Hello! How can I help you today?\"}],\"created\":1787907692,\"id\":\"chatcmpl-bU6RasWOIsil2roP_vqCqA8\",\"model\":\"gemini-3.7-flash-high\",\"object\":\"text_completion\",\"usage\":{\"completion_tokens\":9,\"completion_tokens_details\":{\"reasoning_tokens\":93},\"prompt_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":0},\"total_tokens\":104}}",
+    "method": "POST",
+    "path": "/v1/completions",
+    "status": 200
+  },
+  "count_tokens": {
+    "body": "{\"input_tokens\":1}",
+    "method": "POST",
+    "path": "/v1/messages/count_tokens",
+    "status": 200
+  },
+  "healthz": {
+    "body": "{\"status\":\"ok\"}",
+    "method": "GET",
+    "path": "/healthz",
+    "status": 200
+  },
+  "images_edits": {
+    "body": "{\"error\":{\"message\":\"Model gemini-3-pro-image-preview is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-1.5, gpt-image-2, grok-imagine-image, grok-imagine-image-quality, grok-imagine-image-2.0, or a configured openai-compatibility image model.\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/images/edits",
+    "status": 400
+  },
+  "images_generations": {
+    "body": "{\"error\":{\"message\":\"Model gemini-3-pro-image-preview is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-1.5, gpt-image-2, grok-imagine-image, grok-imagine-image-quality, grok-imagine-image-2.0, or a configured openai-compatibility image model.\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/images/generations",
+    "status": 400
+  },
+  "live_post": {
+    "body": "{\"detail\":\"Field `sdp` must be a string\"}",
+    "method": "POST",
+    "path": "/v1/live",
+    "status": 400
+  },
+  "live_sideband": {
+    "body": "{\"error\":\"WebSocket upgrade required\"}",
+    "method": "GET",
+    "path": "/v1/live/probe-call-id",
+    "status": 426
+  },
+  "management_html": {
+    "body": "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n<title>Quotio Usage</title>\n<style>\n  :root { color-scheme: dark; }\n  * { box-sizing: border-box; }\n  body { margin: 0; background: #0b0d10; color: #e6e9ef;\n         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 20px; }\n  h1 { font-size: ",
+    "method": "GET",
+    "path": "/management.html",
+    "status": 200
+  },
+  "messages": {
+    "body": "{\"content\":[{\"signature\":\"EuYECuMEARFNMg+zC6VWIfZUW+RTOtFdifvzDwOAd1QqRJsGW/uWX77DgPGwyrKKeD6XHeyMJOoHmPUHUdzgY07awGZ4tdAD+02WakFD5NIo4MxTGsxo+0HSSy17blpWs+IuFSfD1twnRdPE/BHvwyelgcnGhDiZEU6jE8GDoKsi+vqhj45PUDSTqu7tF+VIiH8GNk6QBY0oV+IPEedZU2VZDF35NfgpbEgegriqlMsYlvjJvymkE/UGTgW2gn8j5IwoTEg/MPv8jmdWkO8VkqUJlMo4QWo8kHxZrJuFzhuwL7LCi2ackgMEKfs8/PprIkFSLXjtCW6/5rZOQxLJgHyDG9PxFJ9tKT8U5qZv4yqKh3xYxq3Ku+",
+    "method": "POST",
+    "path": "/v1/messages",
+    "status": 200
+  },
+  "openai_videos_content": {
+    "body": "{\"error\":{\"code\":\"model_not_found\",\"message\":\"unknown provider for model grok-imagine-video\",\"param\":\"model\",\"type\":\"invalid_request_error\"}}",
+    "method": "GET",
+    "path": "/openai/v1/videos/probe-video-id/content",
+    "status": 400
+  },
+  "openai_videos_create": {
+    "body": "{\"error\":{\"code\":\"model_not_found\",\"message\":\"unknown provider for model grok-imagine-video\",\"param\":\"model\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/openai/v1/videos",
+    "status": 400
+  },
+  "openai_videos_retrieve": {
+    "body": "{\"error\":{\"code\":\"model_not_found\",\"message\":\"unknown provider for model grok-imagine-video\",\"param\":\"model\",\"type\":\"invalid_request_error\"}}",
+    "method": "GET",
+    "path": "/openai/v1/videos/probe-video-id",
+    "status": 400
+  },
+  "realtime_accept": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime SIP accept are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/calls/probe-call-id/accept",
+    "status": 501
+  },
+  "realtime_call_get": {
+    "body": "{\"error\":{\"code\":\"realtime_request_failed\",\"message\":\"WebSocket upgrade required\",\"param\":null,\"type\":\"invalid_request_error\"}}",
+    "method": "GET",
+    "path": "/v1/realtime/calls/probe-call-id",
+    "status": 426
+  },
+  "realtime_calls": {
+    "body": "{\"detail\":\"Field `sdp` must be a string\"}",
+    "method": "POST",
+    "path": "/v1/realtime/calls",
+    "status": 400
+  },
+  "realtime_client_secrets": {
+    "body": "{\"expires_at\":1787908298,\"session\":{\"expires_at\":1787908298,\"id\":\"sess_lvd7FgS3Rk10XNmJAtHqv-mJ\",\"model\":\"gpt-realtime\",\"object\":\"realtime.session\",\"type\":\"realtime\"},\"value\":\"ek_gSsU5LzaVX_dH6m-5KOclzU0750Vpw7pd-ZVtzN6N5w\"}",
+    "method": "POST",
+    "path": "/v1/realtime/client_secrets",
+    "status": 200
+  },
+  "realtime_hangup": {
+    "body": "{\"error\":{\"code\":\"realtime_call_not_found\",\"message\":\"Realtime call not found\",\"param\":null,\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/calls/probe-call-id/hangup",
+    "status": 404
+  },
+  "realtime_post": {
+    "body": "{\"detail\":\"Field `sdp` must be a string\"}",
+    "method": "POST",
+    "path": "/v1/realtime",
+    "status": 400
+  },
+  "realtime_refer": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime SIP refer are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/calls/probe-call-id/refer",
+    "status": 501
+  },
+  "realtime_reject": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime SIP reject are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/calls/probe-call-id/reject",
+    "status": 501
+  },
+  "realtime_sessions": {
+    "body": "{\"client_secret\":{\"expires_at\":1787908298,\"value\":\"ek_j8xUaqb0EAvmyIcnuygqPqiGNStxjJDy3cN8XZfXZ-c\"},\"expires_at\":1787908298,\"id\":\"sess_VjKfzRON5gdjmV6DQuRxrxFg\",\"model\":\"gemini-3.7-flash-high\",\"object\":\"realtime.session\",\"type\":\"realtime\"}",
+    "method": "POST",
+    "path": "/v1/realtime/sessions",
+    "status": 200
+  },
+  "realtime_transcription": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime transcription-only sessions are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/transcription_sessions",
+    "status": 501
+  },
+  "realtime_translations_get": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime translation sessions are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "GET",
+    "path": "/v1/realtime/translations",
+    "status": 501
+  },
+  "realtime_translations_post": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime translation sessions are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/translations",
+    "status": 501
+  },
+  "realtime_translations_secrets": {
+    "body": "{\"error\":{\"code\":\"realtime_capability_not_supported\",\"message\":\"Realtime translation sessions are not supported by the ChatGPT/Codex OAuth upstream\",\"param\":null,\"type\":\"not_supported_error\"}}",
+    "method": "POST",
+    "path": "/v1/realtime/translations/client_secrets",
+    "status": 501
+  },
+  "realtime_ws": {
+    "body": "",
+    "method": "WS",
+    "path": "/v1/realtime",
+    "status": 101
+  },
+  "responses_compact": {
+    "body": "{\"error\":{\"code\":\"internal_server_error\",\"message\":\"/responses/compact not supported\",\"type\":\"server_error\"}}",
+    "method": "POST",
+    "path": "/v1/responses/compact",
+    "status": 501
+  },
+  "responses_post": {
+    "body": "{\"background\":false,\"created_at\":1787907696,\"error\":null,\"id\":\"resp_chatcmpl-cU6RauZ59rPaug-VkZrhBQ\",\"incomplete_details\":null,\"model\":\"gemini-3.7-flash-high\",\"object\":\"response\",\"output\":[{\"content\":[{\"annotations\":[],\"text\":\"Hello! How can I help you today?\",\"type\":\"output_text\"}],\"id\":\"msg_0\",\"role\":\"assistant\",\"status\":\"completed\",\"type\":\"message\"}],\"parallel_tool_calls\":true,\"status\":\"complet",
+    "method": "POST",
+    "path": "/v1/responses",
+    "status": 200
+  },
+  "responses_ws": {
+    "body": "",
+    "method": "WS",
+    "path": "/v1/responses",
+    "status": 101
+  },
+  "root": {
+    "body": "{\"endpoints\":[\"POST /v1/chat/completions\",\"POST /v1/completions\",\"GET /v1/models\"],\"message\":\"CLI Proxy API Server\"}",
+    "method": "GET",
+    "path": "/",
+    "status": 200
+  },
+  "v1_models": {
+    "body": "{\"data\":[{\"created\":1787907690,\"id\":\"gpt-5.6-sol\",\"object\":\"model\",\"owned_by\":\"openai\"},{\"created\":1787907690,\"id\":\"gpt-5.6-luna\",\"object\":\"model\",\"owned_by\":\"openai\"},{\"created\":1787907690,\"id\":\"gpt-5.6-terra\",\"object\":\"model\",\"owned_by\":\"openai\"},{\"created\":1787907690,\"id\":\"gpt-5.5\",\"object\":\"model\",\"owned_by\":\"openai\"},{\"created\":1787907690,\"id\":\"gpt-5.4\",\"object\":\"model\",\"owned_by\":\"openai\"},{",
+    "method": "GET",
+    "path": "/v1/models",
+    "status": 200
+  },
+  "v1beta_generate": {
+    "body": "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello! How can I help you today?\",\"thoughtSignature\":\"EtAECs0EARFNMg94jDJwU088u9g13VeAAQvyYnsHk1QEGI82H8NuPEDA4sejASe95Pt1t2/z9zz3MEnLRxiVJKZFyREn1aOl8coTT15nrCIDH1Ha0B7scxohNvHRfltq8hAbueaRN9iT+fIbEog0iUX/ROCS5qZ3CE13Dq5L/9lU6HRfSk4wzm5y5ARJzP80ZhWI8r+pg83sZxZZvP6Rk3tK2eD2FU/xQYqi7BI9HeloyZO+oLWBA0NApIiPwT+7MZlPVk07NzbAbkW+172YtQarZBA8xCmaJekD7q6Bah2qB",
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.7-flash-high:generateContent",
+    "status": 200
+  },
+  "v1beta_interactions": {
+    "body": "{\"error\":{\"code\":400,\"message\":\"* GenerateContentRequest.contents: contents is not specified\\n\",\"status\":\"INVALID_ARGUMENT\"}}",
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "status": 400
+  },
+  "v1beta_model_get": {
+    "body": "{\"description\":\"gemini-3.7-flash-high\",\"displayName\":\"gemini-3.7-flash-high\",\"name\":\"models/gemini-3.7-flash-high\",\"supportedInputModalities\":[\"text\",\"image\",\"audio\",\"video\"],\"supportedOutputModalities\":[\"text\"]}",
+    "method": "GET",
+    "path": "/v1beta/models/gemini-3.7-flash-high",
+    "status": 200
+  },
+  "v1beta_models": {
+    "body": "{\"models\":[{\"description\":\"gpt-5.6-sol\",\"displayName\":\"gpt-5.6-sol\",\"name\":\"models/gpt-5.6-sol\",\"supportedGenerationMethods\":[\"generateContent\"],\"supportedInputModalities\":[\"text\",\"image\",\"audio\",\"video\"],\"supportedOutputModalities\":[\"text\"]},{\"description\":\"gpt-5.6-luna\",\"displayName\":\"gpt-5.6-luna\",\"name\":\"models/gpt-5.6-luna\",\"supportedGenerationMethods\":[\"generateContent\"],\"supportedInputModal",
+    "method": "GET",
+    "path": "/v1beta/models",
+    "status": 200
+  },
+  "videos": {
+    "body": "{\"error\":{\"message\":\"Model veo-3.1 is not supported on /v1/videos/generations, /v1/videos/edits, or /v1/videos/extensions. Use grok-imagine-video.\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/videos",
+    "status": 400
+  },
+  "videos_edits": {
+    "body": "{\"error\":{\"message\":\"Model veo-3.1 is not supported on /v1/videos/generations, /v1/videos/edits, or /v1/videos/extensions. Use grok-imagine-video.\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/videos/edits",
+    "status": 400
+  },
+  "videos_extensions": {
+    "body": "{\"error\":{\"message\":\"Model veo-3.1 is not supported on /v1/videos/generations, /v1/videos/edits, or /v1/videos/extensions. Use grok-imagine-video.\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/videos/extensions",
+    "status": 400
+  },
+  "videos_generations": {
+    "body": "{\"error\":{\"message\":\"Model veo-3.1 is not supported on /v1/videos/generations, /v1/videos/edits, or /v1/videos/extensions. Use grok-imagine-video.\",\"type\":\"invalid_request_error\"}}",
+    "method": "POST",
+    "path": "/v1/videos/generations",
+    "status": 400
+  },
+  "videos_retrieve": {
+    "body": "{\"error\":{\"code\":\"model_not_found\",\"message\":\"unknown provider for model grok-imagine-video\",\"param\":\"model\",\"type\":\"invalid_request_error\"}}",
+    "method": "GET",
+    "path": "/v1/videos/probe-request-id",
+    "status": 400
+  }
+}

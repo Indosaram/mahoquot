@@ -137,6 +137,16 @@ pub fn antigravity_stream_url(base: &str) -> String {
     )
 }
 
+/// Token counting is a separate upstream verb from generation, and it is not an
+/// SSE stream, so it cannot reuse `antigravity_stream_url`.
+pub fn antigravity_count_tokens_url(base: &str) -> String {
+    format!(
+        "{}/{}:countTokens",
+        base.trim_end_matches('/'),
+        ANTIGRAVITY_API_VERSION
+    )
+}
+
 pub fn derive_antigravity_slug_from_filename(file_name: &str) -> String {
     let without_prefix = file_name
         .strip_prefix("antigravity-")

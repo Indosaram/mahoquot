@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::middleware::from_fn_with_state;
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
+use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -124,7 +124,32 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/codex/callback", get(cp_routes::oauth_callback))
         .route("/antigravity/callback", get(cp_routes::oauth_callback))
         .merge(authed_routes)
+        .layer(from_fn(cors))
         .with_state(state)
+}
+
+/// CP answers every route with wildcard CORS and short-circuits preflight with
+/// 204, so browser clients pointed at either proxy behave identically.
+async fn cors(method: Method, req: axum::extract::Request, next: Next) -> Response {
+    let mut response = if method == Method::OPTIONS {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(req).await
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
+    response
 }
 
 async fn healthz_handler() -> impl IntoResponse {
