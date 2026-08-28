@@ -88,8 +88,17 @@ pub fn apply_refresh_to_file(
     let lr_str = lr_dt.to_rfc3339_opts(SecondsFormat::Secs, true);
     obj.insert("last_refresh".to_string(), Value::String(lr_str.clone()));
 
-    if obj.contains_key("timestamp") {
-        obj.insert("timestamp".to_string(), Value::String(lr_str));
+    // CLIProxyAPI writes `timestamp` as epoch millis for antigravity but as an
+    // RFC3339 string for codex; rewriting it with the wrong type makes the
+    // credential unloadable on the next start, so mirror whichever is there.
+    match obj.get("timestamp") {
+        Some(Value::Number(_)) => {
+            obj.insert("timestamp".to_string(), Value::Number((now_unix * 1000).into()));
+        }
+        Some(_) => {
+            obj.insert("timestamp".to_string(), Value::String(lr_str));
+        }
+        None => {}
     }
 
     let serialized =
@@ -196,11 +205,45 @@ mod tests {
         assert!(matches!(err, RefreshError::Parse(_)));
     }
 
+    fn refresh_preserves_numeric_timestamp_type(dir: &std::path::Path) {
+        let path = dir.join("antigravity-account.json");
+        std::fs::write(
+            &path,
+            r#"{"access_token":"old","refresh_token":"oldrt","expires_in":3599,
+                "timestamp":1787883220105,"email":"a@b.c","disabled":false}"#,
+        )
+        .unwrap();
+
+        let tokens = Tokens {
+            access_token: "new-at".to_string(),
+            refresh_token: Some("new-rt".to_string()),
+            id_token: None,
+            token_type: Some("bearer".to_string()),
+            expires_in: Some(3599),
+        };
+        let now_unix = 1750000000;
+        apply_refresh_to_file(&path, &tokens, now_unix).unwrap();
+
+        let val: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(
+            val["timestamp"].is_number(),
+            "antigravity timestamp must stay numeric or the credential fails to load: {}",
+            val["timestamp"]
+        );
+        assert_eq!(val["timestamp"], now_unix * 1000);
+
+        let reparsed = apply_refresh_to_file(&path, &tokens, now_unix + 10);
+        assert!(reparsed.is_ok(), "a refreshed file must refresh again cleanly");
+    }
+
     #[test]
     fn apply_refresh_to_file_round_trip() {
         let dir = std::env::temp_dir().join(format!("qprov-apply-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file_path = dir.join("codex-account.json");
+
+        refresh_preserves_numeric_timestamp_type(&dir);
 
         let initial_json = r#"{"access_token":"old","refresh_token":"oldrt","expired":"2020-01-01T00:00:00Z","last_refresh":"2019-01-01T00:00:00Z","project_id":"p1","disabled":false,"email":"a@b.c","type":"plus","expires_in":3600}"#;
         std::fs::write(&file_path, initial_json).unwrap();

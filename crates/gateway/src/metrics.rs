@@ -15,6 +15,7 @@ pub struct GatewayMetrics {
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountStats {
     pub id: String,
+    pub provider: String,
     pub health: HealthStats,
     pub ok: u64,
     pub fails: u64,

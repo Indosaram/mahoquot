@@ -5,6 +5,7 @@ members = [
     "crates/router",
     "crates/providers",
     "crates/gateway",
+    "crates/monitor-ui",
     "tools/bench",
 ]
 
