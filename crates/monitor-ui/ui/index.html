@@ -146,12 +146,15 @@
 </div>
 
 <script>
-// When served by the gateway itself (embedded /management.html), talk to the
-// same origin with relative paths (BASE = ""). In the Tauri shell there is no
-// origin of our own, so fall back to the local gateway default unless the user
-// stored an explicit quotio.base.
+// One page, two surfaces. Served by the gateway itself (embedded
+// /management.html) we talk to the same origin with relative paths, so no port
+// is baked in. Inside the Tauri shell the page has no origin of its own, so it
+// addresses the local gateway directly -- which the app CSP allows via
+// connect-src. Detect the shell by its injected global rather than by URL
+// scheme, because that scheme differs per platform (tauri:// vs http://).
+const IN_TAURI = typeof window.__TAURI__ !== "undefined";
 const BASE = localStorage.getItem("quotio.base") ??
-  ((location.protocol === "http:" || location.protocol === "https:") ? "" : "http://127.0.0.1:18871");
+  (IN_TAURI ? "http://127.0.0.1:18871" : "");
 const KEY  = localStorage.getItem("quotio.key")  || "qkey";
 
 /* Real brand marks. Paths are the vendors' own logo geometry, not generic
