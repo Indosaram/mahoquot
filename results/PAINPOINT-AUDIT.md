@@ -11,7 +11,7 @@ Rust implementation with live evidence. Verified 2026-08-28 against the migrated
 | 3 | codex reset impossible from app | **Fixed** | live reset on `ab53e014`: credits 1→0, 5h usage 16%→0% |
 | 4 | cannot add providers freely | **Already OK** | compiler-measured: 2 files to add a variant |
 | 5 | usage query | **Fixed** | `/admin/usage` from `wham/usage`, 5/5 codex accounts |
-| 6 | kiro not working | **Not implemented** | no kiro provider exists in this repo |
+| 6 | kiro not working | **Not implemented** | blocked: no kiro credentials exist; AGPL upstream |
 
 ## 1. Warm-up on all providers
 
@@ -118,16 +118,30 @@ The user's example (`/v1/usage/self` on an Anthropic-compatible proxy) is the
 same shape: one authenticated GET returning per-account quota. This is the
 provider-native equivalent for the accounts actually in the pool.
 
-## 6. Kiro — not implemented
+## 6. Kiro — not implemented, and blocked on inputs
 
-No kiro provider exists in this repo. `minpeter/kiro-lb` is a full gateway for a
-different upstream (AWS CodeWhisperer/Kiro), requiring its own auth, model
-registry, and translation layer — comparable in size to the antigravity provider,
-not a small addition.
+**Pain point 6 is not addressed.** Stating the blockers rather than deferring:
 
-Stating this plainly: **pain point 6 is not addressed.** No credentials for it
-exist in the migrated pool either, so it could not have been verified live even
-if stubbed.
+1. **No credentials exist anywhere.** Searched the live CP dir, the migrated
+   pool, and Quotio's own application-support dir: zero kiro credentials.
+   Live CP's providers are `antigravity`, `codex`, and a `kimi-device-id` file
+   (a device id, not an account). So kiro could not be verified live even if
+   implemented — and this project's standard for "done" on every other pain
+   point has been live verification against a real account.
+2. **It is a different upstream, not a variant.** `minpeter/kiro-lb` is an
+   OpenAI/Anthropic-compatible gateway for Kiro (Amazon Q Developer /
+   CodeWhisperer): separate AWS SSO auth, model registry, and translation layer.
+   That is a provider of the same magnitude as antigravity, not an increment.
+3. **Licensing needs a decision.** kiro-lb is **AGPL-3.0** (derived from
+   `jwadow/kiro-gateway`). Porting its logic into this tree would raise a
+   licensing question that is the user's call, not mine to make silently.
+
+What is *not* a blocker: provider extensibility. Per pain point 4, adding a
+variant costs edits in 2 files, so the architecture is ready for kiro once
+credentials and a licensing decision exist.
+
+Recommended next step: obtain one kiro credential and confirm whether a
+clean-room implementation is required, or whether AGPL is acceptable.
 
 ## Gates
 
