@@ -19,6 +19,7 @@ use crate::url::build_target_url;
 pub enum RelayMode {
     Native,
     OpenAiCompat,
+    Anthropic,
 }
 
 struct FinalFailure {
@@ -222,6 +223,23 @@ fn build_plan(
             include_usage: false,
             openai_body: None,
         }),
+        RelayMode::Anthropic => {
+            let anthropic: serde_json::Value = serde_json::from_slice(&body_bytes)
+                .map_err(|e| format!("invalid anthropic request: {e}"))?;
+            let openai = compat::anthropic_to_openai(&anthropic)?;
+            let openai_bytes = Bytes::from(openai.to_string());
+            let translated =
+                compat::openai_to_codex(&openai_bytes).map_err(|e| e.to_string())?;
+            Ok(RelayPlan {
+                upstream_path: compat::CODEX_PATH.to_string(),
+                body: Bytes::from(translated.body),
+                model: Some(translated.model),
+                mode,
+                client_stream: translated.stream,
+                include_usage: translated.include_usage,
+                openai_body: Some(openai),
+            })
+        }
         RelayMode::OpenAiCompat => match compat::openai_to_codex(&body_bytes) {
             Ok(translated) => Ok(RelayPlan {
                 upstream_path: compat::CODEX_PATH.to_string(),
@@ -301,6 +319,20 @@ async fn finish_success(
 
     let (first, stream) = compat::open_stream(resp).await?;
     let model = plan.model.clone().unwrap_or_default();
+
+    if plan.mode == RelayMode::Anthropic {
+        let raw = compat::collect_stream(first, stream).await?;
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
+        return Ok(compat::anthropic_response(
+            &raw,
+            &model,
+            created,
+            protocol,
+            plan.client_stream,
+        ));
+    }
 
     if plan.client_stream {
         member.record_ok();

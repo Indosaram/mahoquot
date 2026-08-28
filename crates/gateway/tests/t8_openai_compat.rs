@@ -116,7 +116,7 @@ async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
         max_failover: 3,
         log_level: "warn".to_string(),
         api_keys: quotio_gateway::inbound::ApiKeys::default(),
-        models: quotio_gateway::models_route::model_ids_from_env(None),
+        models_env: None,
         refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: false,
     };

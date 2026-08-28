@@ -1,3 +1,4 @@
+pub mod claude;
 pub mod events;
 pub mod gemini;
 pub mod render;
@@ -14,6 +15,7 @@ use serde_json::{json, Value};
 use events::{CodexEvent, SseParser};
 use render::{Aggregator, ChunkRenderer, DONE_FRAME};
 
+pub use claude::{anthropic_to_openai, estimate_input_tokens, messages_payload};
 pub use gemini::{openai_to_antigravity, GeminiDecoder};
 pub use request::{extract_model, openai_to_codex, TranslateError, TranslatedRequest};
 
@@ -207,6 +209,75 @@ pub fn aggregate(
         Some(message) => Err(message.to_string()),
         None => Ok(aggregator.into_completion()),
     }
+}
+
+pub fn anthropic_response(
+    raw: &[u8],
+    model: &str,
+    created: i64,
+    protocol: Protocol,
+    stream: bool,
+) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+
+    let mut parser = ProtocolParser::new(protocol);
+    let mut events = Vec::new();
+    parser.push(raw, &mut events);
+    parser.finish(&mut events);
+
+    let id = format!("msg_{created}");
+
+    if stream {
+        let (frames, _) = claude::render_anthropic_stream(&events, &id, model);
+        let body = frames.concat();
+        return (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/event-stream"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            body,
+        )
+            .into_response();
+    }
+
+    let mut text = String::new();
+    let mut usage: Option<events::Usage> = None;
+    let mut tool_calls: Vec<(String, String, String)> = Vec::new();
+    let mut finish = "stop";
+
+    for event in events {
+        match event {
+            CodexEvent::TextDelta(t) => text.push_str(&t),
+            CodexEvent::Completed { usage: u } => usage = u,
+            CodexEvent::ToolCallBegin { call_id, name, .. } => {
+                finish = "tool_calls";
+                tool_calls.push((call_id, name, String::new()));
+            }
+            CodexEvent::ToolArgsDelta { delta, .. } => {
+                if let Some(last) = tool_calls.last_mut() {
+                    last.2.push_str(&delta);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let payload = claude::messages_payload(
+        &id,
+        model,
+        &text,
+        &tool_calls,
+        finish,
+        usage.as_ref(),
+    );
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        payload.to_string(),
+    )
+        .into_response()
 }
 
 pub fn error_stream_body(message: &str) -> Body {

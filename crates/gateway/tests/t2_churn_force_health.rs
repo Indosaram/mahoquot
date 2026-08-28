@@ -60,7 +60,7 @@ async fn test_t2_churn_via_force_health() {
         max_failover: 3,
         log_level: "info".to_string(),
         api_keys: quotio_gateway::inbound::ApiKeys::default(),
-        models: quotio_gateway::models_route::model_ids_from_env(None),
+        models_env: None,
         refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: true,
     };

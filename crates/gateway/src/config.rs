@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use quotio_types::Strategy;
 
 use crate::inbound::ApiKeys;
-use crate::models_route::model_ids_from_env;
+
 
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -13,7 +13,7 @@ pub struct GatewayConfig {
     pub max_failover: usize,
     pub log_level: String,
     pub api_keys: ApiKeys,
-    pub models: Vec<String>,
+    pub models_env: Option<String>,
     pub refresh_url: String,
     pub auth_refresh_enabled: bool,
 }
@@ -46,7 +46,7 @@ impl GatewayConfig {
             Err(_) => ApiKeys::default(),
         };
 
-        let models = model_ids_from_env(std::env::var("MODELS").ok().as_deref());
+        let models_env = std::env::var("MODELS").ok();
 
         let refresh_url = std::env::var("REFRESH_URL")
             .unwrap_or_else(|_| quotio_providers::refresh::REFRESH_TOKEN_URL.to_string());
@@ -61,7 +61,7 @@ impl GatewayConfig {
             max_failover,
             log_level,
             api_keys,
-            models,
+            models_env,
             refresh_url,
             auth_refresh_enabled,
         })

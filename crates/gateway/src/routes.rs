@@ -23,6 +23,9 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/models", get(models_handler))
         .route("/admin/stats", get(admin_stats_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
+        .route("/v1/completions", post(completions_handler))
+        .route("/v1/messages", post(messages_handler))
+        .route("/v1/messages/count_tokens", post(count_tokens_handler))
         .route(
             "/backend-api/codex/responses",
             post(codex_responses_handler),
@@ -92,6 +95,86 @@ async fn chat_completions_handler(
         "/v1/chat/completions",
         &headers,
         body,
+    )
+    .await
+}
+
+async fn messages_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    handle_relay(state, RelayMode::Anthropic, "/v1/messages", &headers, body).await
+}
+
+async fn count_tokens_handler(body: Bytes) -> Response {
+    let parsed: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "type": "error",
+                    "error": { "type": "invalid_request_error", "message": e.to_string() }
+                })),
+            )
+                .into_response()
+        }
+    };
+    Json(serde_json::json!({
+        "input_tokens": crate::compat::estimate_input_tokens(&parsed)
+    }))
+    .into_response()
+}
+
+/// Legacy text-completions clients send `prompt`; lift it into the chat shape
+/// so one relay path serves both surfaces.
+async fn completions_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let parsed: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+            )
+                .into_response()
+        }
+    };
+
+    let prompt = parsed
+        .get("prompt")
+        .and_then(|p| match p {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|i| i.as_str())
+                    .collect::<Vec<_>>()
+                    .join(""),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let mut chat = parsed.clone();
+    if let Some(obj) = chat.as_object_mut() {
+        obj.remove("prompt");
+        obj.insert(
+            "messages".to_string(),
+            serde_json::json!([{ "role": "user", "content": prompt }]),
+        );
+    }
+
+    handle_relay(
+        state,
+        RelayMode::OpenAiCompat,
+        "/v1/chat/completions",
+        &headers,
+        Bytes::from(chat.to_string()),
     )
     .await
 }

@@ -5,10 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use quotio_router::Router;
 use quotio_types::{Health, PoolMember};
 
-use crate::account::{load_account_members, AccountMember};
+use crate::account::{load_account_members, AccountMember, ProviderKind};
 use crate::config::GatewayConfig;
 use crate::inbound::ApiKeys;
 use crate::metrics::{AdminStatsResponse, GatewayMetrics};
+use crate::models_route::{model_entries, ModelEntry};
 use crate::monitor::MonitorState;
 
 pub struct AppState {
@@ -19,7 +20,7 @@ pub struct AppState {
     pub metrics: Arc<GatewayMetrics>,
     pub monitor: Arc<MonitorState>,
     pub api_keys: Arc<ApiKeys>,
-    pub models: Vec<String>,
+    pub models: Vec<ModelEntry>,
     pub refresh_url: String,
     pub auth_refresh_enabled: bool,
     pub refreshed: AtomicU64,
@@ -44,7 +45,11 @@ impl AppState {
         let metrics = Arc::new(GatewayMetrics::default());
         let monitor = Arc::new(MonitorState::default());
         let api_keys = Arc::new(config.api_keys.clone());
-        let models = config.models.clone();
+        let has_codex = members.iter().any(|m| m.kind() == ProviderKind::Codex);
+        let has_antigravity = members
+            .iter()
+            .any(|m| m.kind() == ProviderKind::Antigravity);
+        let models = model_entries(has_codex, has_antigravity, config.models_env.as_deref());
         let refresh_url = config.refresh_url.clone();
         let auth_refresh_enabled = config.auth_refresh_enabled;
 

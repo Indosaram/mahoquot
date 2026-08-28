@@ -105,12 +105,18 @@ async fn test_inbound_auth_cases() {
     assert!(empty_keys.is_empty());
     assert!(!empty_keys.accepts("a"));
 
-    // (h) models_payload(&["m1".into()], 42) and model_ids_from_env
-    let payload = models_payload(&["m1".to_string()], 42);
+    // (h) models_payload and model_ids_from_env
+    let payload = models_payload(
+        &[quotio_gateway::models_route::ModelEntry {
+            id: "m1".to_string(),
+            owned_by: "openai".to_string(),
+        }],
+        42,
+    );
     assert_eq!(payload["object"], "list");
     assert_eq!(payload["data"][0]["id"], "m1");
     assert_eq!(payload["data"][0]["created"], 42);
-    assert_eq!(payload["data"][0]["owned_by"], "quotio");
+    assert_eq!(payload["data"][0]["owned_by"], "openai");
 
     let defaults = model_ids_from_env(None);
     assert_eq!(
@@ -142,7 +148,7 @@ async fn test_inbound_auth_cases() {
         max_failover: 3,
         log_level: "info".to_string(),
         api_keys: ApiKeys::from_env_value("secret_key"),
-        models: model_ids_from_env(None),
+        models_env: None,
         refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: true,
     };

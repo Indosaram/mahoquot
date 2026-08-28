@@ -166,7 +166,7 @@ async fn test_t7_refresh_lifecycle() {
             max_failover: 3,
             log_level: "info".to_string(),
             api_keys: quotio_gateway::inbound::ApiKeys::default(),
-            models: quotio_gateway::models_route::model_ids_from_env(None),
+            models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
         };
@@ -264,7 +264,7 @@ async fn test_t7_refresh_lifecycle() {
             max_failover: 3,
             log_level: "info".to_string(),
             api_keys: quotio_gateway::inbound::ApiKeys::default(),
-            models: quotio_gateway::models_route::model_ids_from_env(None),
+            models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
         };
@@ -333,7 +333,7 @@ async fn test_t7_refresh_lifecycle() {
             max_failover: 1,
             log_level: "info".to_string(),
             api_keys: quotio_gateway::inbound::ApiKeys::default(),
-            models: quotio_gateway::models_route::model_ids_from_env(None),
+            models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
         };
@@ -467,7 +467,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
         max_failover: 3,
         log_level: "info".to_string(),
         api_keys: quotio_gateway::inbound::ApiKeys::default(),
-        models: quotio_gateway::models_route::model_ids_from_env(None),
+        models_env: None,
         refresh_url: oauth_url.clone(),
         auth_refresh_enabled: true,
     };
