@@ -92,6 +92,7 @@ pub struct Usage {
     pub credits_balance: Option<f64>,
     pub credits_unlimited: Option<bool>,
     pub has_credits: Option<bool>,
+    pub reset_credits_available: Option<i64>,
     pub observed_at_unix: Option<i64>,
 }
 
@@ -111,6 +112,8 @@ pub struct AccountView {
     pub plan_type: Option<String>,
     pub credits_balance: Option<f64>,
     pub credits_unlimited: Option<bool>,
+    pub reset_credits_available: Option<i64>,
+    pub can_reset: bool,
     pub primary: WindowView,
     pub secondary: WindowView,
     pub ok: u64,
@@ -190,6 +193,8 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
             plan_type: a.usage.plan_type.clone(),
             credits_balance: a.usage.credits_balance,
             credits_unlimited: a.usage.credits_unlimited,
+            reset_credits_available: a.usage.reset_credits_available,
+            can_reset: a.usage.reset_credits_available.unwrap_or(0) > 0,
             primary: window_view(&a.usage.primary, a.usage.observed_at_unix, now_unix_ms / 1000),
             secondary: window_view(&a.usage.secondary, a.usage.observed_at_unix, now_unix_ms / 1000),
             p50_ms: a.ttft.p50_ms,

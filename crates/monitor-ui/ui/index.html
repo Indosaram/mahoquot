@@ -33,9 +33,9 @@
   .tag { font-size: 10px; color: var(--dim); background: var(--line2);
          border: 1px solid var(--line); padding: 1px 7px; border-radius: 4px; }
   .spacer { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-  .win { display: grid; grid-template-columns: 84px 1fr 128px; gap: 10px;
+  .win { display: grid; grid-template-columns: 96px 1fr 132px; gap: 10px;
          align-items: center; margin-top: 6px; }
-  .win-name { color: var(--dim); font-size: 11px; }
+  .win-name { color: var(--dim); font-size: 11px; white-space: nowrap; }
   .bar { height: 7px; background: var(--line2); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
   .fill { height: 100%; border-radius: 99px; transition: width .35s ease; }
   .fill.low  { background: var(--ok); }
@@ -59,6 +59,8 @@
   <h1>Quotio Usage</h1>
   <span class="url" id="url"></span>
   <span class="status" id="status">connecting…</span>
+  <button id="refresh" style="margin-left:10px">refresh quota</button>
+  <button id="warmall">warm all</button>
 </header>
 <div id="banner"></div>
 <div class="cards" id="cards"></div>
@@ -80,18 +82,21 @@ function dur(secs) {
   return `${m}m`;
 }
 
-function windowRow(name, w) {
-  if (!w || w.used_percent == null) {
-    return `<div class="win"><div class="win-name">${name}</div>
-            <div class="unknown">not reported</div><div></div></div>`;
-  }
+// Label from the reported window length rather than its slot, since accounts
+// differ: a free plan's shortest window is 30d, not 5h.
+function windowLabel(mins) {
+  if (mins == null) return "";
+  if (mins % 10080 === 0 && mins / 10080 === 1) return "weekly";
+  if (mins >= 1440) return `${Math.round(mins / 1440)}d`;
+  return `${Math.round(mins / 60)}h`;
+}
+
+function windowRow(w) {
+  if (!w || w.used_percent == null) return "";
   const pct = Math.max(0, Math.min(100, w.used_percent));
   const cls = pct >= 80 ? "high" : pct >= 50 ? "mid" : "low";
-  const label = w.window_minutes >= 10080 ? "weekly"
-              : w.window_minutes >= 1440 ? `${Math.round(w.window_minutes / 1440)}d`
-              : `${Math.round(w.window_minutes / 60)}h`;
   return `<div class="win">
-    <div class="win-name">${name} <span style="color:var(--faint)">${label}</span></div>
+    <div class="win-name">${windowLabel(w.window_minutes)}</div>
     <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>
     <div class="win-meta"><span class="pct">${n(pct)}%</span> · resets ${dur(w.reset_in_secs)}</div>
   </div>`;
@@ -128,11 +133,17 @@ function render(v) {
         <span class="tag">${a.provider}</span>${plan}${credits}${cd}
         <span class="spacer">
           <span class="stat">ok ${a.ok} · fail ${n(a.failure_rate * 100, 0)}% · p50 ${a.samples ? n(a.p50_ms, 0) + "ms" : "–"}</span>
+          <button data-warm="${a.id}">warm</button>
+          <button data-reset="${a.id}" ${a.can_reset ? "" : "disabled"}
+            title="${a.can_reset ? "Spend 1 reset credit to clear the 5h window" : "no reset credits available"}">
+            reset 5h${a.reset_credits_available != null ? ` (${a.reset_credits_available})` : ""}
+          </button>
         </span>
       </div>
       ${a.usage_known
-        ? windowRow("session", a.primary) + windowRow("weekly", a.secondary)
-        : `<div class="unknown">${a.provider} reports no quota headers</div>`}
+        ? (windowRow(a.primary) + windowRow(a.secondary)) ||
+          `<div class="unknown">no quota windows reported</div>`
+        : `<div class="unknown">${a.provider} exposes no quota API</div>`}
       ${a.last_error ? `<div class="err">${a.last_error}</div>` : ""}
     </div>`;
   }).join("");
@@ -146,6 +157,30 @@ async function tick() {
     $("status").textContent = "error: " + e;
   }
 }
+
+async function run(label, fn) {
+  $("status").textContent = label + "…";
+  try {
+    const r = await fn();
+    $("status").textContent = label + " ok";
+    if (r && r.accounts) render(r); else await tick();
+  } catch (e) {
+    $("status").textContent = label + " failed: " + e;
+  }
+}
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  if (t.id === "refresh") return run("refresh", () => invoke("refresh_usage"));
+  if (t.id === "warmall") return run("warm all", () => invoke("warm_all"));
+  if (t.dataset.warm) return run("warm " + t.dataset.warm, () => invoke("warm_account", { id: t.dataset.warm }));
+  if (t.dataset.reset) {
+    if (!confirm(`Spend one reset credit to clear the 5h window for ${t.dataset.reset}?`)) return;
+    return run("reset " + t.dataset.reset, () => invoke("reset_account", { id: t.dataset.reset }));
+  }
+});
+
 tick();
 setInterval(tick, 3000);
 </script>
