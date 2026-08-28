@@ -58,6 +58,13 @@ fn warmup_request(member: &AccountMember) -> Option<WarmupRequest> {
             }),
             vec![("User-Agent".to_string(), "antigravity/1.104.0".to_string())],
         )),
+        // Warmup sends a real (minimal) upstream request. Claude, Cursor, Kiro and
+        // ZCode have no cheap probe that is safe to fire unsolicited, so they opt
+        // out rather than spending a live quota unit per boot.
+        ProviderAccount::Claude(_)
+        | ProviderAccount::Cursor(_)
+        | ProviderAccount::Kiro(_)
+        | ProviderAccount::Zcode(_) => None,
     }
 }
 

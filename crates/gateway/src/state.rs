@@ -132,10 +132,7 @@ impl AppState {
                 };
                 crate::metrics::AccountStats {
                     id: m.id.clone(),
-                    provider: match m.kind() {
-                        ProviderKind::Codex => "codex".to_string(),
-                        ProviderKind::Antigravity => "antigravity".to_string(),
-                    },
+                    provider: m.kind().as_str().to_string(),
                     health: health.into(),
                     ok: m.ok_count.load(Ordering::Relaxed),
                     fails: m.fail_count.load(Ordering::Relaxed),

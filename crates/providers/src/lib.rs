@@ -7,8 +7,12 @@
 
 pub mod account;
 pub mod antigravity;
+pub mod claude;
+pub mod cursor;
+pub mod kiro;
 pub mod refresh;
 pub mod refresh_exec;
+pub mod zcode;
 
 pub use antigravity::{
     antigravity_count_tokens_url, antigravity_quota_summary_url, antigravity_stream_url,
@@ -20,7 +24,28 @@ pub use antigravity::{
 };
 pub use account::{
     derive_identity_slug, derive_identity_slug_from_filename, list_codex_auth_files,
-    load_codex_account, CodexAccount, LoadError, UPSTREAM_BASE, USER_AGENT,
+    load_codex_account, parse_expired_unix, CodexAccount, LoadError, UPSTREAM_BASE, USER_AGENT,
+};
+pub use claude::{
+    claude_messages_url, is_claude_model, list_claude_auth_files, ClaudeAccount,
+    CLAUDE_AUTHORIZE_URL, CLAUDE_BETA_HEADER, CLAUDE_MESSAGES_PATH, CLAUDE_MODELS, CLAUDE_SCOPES,
+    CLAUDE_TOKEN_URL, CLAUDE_UPSTREAM_BASE,
+};
+pub use cursor::{
+    cursor_chat_url, cursor_login_url, is_cursor_model, list_cursor_auth_files, CursorAccount,
+    CURSOR_CHAT_PATH, CURSOR_LOGIN_URL, CURSOR_MODELS, CURSOR_POLL_URL, CURSOR_REFRESH_URL,
+    CURSOR_UPSTREAM_BASE,
+};
+pub use kiro::{
+    is_kiro_model, kiro_generate_url, kiro_refresh_url, list_kiro_auth_files, KiroAccount,
+    KiroAuthMode, KIRO_API_HOST_TEMPLATE, KIRO_DEFAULT_REGION, KIRO_GENERATE_PATH,
+    KIRO_IDC_REFRESH_TEMPLATE, KIRO_MODELS, KIRO_SOCIAL_REFRESH_TEMPLATE,
+};
+pub use zcode::{
+    is_provisioned_api_key, is_zcode_model, list_zcode_auth_files, zcode_messages_url,
+    ZcodeAccount, ZCODE_ANTHROPIC_BASE, ZCODE_API_BASE, ZCODE_LOGIN_URL, ZCODE_MESSAGES_PATH,
+    ZCODE_MODELS, ZCODE_OAUTH_AUTHORIZE_URL, ZCODE_OAUTH_BROKER_TOKEN_URL, ZCODE_OAUTH_CLIENT_ID,
+    ZCODE_OAUTH_REDIRECT_URI, ZCODE_USERINFO_URL,
 };
 pub use refresh::{
     build_antigravity_refresh_request, build_refresh_request, parse_refresh_response,

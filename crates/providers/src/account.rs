@@ -11,6 +11,19 @@ pub enum LoadError {
     Parse { path: PathBuf, msg: String },
 }
 
+/// Credential timestamps arrive in two shapes across providers: RFC-3339 with
+/// an offset, and a bare naive datetime that predates the offset being written.
+/// Both must parse, so every provider shares this instead of reimplementing it.
+pub fn parse_expired_unix(expired: &str) -> Option<i64> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(expired) {
+        return Some(dt.timestamp());
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(expired, "%Y-%m-%dT%H:%M:%S") {
+        return Some(naive.and_utc().timestamp());
+    }
+    None
+}
+
 /// Loaded codex auth file.
 #[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct CodexAccount {
@@ -81,14 +94,7 @@ impl CodexAccount {
     }
 
     pub fn expires_at_unix(&self) -> Option<i64> {
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&self.expired) {
-            return Some(dt.timestamp());
-        }
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&self.expired, "%Y-%m-%dT%H:%M:%S")
-        {
-            return Some(naive.and_utc().timestamp());
-        }
-        None
+        parse_expired_unix(&self.expired)
     }
 
     pub fn is_expired(&self, now_unix: i64) -> bool {

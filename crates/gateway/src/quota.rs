@@ -56,6 +56,9 @@ pub async fn refresh_account_usage(
     match member.kind() {
         ProviderKind::Codex => refresh_codex_usage(state, member).await,
         ProviderKind::Antigravity => refresh_antigravity_usage(state, member).await,
+        ProviderKind::Claude | ProviderKind::Cursor | ProviderKind::Kiro | ProviderKind::Zcode => {
+            Err(QuotaError::Unsupported)
+        }
     }
 }
 
