@@ -12,7 +12,13 @@ pub const ROOT_JSON: &str = r#"{"endpoints":["POST /v1/chat/completions","POST /
 
 pub const CALLBACK_HTML: &str = "<html><head><meta charset=\"utf-8\"><title>Authentication successful</title><script>setTimeout(function(){window.close();},5000);</script></head><body><h1>Authentication successful!</h1><p>You can close this window.</p><p>This window will close automatically in 5 seconds.</p></body></html>";
 
-pub const MANAGEMENT_HTML: &str = include_str!("../ui/management.html");
+/// Browser-reachable usage dashboard. There is ONE usage UI of record: the
+/// reference-level monitor page in `crates/monitor-ui/ui/index.html`. Both the
+/// Tauri shell (`frontendDist: ui`) and this embedded `/management.html` route
+/// serve that same file so the two surfaces can never drift apart again (they
+/// did once: the gateway kept a stale hand-written copy while the monitor page
+/// was upgraded). In a browser the page fetches same-origin (BASE = "").
+pub const MANAGEMENT_HTML: &str = include_str!("../../monitor-ui/ui/index.html");
 
 #[cfg(test)]
 mod tests {
@@ -34,7 +40,11 @@ mod tests {
     }
 
     #[test]
-    fn management_page_reads_the_usage_endpoint() {
+    fn management_page_is_the_shared_monitor_ui() {
+        // Same file the Tauri shell serves via frontendDist — one UI of record.
         assert!(MANAGEMENT_HTML.contains("/admin/usage"));
+        assert!(MANAGEMENT_HTML.contains("BRAND")); // provider brand marks
+        assert!(MANAGEMENT_HTML.contains("prov-head")); // provider-first IA
+        assert!(MANAGEMENT_HTML.contains("quotio.base")); // same-origin fallback
     }
 }

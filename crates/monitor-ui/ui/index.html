@@ -146,7 +146,12 @@
 </div>
 
 <script>
-const BASE = localStorage.getItem("quotio.base") || "http://127.0.0.1:18871";
+// When served by the gateway itself (embedded /management.html), talk to the
+// same origin with relative paths (BASE = ""). In the Tauri shell there is no
+// origin of our own, so fall back to the local gateway default unless the user
+// stored an explicit quotio.base.
+const BASE = localStorage.getItem("quotio.base") ??
+  ((location.protocol === "http:" || location.protocol === "https:") ? "" : "http://127.0.0.1:18871");
 const KEY  = localStorage.getItem("quotio.key")  || "qkey";
 
 /* Real brand marks. Paths are the vendors' own logo geometry, not generic
