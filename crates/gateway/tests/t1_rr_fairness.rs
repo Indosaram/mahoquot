@@ -75,6 +75,7 @@ async fn test_t1_rr_fairness() {
         models_env: None,
         refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: true,
+        ..Default::default()
     };
 
     let state = Arc::new(AppState::new(&config).unwrap());

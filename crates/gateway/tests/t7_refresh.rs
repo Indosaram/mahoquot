@@ -170,6 +170,7 @@ async fn test_t7_refresh_lifecycle() {
             models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
+            ..Default::default()
         };
 
         let state = Arc::new(AppState::new(&config).unwrap());
@@ -269,6 +270,7 @@ async fn test_t7_refresh_lifecycle() {
             models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
+            ..Default::default()
         };
 
         let state = Arc::new(AppState::new(&config).unwrap());
@@ -339,6 +341,7 @@ async fn test_t7_refresh_lifecycle() {
             models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
+            ..Default::default()
         };
 
         let state = Arc::new(AppState::new(&config).unwrap());
@@ -474,6 +477,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
         models_env: None,
         refresh_url: oauth_url.clone(),
         auth_refresh_enabled: true,
+        ..Default::default()
     };
 
     let state = Arc::new(AppState::new(&config).unwrap());

@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use quotio_types::Strategy;
 
 use crate::inbound::ApiKeys;
+use crate::management::settings::{RemoteManagement, Settings};
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GatewayConfig {
     pub port: u16,
     pub auth_dir: PathBuf,
@@ -17,6 +18,9 @@ pub struct GatewayConfig {
     pub refresh_url: String,
     pub auth_refresh_enabled: bool,
     pub usage_poll_secs: u64,
+    pub config_path: PathBuf,
+    pub management_env_secret: String,
+    pub management_local_password: String,
 }
 
 impl GatewayConfig {
@@ -55,6 +59,14 @@ impl GatewayConfig {
         let auth_refresh_enabled =
             !matches!(std::env::var("AUTH_REFRESH").as_deref(), Ok("false" | "0"));
 
+        let config_path = std::env::var("CONFIG_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| auth_dir.join("config.yaml"));
+
+        let management_env_secret = std::env::var("MANAGEMENT_PASSWORD").unwrap_or_default();
+        let management_local_password =
+            std::env::var("MANAGEMENT_LOCAL_PASSWORD").unwrap_or_default();
+
         let usage_poll_secs = std::env::var("USAGE_POLL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -62,6 +74,9 @@ impl GatewayConfig {
             .unwrap_or(120);
 
         Ok(Self {
+            config_path,
+            management_env_secret,
+            management_local_password,
             usage_poll_secs,
             port,
             auth_dir,
@@ -73,5 +88,24 @@ impl GatewayConfig {
             refresh_url,
             auth_refresh_enabled,
         })
+    }
+
+    /// The environment-derived document used when no `config.yaml` exists yet,
+    /// so a deployment that only sets env vars keeps working unchanged.
+    pub fn as_settings(&self) -> Settings {
+        Settings {
+            port: self.port,
+            auth_dir: self.auth_dir.display().to_string(),
+            max_retry_credentials: self.max_failover,
+            routing_strategy: match self.strategy {
+                Strategy::FillFirst => "fill_first".to_string(),
+                Strategy::StrictRoundRobin => "round_robin".to_string(),
+            },
+            remote_management: RemoteManagement {
+                secret_key: String::new(),
+                ..RemoteManagement::default()
+            },
+            ..Settings::default()
+        }
     }
 }

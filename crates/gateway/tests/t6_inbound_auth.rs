@@ -152,6 +152,7 @@ async fn test_inbound_auth_cases() {
         models_env: None,
         refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: true,
+        ..Default::default()
     };
     let state = Arc::new(quotio_gateway::state::AppState::new(&config).unwrap());
     let full_app = quotio_gateway::routes::create_app(state);

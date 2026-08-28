@@ -120,6 +120,7 @@ async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
         models_env: None,
         refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: false,
+        ..Default::default()
     };
     let state = Arc::new(AppState::new(&config).unwrap());
     let app = create_app(state.clone());
