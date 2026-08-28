@@ -1,299 +1,208 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use super::settings::Settings;
+use super::scalar_table::{find, Refusal, Scalar, SCALARS};
 use crate::state::AppState;
 
-/// Upstream answers a scalar GET with a single-key object whose key is the
-/// YAML name, and accepts `{"value": <T>}` on PUT/PATCH, rejecting anything
-/// else with 400 `{"error":"invalid body"}`. PUT and PATCH share one handler
-/// upstream, so a scalar has no merge semantics to distinguish them.
-struct Scalar {
-    key: &'static str,
-    read: fn(&Settings) -> Value,
-    write: fn(&mut Settings, Value) -> bool,
+/// Upstream answers every successful write with `{"status":"ok"}` from its
+/// shared persist helper, never an echo of the written value.
+fn saved() -> Response {
+    (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response()
 }
 
-fn ok_value(key: &str, value: Value) -> Response {
-    (StatusCode::OK, Json(json!({ key: value }))).into_response()
+fn refused(refusal: Refusal) -> Response {
+    let message = match refusal {
+        Refusal::InvalidBody => "invalid body",
+        Refusal::Message(m) => m,
+    };
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response()
 }
 
-fn invalid_body() -> Response {
+fn persist_failed(err: impl std::fmt::Display) -> Response {
     (
-        StatusCode::BAD_REQUEST,
-        Json(json!({ "error": "invalid body" })),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": format!("failed to save config: {err}") })),
     )
         .into_response()
 }
 
-/// Pull `value` out of the request body, honouring upstream's contract that a
-/// missing key, a null, or a wrong-typed value are all "invalid body" rather
-/// than a silent default.
-fn extract<T: DeserializeOwned>(body: &Value) -> Option<T> {
-    let raw = body.get("value")?;
-    serde_json::from_value(raw.clone()).ok()
+async fn read_scalar(state: Arc<AppState>, scalar: &'static Scalar) -> Response {
+    let value = (scalar.read)(&state.settings.current());
+    (StatusCode::OK, Json(json!({ scalar.key: value }))).into_response()
 }
 
-fn write_bool(target: &mut bool, body: Value) -> bool {
-    match extract::<bool>(&body) {
-        Some(v) => {
-            *target = v;
-            true
-        }
-        None => false,
-    }
-}
-
-fn write_i64(target: &mut i64, body: Value) -> bool {
-    match extract::<i64>(&body) {
-        Some(v) => {
-            *target = v;
-            true
-        }
-        None => false,
-    }
-}
-
-fn write_usize(target: &mut usize, body: Value) -> bool {
-    match extract::<usize>(&body) {
-        Some(v) => {
-            *target = v;
-            true
-        }
-        None => false,
-    }
-}
-
-fn write_string(target: &mut String, body: Value) -> bool {
-    match extract::<String>(&body) {
-        Some(v) => {
-            *target = v;
-            true
-        }
-        None => false,
-    }
-}
-
-fn write_string_list(target: &mut Vec<String>, body: Value) -> bool {
-    match extract::<Vec<String>>(&body) {
-        Some(v) => {
-            *target = v;
-            true
-        }
-        None => false,
-    }
-}
-
-/// Every scalar route, paired with how it reads and writes the settings
-/// document. Adding a route here registers its GET/PUT/PATCH trio.
-const SCALARS: &[Scalar] = &[
-    Scalar {
-        key: "debug",
-        read: |s| json!(s.debug),
-        write: |s, b| write_bool(&mut s.debug, b),
-    },
-    Scalar {
-        key: "logging-to-file",
-        read: |s| json!(s.logging_to_file),
-        write: |s, b| write_bool(&mut s.logging_to_file, b),
-    },
-    Scalar {
-        key: "error-logs-max-files",
-        read: |s| json!(s.error_logs_max_files),
-        write: |s, b| write_i64(&mut s.error_logs_max_files, b),
-    },
-    Scalar {
-        key: "usage-statistics-enabled",
-        read: |s| json!(s.usage_statistics_enabled),
-        write: |s, b| write_bool(&mut s.usage_statistics_enabled, b),
-    },
-    Scalar {
-        key: "request-retry",
-        read: |s| json!(s.request_retry),
-        write: |s, b| write_i64(&mut s.request_retry, b),
-    },
-    Scalar {
-        key: "max-retry-credentials",
-        read: |s| json!(s.max_retry_credentials),
-        write: |s, b| write_usize(&mut s.max_retry_credentials, b),
-    },
-    Scalar {
-        key: "max-retry-interval",
-        read: |s| json!(s.max_retry_interval),
-        write: |s, b| write_i64(&mut s.max_retry_interval, b),
-    },
-    Scalar {
-        key: "force-model-prefix",
-        read: |s| json!(s.force_model_prefix),
-        write: |s, b| write_bool(&mut s.force_model_prefix, b),
-    },
-    Scalar {
-        key: "ws-auth",
-        read: |s| json!(s.ws_auth),
-        write: |s, b| write_bool(&mut s.ws_auth, b),
-    },
-    Scalar {
-        key: "proxy-url",
-        read: |s| json!(s.proxy_url),
-        write: |s, b| write_string(&mut s.proxy_url, b),
-    },
-    Scalar {
-        key: "oauth-excluded-models",
-        read: |s| json!(s.oauth_excluded_models),
-        write: |s, b| write_string_list(&mut s.oauth_excluded_models, b),
-    },
-];
-
-fn find(key: &str) -> Option<&'static Scalar> {
-    SCALARS.iter().find(|s| s.key == key)
-}
-
-async fn read_scalar(State(state): State<Arc<AppState>>, key: &'static str) -> Response {
-    match find(key) {
-        Some(scalar) => ok_value(scalar.key, (scalar.read)(&state.settings.current())),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-async fn write_scalar(state: Arc<AppState>, key: &'static str, raw: bytes::Bytes) -> Response {
-    let Some(scalar) = find(key) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    // Take the body as bytes and parse it here: axum's Json extractor would
-    // reject a malformed payload with its own parser message, which upstream
-    // never emits -- every bad body must read `{"error":"invalid body"}`.
-    let Ok(body) = serde_json::from_slice::<Value>(&raw) else {
-        return invalid_body();
-    };
-
-    let mut accepted = false;
+/// Apply a change, refusing before anything is written when the body is bad.
+///
+/// The edit runs inside the store's mutate so persistence and publication stay
+/// atomic, and its refusal is captured out rather than returned, because the
+/// store's closure cannot fail the mutation itself.
+fn apply(
+    state: &Arc<AppState>,
+    edit: impl FnOnce(&mut super::settings::Settings) -> Result<(), Refusal>,
+) -> Response {
+    let mut refusal = None;
     let outcome = state.settings.mutate(|settings| {
-        accepted = (scalar.write)(settings, body.clone());
+        if let Err(reason) = edit(settings) {
+            refusal = Some(reason);
+        }
     });
 
-    if !accepted {
-        return invalid_body();
+    if let Some(reason) = refusal {
+        return refused(reason);
     }
     match outcome {
-        Ok(settings) => ok_value(scalar.key, (scalar.read)(&settings)),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": err.to_string() })),
-        )
-            .into_response(),
+        Ok(_) => saved(),
+        Err(err) => persist_failed(err),
     }
 }
 
-macro_rules! scalar_route {
-    ($router:expr, $key:literal) => {
-        $router.route(
-            concat!("/", $key),
-            get(|state: State<Arc<AppState>>| read_scalar(state, $key))
-                .put({
-                    |State(state): State<Arc<AppState>>, body: bytes::Bytes| {
-                        write_scalar(state, $key, body)
-                    }
-                })
-                .patch({
-                    |State(state): State<Arc<AppState>>, body: bytes::Bytes| {
-                        write_scalar(state, $key, body)
-                    }
-                }),
-        )
+async fn write_scalar(state: Arc<AppState>, scalar: &'static Scalar, raw: bytes::Bytes) -> Response {
+    // Parse here rather than through axum's Json extractor: that extractor
+    // answers a malformed payload with its own parser text, which upstream
+    // never emits -- every bad body must read {"error":"invalid body"}.
+    let Ok(body) = serde_json::from_slice::<Value>(&raw) else {
+        return refused(Refusal::InvalidBody);
     };
+    apply(&state, |settings| (scalar.write)(settings, &body))
+}
+
+async fn clear_scalar(
+    state: Arc<AppState>,
+    scalar: &'static Scalar,
+    params: HashMap<String, String>,
+) -> Response {
+    let Some(clear) = scalar.clear else {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    };
+    let provider = params.get("provider").map(String::as_str);
+    apply(&state, |settings| clear(settings, provider))
 }
 
 pub fn scalars_routes() -> Router<Arc<AppState>> {
-    let router = Router::new();
-    let router = scalar_route!(router, "debug");
-    let router = scalar_route!(router, "logging-to-file");
-    let router = scalar_route!(router, "error-logs-max-files");
-    let router = scalar_route!(router, "usage-statistics-enabled");
-    let router = scalar_route!(router, "request-retry");
-    let router = scalar_route!(router, "max-retry-credentials");
-    let router = scalar_route!(router, "max-retry-interval");
-    let router = scalar_route!(router, "force-model-prefix");
-    let router = scalar_route!(router, "ws-auth");
-    let router = scalar_route!(router, "oauth-excluded-models");
-    scalar_route!(router, "proxy-url")
+    let mut router = Router::new();
+    for scalar in SCALARS {
+        let path = scalar.path;
+        let mut method = get(move |State(state): State<Arc<AppState>>| async move {
+            read_scalar(state, find(path).expect("registered")).await
+        })
+        .put(
+            move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
+                write_scalar(state, find(path).expect("registered"), body).await
+            },
+        )
+        .patch(
+            move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
+                write_scalar(state, find(path).expect("registered"), body).await
+            },
+        );
+        if scalar.clear.is_some() {
+            method = method.delete(
+                move |State(state): State<Arc<AppState>>, Query(params): Query<HashMap<String, String>>| async move {
+                    clear_scalar(state, find(path).expect("registered"), params).await
+                },
+            );
+        }
+        router = router.route(path, method);
+    }
+    router
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::scalar_table::normalize_routing_strategy;
     use super::*;
+    use crate::management::settings::Settings;
 
     #[test]
-    fn every_registered_scalar_is_reachable_by_key() {
-        // given the scalar table
-        // then each entry resolves by its yaml key
-        for scalar in SCALARS {
-            assert!(find(scalar.key).is_some(), "unreachable: {}", scalar.key);
+    fn every_upstream_scalar_path_is_registered() {
+        // given the route list captured from upstream
+        let groups: Value =
+            serde_json::from_str(include_str!("../../../../.omo/upstream/route-groups.json"))
+                .expect("route groups");
+        let expected: std::collections::BTreeSet<String> = groups["scalars"]
+            .as_array()
+            .expect("scalars")
+            .iter()
+            .map(|r| {
+                r.as_str()
+                    .expect("route")
+                    .split_once(' ')
+                    .expect("method path")
+                    .1
+                    .to_string()
+            })
+            .collect();
+        // then every one has a table entry
+        let missing: Vec<_> = expected.iter().filter(|p| find(p).is_none()).collect();
+        assert!(missing.is_empty(), "unregistered scalar paths: {missing:?}");
+    }
+
+    #[test]
+    fn routing_strategy_answers_under_its_own_key() {
+        // given the routing scalar
+        let scalar = find("/routing/strategy").expect("registered");
+        // then its response key is "strategy", not the path
+        assert_eq!(scalar.key, "strategy");
+    }
+
+    #[test]
+    fn routing_strategy_normalizes_every_upstream_spelling() {
+        // given each accepted alias
+        for (input, canonical) in [
+            ("", "round-robin"),
+            ("rr", "round-robin"),
+            ("RoundRobin", "round-robin"),
+            ("wrr", "weighted-round-robin"),
+            ("ff", "fill-first"),
+            ("Fill-First", "fill-first"),
+        ] {
+            // then it maps to upstream's canonical spelling
+            assert_eq!(normalize_routing_strategy(input), Some(canonical), "{input}");
         }
+        // and an unknown strategy is rejected
+        assert_eq!(normalize_routing_strategy("nonsense"), None);
     }
 
     #[test]
-    fn a_scalar_reads_the_yaml_key_name_upstream_uses() {
-        // given a settings document with debug on
-        let settings = Settings {
-            debug: true,
-            ..Settings::default()
-        };
-        // when the debug scalar is read
-        let scalar = find("debug").expect("registered");
-        // then the value comes back under upstream's key
-        assert_eq!((scalar.read)(&settings), json!(true));
-        assert_eq!(scalar.key, "debug");
-    }
-
-    #[test]
-    fn a_write_rejects_a_missing_value_key() {
-        // given a body with no "value"
+    fn an_invalid_strategy_is_refused_with_its_own_message() {
+        // given a write of an unknown strategy
+        let scalar = find("/routing/strategy").expect("registered");
         let mut settings = Settings::default();
-        let scalar = find("debug").expect("registered");
-        // when written
-        let accepted = (scalar.write)(&mut settings, json!({ "debug": true }));
-        // then it is refused rather than defaulting
-        assert!(!accepted);
-        assert!(!settings.debug);
+        // when applied
+        let result = (scalar.write)(&mut settings, &json!({ "value": "nonsense" }));
+        // then upstream's specific message is used, not the generic one
+        assert!(matches!(result, Err(Refusal::Message("invalid strategy"))));
     }
 
     #[test]
-    fn a_write_rejects_a_wrongly_typed_value() {
-        // given a string where a bool is required
-        let mut settings = Settings::default();
-        let scalar = find("debug").expect("registered");
-        // when written
-        let accepted = (scalar.write)(&mut settings, json!({ "value": "yes" }));
-        // then it is refused
-        assert!(!accepted);
-        assert!(!settings.debug);
+    fn a_provider_map_accepts_both_upstream_body_shapes() {
+        // given the bare map and the items-wrapped form
+        let scalar = find("/oauth-excluded-models").expect("registered");
+        let mut bare = Settings::default();
+        let mut wrapped = Settings::default();
+        assert!((scalar.write)(&mut bare, &json!({ "gemini": ["a"] })).is_ok());
+        assert!((scalar.write)(&mut wrapped, &json!({ "items": { "gemini": ["a"] } })).is_ok());
+        // then both land identically
+        assert_eq!(bare.oauth_excluded_models, wrapped.oauth_excluded_models);
+        assert_eq!(bare.oauth_excluded_models["gemini"], vec!["a"]);
     }
 
     #[test]
-    fn a_write_accepts_a_correctly_typed_value() {
-        // given a valid body for each representative type
+    fn deleting_a_provider_list_requires_the_provider_query() {
+        // given the collection scalar
+        let scalar = find("/oauth-excluded-models").expect("registered");
+        let clear = scalar.clear.expect("supports delete");
         let mut settings = Settings::default();
-        assert!((find("debug").unwrap().write)(&mut settings, json!({ "value": true })));
-        assert!((find("request-retry").unwrap().write)(&mut settings, json!({ "value": 7 })));
-        assert!((find("proxy-url").unwrap().write)(
-            &mut settings,
-            json!({ "value": "http://127.0.0.1:1" })
-        ));
-        assert!((find("oauth-excluded-models").unwrap().write)(
-            &mut settings,
-            json!({ "value": ["a", "b"] })
-        ));
-        // then each lands in the document
-        assert!(settings.debug);
-        assert_eq!(settings.request_retry, 7);
-        assert_eq!(settings.proxy_url, "http://127.0.0.1:1");
-        assert_eq!(settings.oauth_excluded_models, vec!["a", "b"]);
+        // when no provider is supplied
+        let result = clear(&mut settings, None);
+        // then upstream's missing-provider error is returned
+        assert!(matches!(result, Err(Refusal::Message("missing provider"))));
     }
 }

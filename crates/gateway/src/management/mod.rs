@@ -8,6 +8,7 @@
 
 pub mod auth;
 pub mod gate;
+pub mod scalar_table;
 pub mod scalars;
 pub mod settings;
 pub mod store;
@@ -25,4 +26,10 @@ pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             state,
             gate::require_management_access,
         ))
+        // An unimplemented management path must answer 404 like upstream's
+        // NoRoute. Without this fallback the request escapes the nest and hits
+        // the relay's inbound-key layer, which answers 401 with the wrong
+        // error body entirely. The fallback sits outside the gate because
+        // upstream's group middleware never runs for an unmatched route.
+        .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
 }

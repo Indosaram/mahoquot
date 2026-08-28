@@ -14,6 +14,12 @@ pub struct RemoteManagement {
     pub disable_control_panel: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutingSettings {
+    #[serde(default)]
+    pub strategy: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QuotaExceededSettings {
     #[serde(rename = "switch-project", default = "yes")]
@@ -79,8 +85,8 @@ pub struct Settings {
     pub force_model_prefix: bool,
     #[serde(rename = "ws-auth", default)]
     pub ws_auth: bool,
-    #[serde(rename = "routing-strategy", default)]
-    pub routing_strategy: String,
+    #[serde(default)]
+    pub routing: RoutingSettings,
     #[serde(rename = "quota-exceeded", default)]
     pub quota_exceeded: QuotaExceededSettings,
     #[serde(rename = "remote-management", default)]
@@ -88,7 +94,11 @@ pub struct Settings {
     #[serde(rename = "api-keys", default)]
     pub api_keys: Vec<String>,
     #[serde(rename = "oauth-excluded-models", default)]
-    pub oauth_excluded_models: Vec<String>,
+    pub oauth_excluded_models: std::collections::BTreeMap<String, Vec<String>>,
+    #[serde(rename = "oauth-model-alias", default)]
+    pub oauth_model_alias: serde_json::Value,
+    #[serde(rename = "oauth-request-scoped-errors", default)]
+    pub oauth_request_scoped_errors: serde_json::Value,
 
     #[serde(flatten)]
     pub extra: serde_yaml::Mapping,
@@ -111,11 +121,13 @@ impl Default for Settings {
             max_retry_interval: 0,
             force_model_prefix: false,
             ws_auth: false,
-            routing_strategy: String::new(),
+            routing: RoutingSettings::default(),
             quota_exceeded: QuotaExceededSettings::default(),
             remote_management: RemoteManagement::default(),
             api_keys: Vec::new(),
-            oauth_excluded_models: Vec::new(),
+            oauth_excluded_models: std::collections::BTreeMap::new(),
+            oauth_model_alias: serde_json::Value::Null,
+            oauth_request_scoped_errors: serde_json::Value::Null,
             extra: serde_yaml::Mapping::new(),
         }
     }

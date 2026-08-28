@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use quotio_types::Strategy;
 
 use crate::inbound::ApiKeys;
-use crate::management::settings::{RemoteManagement, Settings};
+use crate::management::settings::{RemoteManagement, RoutingSettings, Settings};
 
 
 #[derive(Debug, Clone, Default)]
@@ -97,9 +97,11 @@ impl GatewayConfig {
             port: self.port,
             auth_dir: self.auth_dir.display().to_string(),
             max_retry_credentials: self.max_failover,
-            routing_strategy: match self.strategy {
-                Strategy::FillFirst => "fill_first".to_string(),
-                Strategy::StrictRoundRobin => "round_robin".to_string(),
+            routing: RoutingSettings {
+                strategy: match self.strategy {
+                    Strategy::FillFirst => "fill-first".to_string(),
+                    Strategy::StrictRoundRobin => "round-robin".to_string(),
+                },
             },
             remote_management: RemoteManagement {
                 secret_key: String::new(),
