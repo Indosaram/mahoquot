@@ -305,3 +305,42 @@ Screenshots are live, not fixtures: `results/monitor-ui-quota.png` (all
 providers) and `results/monitor-ui-antigravity-live.png` (model groups).
 Capturing them in a browser against the gateway also exercised the CORS
 middleware end-to-end — preflight returns 204.
+
+## Monitor UI: scale and theme verification
+
+### 100-account load
+
+The objective calls for handling ~100 accounts (the user's stated peak). Real
+state is 8 accounts, so scale was exercised with a synthetic payload matching
+the live response shape — 100 accounts, 34 antigravity (4 quota rows each) and
+66 codex (2 rows each). This is a scale test of the UI, not a data-correctness
+claim; correctness is covered by the live captures.
+
+Measured in-browser:
+
+    rendered account cards      100
+    tab counts                  All 100 / Antigravity 34 / Codex 66
+    search "user007"            100 -> 1
+    search cleared              -> 100
+    Antigravity tab             -> 34
+    tab + search composed       -> 1
+
+Search and provider filtering compose correctly and the layout holds.
+Screenshot: `results/monitor-ui-100-accounts.png`.
+
+### Light theme was dead code
+
+`:root[data-theme="light"]` was defined with no way to reach it — no toggle, no
+persistence. Added a toggle that persists to `localStorage`.
+
+Rendering it exposed two contrast defects the dark theme had masked:
+
+1. Panels and page were both near-white (`#fff` on `#f6f6f7`), so card and
+   sidebar edges effectively vanished. The page is now a warmer grey with
+   darker borders.
+2. `--warn`/`--ok`/`--bad` were tuned for a dark background; the `COOLDOWN`
+   pill was yellow-on-white and unreadable. Light-theme values are darkened
+   for contrast on white.
+
+Light tokens are therefore not an inversion of the dark set. Screenshot:
+`results/monitor-ui-light.png`.

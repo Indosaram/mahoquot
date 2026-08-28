@@ -22,9 +22,14 @@
     --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   }
+  /* Light tokens are not a simple inversion: the dark theme leans on luminance
+     for separation, which collapses when panels and page are both near-white.
+     Panels stay white, the page drops to a warmer grey, and borders darken so
+     card edges survive. Warning/ok text is darkened for AA on white. */
   :root[data-theme="light"] {
-    --bg: #f6f6f7; --panel: #fff; --panel-2: #fafafa; --line: #e3e3e7;
-    --line-soft: #ededf0; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #8a8a94;
+    --bg: #eeeef1; --panel: #fff; --panel-2: #f6f6f8; --line: #d3d3da;
+    --line-soft: #e6e6ea; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #77777f;
+    --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
   }
   * { box-sizing: border-box; }
   body {
@@ -178,6 +183,11 @@
       <h1 id="title">Quota</h1>
       <span class="spacer"></span>
       <input class="search" id="search" placeholder="Search accounts..." />
+      <button type="button" class="btn icon" id="theme" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img">
+          <title>Toggle theme</title><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      </button>
       <button type="button" class="btn" id="warmAll">Warm all</button>
       <button type="button" class="btn icon" id="refresh" title="Refresh quota" aria-label="Refresh quota">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" role="img">
@@ -411,6 +421,14 @@ async function load() {
   catch (e) { document.getElementById("banner").innerHTML = `<div class="banner">${e.message}</div>`; }
   render();
 }
+
+const themeEl = document.documentElement;
+themeEl.dataset.theme = localStorage.getItem("quotio.theme") || "dark";
+document.getElementById("theme").onclick = () => {
+  const next = themeEl.dataset.theme === "dark" ? "light" : "dark";
+  themeEl.dataset.theme = next;
+  localStorage.setItem("quotio.theme", next);
+};
 
 document.getElementById("search").oninput = e => { query = e.target.value; render(); };
 document.getElementById("warmAll").onclick = async ev => {
