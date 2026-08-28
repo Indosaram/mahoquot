@@ -1,0 +1,138 @@
+# Pain-point audit
+
+Six pain points the user stated for the existing quotio, audited against this
+Rust implementation with live evidence. Verified 2026-08-28 against the migrated
+8-credential pool (5 codex, 3 antigravity) on port 18871.
+
+| # | Pain point | Status | Evidence |
+|---|---|---|---|
+| 1 | warm-up only on antigravity | **Fixed** | `/admin/warmup` warms every provider; 4/5 codex → HTTP 200 live |
+| 2 | round robin uneven, hops accounts | **Fixed** | `select` now honours `affinity_key`; 3 router tests |
+| 3 | codex reset impossible from app | **Fixed** | live reset on `ab53e014`: credits 1→0, 5h usage 16%→0% |
+| 4 | cannot add providers freely | **Already OK** | compiler-measured: 2 files to add a variant |
+| 5 | usage query | **Fixed** | `/admin/usage` from `wham/usage`, 5/5 codex accounts |
+| 6 | kiro not working | **Not implemented** | no kiro provider exists in this repo |
+
+## 1. Warm-up on all providers
+
+The reference implementation (`quotio-desktop`) has `warmup_antigravity` and no
+codex equivalent — the user's complaint reproduced in the reference itself.
+
+`crates/gateway/src/warmup.rs` builds the warm-up request per provider behind one
+code path, exposed as `POST /admin/warmup` and
+`POST /admin/accounts/{id}/warmup`. Live run:
+
+```
+codex        account-g@example.com            ok=True  http=200
+codex        a9d2af16-account-h@example.com    ok=True  http=200
+codex        ab53e014-account-a@gmail.com ok=True  http=200
+codex        account-b@example.com           ok=True  http=200
+codex        565c2911-account-f@example.com ok=False http=400  (free plan, 100% used)
+antigravity  (3 accounts)                   ok=False http=429  (pre-existing cooldown)
+```
+
+Two bugs found only by running it live:
+
+- Codex rejects `max_output_tokens` on `/backend-api/codex/responses` (HTTP 400).
+- Warm-up used the stored token directly, so every antigravity account returned
+  401 on an expired token. It now refreshes once and retries; the remaining 429
+  is a real upstream cooldown, not a credential fault.
+
+The two non-200s are genuine account states, both independently confirmed by the
+quota poll: `account-f` is `plan=free` at 100% of a 30d window.
+
+## 2. Round-robin evenness and account hopping
+
+Root cause found in `crates/router/src/lib.rs`: the selector's signature was
+`select(&self, members, _hint)` — the session hint was accepted and **discarded**.
+Every request re-picked by least-recently-served, so a conversation moved to a
+different account on each turn. That is exactly the reported "이 계정 저 계정
+왔다갔다".
+
+`SessionHint::affinity_key` is now honoured: a keyed session re-uses its bound
+account while that account is healthy, and falls through to round-robin when it
+is not. `handle_relay` derives the key from the client's session headers
+(`session_id`, `conversation_id`, and Anthropic equivalents). The affinity map is
+bounded by sequence-number eviction, so it cannot grow without limit.
+
+Even distribution is preserved for *new* sessions — affinity only pins a session
+that already exists. Covered by three tests:
+`session_sticks_to_one_account_across_turns`,
+`distinct_sessions_spread_across_accounts`, `session_moves_off_an_unhealthy_account`,
+alongside the pre-existing fairness test.
+
+## 3. Codex reset from the app
+
+Real upstream capability, taken from the reference:
+`POST /backend-api/wham/rate-limit-reset-credits/consume` with a
+`redeem_request_id`, spending one "주동 리셋" credit to clear the 5h window. It
+requires the Codex CLI user agent.
+
+Exposed as `POST /admin/accounts/{id}/reset` and wired to a per-account
+`reset 5h (n)` button, disabled unless a credit exists and confirmed before
+spending. Verified live end-to-end on `ab53e014-account-a@gmail.com`:
+
+```
+before  credits=1  primary=16.0%
+after   credits=0  primary=0.0%
+```
+
+## 4. Adding other providers
+
+Measured rather than asserted: a third `ProviderAccount`/`ProviderKind` variant
+was added temporarily and the compiler asked to enumerate every non-exhaustive
+match. Result — **2 files**: `account.rs` (8 accessor arms) and `warmup.rs` (1).
+Everything else dispatches through `ProviderKind`/`UpstreamTarget` without a
+per-provider branch. The probe variant was reverted and the file restored
+byte-identical.
+
+This pain point was already structurally addressed by the earlier
+`ProviderKind`/`ProviderAccount` refactor; no further change made.
+
+## 5. Usage query
+
+Implemented against `GET https://chatgpt.com/backend-api/wham/usage`, which is
+strictly better than scraping `x-codex-*` response headers:
+
+- needs **no traffic** through the account (headers require a real request),
+- states each window's length explicitly (`limit_window_seconds`), so windows are
+  classified by duration instead of guessed from slot order,
+- is the only source of `rate_limit_reset_credits.available_count`, which pain
+  point 3 depends on.
+
+Served at `GET /admin/usage`, forced via `POST /admin/usage/refresh`, and polled
+every `USAGE_POLL_SECS` (default 120). Live, with zero traffic sent:
+
+```
+account-g@example.com     plus     5h 18%   weekly 27%
+a9d2af16-account-h        plus     5h  0%   weekly 16%
+ab53e014-account-a    prolite  weekly 16%          reset_credits=1
+account-b@example.com    plus     5h  3%   weekly  0%
+565c2911-account-f     free     30d 100%
+```
+
+Antigravity exposes no comparable quota API and is reported as "exposes no quota
+API" rather than as 0% used — an unknown must not render as full quota.
+
+The user's example (`/v1/usage/self` on an Anthropic-compatible proxy) is the
+same shape: one authenticated GET returning per-account quota. This is the
+provider-native equivalent for the accounts actually in the pool.
+
+## 6. Kiro — not implemented
+
+No kiro provider exists in this repo. `minpeter/kiro-lb` is a full gateway for a
+different upstream (AWS CodeWhisperer/Kiro), requiring its own auth, model
+registry, and translation layer — comparable in size to the antigravity provider,
+not a small addition.
+
+Stating this plainly: **pain point 6 is not addressed.** No credentials for it
+exist in the migrated pool either, so it could not have been verified live even
+if stubbed.
+
+## Gates
+
+- `cargo test --workspace`: 92 passed, 0 failed
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean
+- Performance, codex path through mock upstream, 3×600 requests at concurrency
+  16: median p50 **43.63 ms** vs **44.75 ms** baseline (**-1.12 ms**), 1800/1800
+  successful. Session affinity added no measurable overhead.
