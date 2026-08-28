@@ -236,8 +236,13 @@ function barColor(leftPct) {
   if (leftPct <= 35) return "var(--warn)";
   return "var(--ok)";
 }
+/** Admin reports health as `{status: "available"}`, not a bare string. */
+function healthText(h) {
+  if (h && typeof h === "object") return String(h.status ?? Object.values(h)[0] ?? "unknown");
+  return String(h ?? "unknown");
+}
 function healthClass(h) {
-  const s = String(h || "").toLowerCase();
+  const s = healthText(h).toLowerCase();
   if (s.includes("available") || s.includes("healthy") || s.includes("ok")) return "ok";
   if (s.includes("cooldown") || s.includes("degraded")) return "warn";
   return "bad";
@@ -283,7 +288,7 @@ function quotaRows(u) {
       resetIn: w.reset_at_unix ? w.reset_at_unix - now : (w.reset_after_seconds ?? null),
     });
   }
-  return flat.length ? [{ name: "Usage", models: "", rows: flat }] : [];
+  return flat.length ? [{ name: u.active_limit || "Usage", models: "", rows: flat }] : [];
 }
 
 function render() {
@@ -350,7 +355,7 @@ function render() {
     const head = `<div class="acct-head">
         <span class="email">${maskEmail(a.id)}</span>
         ${u.plan_type ? `<span class="pill plan">${u.plan_type}</span>` : ""}
-        ${hc === "ok" ? "" : `<span class="pill ${hc}">${String(a.health || "?").replace(/[{}"]/g, "").slice(0, 18)}</span>`}
+        ${hc === "ok" ? "" : `<span class="pill ${hc}">${healthText(a.health).slice(0, 18)}</span>`}
         <span class="spacer"></span>
         <span class="stats">ok ${a.ok ?? 0} · fail ${a.fails ?? 0}${a.ttft ? " · p50 " + Math.round(a.ttft) + "ms" : ""}</span>
         <button type="button" class="btn" data-warm="${encodeURIComponent(a.id)}">Warm</button>

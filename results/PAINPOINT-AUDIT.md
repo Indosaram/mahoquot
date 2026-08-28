@@ -257,27 +257,51 @@ a single shared number, so the UI renders one row per bucket and lists the
 member models beside the group name. A visual reviewer flagged the absence of
 per-model rows as a defect; it was rejected with this evidence.
 
-### Two bugs found while wiring it
+### The real cause of the 403: a missing User-Agent
 
-1. **`403` is not always a licensing error.** A throttled quota poll answers
-   `403 "You do not have a valid license of this product."` — semantically a
-   licence failure, actually a rate limit. Proven by the identical token and
-   body alternating 200/403 minutes apart. Mapping it to `Unauthorized` was
-   wrong, so it is now a retryable upstream condition.
-2. **The misclassification fed a retry loop.** The 403 entered the 401 refresh
-   path, forcing an extra token refresh per failure and doubling traffic
-   against the endpoint that was already throttling. Antigravity polls are now
-   serialised with a gap instead of fanned out concurrently.
+`cloudcode-pa` gates this verb on the Antigravity client `User-Agent`. Without
+it the endpoint answers `403 "You do not have a valid license of this
+product."` — a licensing message for what is actually client rejection. Any
+`antigravity/*` UA is accepted; measured 200 for `antigravity/2.11.0`,
+`antigravity/1.11.3 Darwin/arm64`, and `antigravity/2.11.0 Darwin/arm64`.
+
+`ANTIGRAVITY_USER_AGENT` already existed in `providers/src/antigravity.rs` and
+the relay path already sent it; only the new quota call omitted it. The header
+is now attached and all three accounts return 200.
+
+The 200/403 alternation that made this look like a flaky endpoint or a rate
+limit was an artefact of probing with different UA strings between runs. Two
+intermediate diagnoses were wrong and have been reverted: "concurrent burst
+throttling" (polling was serialised with a 4s gap — removed, it is parallel
+again) and "transient throttle, retry later" (the 403 is now reported as client
+rejection, not a retryable throttle).
 
 Errors from `refresh_all_usage` used to be discarded with `let _ = …`, which is
 why a silently failing quota poll was indistinguishable from a provider with no
 quota API — the root cause of the false claim above. They are logged now.
 
+### A third bug, found only by live data
+
+The admin snapshot reports `health` as `{"status": "available"}`, not a bare
+string. The UI stringified it, so every account rendered as
+`[OBJECT OBJECT]` and tripped the "8 accounts unavailable" banner. A fixture
+written from the documented shape hid this; the live capture exposed it
+immediately. Fixed by `healthText()`.
+
 ### Verification status
 
-Parsing is unit-tested against the live payload (6 tests, including leap-day
-and non-UTC rejection). End-to-end population through the gateway is **not**
-confirmed: at the time of writing all three antigravity accounts return the
-throttle-403 even from a bare `curl`, so the live path could not be observed
-green. The UI screenshot in `results/monitor-ui-quota.png` was therefore
-captured against a fixture matching the real response shape, not live data.
+Verified end-to-end. Parsing is unit-tested against the live payload (6 tests,
+including leap-day and non-UTC rejection), and all three antigravity accounts
+return real model-group quota **through the gateway**, not just from a direct
+probe:
+
+    accounts with live model-group quota: 3/3 antigravity
+    account-e: Gemini Models 92.13% weekly / 97.06% 5h remaining
+
+The remaining 5 accounts are Codex, which reports flat windows rather than
+groups, so 3/8 carrying `groups` is correct rather than a shortfall.
+
+Screenshots are live, not fixtures: `results/monitor-ui-quota.png` (all
+providers) and `results/monitor-ui-antigravity-live.png` (model groups).
+Capturing them in a browser against the gateway also exercised the CORS
+middleware end-to-end — preflight returns 204.

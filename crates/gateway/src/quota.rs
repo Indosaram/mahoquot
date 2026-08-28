@@ -116,6 +116,7 @@ async fn try_antigravity_quota(
         .http_client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
+        .header("User-Agent", quotio_providers::ANTIGRAVITY_USER_AGENT)
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({ "project": project }))
         .timeout(Duration::from_secs(20))
@@ -130,13 +131,12 @@ async fn try_antigravity_quota(
         let detail = resp.text().await.unwrap_or_default();
         let detail = detail.replace('\n', " ");
         let detail = detail.trim();
-        // Antigravity answers a throttled quota poll with 403 "You do not have a
-            // valid license of this product", which is indistinguishable by status
-        // from a genuinely unlicensed account. Measured: the identical token and
-        // body alternate 200/403 minutes apart, so this is treated as a
-        // retryable upstream condition and never as a credential failure.
+        // cloudcode-pa gates this verb on the Antigravity client User-Agent and
+        // answers 403 "You do not have a valid license of this product" when it
+        // is absent. That is a client-identification failure, not a credential
+        // or licensing one, so it is surfaced separately from Unauthorized.
         if status == reqwest::StatusCode::FORBIDDEN && detail.contains("valid license") {
-            return Err(QuotaError::Upstream("quota throttled (403 license)".into()));
+            return Err(QuotaError::Upstream("quota rejected client (403)".into()));
         }
         if status == reqwest::StatusCode::UNAUTHORIZED
             || status == reqwest::StatusCode::FORBIDDEN
@@ -282,43 +282,9 @@ fn getrandom(buf: &mut [u8]) {
     }
 }
 
-/// Gap between per-account Antigravity quota polls.
-///
-/// 1.2s still tripped the throttle across 3 accounts; the endpoint then
-/// returned 403 for over a minute. Kept well clear of that boundary since
-/// quota is refreshed on a timer, not in the request path.
-const ANTIGRAVITY_QUOTA_POLL_GAP: Duration = Duration::from_secs(4);
-
 pub async fn refresh_all_usage(state: &Arc<AppState>) {
-    // Antigravity's quota verb throttles aggressively across accounts: a
-    // concurrent burst returns 429, and once tripped it keeps answering 403
-    // "no valid license" for minutes even for licensed accounts. Polling is
-    // therefore serialised with a wide gap rather than fanned out.
-    let mut antigravity: Vec<_> = Vec::new();
-    let mut others: Vec<_> = Vec::new();
-    for m in state.members.clone() {
-        if m.kind() == ProviderKind::Antigravity {
-            antigravity.push(m);
-        } else {
-            others.push(m);
-        }
-    }
-
-    for m in antigravity {
-        match refresh_account_usage(state, &m).await {
-            Ok(()) | Err(QuotaError::Unsupported) => {}
-            Err(e) => tracing::warn!(
-                account = %m.id,
-                provider = ?m.kind(),
-                error = %e,
-                "quota refresh failed"
-            ),
-        }
-        tokio::time::sleep(ANTIGRAVITY_QUOTA_POLL_GAP).await;
-    }
-
     let mut tasks = Vec::new();
-    for m in others {
+    for m in state.members.clone() {
         let state = Arc::clone(state);
         tasks.push(tokio::spawn(async move {
             // Logged rather than discarded: a silently failing quota poll is
