@@ -108,11 +108,13 @@
   table.acctbl .num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 11px; }
 
   .setgroup { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; padding: 4px 14px 10px; max-width: 640px; }
-  .setgroup-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-faint); font-weight: 600; padding: 11px 0 6px; }
+  /* --fg-faint fails WCAG AA against the panel; group headings and hints are
+     real reading text, so they use the dim token, which passes in both themes. */
+  .setgroup-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-dim); font-weight: 600; padding: 11px 0 6px; }
   .setrow { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
   .setrow:first-of-type { border-top: 0; }
   .setlabel { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
-  .sethint { font-size: 10.5px; color: var(--fg-faint); font-family: var(--mono); }
+  .sethint { font-size: 10.5px; color: var(--fg-dim); font-family: var(--mono); }
   .setfail { font-size: 11px; color: var(--bad); font-family: var(--mono); }
   .setrow input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
   .savenote { border-radius: 8px; padding: 7px 11px; margin-bottom: 12px; font-size: 12px; max-width: 640px; }

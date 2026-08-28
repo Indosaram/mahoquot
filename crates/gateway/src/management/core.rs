@@ -70,7 +70,10 @@ async fn put_config_yaml(State(state): State<Arc<AppState>>, raw: bytes::Bytes) 
         }
     };
     match state.settings.mutate(|current| *current = parsed) {
-        Ok(_) => json_status(StatusCode::OK, json!({ "status": "ok" })),
+        // Upstream reports which document sections it rewrote, and a
+        // whole-config write is always reported as the single "config"
+        // section regardless of what actually differed.
+        Ok(_) => json_status(StatusCode::OK, json!({ "ok": true, "changed": ["config"] })),
         Err(err) => json_status(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({ "error": format!("failed to save config: {err}") }),

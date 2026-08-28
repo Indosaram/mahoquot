@@ -46,11 +46,11 @@ BODIES = {
 }
 DEFAULT_BODY = {"value": True}
 
-# Writing the whole config replaces the file, which erases the oracle's own
-# remote-management.secret-key and makes every later probe fail 403. These
-# routes are compared read-only; the mutating verb is verified separately
-# against our gateway alone.
-READ_ONLY_ONLY = {"/config.yaml", "/config"}
+# Writing the whole config replaces the file. Sending an arbitrary body erases
+# the target's own remote-management.secret-key and makes every later probe
+# fail 403, so each target is instead sent back its OWN current document: a
+# genuine write that is idempotent and leaves the secret intact.
+ECHO_OWN_DOCUMENT = {"/config.yaml"}
 
 
 def concrete(path: str) -> str:
@@ -59,13 +59,16 @@ def concrete(path: str) -> str:
     return path
 
 
-def call(base: str, path: str, method: str, secret: str, body: dict | None):
+def call(base, path, method, secret, body=None, raw=None, content_type="application/json"):
     url = f"http://{base}/v0/management{path}"
-    data = json.dumps(body).encode() if body is not None else None
+    if raw is not None:
+        data = raw.encode()
+    else:
+        data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Authorization", f"Bearer {secret}")
     if data is not None:
-        request.add_header("Content-Type", "application/json")
+        request.add_header("Content-Type", content_type)
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             return response.status, response.read().decode("utf-8", "replace")
@@ -107,23 +110,24 @@ def main() -> int:
         for route in routes:
             method, _, path = route.partition(" ")
             target = concrete(path)
-            if path in READ_ONLY_ONLY and method != "GET":
-                rows.append({
-                    "group": group, "method": method, "path": path,
-                    "oracle_status": "skipped", "mine_status": "skipped",
-                    "oracle_kind": "skipped", "mine_kind": "skipped",
-                    "missing_keys": [], "match": None,
-                    "skipped_reason": "whole-config write would erase the oracle's own secret-key",
-                    "oracle_body": "", "mine_body": "",
-                })
-                continue
-
-            body = None
-            if method in ("PUT", "PATCH", "POST"):
-                body = BODIES.get(path, DEFAULT_BODY)
-
-            o_status, o_text = call(args.oracle, target, method, args.secret, body)
-            m_status, m_text = call(args.mine, target, method, args.secret, body)
+            if path in ECHO_OWN_DOCUMENT and method != "GET":
+                # Read each target's own document and write it straight back.
+                _, o_doc = call(args.oracle, target, "GET", args.secret)
+                _, m_doc = call(args.mine, target, "GET", args.secret)
+                o_status, o_text = call(
+                    args.oracle, target, method, args.secret,
+                    raw=o_doc, content_type="application/yaml",
+                )
+                m_status, m_text = call(
+                    args.mine, target, method, args.secret,
+                    raw=m_doc, content_type="application/yaml",
+                )
+            else:
+                body = None
+                if method in ("PUT", "PATCH", "POST"):
+                    body = BODIES.get(path, DEFAULT_BODY)
+                o_status, o_text = call(args.oracle, target, method, args.secret, body)
+                m_status, m_text = call(args.mine, target, method, args.secret, body)
             o_kind, o_keys = body_kind(o_text)
             m_kind, m_keys = body_kind(m_text)
 

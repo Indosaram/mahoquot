@@ -5,7 +5,7 @@ at `.omo/upstream/route-groups.json`.
 
 ## Result
 
-**127/128 compared routes match; 1 skipped by design; 1 environment-conditional.**
+**129/129 routes match. Nothing skipped.**
 
 Measured by `scripts/mgmt_oracle_diff.py`, which drives a **real CLIProxyAPI
 binary** and this gateway against the same credential pool with the same
@@ -22,23 +22,32 @@ A route matches when statuses agree, body kind agrees, and the oracle's JSON
 keys are a subset of ours: extra keys are additive and do not break a client, a
 missing key does.
 
-### The one skip
+### Two routes that needed care to compare honestly
 
-`PUT /config.yaml` replaces the entire config document. Sent to the oracle it
-erases the oracle's own `remote-management.secret-key`, after which every later
-probe fails 403 — an earlier run scored a meaningless 2/129 exactly this way.
-It is compared read-only, and the mutating verb is verified separately against
-this gateway: `PUT` a modified document, then read `request-retry` back as 9
-through the API and confirm `request-retry: 9` on disk. Both hold.
+**`PUT /config.yaml`** replaces the entire config document. An early run sent
+it an arbitrary body, which erased the oracle's own
+`remote-management.secret-key` and made every later probe fail 403 — that run
+scored a meaningless 2/129. Skipping the route was not good enough either,
+since the mutating verb then went unproven.
 
-### The one environment-conditional route
+The fix is to send each target **its own current document**, read back from its
+own `GET /config.yaml`: a genuine write that is idempotent and leaves the
+secret intact. Verified afterwards: the oracle still authenticates (`200`) and
+still rejects a wrong key (`401`). Upstream bcrypt-hashes a plaintext secret on
+write, so the on-disk value becomes `$2a$10$...` — the secret is preserved, not
+lost; a naive grep for the plaintext is the wrong check.
 
-`GET /latest-version` proxies a GitHub release lookup. GitHub currently
-rate-limits this IP (`403`), so the oracle answers `502 unexpected_status`
-while we answer `200 {"latest-version": ...}`. Earlier in the same session,
-before the rate limit, the oracle returned `200 {"latest-version":"v7.2.145"}`
-— the same shape and key we emit. This is an external dependency, not a
-contract difference.
+This exposed the last real contract difference: upstream answers
+`{"changed":["config"],"ok":true}`, not `{"status":"ok"}`. `changed` is a
+constant marker meaning the file was rewritten — it reads `["config"]` for an
+identical echo, a one-field change, and a two-field change alike.
+
+**`GET /latest-version`** proxies a GitHub release lookup. While GitHub
+rate-limited this IP the oracle answered `502 unexpected_status`, which is an
+external dependency rather than a contract difference. Once the limit reset the
+oracle returned `200 {"latest-version":"v7.2.145"}` and the route matches. The
+diff criterion compares status, body kind and keys — not the version value,
+which legitimately differs between builds.
 
 ## What the oracle diff caught that reachability testing did not
 
@@ -149,6 +158,29 @@ Fresh captures in `results/qa/` (light and dark).
 Browser checks report **zero console errors and zero page errors** across all
 views, in both themes.
 
+### Mechanical UI audit
+
+Because no independent reviewer could be dispatched (see below), the views were
+checked programmatically for the defect classes a visual reviewer looks for.
+Across all five views in both themes:
+
+| check | result |
+|---|---|
+| horizontal overflow | **0** |
+| overlapping interactive controls | **0** |
+| zero-size or unclickable controls | **0** |
+| WCAG AA contrast failures in the views added here | **0** (was 34) |
+
+The audit initially flagged 34 contrast failures in elements introduced by this
+work: `.setgroup-head` and `.sethint` used `--fg-faint`, which measures 2.7-4.4
+against the panel where AA needs 4.5. Both now use `--fg-dim` and pass in both
+themes.
+
+148 further contrast failures remain in **pre-existing** quota and all-accounts
+markup (`.strip .k`, `.stats`, table cells, `.nav-label`, provider metadata).
+They are reported rather than fixed: they predate this work and changing them
+is a design-system decision, not part of exposing the management surface.
+
 ### Defects found and fixed while building this
 
 - `render()` returned early when `/admin/usage` failed, blanking the **whole
@@ -165,11 +197,16 @@ views, in both themes.
 
 ### Limitation on C5
 
-C5 asks for an **independent visual-QA reviewer**. Subagent dispatch failed
-with a provider connection error on every attempt this session (8+, across
-every category), so no independent reviewer ran. The captures above were
-reviewed by the same agent that wrote the UI, which is weaker evidence, and
-this section should not be read as an independent PASS.
+C5 asks for an **independent visual-QA reviewer** returning PASS. Subagent
+dispatch failed with a provider connection error on every attempt this session
+(10+, across every category and through two separate dispatch paths), so no
+independent reviewer ran.
+
+What stands in its place is weaker in one way and stronger in another: the
+mechanical audit above is objective and reproducible, but it cannot judge taste,
+layout intent, or whether a screen communicates well. The remaining judgement
+came from the same agent that wrote the UI. **This section is not an
+independent PASS and should not be read as one.**
 
 ## Invariants
 
