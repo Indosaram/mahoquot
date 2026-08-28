@@ -275,9 +275,14 @@ mod tests {
         // given a settings document persisted to a temp dir
         let dir = std::env::temp_dir().join(format!("quotio-settings-{}", std::process::id()));
         let path = dir.join("config.yaml");
-        let mut settings = Settings::default();
-        settings.port = 18899;
-        settings.remote_management.secret_key = "abc".to_string();
+        let settings = Settings {
+            port: 18899,
+            remote_management: RemoteManagement {
+                secret_key: "abc".to_string(),
+                ..RemoteManagement::default()
+            },
+            ..Settings::default()
+        };
         settings.persist(&path).expect("persists");
         // when reloaded from disk
         let loaded = Settings::load(&path).expect("loads");
@@ -308,9 +313,14 @@ mod tests {
     #[test]
     fn management_auth_is_derived_from_the_document_and_environment() {
         // given a config with a secret and remote access enabled
-        let mut settings = Settings::default();
-        settings.remote_management.allow_remote = true;
-        settings.remote_management.secret_key = "file-secret".to_string();
+        let settings = Settings {
+            remote_management: RemoteManagement {
+                allow_remote: true,
+                secret_key: "file-secret".to_string(),
+                ..RemoteManagement::default()
+            },
+            ..Settings::default()
+        };
         // when the auth view is derived with an env secret
         let auth = settings.management_auth("env-secret".to_string(), String::new());
         // then both sources are carried through
