@@ -95,6 +95,20 @@ pub struct Settings {
     pub api_keys: Vec<String>,
     #[serde(rename = "oauth-excluded-models", default)]
     pub oauth_excluded_models: std::collections::BTreeMap<String, Vec<String>>,
+    #[serde(rename = "gemini-api-key", default)]
+    pub gemini_api_key: Vec<String>,
+    #[serde(rename = "claude-api-key", default)]
+    pub claude_api_key: Vec<String>,
+    #[serde(rename = "codex-api-key", default)]
+    pub codex_api_key: Vec<String>,
+    #[serde(rename = "xai-api-key", default)]
+    pub xai_api_key: Vec<String>,
+    #[serde(rename = "vertex-api-key", default)]
+    pub vertex_api_key: Vec<String>,
+    #[serde(rename = "interactions-api-key", default)]
+    pub interactions_api_key: Vec<String>,
+    #[serde(rename = "openai-compatibility", default)]
+    pub openai_compatibility: Vec<String>,
     #[serde(rename = "oauth-model-alias", default)]
     pub oauth_model_alias: serde_json::Value,
     #[serde(rename = "oauth-request-scoped-errors", default)]
@@ -126,6 +140,13 @@ impl Default for Settings {
             remote_management: RemoteManagement::default(),
             api_keys: Vec::new(),
             oauth_excluded_models: std::collections::BTreeMap::new(),
+            gemini_api_key: Vec::new(),
+            claude_api_key: Vec::new(),
+            codex_api_key: Vec::new(),
+            xai_api_key: Vec::new(),
+            vertex_api_key: Vec::new(),
+            interactions_api_key: Vec::new(),
+            openai_compatibility: Vec::new(),
             oauth_model_alias: serde_json::Value::Null,
             oauth_request_scoped_errors: serde_json::Value::Null,
             extra: serde_yaml::Mapping::new(),

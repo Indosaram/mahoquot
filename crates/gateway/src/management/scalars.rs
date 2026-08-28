@@ -17,7 +17,7 @@ fn saved() -> Response {
     (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response()
 }
 
-fn refused(refusal: Refusal) -> Response {
+pub fn refusal_response(refusal: Refusal) -> Response {
     let message = match refusal {
         Refusal::InvalidBody => "invalid body",
         Refusal::Message(m) => m,
@@ -43,7 +43,7 @@ async fn read_scalar(state: Arc<AppState>, scalar: &'static Scalar) -> Response 
 /// The edit runs inside the store's mutate so persistence and publication stay
 /// atomic, and its refusal is captured out rather than returned, because the
 /// store's closure cannot fail the mutation itself.
-fn apply(
+pub fn apply_edit(
     state: &Arc<AppState>,
     edit: impl FnOnce(&mut super::settings::Settings) -> Result<(), Refusal>,
 ) -> Response {
@@ -55,7 +55,7 @@ fn apply(
     });
 
     if let Some(reason) = refusal {
-        return refused(reason);
+        return refusal_response(reason);
     }
     match outcome {
         Ok(_) => saved(),
@@ -68,9 +68,9 @@ async fn write_scalar(state: Arc<AppState>, scalar: &'static Scalar, raw: bytes:
     // answers a malformed payload with its own parser text, which upstream
     // never emits -- every bad body must read {"error":"invalid body"}.
     let Ok(body) = serde_json::from_slice::<Value>(&raw) else {
-        return refused(Refusal::InvalidBody);
+        return refusal_response(Refusal::InvalidBody);
     };
-    apply(&state, |settings| (scalar.write)(settings, &body))
+    apply_edit(&state, |settings| (scalar.write)(settings, &body))
 }
 
 async fn clear_scalar(
@@ -82,7 +82,7 @@ async fn clear_scalar(
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     };
     let provider = params.get("provider").map(String::as_str);
-    apply(&state, |settings| clear(settings, provider))
+    apply_edit(&state, |settings| clear(settings, provider))
 }
 
 pub fn scalars_routes() -> Router<Arc<AppState>> {

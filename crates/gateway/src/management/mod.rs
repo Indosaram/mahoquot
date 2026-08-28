@@ -6,9 +6,11 @@
 //! once, so a group module never repeats the auth wiring and cannot be mounted
 //! without it.
 
+pub mod apikeys;
 pub mod auth;
 pub mod core;
 pub mod gate;
+pub mod lists;
 pub mod scalar_table;
 pub mod scalars;
 pub mod settings;
@@ -22,6 +24,7 @@ use crate::state::AppState;
 
 pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
+        .merge(apikeys::apikeys_routes())
         .merge(core::core_routes())
         .merge(scalars::scalars_routes())
         .layer(axum::middleware::from_fn_with_state(
