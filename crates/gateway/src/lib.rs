@@ -1,6 +1,8 @@
 pub mod account;
+pub mod capability;
 pub mod compat;
 pub mod config;
+pub mod cp_routes;
 pub mod inbound;
 pub mod metrics;
 pub mod models_route;
@@ -10,6 +12,9 @@ pub mod routes;
 pub mod server;
 pub mod state;
 pub mod quota;
+pub mod realtime;
+pub mod static_pages;
 pub mod url;
+pub mod v1beta;
 pub mod warmup;
 pub mod usage;

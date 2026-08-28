@@ -164,8 +164,13 @@ pub fn messages_payload(
     tool_calls: &[(String, String, String)],
     finish: &str,
     usage: Option<&Usage>,
+    reasoning_signature: Option<&str>,
 ) -> Value {
     let mut content: Vec<Value> = Vec::new();
+    // Anthropic orders the thinking block ahead of the visible answer.
+    if let Some(sig) = reasoning_signature {
+        content.push(json!({ "type": "thinking", "thinking": "", "signature": sig }));
+    }
     if !text.is_empty() {
         content.push(json!({ "type": "text", "text": text }));
     }

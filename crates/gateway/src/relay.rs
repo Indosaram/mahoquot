@@ -21,6 +21,9 @@ pub enum RelayMode {
     Native,
     OpenAiCompat,
     Anthropic,
+    GeminiNative,
+    /// Same upstream request as `OpenAiCompat`; only the reply envelope differs.
+    LegacyCompletions,
 }
 
 struct FinalFailure {
@@ -46,6 +49,34 @@ struct UpstreamTarget {
 }
 
 fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTarget, String> {
+    if plan.mode == RelayMode::GeminiNative {
+        // The client already speaks Gemini, so only the envelope is added.
+        if member.kind() != crate::account::ProviderKind::Antigravity {
+            return Err("gemini-native requests need an antigravity account".to_string());
+        }
+        let project = member
+            .project_id()
+            .ok_or_else(|| "antigravity account missing project_id".to_string())?;
+        let gemini: serde_json::Value = serde_json::from_slice(&plan.body)
+            .map_err(|e| format!("invalid gemini request: {e}"))?;
+        let model = gemini
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let mut inner = gemini.clone();
+        if let Some(obj) = inner.as_object_mut() {
+            obj.remove("model");
+            obj.remove("stream");
+        }
+        let wrapped = crate::v1beta::wrap_for_antigravity(&model, &project, &inner);
+        return Ok(UpstreamTarget {
+            url: crate::url::build_antigravity_url(member.upstream_override.as_deref()),
+            body: Bytes::from(wrapped.to_string()),
+            protocol: compat::Protocol::Antigravity,
+        });
+    }
+
     if member.kind() != crate::account::ProviderKind::Antigravity {
         return Ok(UpstreamTarget {
             url: build_target_url(member.upstream_override.as_deref(), &plan.upstream_path),
@@ -241,7 +272,24 @@ fn build_plan(
                 openai_body: Some(openai),
             })
         }
-        RelayMode::OpenAiCompat => match compat::openai_to_codex(&body_bytes) {
+        RelayMode::GeminiNative => {
+            let gemini: serde_json::Value = serde_json::from_slice(&body_bytes)
+                .map_err(|e| format!("invalid gemini request: {e}"))?;
+            let stream = gemini
+                .get("stream")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            Ok(RelayPlan {
+                upstream_path: req_path.to_string(),
+                model: compat::extract_model(&body_bytes),
+                body: body_bytes,
+                mode,
+                client_stream: stream,
+                include_usage: false,
+                openai_body: None,
+            })
+        }
+        RelayMode::OpenAiCompat | RelayMode::LegacyCompletions => match compat::openai_to_codex(&body_bytes) {
             Ok(translated) => Ok(RelayPlan {
                 upstream_path: compat::CODEX_PATH.to_string(),
                 body: Bytes::from(translated.body),
@@ -385,7 +433,12 @@ async fn finish_success(
     }
 
     let raw = compat::collect_stream(first, stream).await?;
-    let completion = compat::aggregate(&raw, model, created, protocol)?;
+    let shape = match plan.mode {
+        RelayMode::GeminiNative => compat::ReplyShape::Gemini,
+        RelayMode::LegacyCompletions => compat::ReplyShape::TextCompletion,
+        _ => compat::ReplyShape::Chat,
+    };
+    let completion = compat::aggregate(&raw, model, created, protocol, shape)?;
     member.record_ok();
     state.metrics.served.fetch_add(1, Ordering::Relaxed);
     state.router.feedback(member.id(), Outcome::Success);

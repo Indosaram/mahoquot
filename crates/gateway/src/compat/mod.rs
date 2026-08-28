@@ -190,11 +190,21 @@ fn error_frames(renderer: &mut ChunkRenderer, message: &str) -> Vec<Bytes> {
     })
 }
 
+/// Client-visible JSON shape for a non-streaming reply. The upstream parsing is
+/// identical for all three; only the final envelope differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyShape {
+    Chat,
+    TextCompletion,
+    Gemini,
+}
+
 pub fn aggregate(
     raw: &[u8],
     model: String,
     created: i64,
     protocol: Protocol,
+    shape: ReplyShape,
 ) -> Result<Value, String> {
     let mut parser = ProtocolParser::new(protocol);
     let mut events = Vec::new();
@@ -207,7 +217,11 @@ pub fn aggregate(
     }
     match aggregator.failure() {
         Some(message) => Err(message.to_string()),
-        None => Ok(aggregator.into_completion()),
+        None => Ok(match shape {
+            ReplyShape::Chat => aggregator.into_completion(),
+            ReplyShape::TextCompletion => aggregator.into_text_completion(),
+            ReplyShape::Gemini => aggregator.into_gemini(),
+        }),
     }
 }
 
@@ -246,10 +260,12 @@ pub fn anthropic_response(
     let mut usage: Option<events::Usage> = None;
     let mut tool_calls: Vec<(String, String, String)> = Vec::new();
     let mut finish = "stop";
+    let mut reasoning_signature: Option<String> = None;
 
     for event in events {
         match event {
             CodexEvent::TextDelta(t) => text.push_str(&t),
+            CodexEvent::ReasoningSignature(sig) => reasoning_signature = Some(sig),
             CodexEvent::Completed { usage: u } => usage = u,
             CodexEvent::ToolCallBegin { call_id, name, .. } => {
                 finish = "tool_calls";
@@ -271,6 +287,7 @@ pub fn anthropic_response(
         &tool_calls,
         finish,
         usage.as_ref(),
+        reasoning_signature.as_deref(),
     );
     (
         StatusCode::OK,

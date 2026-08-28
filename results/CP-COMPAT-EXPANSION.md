@@ -11,6 +11,11 @@ to `~/.cli-proxy-api`.
 
 **27/27 checks passed** against CLIProxyAPI v7.2.140 sharing the same 8-credential pool.
 
+> **Denominator correction.** Those 27 checks are deep field-level assertions
+> over **7 routes only** (the table below), not over CLIProxyAPI's full surface.
+> CLIProxyAPI registers **44 routes**. Full-surface parity is measured
+> separately in `results/CP-ROUTE-PARITY.md` (49 probes over all 44 routes).
+
 | Surface | Result |
 | --- | --- |
 | `/v1/models` | object=list, entry shape, 20/20 ids are a strict subset of CP |

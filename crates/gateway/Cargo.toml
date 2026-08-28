@@ -29,6 +29,8 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 futures.workspace = true
+rand.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 tower.workspace = true

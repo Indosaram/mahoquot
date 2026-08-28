@@ -97,6 +97,9 @@ impl ChunkRenderer {
                 self.role_prelude(&mut out);
                 out.push(self.chunk(json!({"content": text}), None));
             }
+            // OpenAI streaming chunks carry no field for a provider reasoning
+            // marker, so it is dropped rather than invented into the delta.
+            CodexEvent::ReasoningSignature(_) => {}
             CodexEvent::ToolCallBegin {
                 output_index,
                 call_id,
@@ -193,6 +196,7 @@ pub struct Aggregator {
     model: String,
     created: i64,
     text: String,
+    reasoning_signature: Option<String>,
     tools: Vec<ToolAccumulator>,
     usage: Option<Usage>,
     failure: Option<String>,
@@ -205,6 +209,7 @@ impl Aggregator {
             model,
             created,
             text: String::new(),
+            reasoning_signature: None,
             tools: Vec::new(),
             usage: None,
             failure: None,
@@ -241,6 +246,7 @@ impl Aggregator {
                     tool.arguments.push_str(&delta);
                 }
             }
+            CodexEvent::ReasoningSignature(sig) => self.reasoning_signature = Some(sig),
             CodexEvent::Completed { usage } => self.usage = usage,
             CodexEvent::Failed { message } => self.failure = Some(message),
         }
@@ -248,6 +254,49 @@ impl Aggregator {
 
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
+    }
+
+    /// Legacy `/v1/completions` shape: `text` on the choice and no `message`,
+    /// with `object` set to `text_completion` rather than `chat.completion`.
+    pub fn into_text_completion(self) -> Value {
+        let mut payload = json!({
+            "id": self.id,
+            "object": "text_completion",
+            "created": self.created,
+            "model": self.model,
+            "choices": [{"index": 0, "text": self.text, "finish_reason": "stop"}],
+        });
+        if let Some(usage) = self.usage.as_ref() {
+            payload["usage"] = usage_value(usage);
+        }
+        payload
+    }
+
+    /// Gemini-native shape for the `/v1beta` surface, which nests text under
+    /// `candidates[].content.parts[]` instead of `choices[]`.
+    pub fn into_gemini(self) -> Value {
+        let mut part = json!({"text": self.text});
+        if let Some(sig) = self.reasoning_signature.as_ref() {
+            part["thoughtSignature"] = Value::String(sig.clone());
+        }
+        let mut payload = json!({
+            "candidates": [{
+                "content": {"role": "model", "parts": [part]},
+                "finishReason": "STOP",
+                "index": 0,
+            }],
+            "modelVersion": self.model,
+            "responseId": self.id,
+        });
+        if let Some(usage) = self.usage.as_ref() {
+            payload["usageMetadata"] = json!({
+                "promptTokenCount": usage.prompt_tokens,
+                "candidatesTokenCount": usage.completion_tokens,
+                "totalTokenCount": usage.total_tokens,
+                "thoughtsTokenCount": usage.reasoning_tokens,
+            });
+        }
+        payload
     }
 
     pub fn into_completion(self) -> Value {

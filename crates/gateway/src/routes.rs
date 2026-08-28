@@ -11,6 +11,7 @@ use axum::Router;
 use bytes::Bytes;
 use quotio_types::{Health, PoolMember};
 
+use crate::cp_routes;
 use crate::inbound::require_api_key;
 use crate::models_route::models_payload;
 use crate::monitor::PromAccount;
@@ -33,8 +34,83 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/messages/count_tokens", post(count_tokens_handler))
         .route(
             "/backend-api/codex/responses",
-            post(codex_responses_handler),
+            get(cp_routes::ws_upgrade).post(codex_responses_handler),
         )
+        .route(
+            "/backend-api/codex/responses/compact",
+            post(cp_routes::responses_compact),
+        )
+        .route(
+            "/backend-api/codex/alpha/search",
+            post(cp_routes::alpha_search),
+        )
+        .route(
+            "/v1/responses",
+            get(cp_routes::ws_upgrade).post(cp_routes::responses),
+        )
+        .route("/v1/responses/compact", post(cp_routes::responses_compact))
+        .route("/v1/alpha/search", post(cp_routes::alpha_search))
+        .route(
+            "/v1/images/generations",
+            post(cp_routes::images_generations),
+        )
+        .route("/v1/images/edits", post(cp_routes::images_edits))
+        .route("/v1/videos", post(cp_routes::videos))
+        .route("/v1/videos/generations", post(cp_routes::videos))
+        .route("/v1/videos/edits", post(cp_routes::videos))
+        .route("/v1/videos/extensions", post(cp_routes::videos))
+        .route("/v1/videos/{request_id}", get(cp_routes::videos_by_id))
+        .route("/openai/v1/videos", post(cp_routes::openai_videos))
+        .route("/openai/v1/videos/{video_id}", get(cp_routes::openai_videos))
+        .route(
+            "/openai/v1/videos/{video_id}/content",
+            get(cp_routes::openai_videos),
+        )
+        .route("/v1/live", post(cp_routes::realtime_offer))
+        .route("/v1/live/{call_id}", get(cp_routes::live_sideband))
+        .route(
+            "/v1/realtime",
+            get(cp_routes::ws_upgrade).post(cp_routes::realtime_offer),
+        )
+        .route("/v1/realtime/calls", post(cp_routes::realtime_offer))
+        .route(
+            "/v1/realtime/calls/{call_id}",
+            get(cp_routes::realtime_call_get),
+        )
+        .route(
+            "/v1/realtime/calls/{call_id}/hangup",
+            post(cp_routes::realtime_hangup),
+        )
+        .route(
+            "/v1/realtime/calls/{call_id}/{action}",
+            post(cp_routes::realtime_sip),
+        )
+        .route(
+            "/v1/realtime/client_secrets",
+            post(cp_routes::realtime_client_secrets),
+        )
+        .route(
+            "/v1/realtime/sessions",
+            post(cp_routes::realtime_sessions),
+        )
+        .route(
+            "/v1/realtime/transcription_sessions",
+            post(cp_routes::realtime_transcription),
+        )
+        .route(
+            "/v1/realtime/translations",
+            get(cp_routes::realtime_translations).post(cp_routes::realtime_translations),
+        )
+        .route(
+            "/v1/realtime/translations/client_secrets",
+            post(cp_routes::realtime_translations),
+        )
+        .route("/v1beta/models", get(cp_routes::v1beta_models))
+        .route(
+            "/v1beta/models/{*action}",
+            get(cp_routes::v1beta_action).post(cp_routes::v1beta_action),
+        )
+        .route("/v1beta/interactions", post(cp_routes::v1beta_interactions))
         .layer(from_fn_with_state(state.api_keys.clone(), require_api_key));
 
     // Public surface: Prometheus scrapers and liveness probes never send credentials,
@@ -42,12 +118,17 @@ pub fn create_app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/metrics", get(metrics_handler))
+        .route("/", get(cp_routes::root))
+        .route("/management.html", get(cp_routes::management_html))
+        .route("/anthropic/callback", get(cp_routes::oauth_callback))
+        .route("/codex/callback", get(cp_routes::oauth_callback))
+        .route("/antigravity/callback", get(cp_routes::oauth_callback))
         .merge(authed_routes)
         .with_state(state)
 }
 
 async fn healthz_handler() -> impl IntoResponse {
-    (StatusCode::OK, "ok")
+    Json(serde_json::json!({"status": "ok"}))
 }
 
 async fn models_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -229,7 +310,7 @@ async fn completions_handler(
 
     handle_relay(
         state,
-        RelayMode::OpenAiCompat,
+        RelayMode::LegacyCompletions,
         "/v1/chat/completions",
         &headers,
         Bytes::from(chat.to_string()),

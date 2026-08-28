@@ -8,11 +8,13 @@ pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> Stri
     let raw_base = upstream_override.unwrap_or(UPSTREAM_BASE);
     let base = raw_base.trim_end_matches('/');
 
-    if req_path == "/backend-api/codex/responses" {
+    if let Some(rest) = req_path.strip_prefix("/backend-api/codex") {
+        // The configured base may already include the /backend-api/codex
+        // segment; joining it with a path that repeats it yields a 404.
         if base.ends_with("/backend-api/codex") {
-            format!("{base}/responses")
+            format!("{base}{rest}")
         } else {
-            format!("{base}/backend-api/codex/responses")
+            format!("{base}{req_path}")
         }
     } else if req_path == "/v1/chat/completions" {
         if base.ends_with("/backend-api/codex") {

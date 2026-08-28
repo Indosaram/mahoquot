@@ -18,7 +18,9 @@ quotio-types = { path = "crates/types" }
 quotio-router = { path = "crates/router" }
 quotio-providers = { path = "crates/providers" }
 tokio = { version = "1", features = ["full"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+rand = "0.8"
+base64 = "0.22"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"

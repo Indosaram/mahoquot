@@ -268,8 +268,11 @@ impl GeminiDecoder {
                     });
                     continue;
                 }
-                if part.get("thoughtSignature").is_some() && part.get("text").is_none() {
-                    continue;
+                if let Some(sig) = part.get("thoughtSignature").and_then(Value::as_str) {
+                    out.push(CodexEvent::ReasoningSignature(sig.to_string()));
+                    if part.get("text").is_none() {
+                        continue;
+                    }
                 }
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
                     if !text.is_empty() {

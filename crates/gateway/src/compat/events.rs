@@ -15,6 +15,9 @@ pub enum CodexEvent {
         response_id: String,
     },
     TextDelta(String),
+    /// Opaque provider-side reasoning marker. Preserved rather than parsed so it
+    /// can be handed back in whichever shape the client surface expects.
+    ReasoningSignature(String),
     ToolCallBegin {
         output_index: u64,
         call_id: String,

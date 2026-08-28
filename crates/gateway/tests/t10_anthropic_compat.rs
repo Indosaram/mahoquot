@@ -78,6 +78,7 @@ fn test_t10_response_shape_matches_anthropic() {
         &[],
         "stop",
         Some(&usage),
+        None,
     );
 
     assert_eq!(payload["type"], "message");
@@ -88,6 +89,24 @@ fn test_t10_response_shape_matches_anthropic() {
     assert!(payload["stop_sequence"].is_null());
     assert_eq!(payload["usage"]["input_tokens"], 6);
     assert_eq!(payload["usage"]["output_tokens"], 2);
+}
+
+#[test]
+fn test_t10_thinking_block_precedes_text_when_signature_present() {
+    let payload = messages_payload(
+        "msg_2",
+        "gemini-3.7-flash-high",
+        "alpha bravo",
+        &[],
+        "stop",
+        None,
+        Some("sig-abc"),
+    );
+
+    assert_eq!(payload["content"][0]["type"], "thinking");
+    assert_eq!(payload["content"][0]["signature"], "sig-abc");
+    assert_eq!(payload["content"][1]["type"], "text");
+    assert_eq!(payload["content"][1]["text"], "alpha bravo");
 }
 
 #[test]
