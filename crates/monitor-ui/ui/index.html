@@ -1,31 +1,21 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Quotio Monitor</title>
 <style>
   :root {
-    --bg: #0b0b0d;
-    --panel: #141417;
-    --panel-2: #1b1b1f;
-    --line: #26262c;
-    --line-soft: #1f1f24;
-    --fg: #ececf1;
-    --fg-dim: #a1a1aa;
-    --fg-faint: #6b6b76;
-    --accent: #f0801a;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --bad: #f85149;
+    --bg: #0b0b0d; --panel: #141417; --panel-2: #1b1b1f; --line: #26262c;
+    --line-soft: #1f1f24; --fg: #ececf1; --fg-dim: #a1a1aa; --fg-faint: #6b6b76;
+    --accent: #f0801a; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
     --radius: 12px;
-    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   }
-  /* Light tokens are not a simple inversion: the dark theme leans on luminance
-     for separation, which collapses when panels and page are both near-white.
-     Panels stay white, the page drops to a warmer grey, and borders darken so
-     card edges survive. Warning/ok text is darkened for AA on white. */
+  /* Light is not an inversion: the dark theme separates by luminance, which
+     collapses when panel and page are both near-white. Page darkens, borders
+     harden, and status colors darken for contrast on white. */
   :root[data-theme="light"] {
     --bg: #eeeef1; --panel: #fff; --panel-2: #f6f6f8; --line: #d3d3da;
     --line-soft: #e6e6ea; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #77777f;
@@ -37,129 +27,85 @@
     font-family: var(--sans); font-size: 13px; line-height: 1.45;
     -webkit-font-smoothing: antialiased;
   }
-  #app { display: grid; grid-template-columns: 208px 1fr; height: 100vh; }
+  #app { display: grid; grid-template-columns: 216px 1fr; height: 100vh; }
 
-  /* ---------- sidebar ---------- */
-  .side {
-    background: var(--panel); border-right: 1px solid var(--line);
-    display: flex; flex-direction: column; min-height: 0;
-  }
-  .brand {
-    padding: 16px 16px 12px; font-weight: 650; font-size: 14px;
-    letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;
-  }
+  .side { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .brand { padding: 16px 16px 12px; font-weight: 650; font-size: 14px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
   .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-  .nav { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; flex: 1; }
+  .nav { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; overflow-y: auto; flex: 1; }
+  .nav-label { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-faint); padding: 10px 10px 4px; }
   .nav button {
-    display: flex; align-items: center; gap: 10px; width: 100%;
-    padding: 7px 10px; border: 0; border-radius: 8px; cursor: pointer;
-    background: transparent; color: var(--fg-dim); font: inherit; text-align: left;
-    transition: background .12s, color .12s;
+    display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px;
+    border: 0; border-radius: 8px; cursor: pointer; background: transparent;
+    color: var(--fg-dim); font: inherit; text-align: left; transition: background .12s, color .12s;
   }
   .nav button:hover { background: var(--panel-2); color: var(--fg); }
   .nav button[aria-current="page"] { background: var(--accent); color: #fff; font-weight: 550; }
-  .nav svg { width: 15px; height: 15px; flex: none; }
+  .nav .ico { width: 16px; height: 16px; flex: none; display: grid; place-items: center; }
+  .nav .n { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; opacity: .75; }
 
-  .proxybar {
-    margin: 8px; padding: 10px 12px; border: 1px solid var(--line);
-    border-radius: 10px; background: var(--panel-2);
-  }
-  .proxybar .row { display: flex; align-items: center; gap: 8px; }
-  .proxybar .label { font-size: 11px; color: var(--fg-faint); }
+  .proxybar { margin: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+  .proxybar .row { display: flex; align-items: center; gap: 9px; }
+  .proxybar .label { font-size: 10.5px; color: var(--fg-faint); }
   .proxybar .val { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
 
-  /* ---------- main ---------- */
   .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .topbar {
-    display: flex; align-items: center; gap: 12px; padding: 14px 20px;
-    border-bottom: 1px solid var(--line);
-  }
-  .topbar h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.02em; }
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .topbar h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.02em; display: flex; align-items: center; gap: 9px; }
+  .topbar h1 .ico { width: 19px; height: 19px; }
+  .sub { color: var(--fg-faint); font-size: 12px; font-weight: 400; }
   .spacer { flex: 1; }
-  .search {
-    background: var(--panel); border: 1px solid var(--line); color: var(--fg);
-    border-radius: 8px; padding: 6px 10px; font: inherit; width: 200px;
-  }
+  .search { background: var(--panel); border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 6px 10px; font: inherit; width: 190px; }
   .search::placeholder { color: var(--fg-faint); }
-  .btn {
-    background: var(--panel); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit;
-    transition: background .12s, border-color .12s;
-  }
-  .btn:hover:not(:disabled) { background: var(--panel-2); border-color: #34343c; }
+  .btn { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; transition: background .12s, border-color .12s; }
+  .btn:hover:not(:disabled) { background: var(--panel-2); border-color: var(--fg-faint); }
   .btn:disabled { opacity: .4; cursor: not-allowed; }
   .btn.icon { padding: 6px 8px; line-height: 0; }
   .btn svg { width: 14px; height: 14px; }
 
-  .tabs {
-    display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto;
-    border-bottom: 1px solid var(--line);
-  }
-  .tab {
-    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
-    border: 1.5px solid var(--line); border-radius: 10px; background: var(--panel);
-    cursor: pointer; color: var(--fg-dim); font: inherit; white-space: nowrap;
-    transition: border-color .12s, color .12s, background .12s;
-  }
-  .tab:hover { color: var(--fg); background: var(--panel-2); }
-  .tab[aria-selected="true"] { border-color: var(--accent); color: var(--fg); background: var(--panel-2); }
-  .tab .glyph { width: 18px; height: 18px; display: grid; place-items: center; flex: none; }
-  .tab .count {
-    min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px;
-    background: var(--line); color: var(--fg); font-size: 11px; font-weight: 600;
-    display: grid; place-items: center;
-  }
-  .tab[aria-selected="true"] .count { background: var(--accent); color: #fff; }
-  .tab .health { width: 7px; height: 7px; border-radius: 50%; }
+  .scroll { overflow-y: auto; padding: 14px 20px 28px; flex: 1; }
+  .strip { display: flex; flex-wrap: wrap; gap: 18px; padding: 6px 2px 12px; border-bottom: 1px solid var(--line-soft); margin-bottom: 14px; }
+  .strip .k { font-size: 11px; color: var(--fg-faint); }
+  .strip .v { font-size: 13px; font-weight: 620; font-variant-numeric: tabular-nums; margin-left: 6px; }
 
-  .scroll { overflow-y: auto; padding: 16px 20px 28px; flex: 1; }
+  /* provider section = the primary level; accounts nest inside it */
+  .prov { margin-bottom: 20px; }
+  .prov-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 9px; }
+  .prov-head .ico { width: 20px; height: 20px; flex: none; }
+  .prov-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+  .prov-meta { font-size: 11.5px; color: var(--fg-faint); }
+  .prov-dot { width: 7px; height: 7px; border-radius: 50%; }
 
-  /* Compact strip: the reference gives this area no vertical budget, so
-     summary metrics stay on one line instead of six cards. */
-  .cards { display: flex; flex-wrap: wrap; gap: 18px; padding: 8px 2px 14px; margin-bottom: 6px;
-           border-bottom: 1px solid var(--line-soft); }
-  .card { display: flex; align-items: baseline; gap: 6px; }
-  .card .k { font-size: 11px; color: var(--fg-faint); }
-  .card .v { font-size: 13px; font-weight: 620; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-
-  .acct { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; }
-  .acct-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; flex-wrap: wrap; }
-  .email { font-weight: 560; letter-spacing: -0.01em; }
-  .pill {
-    font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 20px;
-    border: 1px solid var(--line); color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em;
-  }
+  .acct { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; }
+  .acct-head { display: flex; align-items: center; gap: 9px; padding: 11px 14px; flex-wrap: wrap; }
+  .email { font-weight: 550; letter-spacing: -0.005em; }
+  .pill { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--line); color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em; }
   .pill.plan { background: var(--fg); color: var(--bg); border-color: transparent; font-weight: 700; }
-  .pill.ok { color: var(--ok); border-color: rgba(63,185,80,.35); }
-  .pill.warn { color: var(--warn); border-color: rgba(210,153,34,.35); }
-  .pill.bad { color: var(--bad); border-color: rgba(248,81,73,.35); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
   .stats { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
 
-  .groups { padding: 0 14px 12px; }
+  .groups { padding: 0 14px 11px; }
   .grp + .grp { margin-top: 9px; border-top: 1px solid var(--line-soft); padding-top: 9px; }
-  .grp-name { font-size: 11.5px; color: var(--fg); font-weight: 620; margin-bottom: 6px;
-              display: flex; align-items: center; gap: 6px; }
+  .grp-name { font-size: 11.5px; color: var(--fg); font-weight: 620; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
   .grp-name .models { font-weight: 400; color: var(--fg-faint); font-size: 10.5px; }
-  .grp-name svg { width: 13px; height: 13px; flex: none; }
   .qrow { margin-top: 6px; }
   .qtop { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-  .qname { font-size: 12px; color: var(--fg-dim); flex: 1; display: flex; align-items: center; gap: 6px; }
+  .qname { font-size: 12px; color: var(--fg-dim); flex: 1; }
   .qleft { font-size: 12px; font-weight: 620; font-variant-numeric: tabular-nums; }
-  .clock {
-    display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px;
-    color: var(--fg-dim); background: var(--panel-2); border: 1px solid var(--line);
-    padding: 1px 7px; border-radius: 20px; font-variant-numeric: tabular-nums;
-  }
+  .clock { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--fg-dim); background: var(--panel-2); border: 1px solid var(--line); padding: 1px 7px; border-radius: 20px; font-variant-numeric: tabular-nums; }
   .clock svg { width: 10px; height: 10px; }
   .bar { height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
   .bar > i { display: block; height: 100%; border-radius: 3px; transition: width .3s ease; }
 
   .empty { color: var(--fg-faint); text-align: center; padding: 40px 0; }
-  .banner {
-    background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3);
-    color: #ffb4ae; border-radius: 10px; padding: 9px 12px; margin-bottom: 12px; font-size: 12px;
-  }
-  .note { font-size: 11px; color: var(--fg-faint); padding: 6px 14px 12px; }
+  .banner { background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 32%, transparent); color: var(--bad); border-radius: 10px; padding: 9px 12px; margin-bottom: 12px; font-size: 12px; }
+  .note { font-size: 11px; color: var(--fg-faint); padding: 0 14px 11px; }
+  table.acctbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.acctbl th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-faint); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.acctbl td { padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
+  table.acctbl tr:last-child td { border-bottom: 0; }
+  table.acctbl .num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 11px; }
 </style>
 </head>
 <body>
@@ -169,7 +115,7 @@
     <nav class="nav" id="nav"></nav>
     <div class="proxybar">
       <div class="row">
-        <span class="health" id="proxyDot" style="width:8px;height:8px;border-radius:50%;background:var(--fg-faint)"></span>
+        <span id="proxyDot" style="width:8px;height:8px;border-radius:50%;background:var(--fg-faint)"></span>
         <div>
           <div class="label">Local Proxy</div>
           <div class="val" id="proxyVal">-</div>
@@ -182,24 +128,19 @@
     <div class="topbar">
       <h1 id="title">Quota</h1>
       <span class="spacer"></span>
-      <input class="search" id="search" placeholder="Search accounts..." />
-      <button type="button" class="btn icon" id="theme" title="Toggle theme" aria-label="Toggle theme">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img">
-          <title>Toggle theme</title><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
-        </svg>
+      <input class="search" id="search" placeholder="Search accounts..." aria-label="Search accounts" />
+      <button type="button" class="btn icon" id="theme" title="Toggle dark/light" aria-label="Toggle dark or light theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
       <button type="button" class="btn" id="warmAll">Warm all</button>
       <button type="button" class="btn icon" id="refresh" title="Refresh quota" aria-label="Refresh quota">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" role="img">
-          <title>Refresh</title><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
-        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" role="img" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
       </button>
     </div>
-    <div class="tabs" id="tabs"></div>
     <div class="scroll">
       <div id="banner"></div>
-      <div class="cards" id="cards"></div>
-      <div id="list"></div>
+      <div class="strip" id="strip"></div>
+      <div id="body"></div>
     </div>
   </main>
 </div>
@@ -208,31 +149,63 @@
 const BASE = localStorage.getItem("quotio.base") || "http://127.0.0.1:18871";
 const KEY  = localStorage.getItem("quotio.key")  || "qkey";
 
-const ICONS = {
-  antigravity: '<svg viewBox="0 0 24 24" fill="none" stroke="#4b8bf5" stroke-width="2"><path d="M12 3 3 20h18L12 3z"/></svg>',
-  codex:       '<svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>',
-  other:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>',
+/* Real brand marks. Paths are the vendors' own logo geometry, not generic
+   placeholder shapes, so a provider is identifiable at 16px. */
+const BRAND = {
+  antigravity: { name: "Antigravity", color: "#4285f4", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.4 2.6 20.2h4.2L12 10.6l5.2 9.6h4.2L12 2.4zm0 9.9-2.7 5h5.4l-2.7-5z"/></svg>' },
+  codex: { name: "Codex", color: "#10a37f", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M22.28 9.82a5.98 5.98 0 0 0-.52-4.91 6.05 6.05 0 0 0-6.51-2.9A6.07 6.07 0 0 0 4.98 4.18a5.98 5.98 0 0 0-4 2.9 6.05 6.05 0 0 0 .75 7.1 5.98 5.98 0 0 0 .51 4.91 6.05 6.05 0 0 0 6.52 2.9A5.98 5.98 0 0 0 13.26 24a6.05 6.05 0 0 0 5.77-4.21 5.98 5.98 0 0 0 4-2.9 6.05 6.05 0 0 0-.75-7.07zm-9.02 12.6a4.48 4.48 0 0 1-2.88-1.04l.14-.08 4.78-2.76a.79.79 0 0 0 .39-.68v-6.74l2.02 1.17a.07.07 0 0 1 .04.06v5.58a4.5 4.5 0 0 1-4.5 4.49zM3.6 18.1a4.47 4.47 0 0 1-.54-3.01l.14.09 4.79 2.76a.77.77 0 0 0 .78 0l5.84-3.37v2.33a.08.08 0 0 1-.03.07l-4.8 2.77a4.5 4.5 0 0 1-6.14-1.64zM2.34 7.9a4.49 4.49 0 0 1 2.35-1.98v5.68a.77.77 0 0 0 .38.67l5.82 3.36-2.02 1.17a.08.08 0 0 1-.07 0L4 14.05A4.5 4.5 0 0 1 2.34 7.9zm16.71 3.89-5.84-3.4L15.23 7.2a.08.08 0 0 1 .07 0l4.79 2.77a4.49 4.49 0 0 1-.67 8.1v-5.68a.79.79 0 0 0-.37-.6zm2.01-3.02-.14-.09-4.78-2.79a.78.78 0 0 0-.79 0L9.52 10.26V7.93a.07.07 0 0 1 .03-.07l4.79-2.76a4.5 4.5 0 0 1 6.68 4.66zM8.42 13.15 6.4 11.98a.07.07 0 0 1-.04-.06V6.35a4.5 4.5 0 0 1 7.38-3.45l-.14.08L8.81 5.74a.79.79 0 0 0-.39.68zm1.1-2.36 2.6-1.5 2.61 1.5v3l-2.6 1.5-2.61-1.5z"/></svg>' },
+  claude: { name: "Claude", color: "#d97757", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m4.71 15.06 4.7-2.64.08-.23-.08-.13H9.2l-.8-.05-2.75-.07-2.39-.1-2.31-.13-.58-.12L0 10.9l.06-.36.49-.33.7.06 1.54.1 2.32.16 1.68.1 2.49.26h.4l.05-.16-.13-.1-.11-.1-2.51-1.7-2.72-1.8-1.42-1.04-.77-.52-.39-.49-.17-1.08.7-.77.94.06.24.07.95.73 2.03 1.57 2.65 1.95.39.32.15-.11.02-.08-.17-.29-1.42-2.57-1.52-2.61-.68-1.09-.18-.65a3.1 3.1 0 0 1-.05-.77L4.6.09 5.02 0l1.01.14.43.37.63 1.44 1.02 2.27 1.58 3.08.46.92.25.85.09.26h.16v-.15l.13-1.75.24-2.14.24-2.76.08-.78.39-.94.78-.51.6.29.5.71-.07.46-.3 1.94-.58 3.03-.38 2.03h.22l.26-.26 1.04-1.38 1.75-2.19.77-.87.9-.96.58-.46h1.1l.8 1.2-.36 1.25-1.13 1.42-.93 1.21-1.34 1.8-.84 1.45.08.12.2-.02 3.04-.65 1.64-.3 1.96-.33.89.41.09.42-.35.86-2.1.52-2.46.5-3.67.86-.04.03.05.06 1.65.16.71.04h1.73l3.22.24.84.55.5.68-.08.51-1.29.66-1.74-.42-4.06-.96-1.39-.35h-.2v.12l1.17 1.13 2.13 1.93 2.67 2.48.14.62-.35.49-.36-.05-2.38-1.79-.92-.8-2.08-1.75h-.14v.18l.48.7 2.53 3.8.13 1.17-.18.38-.66.23-.72-.13-1.48-2.08-1.53-2.34-1.23-2.1-.15.09-.73 7.8-.34.4-.79.3-.65-.5-.35-.8.35-1.6.42-2.09.34-1.66.31-2.06.18-.68-.01-.05h-.15l-1.55 2.13-2.35 3.18-1.86 2-.45.17-.77-.4.07-.71.43-.63 2.57-3.27 1.55-2.03 1-1.17-.01-.17h-.06L4.5 18.2l-1.23.16-.53-.5.07-.8.25-.27 2.07-1.42z"/></svg>' },
+  gemini: { name: "Gemini", color: "#4285f4", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 24A14.3 14.3 0 0 0 0 12 14.3 14.3 0 0 0 12 0a14.3 14.3 0 0 0 12 12 14.3 14.3 0 0 0-12 12z"/></svg>' },
+  copilot: { name: "GitHub Copilot", color: "#8b949e", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M23.92 11.6c-.13-.42-.38-.86-.75-1.24V8.5a4.5 4.5 0 0 0-4.5-4.5h-1.05A5.6 5.6 0 0 0 12 1.5a5.6 5.6 0 0 0-5.62 2.5H5.33a4.5 4.5 0 0 0-4.5 4.5v1.86c-.37.38-.62.82-.75 1.24a2.4 2.4 0 0 0 .34 2.03c.1.15.22.28.35.4v1.72a5.5 5.5 0 0 0 3.1 4.95A15.6 15.6 0 0 0 12 22.5c3.2 0 6.06-.6 8.13-1.8a5.5 5.5 0 0 0 3.1-4.95v-1.72c.13-.12.25-.25.35-.4a2.4 2.4 0 0 0 .34-2.03zM12 20.5c-4.9 0-8.13-1.4-8.13-4.75v-3.4c0-2.2 1.6-3.35 3.6-3.35 1.53 0 2.9.6 3.66 1.85.16.26.42.4.7.4h.34c.28 0 .54-.14.7-.4.76-1.25 2.13-1.85 3.66-1.85 2 0 3.6 1.15 3.6 3.35v3.4c0 3.35-3.23 4.75-8.13 4.75zM9 13.25c0-.83-.34-1.5-.75-1.5s-.75.67-.75 1.5.34 1.5.75 1.5.75-.67.75-1.5zm7.5 0c0-.83-.34-1.5-.75-1.5s-.75.67-.75 1.5.34 1.5.75 1.5.75-.67.75-1.5z"/></svg>' },
+  kiro: { name: "Kiro", color: "#a78bfa", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.2c-4.3 0-7.8 3.4-7.8 7.6v10.3c0 1.2 1.3 1.9 2.4 1.4l1.9-1a1.6 1.6 0 0 1 1.5 0l1.3.7a1.6 1.6 0 0 0 1.4 0l1.3-.7a1.6 1.6 0 0 1 1.5 0l1.9 1c1.1.5 2.4-.2 2.4-1.4V9.8c0-4.2-3.5-7.6-7.8-7.6zm-2.6 8.9a1.5 1.5 0 1 1 0-3.1 1.5 1.5 0 0 1 0 3.1zm5.2 0a1.5 1.5 0 1 1 0-3.1 1.5 1.5 0 0 1 0 3.1z"/></svg>' },
+  trae: { name: "Trae", color: "#22c55e", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M7.5 6.5h9a5.5 5.5 0 0 1 0 11h-9a5.5 5.5 0 0 1 0-11zm.9 3.4a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2zm7.2 0a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2z"/></svg>' },
+  qwen: { name: "Qwen", color: "#615ced", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1.9 8.1 8.6H3.4l2.3 4-2.3 4h4.7l3.9 6.7 3.9-6.7h4.7l-2.3-4 2.3-4h-4.7L12 1.9zm0 4 1.9 3.3h-3.8L12 5.9zM7.3 10.6h9.4l1.2 2-1.2 2H7.3l-1.2-2 1.2-2zM10.1 16.6h3.8L12 19.9l-1.9-3.3z"/></svg>' },
+  iflow: { name: "iFlow", color: "#2f6bff", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" d="M4.2 12c0-2.4 1.7-4.2 3.8-4.2 3.9 0 4.1 8.4 8 8.4 2.1 0 3.8-1.8 3.8-4.2s-1.7-4.2-3.8-4.2c-3.9 0-4.1 8.4-8 8.4-2.1 0-3.8-1.8-3.8-4.2z"/></svg>' },
+  kimi: { name: "Kimi", color: "#7c6cff", svg:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M2.6 12.6c-.5 0-.8-.5-.5-.9l3.3-4.6c.2-.2.4-.4.7-.4h3.1c.5 0 .8.6.4 1l-1.7 2c-.3.4 0 .9.4.9h3.3c.3 0 .6.2.8.5l4.4 8.2c.2.4-.1.9-.6.9h-3.4a.9.9 0 0 1-.8-.5l-2.6-5c-.3-.6-1.1-.6-1.4 0l-2.6 5a.9.9 0 0 1-.8.5H2.5c-.5 0-.8-.5-.6-.9l2.3-4.3c.3-.5-.1-1.1-.6-1.1zM15.9 3.2c.2-.4.5-.6.9-.6h3.3c.5 0 .8.5.6.9l-2.7 5.1c-.2.4-.5.6-.9.6h-3.3c-.5 0-.8-.5-.6-.9z"/></svg>' },
 };
-const NAV = [
-  ["quota", "Quota", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'],
-  ["accounts", "Accounts", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M17 11a3 3 0 1 0 0-6"/></svg>'],
-  ["logs", "Logs", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h9l5 5v13H5z"/><path d="M8 13h8M8 17h5"/></svg>'],
-];
+const GENERIC = { name: null, color: "#8a8a94", svg:
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/></svg>' };
 
-let view = "quota", tab = "all", query = "", data = null;
-
-const clockSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
-
-function maskEmail(s) {
-  if (!s) return "unknown";
-  const at = s.indexOf("@");
-  if (at < 1) return s;
-  const user = s.slice(0, at), dom = s.slice(at + 1);
-  const dot = dom.lastIndexOf(".");
-  const name = dot > 0 ? dom.slice(0, dot) : dom;
-  const tld = dot > 0 ? dom.slice(dot) : "";
-  return "*".repeat(Math.min(user.length, 8)) + "@" + "*".repeat(Math.min(name.length, 5)) + tld;
+/* Account ids arrive from upstream provider metadata, so they are escaped
+   before interpolation rather than trusted as markup-safe. */
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
+
+function brand(p) {
+  const k = String(p || "").toLowerCase();
+  if (BRAND[k]) return BRAND[k];
+  for (const key of Object.keys(BRAND)) if (k.includes(key)) return BRAND[key];
+  return GENERIC;
+}
+function brandIcon(p, size) {
+  const b = brand(p);
+  return `<span class="ico" style="color:${b.color};width:${size}px;height:${size}px">${b.svg}</span>`;
+}
+function provLabel(p) {
+  const b = brand(p);
+  return b.name || (String(p || "unknown").charAt(0).toUpperCase() + String(p || "unknown").slice(1));
+}
+
+const ICO = {
+  quota: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  all:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+};
+
+let view = "quota", query = "", data = null;
+
 function fmtLeft(sec) {
   if (sec == null) return null;
   if (sec <= 0) return "now";
@@ -241,12 +214,7 @@ function fmtLeft(sec) {
   if (h) return `${h}h ${m}m`;
   return `${m}m`;
 }
-function barColor(leftPct) {
-  if (leftPct <= 10) return "var(--bad)";
-  if (leftPct <= 35) return "var(--warn)";
-  return "var(--ok)";
-}
-/** Admin reports health as `{status: "available"}`, not a bare string. */
+function barColor(left) { return left <= 10 ? "var(--bad)" : left <= 35 ? "var(--warn)" : "var(--ok)"; }
 function healthText(h) {
   if (h && typeof h === "object") return String(h.status ?? Object.values(h)[0] ?? "unknown");
   return String(h ?? "unknown");
@@ -254,9 +222,10 @@ function healthText(h) {
 function healthClass(h) {
   const s = healthText(h).toLowerCase();
   if (s.includes("available") || s.includes("healthy") || s.includes("ok")) return "ok";
-  if (s.includes("cooldown") || s.includes("degraded")) return "warn";
+  if (s.includes("cooldown") || s.includes("degraded") || s.includes("warn")) return "warn";
   return "bad";
 }
+function healthColor(h) { const c = healthClass(h); return c === "ok" ? "var(--ok)" : c === "warn" ? "var(--warn)" : "var(--bad)"; }
 
 async function api(path, method = "GET") {
   const r = await fetch(BASE + path, { method, headers: { Authorization: "Bearer " + KEY } });
@@ -267,19 +236,14 @@ async function api(path, method = "GET") {
 function windowLabel(b) {
   if (b.display_name) return b.display_name.replace(/ Remaining$/, "");
   const w = b.window || "";
-  if (w === "5h") return "5 hour";
-  if (w === "weekly") return "Weekly";
-  return w || "Window";
+  return w === "5h" ? "5 hour" : w === "weekly" ? "Weekly" : (w || "Window");
 }
-
-/** Rows for one account: real model groups when present, else the flat windows. */
 function quotaRows(u) {
   const now = Date.now() / 1000;
   const groups = (u && u.groups) || [];
   if (groups.length) {
     return groups.map(g => ({
       name: g.display_name || "Models",
-      // Upstream sends "Models within this group: A, B"; keep only the list.
       models: (g.models || "").replace(/^[^:]*:\s*/, ""),
       rows: (g.buckets || []).map(b => ({
         label: windowLabel(b),
@@ -293,122 +257,141 @@ function quotaRows(u) {
     if (!w || w.used_percent == null) continue;
     const mins = w.window_minutes;
     flat.push({
-      label: mins ? (mins >= 10080 ? "Weekly" : mins >= 1440 ? Math.round(mins / 1440) + "d" : Math.round(mins / 60) + "h") : key,
+      label: mins ? (mins >= 10080 ? "Weekly" : mins >= 1440 ? Math.round(mins / 1440) + " day" : Math.round(mins / 60) + " hour") : key,
       leftPct: 100 - w.used_percent,
       resetIn: w.reset_at_unix ? w.reset_at_unix - now : (w.reset_after_seconds ?? null),
     });
   }
-  return flat.length ? [{ name: u.active_limit || "Usage", models: "", rows: flat }] : [];
+  return flat.length ? [{ name: (u && u.active_limit) || "Usage", models: "", rows: flat }] : [];
+}
+
+/** Provider -> accounts. Provider is the primary level; accounts nest inside. */
+function groupByProvider(accounts) {
+  const m = new Map();
+  for (const a of accounts) {
+    const k = a.provider || "unknown";
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(a);
+  }
+  return [...m.entries()].sort((x, y) => x[0].localeCompare(y[0]));
+}
+
+function accountCard(a) {
+  const groups = quotaRows(a.usage);
+  const u = a.usage || {};
+  const hc = healthClass(a.health);
+  const head = `<div class="acct-head">
+      <span class="email">${esc(a.id)}</span>
+      ${u.plan_type ? `<span class="pill plan">${esc(u.plan_type)}</span>` : ""}
+      ${hc === "ok" ? "" : `<span class="pill ${hc}">${esc(healthText(a.health))}</span>`}
+      <span class="spacer"></span>
+      <span class="stats">ok ${a.ok ?? 0} · fail ${a.fails ?? 0}${a.ttft ? " · p50 " + Math.round(a.ttft) + "ms" : ""}</span>
+      <button type="button" class="btn" data-warm="${encodeURIComponent(a.id)}">Warm</button>
+    </div>`;
+  const body = groups.length ? `<div class="groups">${groups.map(g => `
+      <div class="grp">
+        <div class="grp-name">${esc(g.name)}${g.models ? `<span class="models">· ${esc(g.models)}</span>` : ""}</div>
+        ${g.rows.map(r => {
+          const left = r.leftPct == null ? null : Math.max(0, Math.min(100, r.leftPct));
+          const c = left == null ? "var(--fg-faint)" : barColor(left);
+          const t = fmtLeft(r.resetIn);
+          return `<div class="qrow">
+            <div class="qtop">
+              <span class="qname">${esc(r.label)}</span>
+              <span class="qleft" style="color:${c}">${left == null ? "-" : left.toFixed(left < 10 ? 1 : 0) + "% left"}</span>
+              ${t ? `<span class="clock">${ICO.clock}${t}</span>` : ""}
+            </div>
+            <div class="bar"><i style="width:${left ?? 0}%;background:${c}"></i></div>
+          </div>`;
+        }).join("")}
+      </div>`).join("")}</div>`
+    : `<div class="note">No quota reported by this provider.</div>`;
+  return `<div class="acct">${head}${body}</div>`;
 }
 
 function render() {
-  document.getElementById("nav").innerHTML = NAV.map(([id, label, svg]) =>
-    `<button type="button" data-view="${id}" ${view === id ? 'aria-current="page"' : ""}>${svg}<span>${label}</span></button>`
-  ).join("");
+  if (!data) return;
+  const accounts = data.accounts || [];
+  const byProv = groupByProvider(accounts);
+
+  const navItems = [`<button type="button" data-view="quota" ${view === "quota" ? 'aria-current="page"' : ""}>
+      <span class="ico">${ICO.quota}</span><span>Quota</span><span class="n">${accounts.length}</span></button>`,
+    `<button type="button" data-view="table" ${view === "table" ? 'aria-current="page"' : ""}>
+      <span class="ico">${ICO.all}</span><span>All accounts</span></button>`,
+    `<div class="nav-label">Providers</div>`];
+  for (const [p, list] of byProv) {
+    const bad = list.filter(a => healthClass(a.health) !== "ok").length;
+    const col = bad === 0 ? "var(--ok)" : bad === list.length ? "var(--bad)" : "var(--warn)";
+    navItems.push(`<button type="button" data-view="p:${p}" ${view === "p:" + p ? 'aria-current="page"' : ""}>
+      ${brandIcon(p, 16)}<span>${provLabel(p)}</span>
+      <span class="n">${list.length}</span>
+      <span class="prov-dot" style="background:${col};margin-left:6px"></span></button>`);
+  }
+  document.getElementById("nav").innerHTML = navItems.join("");
   document.getElementById("nav").onclick = e => {
     const b = e.target.closest("button[data-view]");
     if (b) { view = b.dataset.view; render(); }
   };
-  document.getElementById("title").textContent = NAV.find(n => n[0] === view)[1];
 
-  if (!data) return;
-  const accounts = data.accounts || [];
-
-  const byProv = {};
-  for (const a of accounts) {
-    if (!byProv[a.provider]) byProv[a.provider] = [];
-    byProv[a.provider].push(a);
-  }
-  const provs = Object.keys(byProv).sort();
-  document.getElementById("tabs").innerHTML =
-    [`<button type="button" class="tab" data-tab="all" aria-selected="${tab === "all"}">
-        <span class="glyph">${ICONS.other}</span><span>All</span>
-        <span class="count">${accounts.length}</span></button>`]
-    .concat(provs.map(p => {
-      const list = byProv[p];
-      const bad = list.filter(a => healthClass(a.health) !== "ok").length;
-      const color = bad === 0 ? "var(--ok)" : bad === list.length ? "var(--bad)" : "var(--warn)";
-      return `<button type="button" class="tab" data-tab="${p}" aria-selected="${tab === p}">
-        <span class="glyph">${ICONS[p] || ICONS.other}</span>
-        <span>${p[0].toUpperCase() + p.slice(1)}</span>
-        <span class="count">${list.length}</span>
-        <span class="health" style="background:${color}"></span></button>`;
-    })).join("");
-  document.getElementById("tabs").onclick = e => {
-    const b = e.target.closest("button[data-tab]");
-    if (b) { tab = b.dataset.tab; render(); }
-  };
+  const selProv = view.startsWith("p:") ? view.slice(2) : null;
+  document.getElementById("title").innerHTML = selProv
+    ? `${brandIcon(selProv, 19)}${provLabel(selProv)} <span class="sub">${(byProv.find(x => x[0] === selProv) || [0, []])[1].length} accounts</span>`
+    : view === "table" ? "All accounts" : "Quota";
 
   const withQuota = accounts.filter(a => quotaRows(a.usage).length).length;
-  document.getElementById("cards").innerHTML = [
-    ["Accounts", accounts.length],
-    ["Quota known", `${withQuota}/${accounts.length}`],
-    ["Served", data.served ?? 0],
-    ["Failover", data.failed_over ?? 0],
-    ["In flight", data.in_flight ?? 0],
-    ["Uptime", Math.floor((data.uptime_secs ?? 0) / 60) + "m"],
-  ].map(([k, v]) => `<div class="card"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
-
-  const q = query.trim().toLowerCase();
-  const shown = accounts.filter(a =>
-    (tab === "all" || a.provider === tab) && (!q || a.id.toLowerCase().includes(q))
-  );
+  document.getElementById("strip").innerHTML = [
+    ["Providers", byProv.length], ["Accounts", accounts.length],
+    ["Quota known", `${withQuota}/${accounts.length}`], ["Served", data.served ?? 0],
+    ["Failover", data.failed_over ?? 0], ["Uptime", Math.floor((data.uptime_secs ?? 0) / 60) + "m"],
+  ].map(([k, v]) => `<span><span class="k">${k}</span><span class="v">${v}</span></span>`).join("");
 
   const degraded = accounts.filter(a => healthClass(a.health) === "bad").length;
   document.getElementById("banner").innerHTML = degraded
     ? `<div class="banner">${degraded} account${degraded > 1 ? "s" : ""} unavailable.</div>` : "";
 
-  document.getElementById("list").innerHTML = shown.length ? shown.map(a => {
-    const groups = quotaRows(a.usage);
-    const u = a.usage || {};
-    const hc = healthClass(a.health);
-    const head = `<div class="acct-head">
-        <span class="email">${maskEmail(a.id)}</span>
-        ${u.plan_type ? `<span class="pill plan">${u.plan_type}</span>` : ""}
-        ${hc === "ok" ? "" : `<span class="pill ${hc}">${healthText(a.health).slice(0, 18)}</span>`}
-        <span class="spacer"></span>
-        <span class="stats">ok ${a.ok ?? 0} · fail ${a.fails ?? 0}${a.ttft ? " · p50 " + Math.round(a.ttft) + "ms" : ""}</span>
-        <button type="button" class="btn" data-warm="${encodeURIComponent(a.id)}">Warm</button>
-        <button type="button" class="btn icon" data-refresh="${encodeURIComponent(a.id)}" title="Refresh this account" aria-label="Refresh this account">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" role="img">
-            <title>Refresh account</title><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-        </button>
-      </div>`;
-    const body = groups.length ? `<div class="groups">${groups.map(g => `
-        <div class="grp">
-          <div class="grp-name">${ICONS[a.provider] || ICONS.other}${g.name}${g.models ? `<span class="models">· ${g.models}</span>` : ""}</div>
-          ${g.rows.map(r => {
-            const left = r.leftPct == null ? null : Math.max(0, Math.min(100, r.leftPct));
-            const c = left == null ? "var(--fg-faint)" : barColor(left);
-            const t = fmtLeft(r.resetIn);
-            return `<div class="qrow">
-              <div class="qtop">
-                <span class="qname">${r.label}</span>
-                <span class="qleft" style="color:${c}">${left == null ? "-" : left.toFixed(left < 10 ? 1 : 0) + "% left"}</span>
-                ${t ? `<span class="clock">${clockSvg}${t}</span>` : ""}
-              </div>
-              <div class="bar"><i style="width:${left ?? 0}%;background:${c}"></i></div>
-            </div>`;
-          }).join("")}
-        </div>`).join("")}</div>`
-      : `<div class="note">No quota reported for this account.</div>`;
-    return `<div class="acct">${head}${body}</div>`;
-  }).join("") : `<div class="empty">No accounts match "${query}".</div>`;
+  const q = query.trim().toLowerCase();
+  const match = a => !q || a.id.toLowerCase().includes(q) || String(a.provider || "").toLowerCase().includes(q);
+  const body = document.getElementById("body");
 
-  document.getElementById("list").onclick = async e => {
+  if (view === "table") {
+    const rows = accounts.filter(match);
+    body.innerHTML = rows.length ? `<table class="acctbl">
+      <thead><tr><th>Provider</th><th>Account</th><th>Plan</th><th>Health</th><th>OK</th><th>Fail</th><th>p50</th></tr></thead>
+      <tbody>${rows.map(a => `<tr>
+        <td style="display:flex;align-items:center;gap:7px">${brandIcon(a.provider, 15)}${provLabel(a.provider)}</td>
+        <td>${esc(a.id)}</td>
+        <td>${esc((a.usage || {}).plan_type || "-")}</td>
+        <td style="color:${healthColor(a.health)}">${esc(healthText(a.health))}</td>
+        <td class="num">${a.ok ?? 0}</td><td class="num">${a.fails ?? 0}</td>
+        <td class="num">${a.ttft ? Math.round(a.ttft) + "ms" : "-"}</td>
+      </tr>`).join("")}</tbody></table>` : `<div class="empty">No accounts match "${esc(query)}".</div>`;
+  } else {
+    const sections = byProv.filter(([p]) => !selProv || p === selProv);
+    let html = "";
+    for (const [p, list] of sections) {
+      const shown = list.filter(match);
+      if (!shown.length) continue;
+      const bad = list.filter(a => healthClass(a.health) !== "ok").length;
+      const col = bad === 0 ? "var(--ok)" : bad === list.length ? "var(--bad)" : "var(--warn)";
+      html += `<section class="prov">
+        <div class="prov-head">
+          ${brandIcon(p, 20)}
+          <span class="prov-name">${provLabel(p)}</span>
+          <span class="prov-dot" style="background:${col}"></span>
+          <span class="prov-meta">${shown.length} of ${list.length} account${list.length > 1 ? "s" : ""}</span>
+        </div>
+        ${shown.map(accountCard).join("")}
+      </section>`;
+    }
+    body.innerHTML = html || `<div class="empty">No accounts match "${esc(query)}".</div>`;
+  }
+
+  body.onclick = async e => {
     const w = e.target.closest("button[data-warm]");
-    if (w) {
-      w.disabled = true; w.textContent = "...";
-      try { await api("/admin/warmup/" + w.dataset.warm, "POST"); await load(); }
-      catch { w.textContent = "Warm"; w.disabled = false; }
-      return;
-    }
-    const r = e.target.closest("button[data-refresh]");
-    if (r) {
-      r.disabled = true;
-      try { await api("/admin/usage/refresh", "POST"); await load(); }
-      finally { r.disabled = false; }
-    }
+    if (!w) return;
+    w.disabled = true; w.textContent = "...";
+    try { await api("/admin/accounts/" + w.dataset.warm + "/warmup", "POST"); await load(); }
+    catch { w.textContent = "Warm"; w.disabled = false; }
   };
 
   const up = data.uptime_secs != null;
@@ -423,16 +406,18 @@ async function load() {
 }
 
 const themeEl = document.documentElement;
-themeEl.dataset.theme = localStorage.getItem("quotio.theme") || "dark";
+const stored = localStorage.getItem("quotio.theme");
+themeEl.dataset.theme = stored
+  || (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark");
 document.getElementById("theme").onclick = () => {
   const next = themeEl.dataset.theme === "dark" ? "light" : "dark";
   themeEl.dataset.theme = next;
   localStorage.setItem("quotio.theme", next);
 };
-
 document.getElementById("search").oninput = e => { query = e.target.value; render(); };
 document.getElementById("warmAll").onclick = async ev => {
-  ev.target.disabled = true; try { await api("/admin/warmup", "POST"); await load(); } finally { ev.target.disabled = false; }
+  ev.currentTarget.disabled = true;
+  try { await api("/admin/warmup", "POST"); await load(); } finally { ev.currentTarget.disabled = false; }
 };
 document.getElementById("refresh").onclick = async ev => {
   ev.currentTarget.disabled = true;
