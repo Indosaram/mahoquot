@@ -104,3 +104,30 @@ fn an_auth_dir_with_only_bad_credentials_yields_an_empty_pool_rather_than_an_err
     let members = load_account_members(dir.path()).expect("must not error");
     assert!(members.is_empty());
 }
+
+#[test]
+fn each_provider_only_claims_models_it_can_actually_serve() {
+    let dir = TempAuthDir::new("models");
+    for name in ["codex", "claude", "cursor", "kiro", "zcode"] {
+        dir.write(&format!("{name}-user.json"), &credential(name));
+    }
+    let members = load_account_members(dir.path()).expect("load");
+    let by_kind = |k: ProviderKind| {
+        members
+            .iter()
+            .find(|m| m.kind() == k)
+            .expect("member present")
+            .clone()
+    };
+
+    // A Kiro account must not be picked for an OpenAI model: it cannot serve it,
+    // and routing there would send the request to the wrong upstream entirely.
+    assert!(!by_kind(ProviderKind::Kiro).supports_model("gpt-5.6-sol"));
+    assert!(!by_kind(ProviderKind::Zcode).supports_model("gpt-5.6-sol"));
+    assert!(!by_kind(ProviderKind::Claude).supports_model("gpt-5.6-sol"));
+
+    // ...but each must claim its own catalogue.
+    assert!(by_kind(ProviderKind::Kiro).supports_model("claude-haiku-4-5-20251001"));
+    assert!(by_kind(ProviderKind::Zcode).supports_model("glm-5.2"));
+    assert!(by_kind(ProviderKind::Claude).supports_model("claude-sonnet-4-5-20250929"));
+}

@@ -10,6 +10,34 @@ pub fn build_antigravity_count_tokens_url(upstream_override: Option<&str>) -> St
     antigravity_count_tokens_url(upstream_override.unwrap_or(ANTIGRAVITY_UPSTREAM_BASE))
 }
 
+/// Route a request to the upstream that actually owns the account. Without this
+/// every non-Antigravity provider fell through to the Codex base, so a Claude or
+/// Kiro account would have had its request sent to chatgpt.com.
+pub fn build_provider_url(
+    kind: crate::account::ProviderKind,
+    upstream_override: Option<&str>,
+    req_path: &str,
+) -> String {
+    use crate::account::ProviderKind;
+
+    // Codex and Antigravity keep their existing builders, which encode
+    // path-joining quirks this generic one must not second-guess.
+    let base = match kind {
+        ProviderKind::Codex => return build_target_url(upstream_override, req_path),
+        ProviderKind::Antigravity => return build_antigravity_url(upstream_override),
+        ProviderKind::Claude => quotio_providers::CLAUDE_UPSTREAM_BASE.to_string(),
+        ProviderKind::Cursor => quotio_providers::CURSOR_UPSTREAM_BASE.to_string(),
+        ProviderKind::Zcode => quotio_providers::ZCODE_ANTHROPIC_BASE.to_string(),
+        // Kiro's host is region-templated; the default region is correct for
+        // accounts that did not record one.
+        ProviderKind::Kiro => quotio_providers::KIRO_API_HOST_TEMPLATE
+            .replace("{region}", quotio_providers::KIRO_DEFAULT_REGION),
+    };
+
+    let base = upstream_override.unwrap_or(&base).trim_end_matches('/');
+    format!("{base}{req_path}")
+}
+
 pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> String {
     let raw_base = upstream_override.unwrap_or(UPSTREAM_BASE);
     let base = raw_base.trim_end_matches('/');
@@ -37,6 +65,55 @@ pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::ProviderKind;
+
+    #[test]
+    fn each_provider_resolves_to_its_own_upstream_not_codex() {
+        let claude = build_provider_url(ProviderKind::Claude, None, "/v1/messages");
+        assert!(
+            claude.starts_with("https://api.anthropic.com"),
+            "claude routed to {claude}"
+        );
+
+        let zcode = build_provider_url(ProviderKind::Zcode, None, "/v1/messages");
+        assert!(
+            zcode.starts_with("https://api.z.ai/api/anthropic"),
+            "zcode routed to {zcode}"
+        );
+
+        let cursor = build_provider_url(ProviderKind::Cursor, None, "/v1/chat/completions");
+        assert!(
+            cursor.starts_with("https://api2.cursor.sh"),
+            "cursor routed to {cursor}"
+        );
+
+        let kiro = build_provider_url(ProviderKind::Kiro, None, "/v1/messages");
+        assert!(kiro.contains("kiro.dev"), "kiro routed to {kiro}");
+
+        for url in [claude, zcode, cursor, kiro] {
+            assert!(!url.contains("chatgpt.com"), "leaked to codex upstream: {url}");
+        }
+    }
+
+    #[test]
+    fn an_override_still_wins_for_every_provider() {
+        assert_eq!(
+            build_provider_url(
+                ProviderKind::Claude,
+                Some("http://127.0.0.1:18895"),
+                "/v1/messages"
+            ),
+            "http://127.0.0.1:18895/v1/messages"
+        );
+        assert_eq!(
+            build_provider_url(
+                ProviderKind::Kiro,
+                Some("http://127.0.0.1:18896"),
+                "/v1/messages"
+            ),
+            "http://127.0.0.1:18896/v1/messages"
+        );
+    }
 
     #[test]
     fn test_antigravity_url_construction() {

@@ -14,7 +14,6 @@ use crate::account::AccountMember;
 use crate::compat;
 use crate::usage::parse_codex_headers;
 use crate::state::AppState;
-use crate::url::build_target_url;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RelayMode {
@@ -106,7 +105,11 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
 
     if member.kind() != crate::account::ProviderKind::Antigravity {
         return Ok(UpstreamTarget {
-            url: build_target_url(member.upstream_override.as_deref(), &plan.upstream_path),
+            url: crate::url::build_provider_url(
+                member.kind(),
+                member.upstream_override.as_deref(),
+                &plan.upstream_path,
+            ),
             body: plan.body.clone(),
             protocol: compat::Protocol::Codex,
         });

@@ -30,6 +30,22 @@ pub enum ProviderAccount {
 }
 
 impl ProviderKind {
+    /// Whether this provider can serve the model at all. The four newer
+    /// providers publish a closed catalogue, so they must not claim a model they
+    /// cannot answer: doing so lets the router pick them for, say, an OpenAI
+    /// request and send it to the wrong upstream. Codex keeps its historical
+    /// open-ended rule, since its model names are not enumerable.
+    pub fn serves_model(&self, model: &str) -> bool {
+        match self {
+            ProviderKind::Codex => !is_antigravity_model(model),
+            ProviderKind::Antigravity => is_antigravity_model(model),
+            ProviderKind::Claude => quotio_providers::is_claude_model(model),
+            ProviderKind::Cursor => quotio_providers::is_cursor_model(model),
+            ProviderKind::Kiro => quotio_providers::is_kiro_model(model),
+            ProviderKind::Zcode => quotio_providers::is_zcode_model(model),
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             ProviderKind::Codex => "codex",
@@ -235,7 +251,7 @@ impl AccountMember {
     }
 
     pub fn supports_model(&self, model: &str) -> bool {
-        if is_antigravity_model(model) != (self.kind() == ProviderKind::Antigravity) {
+        if !self.kind().serves_model(model) {
             return false;
         }
         let guard = self
