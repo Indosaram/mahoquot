@@ -22,6 +22,26 @@ A route matches when statuses agree, body kind agrees, and the oracle's JSON
 keys are a subset of ours: extra keys are additive and do not break a client, a
 missing key does.
 
+### The route list is the right list
+
+The diff above drives both sides from one list, so it cannot catch a list that
+is itself wrong: a route missing from the list is never tested, and a route that
+does not exist upstream "matches" because both sides 404 it. Counting to 129
+proves nothing on its own.
+
+`scripts/verify_route_set.py` closes that by diffing the list against the
+registrations parsed out of the vendored `server_management.go` — the exact file
+the brief names:
+
+```
+upstream registrations: 129
+probed routes         : 129
+ROUTE SET MATCHES UPSTREAM EXACTLY
+```
+
+Zero missing, zero phantom. So the 129 compared are provably the 129 upstream
+registers, not 129 routes of our own choosing.
+
 ### Two routes that needed care to compare honestly
 
 **`PUT /config.yaml`** replaces the entire config document. An early run sent
