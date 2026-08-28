@@ -128,7 +128,7 @@ async fn api_key_usage(State(state): State<Arc<AppState>>) -> Response {
 async fn usage_queue() -> Response {
     (
         StatusCode::OK,
-        Json(json!({ "usage-queue": { "pending": 0, "items": [] } })),
+        Json(json!([])),
     )
         .into_response()
 }

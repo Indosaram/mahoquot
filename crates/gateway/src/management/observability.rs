@@ -32,6 +32,44 @@ fn require_file_logging(settings: &Settings) -> Option<Response> {
     ))
 }
 
+/// Log routes read whatever is in the log directory. Nothing else in this
+/// build writes there yet, so this is the single entry point that appends a
+/// line, keeping the read and write halves of the contract in one file.
+pub fn append_log_line(settings: &Settings, line: &str) {
+    if !settings.logging_to_file {
+        return;
+    }
+    let dir = log_dir(settings);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("gateway.log"))
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn read_log_lines(dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = entries
+        .flatten()
+        .filter(|e| e.metadata().map(|m| m.is_file()).unwrap_or(false))
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    paths
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .flat_map(|body| body.lines().map(str::to_string).collect::<Vec<_>>())
+        .collect()
+}
+
 fn list_log_files(dir: &std::path::Path) -> Vec<Value> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -58,9 +96,19 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Response {
     if let Some(refusal) = require_file_logging(&settings) {
         return refusal;
     }
+    let dir = log_dir(&settings);
+    let lines = read_log_lines(&dir);
     json_status(
         StatusCode::OK,
-        json!({ "files": list_log_files(&log_dir(&settings)) }),
+        json!({
+            "lines": lines,
+            "line-count": lines.len(),
+            "next-cursor": Value::Null,
+            "latest-timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or_default(),
+        }),
     )
 }
 
@@ -70,14 +118,20 @@ async fn delete_logs(State(state): State<Arc<AppState>>) -> Response {
         return refusal;
     }
     let dir = log_dir(&settings);
+    let mut removed = 0u64;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
-            if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
-                let _ = std::fs::remove_file(entry.path());
+            if entry.metadata().map(|m| m.is_file()).unwrap_or(false)
+                && std::fs::remove_file(entry.path()).is_ok()
+            {
+                removed += 1;
             }
         }
     }
-    json_status(StatusCode::OK, json!({ "status": "ok" }))
+    json_status(
+        StatusCode::OK,
+        json!({ "success": true, "removed": removed, "message": "Logs cleared successfully" }),
+    )
 }
 
 async fn request_error_logs(State(state): State<Arc<AppState>>) -> Response {

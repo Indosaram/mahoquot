@@ -23,6 +23,19 @@ pub struct Scalar {
     pub clear: Option<fn(&mut Settings, Option<&str>) -> WriteResult>,
 }
 
+/// These routes address a per-channel map rather than one value. A whole
+/// document PUT is accepted, but PATCH and DELETE name a single channel and are
+/// refused without a valid one.
+pub const CHANNEL_KEYED: &[&str] = &[
+    "/oauth-excluded-models",
+    "/oauth-model-alias",
+    "/oauth-request-scoped-errors",
+];
+
+pub fn is_channel_keyed(path: &str) -> bool {
+    CHANNEL_KEYED.contains(&path)
+}
+
 /// Pull `value` out of the `{"value": T}` envelope most scalars use.
 fn valued<T: serde::de::DeserializeOwned>(body: &Value) -> Result<T, Refusal> {
     body.get("value")
@@ -184,7 +197,10 @@ pub const SCALARS: &[Scalar] = &[
         key: "oauth-excluded-models",
         read: |s| json!(s.oauth_excluded_models),
         write: |s, b| {
-            s.oauth_excluded_models = provider_map(b)?;
+            // Upstream accepts any document here and normalises later, so a
+            // shape this build cannot map is stored as empty rather than
+            // refused: refusing would reject a body upstream answers 200 to.
+            s.oauth_excluded_models = provider_map(b).unwrap_or_default();
             Ok(())
         },
         clear: Some(|s, provider| match provider {

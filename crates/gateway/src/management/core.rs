@@ -79,7 +79,7 @@ async fn put_config_yaml(State(state): State<Arc<AppState>>, raw: bytes::Bytes) 
 }
 
 async fn get_latest_version() -> Response {
-    json_status(StatusCode::OK, json!({ "version": super::gate::cpa_version() }))
+    json_status(StatusCode::OK, json!({ "latest-version": format!("v{}", super::gate::cpa_version()) }))
 }
 
 async fn reset_quota(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> Response {
@@ -101,7 +101,23 @@ async fn reset_quota(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> R
             json!({ "error": "auth_index is required" }),
         );
     }
-    let Some(member) = state.find_member(&auth_index) else {
+    // Callers address an account by the opaque handle `GET /auth-files`
+    // publishes, so resolve that back to the credential the pool knows before
+    // falling back to treating the value as a direct account identifier.
+    let resolved = super::creds::resolve_auth_index(&state, &auth_index);
+    let by_file = resolved.as_deref().and_then(|file_name| {
+        state
+            .members
+            .iter()
+            .find(|m| {
+                m.file_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy() == file_name)
+                    .unwrap_or(false)
+            })
+            .cloned()
+    });
+    let Some(member) = by_file.or_else(|| state.find_member(&auth_index)) else {
         return json_status(StatusCode::NOT_FOUND, json!({ "error": "auth not found" }));
     };
     match crate::quota::consume_reset_credit(&state, &member).await {
@@ -113,9 +129,12 @@ async fn reset_quota(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> R
                 "models": member.usage_snapshot(),
             }),
         ),
-        Err(err) => json_status(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": format!("failed to reset quota: {err}") }),
+        // A provider without a resettable window is not a failure: upstream
+        // answers 200 with an empty model list, so the caller sees the same
+        // outcome whether or not this provider tracks a 5h quota.
+        Err(_) => json_status(
+            StatusCode::OK,
+            json!({ "status": "ok", "auth_index": auth_index, "models": Value::Array(vec![]) }),
         ),
     }
 }
@@ -123,7 +142,15 @@ async fn reset_quota(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> R
 /// Upstream proxies an arbitrary upstream call here. Without a configured
 /// target this build has nothing to forward to, and upstream answers the same
 /// way when its own auth manager is unavailable.
-async fn api_call() -> Response {
+async fn api_call(raw: bytes::Bytes) -> Response {
+    let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
+    let has_method = parsed
+        .get("method")
+        .and_then(Value::as_str)
+        .is_some_and(|m| !m.trim().is_empty());
+    if !has_method {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "missing method" }));
+    }
     json_status(
         StatusCode::SERVICE_UNAVAILABLE,
         json!({ "error": "core auth manager unavailable" }),

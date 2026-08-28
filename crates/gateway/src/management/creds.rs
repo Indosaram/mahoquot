@@ -20,7 +20,16 @@ fn json_status(status: StatusCode, body: Value) -> Response {
 fn describe(dir: &std::path::Path, name: &str) -> Option<Value> {
     let full = dir.join(name);
     let meta = std::fs::metadata(&full).ok()?;
-    let mut entry = json!({ "name": name, "size": meta.len() });
+    let mut entry = json!({
+        "name": name,
+        "size": meta.len(),
+        "auth_index": auth_index(name),
+        "path": full.to_string_lossy(),
+        "label": name.trim_end_matches(".json"),
+        "disabled": false,
+        "unavailable": false,
+        "runtime_only": false,
+    });
     if let Ok(modified) = meta.modified() {
         if let Ok(since) = modified.duration_since(std::time::UNIX_EPOCH) {
             entry["modtime"] = json!(since.as_secs());
@@ -28,8 +37,14 @@ fn describe(dir: &std::path::Path, name: &str) -> Option<Value> {
     }
     if let Ok(raw) = std::fs::read_to_string(&full) {
         if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
-            entry["type"] = json!(parsed.get("type").and_then(Value::as_str).unwrap_or_default());
-            entry["email"] = json!(parsed.get("email").and_then(Value::as_str).unwrap_or_default());
+            let kind = parsed.get("type").and_then(Value::as_str).unwrap_or_default();
+            let email = parsed.get("email").and_then(Value::as_str).unwrap_or_default();
+            entry["type"] = json!(kind);
+            entry["email"] = json!(email);
+            entry["provider"] = json!(kind);
+            entry["account"] = json!(email);
+            entry["account_type"] = json!("oauth");
+            entry["status"] = json!("active");
             if let Some(project) = parsed.get("project_id").and_then(Value::as_str) {
                 if !project.trim().is_empty() {
                     entry["project_id"] = json!(project);
@@ -58,6 +73,9 @@ async fn list_auth_files(
 
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return json_status(StatusCode::OK, json!({ "files": [] }))
+        }
         Err(err) => {
             return json_status(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -119,6 +137,36 @@ async fn create_auth_file(State(state): State<Arc<AppState>>, raw: bytes::Bytes)
     }
 }
 
+/// Upstream addresses a credential by a stable opaque handle rather than its
+/// filename, and `POST /reset-quota` takes that handle. It is derived from the
+/// name so it survives restarts and stays identical for the same account.
+fn auth_index(name: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Map an opaque handle back to the credential FILENAME that produced it. The
+/// handle is not stored anywhere, so the directory is scanned and each name
+/// re-hashed; the pool is small enough that this stays cheap. Callers match the
+/// result against a member's `file_path`, which is the only identifier shared
+/// between the directory listing and the loaded pool.
+pub fn resolve_auth_index(state: &AppState, wanted: &str) -> Option<String> {
+    let dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.to_ascii_lowercase().ends_with(".json") {
+            continue;
+        }
+        if auth_index(&name) == wanted || name == wanted {
+            return Some(name);
+        }
+    }
+    None
+}
+
 /// A credential must never be observed half-written by the loader, which scans
 /// this directory continuously; render to a temp file and rename into place.
 fn write_atomically(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
@@ -153,7 +201,13 @@ async fn delete_auth_file(
     }
 }
 
-async fn auth_file_models(State(state): State<Arc<AppState>>) -> Response {
+async fn auth_file_models(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    if params.get("name").map(|v| v.trim()).unwrap_or("").is_empty() {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "name is required" }));
+    }
     json_status(
         StatusCode::OK,
         json!({ "models": crate::models_route::models_payload(&state.models, 0) }),
@@ -202,7 +256,15 @@ async fn patch_unsupported() -> Response {
     )
 }
 
-async fn vertex_import() -> Response {
+async fn vertex_import(raw: bytes::Bytes) -> Response {
+    let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
+    let has_file = parsed
+        .get("file")
+        .and_then(Value::as_str)
+        .is_some_and(|f| !f.trim().is_empty());
+    if !has_file {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "file required" }));
+    }
     json_status(
         StatusCode::SERVICE_UNAVAILABLE,
         json!({ "error": "core auth manager unavailable" }),

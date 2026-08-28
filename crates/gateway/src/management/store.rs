@@ -30,12 +30,22 @@ impl SettingsStore {
     /// is an error rather than a silent fallback, so a typo in config.yaml can
     /// never be mistaken for "no config" and quietly revert live settings.
     pub fn load_or(path: PathBuf, fallback: Settings) -> Result<Self, SettingsError> {
-        let settings = if path.exists() {
-            Settings::load(&path)?
-        } else {
-            fallback
-        };
-        Ok(Self::new(settings, path))
+        if path.exists() {
+            let settings = Settings::load(&path)?;
+            return Ok(Self::new(settings, path));
+        }
+        // Upstream always has a config file, so `GET /config.yaml` never 404s
+        // there. Materialise the boot document once so the served surface
+        // matches instead of depending on a write having happened first.
+        //
+        // An empty path means no config file was requested at all (embedding
+        // and tests construct the gateway this way), and writing to it would
+        // fail; such a store stays purely in memory.
+        let store = Self::new(fallback, path);
+        if !store.path.as_os_str().is_empty() {
+            store.mutate(|_| {})?;
+        }
+        Ok(store)
     }
 
     pub fn current(&self) -> Arc<Settings> {

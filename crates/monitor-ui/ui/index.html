@@ -117,6 +117,8 @@
   .setrow input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
   .savenote { border-radius: 8px; padding: 7px 11px; margin-bottom: 12px; font-size: 12px; max-width: 640px; }
   .savenote.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); color: var(--ok); }
+  .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+  .logbox { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin: 0; max-width: 100%; overflow-x: auto; font-family: var(--mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--fg-soft); }
   .savenote.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); color: var(--bad); }
 </style>
 </head>
@@ -222,6 +224,8 @@ const ICO = {
   quota: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   all:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></svg>',
   cog:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  key:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 2l-2 2m-7.6 7.6a5 5 0 1 1-7.1 7.1 5 5 0 0 1 7.1-7.1zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>',
+  doc:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
 };
 
@@ -307,6 +311,164 @@ const SETTINGS_FIELDS = [
 function settingsKey(path) { return path.split("/").filter(Boolean).pop(); }
 
 let settingsState = { loaded: false, values: {}, errors: {}, notice: null };
+let credsState = { loaded: false, files: [], error: null, notice: null };
+let logsState = { loaded: false, lines: [], count: 0, error: null };
+
+async function loadCreds() {
+  credsState.error = null;
+  try {
+    const body = await mgmt("/auth-files");
+    credsState.files = (body && body.files) || [];
+  } catch (e) {
+    credsState.error = e.message;
+    credsState.files = [];
+  }
+  credsState.loaded = true;
+}
+
+async function loadLogs() {
+  logsState.error = null;
+  try {
+    const body = await mgmt("/logs");
+    logsState.lines = (body && body.lines) || [];
+    logsState.count = (body && body["line-count"]) || logsState.lines.length;
+  } catch (e) {
+    logsState.error = e.message;
+    logsState.lines = [];
+    logsState.count = 0;
+  }
+  logsState.loaded = true;
+}
+
+/* Adding an account is an OAuth flow: the gateway mints the provider URL and a
+   state value, the person approves in a browser, and the callback completes it.
+   The window is opened rather than navigated so the monitor keeps running. */
+async function startLogin(provider) {
+  credsState.notice = null;
+  try {
+    const body = await mgmt(`/${provider}-auth-url`);
+    if (body && body.url) {
+      window.open(body.url, "_blank", "noopener");
+      credsState.notice = body.user_code
+        ? { text: `Approve in the browser. Code: ${body.user_code}` }
+        : { text: "Approve in the browser, then refresh." };
+    } else {
+      credsState.notice = { text: "No login URL returned.", bad: true };
+    }
+  } catch (e) {
+    credsState.notice = { text: e.message, bad: true };
+  }
+  render();
+}
+
+async function removeCredential(name) {
+  credsState.notice = null;
+  try {
+    await mgmt(`/auth-files?name=${encodeURIComponent(name)}`, "DELETE");
+    credsState.notice = { text: `Removed ${name}.` };
+  } catch (e) {
+    credsState.notice = { text: e.message, bad: true };
+  }
+  await loadCreds();
+  render();
+}
+
+async function resetAccountQuota(authIndex, label) {
+  credsState.notice = null;
+  try {
+    await mgmt("/reset-quota", "POST", { auth_index: authIndex });
+    credsState.notice = { text: `Reset the 5h window for ${label}.` };
+  } catch (e) {
+    credsState.notice = { text: e.message, bad: true };
+  }
+  render();
+}
+
+const LOGIN_PROVIDERS = ["anthropic", "codex", "antigravity", "kimi", "xai"];
+
+function credsHtml() {
+  if (!MGMT_KEY()) return mgmtGateHtml("Credentials are served by the management API.");
+  if (!credsState.loaded) return `<div class="empty">Loading credentials...</div>`;
+  const notice = credsState.notice
+    ? `<div class="savenote ${credsState.notice.bad ? "bad" : "ok"}">${esc(credsState.notice.text)}</div>` : "";
+  const err = credsState.error ? `<div class="banner">${esc(credsState.error)}</div>` : "";
+
+  const add = `<div class="setgroup"><div class="setgroup-head">Add an account</div>
+    <div class="setrow" style="flex-wrap:wrap;gap:8px">
+      ${LOGIN_PROVIDERS.map(p => `<button type="button" class="btn" data-login="${p}">${esc(p)}</button>`).join("")}
+    </div></div>`;
+
+  const rows = credsState.files.length
+    ? credsState.files.map(f => {
+        const label = f.email || f.name;
+        const idx = f.auth_index || f.name;
+        return `<div class="setrow">
+          <label class="setlabel">${esc(label)}
+            <span class="sethint">${esc(f.type || "")} · ${esc(f.name)}</span></label>
+          <button type="button" class="btn" data-reset="${esc(idx)}" data-label="${esc(label)}">Reset 5h</button>
+          <button type="button" class="btn danger" data-remove="${esc(f.name)}">Remove</button>
+        </div>`;
+      }).join("")
+    : `<div class="setrow"><span class="sethint">No credentials on disk.</span></div>`;
+
+  return err + notice + add +
+    `<div class="setgroup"><div class="setgroup-head">Accounts (${credsState.files.length})</div>${rows}</div>`;
+}
+
+function logsHtml() {
+  if (!MGMT_KEY()) return mgmtGateHtml("Logs are served by the management API.");
+  if (!logsState.loaded) return `<div class="empty">Loading logs...</div>`;
+  if (logsState.error) {
+    return `<div class="banner">${esc(logsState.error)}</div>
+      <div class="note" style="padding:10px 0">Log routes answer only while <strong>Log to file</strong> is enabled in Settings.</div>`;
+  }
+  const body = logsState.lines.length
+    ? `<pre class="logbox">${logsState.lines.slice(-500).map(esc).join("\n")}</pre>`
+    : `<div class="empty">No log lines yet.</div>`;
+  return `<div class="setgroup"><div class="setgroup-head">Log output (${logsState.count} lines)</div>
+    <div class="setrow"><label class="setlabel">Showing the most recent lines</label>
+      <button type="button" class="btn" id="logsRefresh">Refresh</button>
+      <button type="button" class="btn danger" id="logsClear">Clear</button></div></div>${body}`;
+}
+
+/* All three management views share the same password gate, so the connect and
+   forget handlers are wired in one place: each view reloads only its own data
+   once a password is supplied. */
+function wireMgmtGate(root, forView) {
+  const save = root.querySelector("#mgmtSave");
+  if (save) {
+    const input = root.querySelector("#mgmtKey");
+    const connect = async () => {
+      localStorage.setItem("quotio.mgmt", input.value);
+      settingsState.loaded = false;
+      credsState.loaded = false;
+      logsState.loaded = false;
+      render();
+      if (forView === "settings") await loadSettings();
+      if (forView === "creds") await loadCreds();
+      if (forView === "logs") await loadLogs();
+      render();
+    };
+    save.onclick = connect;
+    input.onkeydown = e => { if (e.key === "Enter") connect(); };
+  }
+  const forget = root.querySelector("#mgmtForget");
+  if (forget) forget.onclick = () => {
+    localStorage.removeItem("quotio.mgmt");
+    settingsState = { loaded: false, values: {}, errors: {}, notice: null };
+    credsState = { loaded: false, files: [], error: null, notice: null };
+    logsState = { loaded: false, lines: [], count: 0, error: null };
+    render();
+  };
+}
+
+function mgmtGateHtml(reason) {
+  return `<div class="setgroup"><div class="setgroup-head">Management access</div>
+    <div class="note" style="padding:0 0 10px">${esc(reason)}</div>
+    <div class="setrow"><label class="setlabel" for="mgmtKey">Management password</label>
+      <input class="search" id="mgmtKey" type="password" style="width:230px" placeholder="MANAGEMENT_PASSWORD" />
+      <button type="button" class="btn" id="mgmtSave">Connect</button></div></div>`;
+}
 
 async function loadSettings() {
   const flat = SETTINGS_FIELDS.flatMap(g => g.items);
@@ -331,11 +493,7 @@ async function loadSettings() {
 
 function settingsHtml() {
   if (!MGMT_KEY()) {
-    return `<div class="setgroup"><div class="setgroup-head">Management access</div>
-      <div class="note" style="padding:0 0 10px">These settings are served by the gateway's management API, which needs the management password.</div>
-      <div class="setrow"><label class="setlabel" for="mgmtKey">Management password</label>
-        <input class="search" id="mgmtKey" type="password" style="width:230px" placeholder="MANAGEMENT_PASSWORD" />
-        <button type="button" class="btn" id="mgmtSave">Connect</button></div></div>`;
+    return mgmtGateHtml("These settings are served by the gateway's management API, which needs the management password.");
   }
   if (!settingsState.loaded) return `<div class="empty">Loading settings...</div>`;
 
@@ -468,6 +626,10 @@ function render() {
       <span class="ico">${ICO.quota}</span><span>Quota</span><span class="n">${accounts.length}</span></button>`,
     `<button type="button" data-view="table" ${view === "table" ? 'aria-current="page"' : ""}>
       <span class="ico">${ICO.all}</span><span>All accounts</span></button>`,
+    `<button type="button" data-view="creds" ${view === "creds" ? 'aria-current="page"' : ""}>
+      <span class="ico">${ICO.key}</span><span>Credentials</span></button>`,
+    `<button type="button" data-view="logs" ${view === "logs" ? 'aria-current="page"' : ""}>
+      <span class="ico">${ICO.doc}</span><span>Logs</span></button>`,
     `<button type="button" data-view="settings" ${view === "settings" ? 'aria-current="page"' : ""}>
       <span class="ico">${ICO.cog}</span><span>Settings</span></button>`,
     `<div class="nav-label">Providers</div>`];
@@ -488,12 +650,21 @@ function render() {
     if (view === "settings" && MGMT_KEY() && !settingsState.loaded) {
       loadSettings().then(render);
     }
+    if (view === "creds" && MGMT_KEY() && !credsState.loaded) {
+      loadCreds().then(render);
+    }
+    if (view === "logs" && MGMT_KEY() && !logsState.loaded) {
+      loadLogs().then(render);
+    }
   };
 
   const selProv = view.startsWith("p:") ? view.slice(2) : null;
   document.getElementById("title").innerHTML = selProv
     ? `${brandIcon(selProv, 19)}${provLabel(selProv)} <span class="sub">${(byProv.find(x => x[0] === selProv) || [0, []])[1].length} accounts</span>`
-    : view === "table" ? "All accounts" : view === "settings" ? "Settings" : "Quota";
+    : view === "table" ? "All accounts"
+    : view === "settings" ? "Settings"
+    : view === "creds" ? "Credentials"
+    : view === "logs" ? "Logs" : "Quota";
 
   const withQuota = accounts.filter(a => quotaRows(a.usage).length).length;
   document.getElementById("strip").innerHTML = [
@@ -511,27 +682,29 @@ function render() {
   const match = a => !q || a.id.toLowerCase().includes(q) || String(a.provider || "").toLowerCase().includes(q);
   const body = document.getElementById("body");
 
-  if (view === "settings") {
-    body.innerHTML = settingsHtml();
-    const save = document.getElementById("mgmtSave");
-    if (save) {
-      const input = document.getElementById("mgmtKey");
-      const connect = async () => {
-        localStorage.setItem("quotio.mgmt", input.value);
-        settingsState.loaded = false;
-        render();
-        await loadSettings();
-        render();
-      };
-      save.onclick = connect;
-      input.onkeydown = e => { if (e.key === "Enter") connect(); };
-    }
-    const forget = document.getElementById("mgmtForget");
-    if (forget) forget.onclick = () => {
-      localStorage.removeItem("quotio.mgmt");
-      settingsState = { loaded: false, values: {}, errors: {}, notice: null };
+  if (view === "creds" || view === "logs") {
+    body.innerHTML = view === "creds" ? credsHtml() : logsHtml();
+    wireMgmtGate(body, view);
+    body.querySelectorAll("[data-login]").forEach(el => {
+      el.onclick = () => startLogin(el.dataset.login);
+    });
+    body.querySelectorAll("[data-remove]").forEach(el => {
+      el.onclick = () => removeCredential(el.dataset.remove);
+    });
+    body.querySelectorAll("[data-reset]").forEach(el => {
+      el.onclick = () => resetAccountQuota(el.dataset.reset, el.dataset.label);
+    });
+    const refresh = document.getElementById("logsRefresh");
+    if (refresh) refresh.onclick = async () => { await loadLogs(); render(); };
+    const clear = document.getElementById("logsClear");
+    if (clear) clear.onclick = async () => {
+      try { await mgmt("/logs", "DELETE"); } catch (e) { logsState.error = e.message; }
+      await loadLogs();
       render();
     };
+  } else if (view === "settings") {
+    body.innerHTML = settingsHtml();
+    wireMgmtGate(body, "settings");
     body.querySelectorAll("[data-set]").forEach(el => {
       if (el.type === "checkbox") {
         el.onchange = () => writeSetting(el.dataset.set, el.checked);

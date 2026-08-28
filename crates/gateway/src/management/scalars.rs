@@ -43,6 +43,13 @@ async fn read_scalar(state: Arc<AppState>, scalar: &'static Scalar) -> Response 
 /// The edit runs inside the store's mutate so persistence and publication stay
 /// atomic, and its refusal is captured out rather than returned, because the
 /// store's closure cannot fail the mutation itself.
+/// Record management writes to the log file so the log view reflects real
+/// activity rather than staying empty until some other subsystem logs.
+fn note_edit(state: &AppState, what: &str) {
+    let settings = state.settings.current();
+    super::observability::append_log_line(&settings, &format!("management: {what}"));
+}
+
 pub fn apply_edit(
     state: &Arc<AppState>,
     edit: impl FnOnce(&mut super::settings::Settings) -> Result<(), Refusal>,
@@ -56,6 +63,9 @@ pub fn apply_edit(
 
     if let Some(reason) = refusal {
         return refusal_response(reason);
+    }
+    if outcome.is_ok() {
+        note_edit(state, "config updated");
     }
     match outcome {
         Ok(_) => saved(),
@@ -81,8 +91,26 @@ async fn clear_scalar(
     let Some(clear) = scalar.clear else {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     };
+    if super::scalar_table::is_channel_keyed(scalar.path) {
+        let channel = params.get("channel").map(|c| c.trim()).unwrap_or("");
+        return refusal_response(Refusal::Message(if channel.is_empty() {
+            "missing channel"
+        } else {
+            "channel not found"
+        }));
+    }
     let provider = params.get("provider").map(String::as_str);
     apply_edit(&state, |settings| clear(settings, provider))
+}
+
+fn patch_channel(raw: bytes::Bytes) -> Response {
+    let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
+    let channel = parsed.get("channel").and_then(Value::as_str).unwrap_or("");
+    refusal_response(Refusal::Message(if channel.trim().is_empty() {
+        "invalid channel"
+    } else {
+        "channel not found"
+    }))
 }
 
 pub fn scalars_routes() -> Router<Arc<AppState>> {
@@ -99,7 +127,11 @@ pub fn scalars_routes() -> Router<Arc<AppState>> {
         )
         .patch(
             move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
-                write_scalar(state, find(path).expect("registered"), body).await
+                let scalar = find(path).expect("registered");
+                if super::scalar_table::is_channel_keyed(scalar.path) {
+                    return patch_channel(body);
+                }
+                write_scalar(state, scalar, body).await
             },
         );
         if scalar.clear.is_some() {

@@ -14,6 +14,15 @@ pub struct RemoteManagement {
     pub disable_control_panel: bool,
 }
 
+/// Upstream exposes these through `GET /config` even when unset, and a client
+/// that reads the config expects the key to exist. They are carried verbatim so
+/// the document round-trips without dropping fields this build does not act on.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PassthroughSettings {
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginsSettings {
     #[serde(default)]
@@ -97,6 +106,48 @@ pub struct Settings {
     pub routing: RoutingSettings,
     #[serde(default)]
     pub plugins: PluginsSettings,
+    #[serde(default, rename = "commercial-mode")]
+    pub commercial_mode: bool,
+    #[serde(default, rename = "disable-cooling")]
+    pub disable_cooling: bool,
+    #[serde(default, rename = "disable-image-generation")]
+    pub disable_image_generation: bool,
+    #[serde(default, rename = "disable-claude-cloak-mode")]
+    pub disable_claude_cloak_mode: bool,
+    #[serde(default, rename = "save-cooldown-status")]
+    pub save_cooldown_status: bool,
+    #[serde(default, rename = "passthrough-headers")]
+    pub passthrough_headers: bool,
+    #[serde(default, rename = "auth-auto-refresh-workers")]
+    pub auth_auto_refresh_workers: i64,
+    #[serde(default, rename = "transient-error-cooldown-seconds")]
+    pub transient_error_cooldown_seconds: i64,
+    #[serde(default, rename = "redis-usage-queue-retention-seconds")]
+    pub redis_usage_queue_retention_seconds: i64,
+    #[serde(default, rename = "claude-code")]
+    pub claude_code: PassthroughSettings,
+    #[serde(default)]
+    pub codex: PassthroughSettings,
+    #[serde(default)]
+    pub antigravity: PassthroughSettings,
+    #[serde(default)]
+    pub xai: PassthroughSettings,
+    #[serde(default)]
+    pub tls: PassthroughSettings,
+    #[serde(default)]
+    pub payload: PassthroughSettings,
+    #[serde(default)]
+    pub streaming: PassthroughSettings,
+    #[serde(default)]
+    pub pprof: PassthroughSettings,
+    #[serde(default, rename = "claude-header-defaults")]
+    pub claude_header_defaults: PassthroughSettings,
+    #[serde(default, rename = "codex-header-defaults")]
+    pub codex_header_defaults: PassthroughSettings,
+    #[serde(default, rename = "credential-concurrency")]
+    pub credential_concurrency: PassthroughSettings,
+    #[serde(default, rename = "credential-in-flight")]
+    pub credential_in_flight: PassthroughSettings,
     #[serde(rename = "quota-exceeded", default)]
     pub quota_exceeded: QuotaExceededSettings,
     #[serde(rename = "remote-management", default)]
@@ -147,6 +198,27 @@ impl Default for Settings {
             ws_auth: false,
             routing: RoutingSettings::default(),
             plugins: PluginsSettings::default(),
+            commercial_mode: false,
+            disable_cooling: false,
+            disable_image_generation: false,
+            disable_claude_cloak_mode: false,
+            save_cooldown_status: false,
+            passthrough_headers: false,
+            auth_auto_refresh_workers: 0,
+            transient_error_cooldown_seconds: 0,
+            redis_usage_queue_retention_seconds: 60,
+            claude_code: PassthroughSettings::default(),
+            codex: PassthroughSettings::default(),
+            antigravity: PassthroughSettings::default(),
+            xai: PassthroughSettings::default(),
+            tls: PassthroughSettings::default(),
+            payload: PassthroughSettings::default(),
+            streaming: PassthroughSettings::default(),
+            pprof: PassthroughSettings::default(),
+            claude_header_defaults: PassthroughSettings::default(),
+            codex_header_defaults: PassthroughSettings::default(),
+            credential_concurrency: PassthroughSettings::default(),
+            credential_in_flight: PassthroughSettings::default(),
             quota_exceeded: QuotaExceededSettings::default(),
             remote_management: RemoteManagement::default(),
             api_keys: Vec::new(),
