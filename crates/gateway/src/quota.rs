@@ -47,15 +47,123 @@ fn codex_account_id(member: &AccountMember) -> String {
     }
 }
 
-/// Poll one account's quota and store it. Returns `Unsupported` for providers
-/// that publish no quota API, which is a normal state rather than a failure.
+/// Poll one account's quota and store it. Returns `Unsupported` only for
+/// providers that genuinely publish no quota API.
 pub async fn refresh_account_usage(
     state: &AppState,
     member: &Arc<AccountMember>,
 ) -> Result<(), QuotaError> {
-    if member.kind() != ProviderKind::Codex {
-        return Err(QuotaError::Unsupported);
+    match member.kind() {
+        ProviderKind::Codex => refresh_codex_usage(state, member).await,
+        ProviderKind::Antigravity => refresh_antigravity_usage(state, member).await,
     }
+}
+
+/// Antigravity's per-model-group quota.
+///
+/// Body is `{"project": <project_id>}`; the response carries a
+/// `remainingFraction` per bucket which `parse_antigravity_quota_summary`
+/// converts to the consumed orientation used everywhere else.
+async fn refresh_antigravity_usage(
+    state: &AppState,
+    member: &Arc<AccountMember>,
+) -> Result<(), QuotaError> {
+    // Mirrors the relay's auth handling: refresh a known-expired token up
+    // front, then retry once if the quota verb still answers 401.
+    if state.auth_refresh_enabled && member.is_expired(now_unix()) {
+        let _ = state.refresh_member(member, None).await;
+    }
+    // Capture the token actually used, so a 401 retry can present it and force
+    // a refresh; `refresh_member(_, None)` is a no-op unless the clock already
+    // says expired, which is exactly the case a 401 contradicts.
+    let used = member.access_token();
+    match try_antigravity_quota(state, member).await {
+        Err(QuotaError::Unauthorized) if state.auth_refresh_enabled => {
+            let refreshed = state
+                .refresh_member(member, Some(&used))
+                .await
+                .map_err(|e| QuotaError::Upstream(format!("refresh failed: {e}")))?;
+            tracing::debug!(account = %member.id, refreshed, "quota 401 retry");
+            try_antigravity_quota(state, member).await
+        }
+        other => other,
+    }
+}
+
+async fn try_antigravity_quota(
+    state: &AppState,
+    member: &Arc<AccountMember>,
+) -> Result<(), QuotaError> {
+    let token = member.access_token();
+    if token.is_empty() {
+        return Err(QuotaError::Unauthorized);
+    }
+    let project = {
+        let guard = member
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            crate::account::ProviderAccount::Antigravity(a) => a.project_id.clone(),
+            _ => return Err(QuotaError::Unsupported),
+        }
+    };
+
+    let url = quotio_providers::antigravity_quota_summary_url(
+        quotio_providers::ANTIGRAVITY_UPSTREAM_BASE,
+    );
+    let resp = state
+        .http_client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({ "project": project }))
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| QuotaError::Upstream(e.to_string()))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        // Carry the upstream message: Antigravity distinguishes a throttle from
+        // an unlicensed project only in the body, and both arrive as 4xx.
+        let detail = resp.text().await.unwrap_or_default();
+        let detail = detail.replace('\n', " ");
+        let detail = detail.trim();
+        // Antigravity answers a throttled quota poll with 403 "You do not have a
+            // valid license of this product", which is indistinguishable by status
+        // from a genuinely unlicensed account. Measured: the identical token and
+        // body alternate 200/403 minutes apart, so this is treated as a
+        // retryable upstream condition and never as a credential failure.
+        if status == reqwest::StatusCode::FORBIDDEN && detail.contains("valid license") {
+            return Err(QuotaError::Upstream("quota throttled (403 license)".into()));
+        }
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            || status == reqwest::StatusCode::FORBIDDEN
+        {
+            tracing::debug!(%status, detail = %&detail[..detail.len().min(240)], "antigravity quota rejected");
+            return Err(QuotaError::Unauthorized);
+        }
+        return Err(QuotaError::Upstream(format!(
+            "quota http {status}: {}",
+            &detail[..detail.len().min(160)]
+        )));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| QuotaError::Upstream(e.to_string()))?;
+    member.set_usage(crate::usage::parse_antigravity_quota_summary(
+        &body,
+        now_unix(),
+    ));
+    Ok(())
+}
+
+async fn refresh_codex_usage(
+    state: &AppState,
+    member: &Arc<AccountMember>,
+) -> Result<(), QuotaError> {
     let token = member.access_token();
     if token.is_empty() {
         return Err(QuotaError::Unauthorized);
@@ -174,12 +282,56 @@ fn getrandom(buf: &mut [u8]) {
     }
 }
 
+/// Gap between per-account Antigravity quota polls.
+///
+/// 1.2s still tripped the throttle across 3 accounts; the endpoint then
+/// returned 403 for over a minute. Kept well clear of that boundary since
+/// quota is refreshed on a timer, not in the request path.
+const ANTIGRAVITY_QUOTA_POLL_GAP: Duration = Duration::from_secs(4);
+
 pub async fn refresh_all_usage(state: &Arc<AppState>) {
-    let mut tasks = Vec::new();
+    // Antigravity's quota verb throttles aggressively across accounts: a
+    // concurrent burst returns 429, and once tripped it keeps answering 403
+    // "no valid license" for minutes even for licensed accounts. Polling is
+    // therefore serialised with a wide gap rather than fanned out.
+    let mut antigravity: Vec<_> = Vec::new();
+    let mut others: Vec<_> = Vec::new();
     for m in state.members.clone() {
+        if m.kind() == ProviderKind::Antigravity {
+            antigravity.push(m);
+        } else {
+            others.push(m);
+        }
+    }
+
+    for m in antigravity {
+        match refresh_account_usage(state, &m).await {
+            Ok(()) | Err(QuotaError::Unsupported) => {}
+            Err(e) => tracing::warn!(
+                account = %m.id,
+                provider = ?m.kind(),
+                error = %e,
+                "quota refresh failed"
+            ),
+        }
+        tokio::time::sleep(ANTIGRAVITY_QUOTA_POLL_GAP).await;
+    }
+
+    let mut tasks = Vec::new();
+    for m in others {
         let state = Arc::clone(state);
         tasks.push(tokio::spawn(async move {
-            let _ = refresh_account_usage(&state, &m).await;
+            // Logged rather than discarded: a silently failing quota poll is
+            // indistinguishable from a provider that reports no quota.
+            match refresh_account_usage(&state, &m).await {
+                Ok(()) | Err(QuotaError::Unsupported) => {}
+                Err(e) => tracing::warn!(
+                    account = %m.id,
+                    provider = ?m.kind(),
+                    error = %e,
+                    "quota refresh failed"
+                ),
+            }
         }));
     }
     for t in tasks {

@@ -25,12 +25,42 @@ impl QuotaWindow {
     }
 }
 
+/// One rolling window inside a model group, as Antigravity's quota summary
+/// reports it.
+///
+/// Antigravity returns `remainingFraction` (1.0 == untouched) whereas Codex
+/// reports consumption, so the conversion to `used_percent` happens at parse
+/// time to keep a single orientation across providers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct QuotaBucket {
+    pub bucket_id: Option<String>,
+    pub display_name: Option<String>,
+    pub window: Option<String>,
+    pub used_percent: Option<f64>,
+    pub reset_at_unix: Option<i64>,
+}
+
+/// A set of models that share one quota pool.
+///
+/// Antigravity groups models ("Gemini Models", "Claude and GPT models") and
+/// meters the group, not the individual model, so the group is the smallest
+/// unit that can be reported truthfully.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct QuotaGroup {
+    pub display_name: Option<String>,
+    pub models: Option<String>,
+    pub buckets: Vec<QuotaBucket>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AccountUsage {
     pub plan_type: Option<String>,
     pub active_limit: Option<String>,
     pub primary: QuotaWindow,
     pub secondary: QuotaWindow,
+    /// Per-model-group quota. Empty for providers that only report flat windows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<QuotaGroup>,
     pub credits_balance: Option<f64>,
     pub credits_unlimited: Option<bool>,
     pub has_credits: Option<bool>,
@@ -44,6 +74,113 @@ impl AccountUsage {
     pub fn is_known(&self) -> bool {
         self.observed_at_unix.is_some()
     }
+}
+
+/// Parse Antigravity's `v1internal:retrieveUserQuotaSummary` payload.
+///
+/// Captured live from cloudcode-pa: `groups[].buckets[]` carry
+/// `remainingFraction` (0..1) and an RFC3339 `resetTime`. The flat
+/// `primary`/`secondary` windows are filled from the *most consumed* bucket so
+/// existing rotation logic, which only understands flat windows, still sees a
+/// truthful worst case.
+pub fn parse_antigravity_quota_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
+    let mut groups = Vec::new();
+    for g in body.get("groups").and_then(|v| v.as_array()).into_iter().flatten() {
+        let buckets: Vec<QuotaBucket> = g
+            .get("buckets")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|b| QuotaBucket {
+                bucket_id: b.get("bucketId").and_then(|v| v.as_str()).map(str::to_string),
+                display_name: b
+                    .get("displayName")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                window: b.get("window").and_then(|v| v.as_str()).map(str::to_string),
+                used_percent: b
+                    .get("remainingFraction")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| ((1.0 - f) * 100.0).clamp(0.0, 100.0)),
+                reset_at_unix: b
+                    .get("resetTime")
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_rfc3339_unix),
+            })
+            .collect();
+        groups.push(QuotaGroup {
+            display_name: g
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            models: g
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            buckets,
+        });
+    }
+
+    let worst = |window: &str| -> QuotaWindow {
+        groups
+            .iter()
+            .flat_map(|g| g.buckets.iter())
+            .filter(|b| b.window.as_deref() == Some(window))
+            .max_by(|a, b| {
+                a.used_percent
+                    .unwrap_or(0.0)
+                    .total_cmp(&b.used_percent.unwrap_or(0.0))
+            })
+            .map(|b| QuotaWindow {
+                used_percent: b.used_percent,
+                window_minutes: Some(if window == "weekly" { 10_080 } else { 300 }),
+                reset_after_seconds: None,
+                reset_at_unix: b.reset_at_unix,
+                limit_name: b.bucket_id.clone(),
+            })
+            .unwrap_or_default()
+    };
+
+    AccountUsage {
+        primary: worst("weekly"),
+        secondary: worst("5h"),
+        groups,
+        observed_at_unix: Some(now_unix),
+        ..Default::default()
+    }
+}
+
+/// Parse the `YYYY-MM-DDTHH:MM:SSZ` form cloudcode-pa emits for `resetTime`.
+///
+/// Hand-rolled because the gateway carries no date dependency and this field
+/// is always UTC with a `Z` suffix; anything else is rejected rather than
+/// guessed at.
+fn parse_rfc3339_unix(s: &str) -> Option<i64> {
+    let s = s.strip_suffix('Z')?;
+    let (date, time) = s.split_once('T')?;
+    let mut d = date.split('-');
+    let (y, mo, da): (i64, i64, i64) = (
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+    );
+    let mut t = time.split(':');
+    let (h, mi): (i64, i64) = (t.next()?.parse().ok()?, t.next()?.parse().ok()?);
+    let sec: i64 = t.next()?.split('.').next()?.parse().ok()?;
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&da) {
+        return None;
+    }
+
+    // Days from civil epoch (Howard Hinnant's algorithm).
+    let y_adj = if mo <= 2 { y - 1 } else { y };
+    let era = if y_adj >= 0 { y_adj } else { y_adj - 399 } / 400;
+    let yoe = y_adj - era * 400;
+    let mp = (mo + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + da - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+
+    Some(days * 86_400 + h * 3_600 + mi * 60 + sec)
 }
 
 fn num(map: &HashMap<String, String>, key: &str) -> Option<f64> {
@@ -142,6 +279,7 @@ pub fn parse_codex_headers(headers: &HashMap<String, String>, now_unix: i64) -> 
         credits_unlimited: flag(&lower, "x-codex-credits-unlimited"),
         has_credits: flag(&lower, "x-codex-credits-has-credits"),
         reset_credits_available: None,
+        groups: Vec::new(),
         observed_at_unix: observed,
     }
 }
@@ -248,6 +386,7 @@ impl WhamUsage {
             reset_credits_available: self
                 .rate_limit_reset_credits
                 .and_then(|r| r.available_count),
+            groups: Vec::new(),
             observed_at_unix: Some(now_unix),
         }
     }
@@ -407,5 +546,91 @@ mod tests {
     #[test]
     fn reset_is_unknown_without_any_signal() {
         assert_eq!(seconds_until_reset(&QuotaWindow::default(), Some(5), 10), None);
+    }
+
+    /// Verbatim shape of a live cloudcode-pa `retrieveUserQuotaSummary` 200.
+    fn antigravity_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "description": "Models within this group: Gemini Flash, Gemini Pro",
+                    "buckets": [
+                        {
+                            "bucketId": "gemini-weekly",
+                            "displayName": "Weekly Limit Remaining",
+                            "window": "weekly",
+                            "resetTime": "2026-09-04T01:27:21Z",
+                            "remainingFraction": 0.99998575
+                        },
+                        {
+                            "bucketId": "gemini-5h",
+                            "displayName": "Five Hour Limit Remaining",
+                            "window": "5h",
+                            "resetTime": "2026-08-28T11:27:21Z",
+                            "remainingFraction": 0.5
+                        }
+                    ]
+                },
+                {
+                    "displayName": "Claude and GPT models",
+                    "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+                    "buckets": [
+                        {"bucketId": "3p-weekly", "window": "weekly", "resetTime": "2026-09-04T10:01:23Z", "remainingFraction": 0.25},
+                        {"bucketId": "3p-5h", "window": "5h", "resetTime": "2026-08-28T15:01:23Z", "remainingFraction": 1}
+                    ]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn antigravity_summary_maps_remaining_fraction_to_used_percent() {
+        let u = parse_antigravity_quota_summary(&antigravity_fixture(), 1_700_000_000);
+        assert_eq!(u.groups.len(), 2);
+        let gemini = &u.groups[0];
+        assert_eq!(gemini.display_name.as_deref(), Some("Gemini Models"));
+        // remainingFraction 0.5 -> 50% consumed, not 50% remaining.
+        let five_h = gemini.buckets.iter().find(|b| b.window.as_deref() == Some("5h")).unwrap();
+        assert!((five_h.used_percent.unwrap() - 50.0).abs() < 1e-6);
+        // 0.99998575 remaining is ~0% consumed.
+        let weekly = gemini.buckets.iter().find(|b| b.window.as_deref() == Some("weekly")).unwrap();
+        assert!(weekly.used_percent.unwrap() < 0.01);
+    }
+
+    #[test]
+    fn antigravity_summary_parses_reset_time() {
+        let u = parse_antigravity_quota_summary(&antigravity_fixture(), 1_700_000_000);
+        let b = &u.groups[0].buckets[0];
+        // 2026-09-04T01:27:21Z
+        assert_eq!(b.reset_at_unix, Some(1_788_485_241));
+    }
+
+    #[test]
+    fn antigravity_flat_windows_take_worst_bucket() {
+        let u = parse_antigravity_quota_summary(&antigravity_fixture(), 1_700_000_000);
+        // weekly: gemini ~0% vs 3p 75% -> worst is 75%
+        assert!((u.primary.used_percent.unwrap() - 75.0).abs() < 1e-6);
+        assert_eq!(u.primary.window_minutes, Some(10_080));
+        // 5h: gemini 50% vs 3p 0% -> worst is 50%
+        assert!((u.secondary.used_percent.unwrap() - 50.0).abs() < 1e-6);
+        assert_eq!(u.secondary.window_minutes, Some(300));
+    }
+
+    #[test]
+    fn rfc3339_parser_rejects_non_utc_and_malformed() {
+        assert_eq!(parse_rfc3339_unix("2026-09-04T01:27:21+09:00"), None);
+        assert_eq!(parse_rfc3339_unix("2026-13-04T01:27:21Z"), None);
+        assert_eq!(parse_rfc3339_unix("garbage"), None);
+        // Leap day must round-trip.
+        assert_eq!(parse_rfc3339_unix("2024-02-29T00:00:00Z"), Some(1_709_164_800));
+    }
+
+    #[test]
+    fn antigravity_summary_tolerates_empty_payload() {
+        let u = parse_antigravity_quota_summary(&serde_json::json!({}), 42);
+        assert!(u.groups.is_empty());
+        assert_eq!(u.primary.used_percent, None);
+        assert_eq!(u.observed_at_unix, Some(42));
     }
 }

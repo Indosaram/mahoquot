@@ -147,6 +147,20 @@ pub fn antigravity_count_tokens_url(base: &str) -> String {
     )
 }
 
+/// Per-model-group quota summary.
+///
+/// Contrary to an earlier assumption in this codebase, Antigravity *does*
+/// expose quota: this verb returns `groups[].buckets[]` with a
+/// `remainingFraction` and RFC3339 `resetTime`. Verified live against
+/// cloudcode-pa. Takes `{"project": <project_id>}` as its body.
+pub fn antigravity_quota_summary_url(base: &str) -> String {
+    format!(
+        "{}/{}:retrieveUserQuotaSummary",
+        base.trim_end_matches('/'),
+        ANTIGRAVITY_API_VERSION
+    )
+}
+
 pub fn derive_antigravity_slug_from_filename(file_name: &str) -> String {
     let without_prefix = file_name
         .strip_prefix("antigravity-")

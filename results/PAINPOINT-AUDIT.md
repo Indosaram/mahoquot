@@ -225,3 +225,59 @@ controls pain point 1 needed.
 - Performance, codex path through mock upstream, 3×600 requests at concurrency
   16: median p50 **43.63 ms** vs **44.75 ms** baseline (**-1.12 ms**), 1800/1800
   successful. Session affinity added no measurable overhead.
+
+## Correction: Antigravity DOES expose a quota API
+
+An earlier revision of this document and the monitor UI stated that Antigravity
+"exposes no quota API". **That was wrong.** Reading the reference
+implementation (`nguyenphutrong/quotio`, `AntigravityQuotaFetcher.swift`) and
+calling the endpoint directly proved it:
+
+    POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary
+    Authorization: Bearer <access_token>
+    {"project": "<project_id>"}
+
+returns HTTP 200 with per-model-group quota:
+
+    groups[].displayName        "Gemini Models" / "Claude and GPT models"
+    groups[].description        the member models
+    groups[].buckets[]          bucketId, displayName, window (5h|weekly),
+                                resetTime (RFC3339 Z), remainingFraction (0..1)
+
+Live-captured example (`account-e`): Gemini Models at 7.72% weekly and 0.73%
+5h consumed. Antigravity is the majority of the pool, so most accounts were
+being shown as "quota unknown" for no reason. This was a functional defect,
+not a display gap.
+
+### What the API meters
+
+It meters **groups, not individual models**. `Gemini Flash` and `Gemini Pro`
+share `gemini-5h`/`gemini-weekly`. Rendering one bar per model would duplicate
+a single shared number, so the UI renders one row per bucket and lists the
+member models beside the group name. A visual reviewer flagged the absence of
+per-model rows as a defect; it was rejected with this evidence.
+
+### Two bugs found while wiring it
+
+1. **`403` is not always a licensing error.** A throttled quota poll answers
+   `403 "You do not have a valid license of this product."` — semantically a
+   licence failure, actually a rate limit. Proven by the identical token and
+   body alternating 200/403 minutes apart. Mapping it to `Unauthorized` was
+   wrong, so it is now a retryable upstream condition.
+2. **The misclassification fed a retry loop.** The 403 entered the 401 refresh
+   path, forcing an extra token refresh per failure and doubling traffic
+   against the endpoint that was already throttling. Antigravity polls are now
+   serialised with a gap instead of fanned out concurrently.
+
+Errors from `refresh_all_usage` used to be discarded with `let _ = …`, which is
+why a silently failing quota poll was indistinguishable from a provider with no
+quota API — the root cause of the false claim above. They are logged now.
+
+### Verification status
+
+Parsing is unit-tested against the live payload (6 tests, including leap-day
+and non-UTC rejection). End-to-end population through the gateway is **not**
+confirmed: at the time of writing all three antigravity accounts return the
+throttle-403 even from a bare `curl`, so the live path could not be observed
+green. The UI screenshot in `results/monitor-ui-quota.png` was therefore
+captured against a fixture matching the real response shape, not live data.
