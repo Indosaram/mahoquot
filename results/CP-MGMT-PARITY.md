@@ -208,6 +208,31 @@ layout intent, or whether a screen communicates well. The remaining judgement
 came from the same agent that wrote the UI. **This section is not an
 independent PASS and should not be read as one.**
 
+### Root cause of the dispatch failure
+
+Worth recording, because it is fixable and it is not a code problem here:
+
+- Every subagent category in `~/.omo/omo.json` routes to
+  `quotio/gemini-3.7-flash-high`.
+- The `quotio` provider in `~/.omo/models.json` has
+  `baseUrl: http://127.0.0.1:8317/v1` — **the live Quotio gateway**.
+- Port 8317 has no listener. Every category spawn therefore fails with a
+  provider connection error. The declared fallback `stealth/ox-alpha` reports
+  "Model ox-alpha-free is not supported".
+- The only image-capable models on an authenticated provider are
+  `opengateway/moonshotai/kimi-k3` and `...-ultrafast`; both return
+  `401 invalid_api_key` when used as an explicit model override.
+- The session's own default model is reachable (`completion(model="default")`
+  answers), but that path is text-only and cannot read a screenshot.
+
+So the visual reviewer is unreachable until either the Quotio gateway is
+running on 8317 or the `opengateway` key is refreshed. Note the irony: the
+delegation path depends on the very gateway this work is building.
+
+Starting a gateway on 8317 was not attempted: the invariants confine test
+gateways to 18840-18899 and forbid writing the live Quotio state, and 8317 is
+the user's live port.
+
 ## Invariants
 
 `~/.cli-proxy-api` and `Application Support/Quotio` were never written by this
