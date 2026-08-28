@@ -6,3 +6,4 @@
 //! group module never repeats the auth wiring and cannot accidentally omit it.
 
 pub mod auth;
+pub mod settings;
