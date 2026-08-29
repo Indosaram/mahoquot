@@ -56,6 +56,10 @@ fn yes() -> bool {
     true
 }
 
+fn default_log_size_mb() -> i64 {
+    100
+}
+
 fn default_port() -> u16 {
     18801
 }
@@ -78,9 +82,9 @@ pub struct Settings {
     pub auth_dir: String,
     #[serde(default)]
     pub debug: bool,
-    #[serde(rename = "logging-to-file", default)]
+    #[serde(rename = "logging-to-file", default = "yes")]
     pub logging_to_file: bool,
-    #[serde(rename = "logs-max-total-size-mb", default)]
+    #[serde(rename = "logs-max-total-size-mb", default = "default_log_size_mb")]
     pub logs_max_total_size_mb: i64,
     #[serde(rename = "error-logs-max-files", default)]
     pub error_logs_max_files: i64,
@@ -183,8 +187,8 @@ impl Default for Settings {
             port: default_port(),
             auth_dir: String::new(),
             debug: false,
-            logging_to_file: false,
-            logs_max_total_size_mb: 0,
+            logging_to_file: true,
+            logs_max_total_size_mb: default_log_size_mb(),
             error_logs_max_files: 0,
             usage_statistics_enabled: false,
             request_log: false,

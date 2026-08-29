@@ -1,6 +1,69 @@
 use quotio_gateway::monitor::{MonitorState, PromAccount};
 use std::sync::Arc;
 
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
+use http_body_util::BodyExt;
+use quotio_gateway::config::GatewayConfig;
+use quotio_gateway::inbound::ApiKeys;
+use quotio_gateway::management::observability::append_log_line;
+use quotio_gateway::routes::create_app;
+use quotio_gateway::state::AppState;
+use tower::ServiceExt;
+
+#[tokio::test]
+async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
+    let auth_dir = std::env::temp_dir().join(format!(
+        "quotio-monitor-restart-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&auth_dir).expect("auth dir");
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: ApiKeys::new(vec!["history-key".to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let first = AppState::new(&config).expect("first state");
+    first.telemetry.record(1_800, "codex", true);
+    first.telemetry.flush().expect("flush history");
+    append_log_line(&first.settings.current(), r#"{"provider":"codex","status":200}"#);
+
+    let restored = Arc::new(AppState::new(&config).expect("restored state"));
+    let app = create_app(restored);
+    let stats = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/stats")
+                .header(header::AUTHORIZATION, "Bearer history-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stats.status(), StatusCode::OK);
+    let stats_body = stats.into_body().collect().await.unwrap().to_bytes();
+    let stats_json: serde_json::Value = serde_json::from_slice(&stats_body).unwrap();
+    assert_eq!(stats_json["history"][0]["requests"], 1);
+
+    let logs = app
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/logs")
+                .header(header::AUTHORIZATION, "Bearer history-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs_body = logs.into_body().collect().await.unwrap().to_bytes();
+    let logs_json: serde_json::Value = serde_json::from_slice(&logs_body).unwrap();
+    assert!(logs_json["lines"][0].as_str().unwrap().contains("codex"));
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
 #[test]
 fn test_in_flight_tracking() {
     let monitor = Arc::new(MonitorState::new(1000));

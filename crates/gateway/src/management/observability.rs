@@ -252,7 +252,10 @@ mod tests {
     #[test]
     fn log_routes_are_refused_while_file_logging_is_off() {
         // given a config with logging-to-file disabled
-        let settings = Settings::default();
+        let settings = Settings {
+            logging_to_file: false,
+            ..Settings::default()
+        };
         // when a log route checks availability
         let refusal = require_file_logging(&settings);
         // then it refuses rather than reporting an empty list

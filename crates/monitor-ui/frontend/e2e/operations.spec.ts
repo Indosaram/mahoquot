@@ -154,9 +154,10 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await installMocks(page);
   await page.goto("/management.html");
   await expect(page.locator(".mobile-nav")).toBeHidden();
-  await expect(page.getByText("Live process snapshot")).toBeVisible();
-  await expect(page.getByText("1 of 4 ready")).toBeVisible();
-  await expect(page.getByText("3 accounts")).toBeVisible();
+  await expect(page.getByText("10-second process snapshots")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Calls over time" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Provider traffic" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Latency distribution" })).toBeVisible();
   await page.getByText("Open logs").click();
   await expect(
     page.getByText("Raw server output, not a reconstructed request history."),

@@ -294,6 +294,49 @@ async fn claude_accepts_openai_input_and_returns_openai_nonstream() {
 }
 
 #[tokio::test]
+async fn relay_persists_aggregate_history_and_redacted_proxy_log() {
+    let response_json = r#"{"id":"msg_json","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"relay-ok"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}"#;
+    let (upstream, _seen, mock_task) = start_mock(response_json, "application/json").await;
+    let (gateway, auth_dir, gateway_task) = start_gateway("claude", &upstream).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-5-20250929",
+            "stream": false,
+            "messages": [{"role":"user","content":"must-not-be-logged"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let stats: serde_json::Value = reqwest::Client::new()
+        .get(format!("{gateway}/admin/stats"))
+        .bearer_auth("relay-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(stats["history"][0]["requests"], 1);
+    assert_eq!(stats["history"][0]["providers"][0]["provider"], "claude");
+
+    let log_path = auth_dir.join("logs/gateway.log");
+    let log = std::fs::read_to_string(log_path).unwrap();
+    assert!(log.contains("\"provider\":\"claude\""));
+    assert!(log.contains("\"status\":200"));
+    assert!(!log.contains("must-not-be-logged"));
+    assert!(!log.contains("u@claude.test"));
+
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
 async fn kiro_relays_conversation_state_and_decodes_eventstream() {
     let (upstream, seen, mock_task) = start_mock(
         "binary-prefix {\"content\":\"kiro-ok\"}{\"stopReason\":\"END_TURN\"}",
