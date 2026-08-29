@@ -112,6 +112,9 @@ async fn create_auth_file(State(state): State<Arc<AppState>>, raw: bytes::Bytes)
         return json_status(StatusCode::BAD_REQUEST, json!({ "error": "invalid name" }));
     }
     let content = body.get("content").cloned().unwrap_or(Value::Null);
+    if let Err(error) = validate_provider_credential(&content) {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": error }));
+    }
     let dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
     if let Err(err) = std::fs::create_dir_all(&dir) {
         return json_status(
@@ -135,6 +138,49 @@ async fn create_auth_file(State(state): State<Arc<AppState>>, raw: bytes::Bytes)
             json!({ "error": format!("failed to write auth file: {err}") }),
         ),
     }
+}
+
+fn required_string<'a>(content: &'a Value, field: &str) -> Result<&'a str, String> {
+    content
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("credential field {field} is required"))
+}
+
+fn validate_provider_credential(content: &Value) -> Result<(), String> {
+    let kind = required_string(content, "type")?;
+    match kind {
+        "claude" | "cursor" => {
+            required_string(content, "access_token")?;
+            required_string(content, "refresh_token")?;
+            required_string(content, "email")?;
+            required_string(content, "expired")?;
+        }
+        "kiro" => {
+            required_string(content, "access_token")?;
+            required_string(content, "refresh_token")?;
+            required_string(content, "email")?;
+            required_string(content, "expired")?;
+            if content.get("auth_mode").and_then(Value::as_str) == Some("idc") {
+                required_string(content, "client_id")?;
+                required_string(content, "client_secret")?;
+            }
+        }
+        "zcode" => {
+            let key = required_string(content, "access_token")?;
+            if !quotio_providers::zcode::is_provisioned_api_key(key) {
+                return Err("zcode access_token must be a provisioned {id}.{secret} key".into());
+            }
+            required_string(content, "refresh_token")?;
+            required_string(content, "email")?;
+            required_string(content, "expired")?;
+        }
+        "codex" | "antigravity" => {}
+        _ => return Err(format!("unsupported credential type {kind}")),
+    }
+    Ok(())
 }
 
 /// Upstream addresses a credential by a stable opaque handle rather than its
@@ -328,5 +374,65 @@ mod tests {
         // then only the final file exists, so the loader never sees a partial
         assert_eq!(names, vec!["x.json".to_string()]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn provider_imports_reject_credentials_the_loader_cannot_use() {
+        let invalid_kiro = json!({
+            "type": "kiro",
+            "auth_mode": "idc",
+            "access_token": "a",
+            "refresh_token": "r",
+            "email": "u@example.com",
+            "expired": "2099-01-01T00:00:00Z",
+            "client_id": "client"
+        });
+        assert_eq!(
+            validate_provider_credential(&invalid_kiro),
+            Err("credential field client_secret is required".to_string())
+        );
+
+        let invalid_zcode = json!({
+            "type": "zcode",
+            "access_token": "oauth-token-not-api-key",
+            "refresh_token": "r",
+            "email": "u@example.com",
+            "expired": "2099-01-01T00:00:00Z"
+        });
+        assert_eq!(
+            validate_provider_credential(&invalid_zcode),
+            Err("zcode access_token must be a provisioned {id}.{secret} key".to_string())
+        );
+    }
+
+    #[test]
+    fn provider_imports_accept_reference_credential_shapes() {
+        for credential in [
+            json!({
+                "type": "claude", "access_token": "a", "refresh_token": "r",
+                "email": "u@example.com", "expired": "2099-01-01T00:00:00Z"
+            }),
+            json!({
+                "type": "cursor", "access_token": "a", "refresh_token": "r",
+                "email": "u@example.com", "expired": "2099-01-01T00:00:00Z"
+            }),
+            json!({
+                "type": "kiro", "auth_mode": "social", "access_token": "a",
+                "refresh_token": "r", "email": "u@example.com",
+                "expired": "2099-01-01T00:00:00Z"
+            }),
+            json!({
+                "type": "kiro", "auth_mode": "idc", "access_token": "a",
+                "refresh_token": "r", "email": "u@example.com",
+                "expired": "2099-01-01T00:00:00Z", "client_id": "c",
+                "client_secret": "s"
+            }),
+            json!({
+                "type": "zcode", "access_token": "id.secret", "refresh_token": "r",
+                "email": "u@example.com", "expired": "2099-01-01T00:00:00Z"
+            }),
+        ] {
+            validate_provider_credential(&credential).expect("reference shape accepted");
+        }
     }
 }
