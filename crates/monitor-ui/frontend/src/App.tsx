@@ -75,6 +75,7 @@ const emptyStats: AdminStats = {
   refreshed: 0,
   ttft: null,
   accounts: [],
+  history: [],
 };
 
 const latencyP50 = (stats: AdminStats): number | null => {
@@ -225,7 +226,9 @@ export default function App() {
       const nextStats = await clients.admin.stats();
       setStats(nextStats);
       setTelemetry((samples) => {
-        const restored = samples.length ? samples : persistedTelemetrySamples(nextStats.history);
+        const restored = samples.length
+          ? samples
+          : persistedTelemetrySamples(nextStats.history ?? []);
         return appendTelemetrySample(restored, nextStats, Date.now());
       });
       setLoadState("online");

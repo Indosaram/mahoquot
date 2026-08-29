@@ -4,6 +4,7 @@
 )]
 
 mod stats;
+mod tray;
 #[cfg(test)]
 mod tray_tests;
 

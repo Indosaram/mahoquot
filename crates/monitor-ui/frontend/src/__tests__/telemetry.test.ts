@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AdminStats } from "../lib/schemas";
-import {
-  appendTelemetrySample,
-  persistedTelemetrySamples,
-  providerTotals,
-} from "../lib/telemetry";
+import { appendTelemetrySample, persistedTelemetrySamples, providerTotals } from "../lib/telemetry";
 
 const snapshot = (served: number, ok: number, fails: number): AdminStats => ({
   uptime_secs: 10,

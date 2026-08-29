@@ -91,7 +91,7 @@ export const AdminStatsSchema = z.object({
   refreshed: z.number().default(0),
   ttft: z.union([TtftSnapshotSchema, z.number()]).nullable().optional(),
   accounts: z.array(AccountStatsSchema).default([]),
-  history: z.array(TelemetryBucketSchema).default([]),
+  history: z.array(TelemetryBucketSchema).optional(),
 });
 export type AdminStats = z.infer<typeof AdminStatsSchema>;
 

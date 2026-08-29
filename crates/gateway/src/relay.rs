@@ -41,7 +41,7 @@ fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn record_request_outcome(
+async fn record_request_outcome(
     state: &AppState,
     provider: &str,
     model: Option<&str>,
@@ -65,9 +65,10 @@ fn record_request_outcome(
     })
     .to_string();
     let settings = (*settings).clone();
-    tokio::task::spawn_blocking(move || {
+    let _ = tokio::task::spawn_blocking(move || {
         crate::management::observability::append_log_line(&settings, &line);
-    });
+    })
+    .await;
 }
 
 struct RelayPlan {
@@ -886,7 +887,8 @@ pub async fn handle_relay(
                         response.status().as_u16(),
                         response.status().is_success(),
                         request_started.elapsed().as_millis() as u64,
-                    );
+                    )
+                    .await;
                     return response;
                 }
                 Err(reason) => {
@@ -941,6 +943,15 @@ pub async fn handle_relay(
         state
             .monitor
             .record_error(member.id(), status_code, "client error");
+        record_request_outcome(
+            &state,
+            member.kind().as_str(),
+            plan.model.as_deref(),
+            failure.status.as_u16(),
+            false,
+            request_started.elapsed().as_millis() as u64,
+        )
+        .await;
         return body_response(
             failure.status,
             failure.content_type.as_deref(),
@@ -950,7 +961,7 @@ pub async fn handle_relay(
 
     state.metrics.exposed_errors.fetch_add(1, Ordering::Relaxed);
 
-    match last_failure {
+    let response = match last_failure {
         Some(final_fail) => body_response(
             final_fail.status,
             final_fail.content_type.as_deref(),
@@ -962,7 +973,17 @@ pub async fn handle_relay(
             .body(compat::error_stream_body("all failover attempts failed"))
             .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "upstream failure").into_response()),
         None => json_error(StatusCode::BAD_GATEWAY, "all failover attempts failed"),
-    }
+    };
+    record_request_outcome(
+        &state,
+        "unknown",
+        plan.model.as_deref(),
+        response.status().as_u16(),
+        false,
+        request_started.elapsed().as_millis() as u64,
+    )
+    .await;
+    response
 }
 
 #[cfg(test)]
