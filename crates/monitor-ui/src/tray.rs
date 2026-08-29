@@ -77,6 +77,17 @@ pub fn should_spawn_gateway(port_listening: bool) -> bool {
     !port_listening
 }
 
+/// The incumbent app's credential store wins when it exists, so accounts the
+/// user already had are visible with no migration step.
+pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
+    let legacy = std::path::Path::new(home).join(".cli-proxy-api");
+    if legacy.is_dir() {
+        legacy
+    } else {
+        std::path::Path::new(home).join(".mahoquot/auth")
+    }
+}
+
 pub fn resolve_gateway_binary(env_override: Option<String>, exe: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = env_override {
         return Some(PathBuf::from(path));

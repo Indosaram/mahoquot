@@ -110,6 +110,8 @@ async fn reset_quota(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> R
     let resolved = super::creds::resolve_auth_index(&state, &auth_index);
     let by_file = resolved.as_deref().and_then(|file_name| {
         state
+            .pool
+            .load()
             .members
             .iter()
             .find(|m| {

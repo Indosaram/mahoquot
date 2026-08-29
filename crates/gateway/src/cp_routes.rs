@@ -44,6 +44,8 @@ fn parse_body(body: &Bytes) -> Result<Value, Box<Response>> {
 
 fn owner_of(state: &AppState, model: &str) -> Option<String> {
     state
+        .pool
+        .load()
         .models
         .iter()
         .find(|m| m.id == model)
@@ -416,7 +418,7 @@ pub async fn alpha_search(
 }
 
 pub async fn v1beta_models(State(state): State<Arc<AppState>>) -> Response {
-    Json(v1beta::models_payload(&state.models)).into_response()
+    Json(v1beta::models_payload(&state.pool.load().models)).into_response()
 }
 
 pub async fn v1beta_action(
@@ -427,7 +429,14 @@ pub async fn v1beta_action(
 ) -> Response {
     let (model, verb) = v1beta::parse_action(&action);
 
-    let Some(entry) = state.models.iter().find(|m| m.id == model).cloned() else {
+    let Some(entry) = state
+        .pool
+        .load()
+        .models
+        .iter()
+        .find(|m| m.id == model)
+        .cloned()
+    else {
         return json_status(StatusCode::NOT_FOUND, v1beta::model_not_found(&model));
     };
 

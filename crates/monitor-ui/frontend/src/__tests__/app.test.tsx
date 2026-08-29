@@ -70,7 +70,7 @@ describe("operations console", () => {
       }),
     );
     render(<App />);
-    await screen.findByText("Gateway connected");
+    await screen.findByText("Requests");
     expect(calls.some((url) => url.includes("/v0/management/"))).toBe(true);
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
@@ -80,31 +80,74 @@ describe("operations console", () => {
 
   it("exposes exactly the approved primary surfaces and snapshot caveat", async () => {
     render(<App />);
-    await screen.findByText(
-      "Request history is persisted for 30 days and survives gateway and console restarts.",
-    );
+    await screen.findByText("Requests");
     const nav = screen.getByRole("navigation", { name: "Primary navigation" });
     expect(nav).toHaveTextContent("Overview");
     expect(nav).toHaveTextContent("Accounts");
+    expect(nav).toHaveTextContent("Logs");
     expect(nav).toHaveTextContent("Settings");
     expect(nav).not.toHaveTextContent("Credentials");
     expect(screen.getByRole("img", { name: "Request activity over time" })).toBeInTheDocument();
-    expect(screen.getByText("Success rate")).toBeInTheDocument();
-    expect(screen.getByText("Provider traffic")).toBeInTheDocument();
-    expect(screen.getByText("Latency distribution")).toBeInTheDocument();
-    expect(screen.getByText("Successful")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getByText(/8 calls · 100% success/)).toBeInTheDocument();
+    expect(screen.getByText("Success")).toBeInTheDocument();
+    expect(screen.getByText("Provider mix")).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Telemetry range" })).toBeInTheDocument();
+    for (const range of ["30m", "1h", "1d", "7d", "30d"]) {
+      expect(screen.getByRole("radio", { name: range })).toBeInTheDocument();
+    }
+    expect(screen.queryByText("Latency distribution")).not.toBeInTheDocument();
+    expect(screen.queryByText("Current interval")).not.toBeInTheDocument();
+    expect(screen.queryByText("30-day retention")).not.toBeInTheDocument();
+    expect(screen.queryByText("Open logs")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Live/i)).not.toBeInTheDocument();
     expect(screen.queryByText("long-runtime-id@example.com")).not.toBeInTheDocument();
     expect(screen.queryByText("POOL HEALTH")).not.toBeInTheDocument();
+  });
+
+  it("updates Overview totals when the telemetry range changes", async () => {
+    const now = Date.now();
+    const historyStats = {
+      ...stats,
+      history: [
+        {
+          minute_unix: Math.floor((now - 2 * 60 * 60_000) / 60_000) * 60,
+          requests: 90,
+          successes: 88,
+          failures: 2,
+          providers: [{ provider: "codex", requests: 90, successes: 88, failures: 2 }],
+        },
+        {
+          minute_unix: Math.floor((now - 10 * 60_000) / 60_000) * 60,
+          requests: 3,
+          successes: 3,
+          failures: 0,
+          providers: [{ provider: "claude", requests: 3, successes: 3, failures: 0 }],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(historyStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    render(<App />);
+    expect(await screen.findByText("93")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "30m" }));
+    expect(await screen.findByText("3")).toBeInTheDocument();
+    expect(screen.queryByText("93")).not.toBeInTheDocument();
   });
 
   it("renders compact notch surface when requested via query param", async () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
     try {
       render(<App />);
-      expect(await screen.findByTestId("notch-ring-codex")).toBeInTheDocument();
-      expect(screen.getByTestId("notch-tooltip-codex")).toBeInTheDocument();
+      expect(await screen.findByTestId("notch-hover-zone")).toBeInTheDocument();
+      expect(screen.getByText("Quotio")).toBeInTheDocument();
+      expect(screen.getByText("1")).toBeInTheDocument();
       expect(
         screen.queryByRole("navigation", { name: "Primary navigation" }),
       ).not.toBeInTheDocument();
@@ -122,10 +165,12 @@ describe("operations console", () => {
     expect(screen.getByLabelText("API key")).toBeInTheDocument();
     expect(screen.queryByText("Provider onboarding")).not.toBeInTheDocument();
     expect(screen.getByText("Connection & access")).toBeInTheDocument();
-    expect(screen.getByText("Routing policy")).toBeInTheDocument();
+    expect(screen.getByText("Proxy behavior")).toBeInTheDocument();
     expect(screen.queryByLabelText("Management password")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy API key" })).toBeInTheDocument();
-    expect(screen.getByText("Runtime & logging")).toBeInTheDocument();
+    expect(screen.getByText("Advanced YAML")).toBeInTheDocument();
+    expect(screen.queryByText("Routing policy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Runtime & logging")).not.toBeInTheDocument();
     expect(screen.getByText("Advanced YAML")).toBeInTheDocument();
     expect(screen.queryAllByText("Edit settings")).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Open YAML editor" }));
@@ -366,16 +411,19 @@ describe("operations console", () => {
     expect(screen.getByText(/Proxy settings saved/i)).toBeInTheDocument();
   });
 
-  it("keeps navigation and reconnect controls alive when the gateway is offline", async () => {
+  it("keeps gateway lifecycle state in Settings instead of rendering an error", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Promise.reject(new TypeError("connection refused"))),
     );
     render(<App />);
-    expect(await screen.findByText(/Gateway offline/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("Settings").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/Gateway offline/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
     expect(screen.getByLabelText("Gateway URL")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Save & reconnect" })).toBeEnabled();
+    expect(screen.getByText("Gateway process")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start gateway|Stop gateway/ })).toBeInTheDocument();
   });
 
   it("does not replace a focused settings field during polling", async () => {
@@ -395,10 +443,8 @@ describe("operations console", () => {
 
   it("opens raw logs without presenting fabricated request history", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByText("Open logs"));
-    await waitFor(() =>
-      expect(screen.getByRole("complementary", { name: "Gateway logs" })).toBeInTheDocument(),
-    );
+    fireEvent.click((await screen.findAllByText("Logs")).at(0) as HTMLElement);
+    expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
     expect(
       screen.getByText("Raw server output, not a reconstructed request history."),
     ).toBeInTheDocument();

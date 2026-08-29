@@ -155,7 +155,7 @@ pub async fn warm_account(state: &Arc<AppState>, member: &Arc<AccountMember>) ->
 
 pub async fn warm_all(state: &Arc<AppState>) -> Vec<WarmupResult> {
     let mut tasks = Vec::new();
-    for m in state.members.clone() {
+    for m in state.pool.load().members.clone() {
         let state = Arc::clone(state);
         tasks.push(tokio::spawn(
             async move { warm_account(&state, &m).await },

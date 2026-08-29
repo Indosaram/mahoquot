@@ -2084,6 +2084,8 @@ dependencies = [
 name = "mahoquot-monitor-ui"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "mahoquot-gateway",
  "objc",
  "reqwest 0.12.28",
  "serde",
@@ -2091,6 +2093,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

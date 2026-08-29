@@ -74,6 +74,10 @@ test("renders live compact notch panel", async ({ page }) => {
   const surface = page.locator('[data-mahoquot-surface="notch"]');
   await expect(surface).toBeVisible();
 
+  const notchSurface = surface.locator(".notch-surface");
+  const compactBox = await notchSurface.boundingBox();
+  expect(compactBox?.height ?? 999).toBeLessThanOrEqual(56);
+
   const transparentBackground = await page.evaluate(() => {
     const body = getComputedStyle(document.body).backgroundColor;
     const root = getComputedStyle(document.documentElement).backgroundColor;
@@ -82,10 +86,20 @@ test("renders live compact notch panel", async ({ page }) => {
   expect(transparentBackground.body).toBe("rgba(0, 0, 0, 0)");
   expect(transparentBackground.root).toBe("rgba(0, 0, 0, 0)");
 
+  await surface.locator(".notch-hover-zone").hover();
+  await expect(notchSurface).toHaveClass(/expanded/);
+  await expect(notchSurface).toHaveCSS("height", "440px");
+  const expandedBox = await notchSurface.boundingBox();
+  expect(expandedBox?.height ?? 0).toBeGreaterThan(200);
+
   await expect(surface.getByTestId("notch-ring-codex")).toBeVisible();
   await expect(surface.getByTestId("notch-ring-claude")).toBeVisible();
   await expect(surface.getByTestId("notch-ring-antigravity")).toBeVisible();
 
+  await page.mouse.move(10, 520);
+  await expect(notchSurface).not.toHaveClass(/expanded/);
+
+  await surface.locator(".notch-hover-zone").hover();
   await page.getByTestId("notch-ring-codex").hover();
   const tooltip = surface.getByTestId("notch-tooltip-codex");
   await expect(tooltip).toBeVisible();
@@ -113,6 +127,10 @@ test("shows onboarding hint ring when no accounts are connected", async ({ page 
   await page.goto("/management.html?surface=notch");
 
   const surface = page.locator('[data-mahoquot-surface="notch"]');
+  const notchSurface = surface.locator(".notch-surface");
+  await expect(notchSurface).toBeVisible();
+  await surface.locator(".notch-hover-zone").hover();
+  await expect(notchSurface).toHaveCSS("height", "440px");
   await expect(surface.getByTestId("notch-empty-ring")).toBeVisible();
   await page.getByTestId("notch-empty-ring").hover();
   await expect(surface.getByTestId("notch-tooltip-empty")).toBeVisible();

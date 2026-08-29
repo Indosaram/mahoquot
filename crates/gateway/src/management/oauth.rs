@@ -578,6 +578,9 @@ async fn auth_status(
                 let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
                 match poll_cursor_session(&state.http_client, &auth_dir, &mut session).await {
                     Ok(Some(_cred)) => {
+                        if let Err(error) = state.rescan_pool() {
+                            eprintln!("pool rescan failed after cursor onboarding: {error}");
+                        }
                         let mut sessions = SESSIONS.write().unwrap();
                         sessions.insert(session.state.clone(), session);
                         return json_status(StatusCode::OK, json!({ "status": "ok", "provider": "cursor" }));
@@ -636,8 +639,13 @@ pub async fn oauth_callback(
                 )
                 .await;
 
-                if let Err(err) = exchange_res {
-                    session.status = SessionStatus::Failed(err);
+                match exchange_res {
+                    Ok(_) => {
+                        if let Err(error) = state.rescan_pool() {
+                            eprintln!("pool rescan failed after anthropic onboarding: {error}");
+                        }
+                    }
+                    Err(err) => session.status = SessionStatus::Failed(err),
                 }
 
                 let mut sessions = SESSIONS.write().unwrap();

@@ -1,8 +1,8 @@
 use crate::tray::{
     calculate_notch_window_position, calculate_notch_window_physical_position,
-    resolve_gateway_binary, should_spawn_gateway, DisplayBounds, NotchInsets, WindowDimensions,
-    MonitorSummary, WindowPosition, MENU_ID_GATEWAY, MENU_ID_QUIT, MENU_ID_REFRESH,
-    MENU_ID_TOGGLE, pick_notched_monitor_index,
+    default_auth_dir, resolve_gateway_binary, should_spawn_gateway, DisplayBounds, NotchInsets,
+    WindowDimensions, MonitorSummary, WindowPosition, MENU_ID_GATEWAY, MENU_ID_QUIT,
+    MENU_ID_REFRESH, MENU_ID_TOGGLE, pick_notched_monitor_index,
 };
 
 #[test]
@@ -142,4 +142,37 @@ fn notched_monitor_prefers_retina_panel_for_island_placement() {
         }]),
         None
     );
+}
+
+#[test]
+fn default_auth_dir_adopts_the_incumbent_store_when_present() {
+    // given a home directory carrying the incumbent credential store
+    let home = std::env::temp_dir().join(format!(
+        "mahoquot-auth-dir-legacy-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+    let legacy = home.join(".cli-proxy-api");
+    std::fs::create_dir_all(&legacy).expect("legacy dir");
+    // when the default auth dir is resolved
+    let resolved = default_auth_dir(&home.display().to_string());
+    // then the incumbent store is adopted with no migration step
+    assert_eq!(resolved, legacy);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn default_auth_dir_stays_app_local_without_a_legacy_store() {
+    // given a home directory without the incumbent store
+    let home = std::env::temp_dir().join(format!(
+        "mahoquot-auth-dir-fresh-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("home dir");
+    // when the default auth dir is resolved
+    let resolved = default_auth_dir(&home.display().to_string());
+    // then it stays inside the app's own tree
+    assert_eq!(resolved, home.join(".mahoquot/auth"));
+    std::fs::remove_dir_all(&home).ok();
 }

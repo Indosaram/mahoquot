@@ -11,6 +11,7 @@ import {
   Network,
   RefreshCw,
   RotateCcw,
+  Route,
   Settings2,
   Sparkles,
   Sun,
@@ -34,6 +35,12 @@ import {
 } from "./lib/accounts";
 import { GatewayError, createGatewayClients } from "./lib/api";
 import type { ProviderAuthStatus } from "./lib/api";
+import {
+  type GatewayLifecycleStatus,
+  getGatewayLifecycle,
+  startManagedGateway,
+  stopManagedGateway,
+} from "./lib/native";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import {
   getGatewayBaseUrl,
@@ -48,14 +55,16 @@ import {
   persistedTelemetrySamples,
 } from "./lib/telemetry";
 
-type Surface = "overview" | "accounts" | "settings" | "notch";
-type LoadState = "loading" | "online" | "offline" | "relay-locked";
+type Surface = "overview" | "accounts" | "logs" | "settings" | "notch";
+type LoadState = "loading" | "online" | "starting" | "stopped" | "relay-locked";
 
 const getInitialSurface = (): Surface => {
   if (typeof window !== "undefined") {
     const param = new URLSearchParams(window.location.search).get("surface");
     if (param === "notch") return "notch";
-    if (param === "accounts" || param === "settings" || param === "overview") return param;
+    if (param === "accounts" || param === "logs" || param === "settings" || param === "overview") {
+      return param;
+    }
   }
   return "overview";
 };
@@ -190,6 +199,7 @@ const HealthBadge = ({ account }: { account: NormalizedAccount }) => {
 
 export default function App() {
   const [surface, setSurface] = useState<Surface>(getInitialSurface);
+  const [notchExpanded, setNotchExpanded] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [baseUrl, setBaseUrlState] = useState(getGatewayBaseUrl());
   const [relayKey, setRelayKeyState] = useState(getRelayKey());
@@ -197,7 +207,7 @@ export default function App() {
   const [credentials, setCredentials] = useState<readonly AuthFileItem[]>([]);
   const [logs, setLogs] = useState<readonly string[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [logsOpen, setLogsOpen] = useState(false);
+  const [gatewayLifecycle, setGatewayLifecycle] = useState<GatewayLifecycleStatus>("running");
   const [provider, setProvider] = useState(
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
@@ -224,16 +234,19 @@ export default function App() {
       const nextStats = await clients.admin.stats();
       setStats(nextStats);
       setTelemetry((samples) => {
-        const restored = samples.length
-          ? samples
-          : persistedTelemetrySamples(nextStats.history ?? []);
-        return appendTelemetrySample(restored, nextStats, Date.now());
+        const persisted = persistedTelemetrySamples(nextStats.history ?? []);
+        return persisted.length ? persisted : appendTelemetrySample(samples, nextStats, Date.now());
       });
       setLoadState("online");
+      setGatewayLifecycle("running");
       firstLoad.current = false;
     } catch (error) {
       setLoadState(
-        error instanceof GatewayError && error.status === 401 ? "relay-locked" : "offline",
+        error instanceof GatewayError && error.status === 401
+          ? "relay-locked"
+          : gatewayLifecycle === "stopped"
+            ? "stopped"
+            : "starting",
       );
       firstLoad.current = false;
       return;
@@ -249,7 +262,11 @@ export default function App() {
       setCredentials([]);
       setLogs([]);
     }
-  }, [clients]);
+  }, [clients, gatewayLifecycle]);
+
+  useEffect(() => {
+    void getGatewayLifecycle().then(setGatewayLifecycle);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -271,6 +288,16 @@ export default function App() {
       };
     }
   }, [surface]);
+
+  useEffect(() => {
+    if (surface !== "notch") return;
+    const api = (
+      window as {
+        __TAURI__?: { core?: { invoke: (command: string) => void } };
+      }
+    ).__TAURI__;
+    api?.core?.invoke(notchExpanded ? "expand_notch" : "collapse_notch");
+  }, [notchExpanded, surface]);
 
   useEffect(() => {
     window.sessionStorage.setItem("mahoquot.provider", provider);
@@ -447,6 +474,26 @@ export default function App() {
     }
   };
 
+  const toggleGateway = async () => {
+    setPending("gateway:lifecycle");
+    setNotice("");
+    try {
+      const next =
+        gatewayLifecycle === "running" ? await stopManagedGateway() : await startManagedGateway();
+      setGatewayLifecycle(next);
+      setLoadState(next === "running" ? "starting" : "stopped");
+      if (next === "running") {
+        await refresh();
+      }
+    } catch (error) {
+      setNotice(
+        `Action failed: ${error instanceof Error ? error.message : "gateway control failed"}`,
+      );
+    } finally {
+      setPending("");
+    }
+  };
+
   const openConfigEditor = async () => {
     setNotice("");
     setPending("config:load");
@@ -477,13 +524,28 @@ export default function App() {
   if (surface === "notch") {
     return (
       <div className="notch-shell" data-mahoquot-surface="notch">
-        <div className="notch-surface">
-          {loadState === "online" && accounts.length ? (
+        <div
+          className={`notch-hover-zone${notchExpanded ? " expanded" : ""}`}
+          onMouseEnter={() => setNotchExpanded(true)}
+          data-testid="notch-hover-zone"
+        />
+        <div
+          className={`notch-surface${notchExpanded ? " expanded" : ""}`}
+          onMouseLeave={() => setNotchExpanded(false)}
+        >
+          {!notchExpanded ? (
+            <div className="notch-compact-row">
+              <span className={`status-dot ${loadState === "online" ? "online" : ""}`} />
+              <strong>Quotio</strong>
+              {accounts.length ? (
+                <span className="notch-compact-count">{accounts.length}</span>
+              ) : null}
+            </div>
+          ) : loadState === "online" && accounts.length ? (
             accounts.map((account) => {
               const rows = quotaRows(account);
               const usedPct = rows[0]?.usedPercent ?? null;
               const clamped = usedPct === null ? 0 : Math.min(100, Math.max(0, usedPct));
-              const circumference = 2 * Math.PI * 20;
               const color = providerRingColor(account.provider);
               return (
                 <div
@@ -495,21 +557,21 @@ export default function App() {
                   <div className="notch-ring-wrap">
                     <svg
                       className="notch-ring"
-                      viewBox="0 0 48 48"
-                      width="44"
-                      height="44"
+                      viewBox="0 0 56 56"
+                      width="56"
+                      height="56"
                       aria-hidden="true"
                     >
-                      <circle className="notch-ring-track" cx="24" cy="24" r="20" />
+                      <circle className="notch-ring-track" cx="28" cy="28" r="24" />
                       <circle
                         className="notch-ring-fill"
-                        cx="24"
-                        cy="24"
-                        r="20"
+                        cx="28"
+                        cy="28"
+                        r="24"
                         stroke={color}
-                        strokeDasharray={circumference}
-                        strokeDashoffset={circumference * (1 - clamped / 100)}
-                        transform="rotate(-90 24 24)"
+                        strokeDasharray={163.36}
+                        strokeDashoffset={163.36 * (1 - clamped / 100)}
+                        transform="rotate(-90 28 28)"
                       />
                     </svg>
                     <span className="notch-ring-logo">
@@ -559,12 +621,12 @@ export default function App() {
               <div className="notch-ring-wrap">
                 <svg
                   className="notch-ring"
-                  viewBox="0 0 48 48"
-                  width="44"
-                  height="44"
+                  viewBox="0 0 56 56"
+                  width="56"
+                  height="56"
                   aria-hidden="true"
                 >
-                  <circle className="notch-ring-track" cx="24" cy="24" r="20" />
+                  <circle className="notch-ring-track" cx="28" cy="28" r="24" />
                 </svg>
                 <span className="notch-ring-logo">
                   <strong>Q</strong>
@@ -603,6 +665,7 @@ export default function App() {
             [
               ["overview", CircleGauge, "Overview"],
               ["accounts", Users, "Accounts"],
+              ["logs", TerminalSquare, "Logs"],
               ["settings", Settings2, "Settings"],
             ] as const
           ).map(([id, Icon, label]) => (
@@ -618,16 +681,11 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-foot">
-          <span className={`status-dot ${loadState}`} />
-          {loadState === "online" ? "Gateway connected" : loadState.replace("-", " ")}
-        </div>
       </aside>
 
       <main>
         <header className="topbar">
           <div>
-            <p className="eyebrow">LOCAL GATEWAY</p>
             <h1>{surface.charAt(0).toUpperCase() + surface.slice(1)}</h1>
           </div>
           <div className="top-actions">
@@ -644,7 +702,7 @@ export default function App() {
         </header>
 
         <div className="mobile-nav" aria-label="Mobile navigation">
-          {(["overview", "accounts", "settings"] as const).map((item) => (
+          {(["overview", "accounts", "logs", "settings"] as const).map((item) => (
             <button
               type="button"
               key={item}
@@ -656,28 +714,13 @@ export default function App() {
           ))}
         </div>
 
-        {loadState === "loading" ? (
-          <div className="state-panel">Loading live gateway snapshot…</div>
-        ) : null}
-        {loadState === "offline" ? (
-          <div className="state-panel danger">
-            <AlertTriangle /> Gateway offline. Update the address in Settings, then reconnect.
-          </div>
-        ) : null}
         {loadState === "relay-locked" ? (
           <div className="state-panel warning">
             <KeyRound /> API key required to load gateway telemetry and management data.
           </div>
         ) : null}
 
-        {surface === "overview" ? (
-          <OverviewDashboard
-            stats={stats}
-            samples={telemetry}
-            online={loadState === "online"}
-            onOpenLogs={() => setLogsOpen(true)}
-          />
-        ) : null}
+        {surface === "overview" ? <OverviewDashboard stats={stats} samples={telemetry} /> : null}
 
         {surface === "accounts" ? (
           <div className="content accounts">
@@ -863,36 +906,56 @@ export default function App() {
           </div>
         ) : null}
 
+        {surface === "logs" ? (
+          <div className="content logs-surface">
+            <header className="logs-header">
+              <div>
+                <h2>Gateway logs</h2>
+                <p>Raw server output, not a reconstructed request history.</p>
+              </div>
+              <Button onClick={() => void refresh()}>
+                <RefreshCw size={14} /> Refresh
+              </Button>
+            </header>
+            <pre>{logs.length ? logs.join("\n") : "No log lines returned."}</pre>
+          </div>
+        ) : null}
+
         {surface === "settings" ? (
           <div className="content settings">
-            <div className="settings-header">
+            {notice ? (
+              <output className={notice.startsWith("Action failed") ? "notice danger" : "notice"}>
+                {notice}
+              </output>
+            ) : null}
+            <Card className="gateway-process-card">
               <div>
-                <span className="kicker">OPERATIONS</span>
-                <h2>Connection & access</h2>
-                <p>
-                  Connect this console to the gateway with one API key for proxy and management
-                  access.
-                </p>
+                <h2>Gateway process</h2>
+                <p>Starts automatically with Mahoquot. Stop or restart it explicitly here.</p>
               </div>
-              <Badge tone={loadState === "online" ? "ok" : "bad"}>
-                {loadState === "online" ? "Connected" : "Disconnected"}
-              </Badge>
-            </div>
-            <Card className="connection-card">
-              <div className="connection-summary">
+              <div className="gateway-process-action">
+                <Badge tone={gatewayLifecycle === "running" ? "ok" : "neutral"}>
+                  {gatewayLifecycle === "running" ? "Running" : "Stopped"}
+                </Badge>
+                <Button disabled={pending !== ""} onClick={() => void toggleGateway()}>
+                  {pending === "gateway:lifecycle"
+                    ? "Working…"
+                    : gatewayLifecycle === "running"
+                      ? "Stop gateway"
+                      : "Start gateway"}
+                </Button>
+              </div>
+            </Card>
+            <Card className="settings-card">
+              <header className="settings-card-head">
                 <div className={`connection-orb ${loadState}`}>
                   <Network size={18} />
                 </div>
                 <div>
-                  <strong>
-                    {loadState === "online" ? "Gateway connected" : "Gateway unavailable"}
-                  </strong>
-                  <span>{baseUrl || "Same-origin gateway"}</span>
+                  <h2>Connection & access</h2>
+                  <p>{baseUrl || "Same-origin gateway"}</p>
                 </div>
-                <Button onClick={() => void refresh()}>
-                  <RefreshCw size={14} /> Test connection
-                </Button>
-              </div>
+              </header>
               <div className="connection-fields">
                 <Field
                   label="Gateway URL"
@@ -959,80 +1022,22 @@ export default function App() {
                 </Button>
               </div>
             </Card>
-            <div className="settings-workbench">
-              <Card className="settings-section">
-                <div className="settings-section-title">
-                  <div className="settings-icon">
-                    <RotateCcw size={17} />
-                  </div>
-                  <div>
-                    <h2>Routing policy</h2>
-                    <p>How requests move across healthy accounts.</p>
-                  </div>
-                </div>
-                <dl className="settings-facts">
-                  <div>
-                    <dt>Strategy</dt>
-                    <dd>Strict round robin</dd>
-                  </div>
-                  <div>
-                    <dt>Failover boundary</dt>
-                    <dd>Before first response byte</dd>
-                  </div>
-                  <div>
-                    <dt>Account cooldown</dt>
-                    <dd>Provider-directed</dd>
-                  </div>
-                </dl>
-                <Badge tone="warn">Saved changes require restart</Badge>
-              </Card>
-              <Card className="settings-section">
-                <div className="settings-section-title">
-                  <div className="settings-icon">
-                    <TerminalSquare size={17} />
-                  </div>
-                  <div>
-                    <h2>Runtime & logging</h2>
-                    <p>Network listener and diagnostic output.</p>
-                  </div>
-                </div>
-                <dl className="settings-facts">
-                  <div>
-                    <dt>Gateway port</dt>
-                    <dd>18801</dd>
-                  </div>
-                  <div>
-                    <dt>Logs</dt>
-                    <dd>Available from Overview</dd>
-                  </div>
-                  <div>
-                    <dt>Runtime config</dt>
-                    <dd>Loaded at process start</dd>
-                  </div>
-                </dl>
-                <Badge tone="warn">Saved changes require restart</Badge>
-              </Card>
-            </div>
-            <Card className="proxy-settings-card">
-              <div className="settings-section-title">
+            <Card className="settings-card">
+              <header className="settings-card-head">
                 <div className="settings-icon">
-                  <Network size={17} />
+                  <Route size={17} />
                 </div>
                 <div>
                   <h2>Proxy behavior</h2>
-                  <p>Edit common routing and diagnostic settings without raw YAML.</p>
+                  <p>How requests route across accounts, retry, and log.</p>
                 </div>
-              </div>
+                <Badge tone="warn">Saved changes require restart</Badge>
+              </header>
               <div className="proxy-settings-grid">
-                <Field label="Upstream proxy URL" hint="Leave blank to connect directly.">
-                  <Input
-                    aria-label="Upstream proxy URL"
-                    value={proxyUrl}
-                    placeholder="http://127.0.0.1:7890"
-                    onChange={(event) => setProxyUrl(event.target.value)}
-                  />
-                </Field>
-                <Field label="Routing strategy" hint="Applied to persisted gateway routing.">
+                <Field
+                  label="Routing strategy"
+                  hint="Failover only before the first response byte; cooldowns follow provider direction."
+                >
                   <select
                     className="input"
                     aria-label="Routing strategy"
@@ -1054,6 +1059,14 @@ export default function App() {
                     onChange={(event) => setRequestRetry(event.target.value)}
                   />
                 </Field>
+                <Field label="Upstream proxy URL" hint="Leave blank to connect directly.">
+                  <Input
+                    aria-label="Upstream proxy URL"
+                    value={proxyUrl}
+                    placeholder="http://127.0.0.1:7890"
+                    onChange={(event) => setProxyUrl(event.target.value)}
+                  />
+                </Field>
                 <label className="toggle-field">
                   <input
                     aria-label="Write logs to file"
@@ -1068,49 +1081,33 @@ export default function App() {
                 </label>
               </div>
               <div className="connection-actions">
-                <span>
-                  Saved values persist immediately; runtime-affecting changes require restart.
-                </span>
+                <span>Saved values persist immediately.</span>
                 <Button disabled={pending !== ""} onClick={() => void saveProxySettings()}>
                   {pending === "settings:save" ? "Saving…" : "Save proxy settings"}
                 </Button>
               </div>
             </Card>
-            <Card className="advanced-row">
-              <div>
-                <span className="kicker">ADVANCED</span>
-                <h2>Advanced YAML</h2>
-                <p>
-                  Edit the complete persisted gateway configuration. The document may contain
-                  secrets.
-                </p>
-              </div>
-              <Button disabled={pending !== ""} onClick={() => void openConfigEditor()}>
-                {pending === "config:load" ? "Loading…" : "Open YAML editor"}
-              </Button>
+            <Card className="settings-card advanced-card">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <TerminalSquare size={17} />
+                </div>
+                <div>
+                  <h2>Advanced YAML</h2>
+                  <p>
+                    Edit the complete persisted gateway configuration. The document may contain
+                    secrets.
+                  </p>
+                </div>
+                <Button disabled={pending !== ""} onClick={() => void openConfigEditor()}>
+                  {pending === "config:load" ? "Loading…" : "Open YAML editor"}
+                </Button>
+              </header>
             </Card>
-            {notice ? <output className="notice">{notice}</output> : null}
           </div>
         ) : null}
       </main>
 
-      {logsOpen ? (
-        <div className="drawer-backdrop">
-          <aside className="drawer" aria-label="Gateway logs">
-            <div className="section-head">
-              <div>
-                <span className="kicker">RAW LOG STREAM</span>
-                <h2>Gateway logs</h2>
-              </div>
-              <Button aria-label="Close logs" onClick={() => setLogsOpen(false)}>
-                <X />
-              </Button>
-            </div>
-            <p className="drawer-caveat">Raw server output, not a reconstructed request history.</p>
-            <pre>{logs.length ? logs.join("\n") : "No log lines returned."}</pre>
-          </aside>
-        </div>
-      ) : null}
       {onboardingOpen ? (
         <div className="drawer-backdrop">
           <aside className="drawer onboarding-drawer" aria-label="Provider onboarding">

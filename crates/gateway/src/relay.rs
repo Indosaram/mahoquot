@@ -496,14 +496,18 @@ fn reply_shape(mode: RelayMode) -> compat::ReplyShape {
     }
 }
 
-fn eligible_indices(state: &AppState, model: Option<&str>, now_ms: i64) -> Vec<usize> {
+fn eligible_indices(
+    pool: &crate::state::PoolSnapshot,
+    model: Option<&str>,
+    now_ms: i64,
+) -> Vec<usize> {
     let model_owned_by_dedicated_provider = model.is_some_and(|model| {
-        state.members.iter().any(|member| {
+        pool.members.iter().any(|member| {
             member.kind() != crate::account::ProviderKind::Codex
                 && member.kind().serves_model(model)
         })
     });
-    state
+    pool
         .members
         .iter()
         .enumerate()
@@ -522,15 +526,22 @@ fn select_index(
     hint: &SessionHint,
     model: Option<&str>,
 ) -> Option<usize> {
+    let pool = state.pool.load();
+    let as_dyn = |members: &[Arc<AccountMember>]| {
+        members
+            .iter()
+            .map(|m| m.clone() as Arc<dyn PoolMember>)
+            .collect::<Vec<_>>()
+    };
     let Some(model) = model else {
-        return state.router.select(&state.pool_members, hint);
+        return state.router.select(&as_dyn(&pool.members), hint);
     };
 
-    let mut candidates: Vec<Arc<dyn PoolMember>> = Vec::with_capacity(state.members.len());
-    let mut origin: Vec<usize> = Vec::with_capacity(state.members.len());
-    for (index, member) in state.members.iter().enumerate() {
+    let mut candidates: Vec<Arc<dyn PoolMember>> = Vec::with_capacity(pool.members.len());
+    let mut origin: Vec<usize> = Vec::with_capacity(pool.members.len());
+    for (index, member) in pool.members.iter().enumerate() {
         if member.supports_model(model) {
-            candidates.push(state.pool_members[index].clone());
+            candidates.push(member.clone());
             origin.push(index);
         }
     }
@@ -739,7 +750,8 @@ pub async fn handle_relay(
         Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
     };
 
-    let available_count = eligible_indices(&state, plan.model.as_deref(), now_ms).len();
+    let available_count =
+        eligible_indices(&state.pool.load(), plan.model.as_deref(), now_ms).len();
     let max_attempts = std::cmp::min(available_count, state.max_failover);
     if max_attempts == 0 {
         return json_error(
@@ -758,7 +770,7 @@ pub async fn handle_relay(
             Some(idx) => idx,
             None => break,
         };
-        let member = match state.members.get(chosen_idx) {
+        let member = match state.pool.load().members.get(chosen_idx) {
             Some(m) => m.clone(),
             None => break,
         };
@@ -1043,9 +1055,9 @@ mod routing_tests {
         ] {
             let selected = select_index(&state, &hint, Some(model)).expect("selection");
             assert!(
-                state.members[selected].supports_model(model),
+                state.pool.load().members[selected].supports_model(model),
                 "model {model} was routed to {}",
-                state.members[selected].kind().as_str()
+                state.pool.load().members[selected].kind().as_str()
             );
         }
 

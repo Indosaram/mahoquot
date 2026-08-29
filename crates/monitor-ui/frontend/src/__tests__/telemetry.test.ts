@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AdminStats } from "../lib/schemas";
-import { appendTelemetrySample, persistedTelemetrySamples, providerTotals } from "../lib/telemetry";
+import {
+  appendTelemetrySample,
+  filterTelemetryRange,
+  persistedTelemetrySamples,
+  providerTotals,
+  summarizeTelemetry,
+} from "../lib/telemetry";
 
 const snapshot = (served: number, ok: number, fails: number): AdminStats => ({
   uptime_secs: 10,
@@ -60,6 +66,47 @@ describe("request telemetry sampling", () => {
       requests: 4,
       successes: 3,
       failures: 1,
+    });
+  });
+
+  it("filters persisted samples to each selected time range", () => {
+    const now = 2_000_000_000_000;
+    const samples = [
+      { timestamp: now - 31 * 60_000, requests: 5 },
+      { timestamp: now - 29 * 60_000, requests: 3 },
+      { timestamp: now - 10 * 60_000, requests: 2 },
+    ] as const;
+    expect(filterTelemetryRange(samples, "30m", now).map((sample) => sample.requests)).toEqual([
+      3, 2,
+    ]);
+    expect(filterTelemetryRange(samples, "1h", now)).toHaveLength(3);
+  });
+
+  it("summarizes requests outcomes and providers inside the selected range", () => {
+    const samples = persistedTelemetrySamples([
+      {
+        minute_unix: 1_800,
+        requests: 4,
+        successes: 3,
+        failures: 1,
+        providers: [{ provider: "codex", requests: 4, successes: 3, failures: 1 }],
+      },
+      {
+        minute_unix: 1_860,
+        requests: 2,
+        successes: 2,
+        failures: 0,
+        providers: [{ provider: "claude", requests: 2, successes: 2, failures: 0 }],
+      },
+    ]);
+    expect(summarizeTelemetry(samples)).toEqual({
+      requests: 6,
+      successes: 5,
+      failures: 1,
+      providers: [
+        { provider: "codex", requests: 4, successes: 3, failures: 1 },
+        { provider: "claude", requests: 2, successes: 2, failures: 0 },
+      ],
     });
   });
 });

@@ -14,15 +14,19 @@ use crate::models_route::{model_entries, ModelEntry};
 use crate::monitor::MonitorState;
 use crate::telemetry::TelemetryStore;
 
+pub struct PoolSnapshot {
+    pub members: Vec<Arc<AccountMember>>,
+    pub models: Vec<ModelEntry>,
+}
+
 pub struct AppState {
     pub router: Router,
-    pub members: Vec<Arc<AccountMember>>,
-    pub pool_members: Vec<Arc<dyn PoolMember>>,
+    pub pool: arc_swap::ArcSwap<PoolSnapshot>,
+    pub models_env: Option<String>,
     pub http_client: reqwest::Client,
     pub metrics: Arc<GatewayMetrics>,
     pub monitor: Arc<MonitorState>,
     pub api_keys: Arc<ApiKeys>,
-    pub models: Vec<ModelEntry>,
     pub refresh_url: String,
     pub auth_refresh_enabled: bool,
     pub refreshed: AtomicU64,
@@ -35,10 +39,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: &GatewayConfig) -> anyhow::Result<Self> {
         let members = load_account_members(&config.auth_dir)?;
-        let pool_members: Vec<Arc<dyn PoolMember>> = members
-            .iter()
-            .map(|m| m.clone() as Arc<dyn PoolMember>)
-            .collect();
+        let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
+        let models = model_entries(&provider_kinds, config.models_env.as_deref());
 
         let http_client = reqwest::Client::builder()
             .tcp_nodelay(true)
@@ -49,8 +51,6 @@ impl AppState {
         let metrics = Arc::new(GatewayMetrics::default());
         let monitor = Arc::new(MonitorState::default());
         let api_keys = Arc::new(config.api_keys.clone());
-        let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
-        let models = model_entries(&provider_kinds, config.models_env.as_deref());
         let refresh_url = config.refresh_url.clone();
         let auth_refresh_enabled = config.auth_refresh_enabled;
         let settings = Arc::new(SettingsStore::load_or(
@@ -65,13 +65,12 @@ impl AppState {
             settings,
             telemetry,
             router,
-            members,
-            pool_members,
+            pool: arc_swap::ArcSwap::from_pointee(PoolSnapshot { members, models }),
+            models_env: config.models_env.clone(),
             http_client,
             metrics,
             monitor,
             api_keys,
-            models,
             refresh_url,
             auth_refresh_enabled,
             refreshed: AtomicU64::new(0),
@@ -81,7 +80,25 @@ impl AppState {
     }
 
     pub fn find_member(&self, id: &str) -> Option<Arc<AccountMember>> {
-        self.members.iter().find(|m| m.id == id).cloned()
+        self.pool
+            .load()
+            .members
+            .iter()
+            .find(|m| m.id == id)
+            .cloned()
+    }
+
+    /// Rebuilds the pool from the auth directory so credentials written after
+    /// startup (imports, OAuth onboarding) become live without a restart.
+    pub fn rescan_pool(&self) -> anyhow::Result<usize> {
+        let auth_dir = self.settings.current().auth_dir.clone();
+        let members = load_account_members(std::path::Path::new(&auth_dir))?;
+        let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
+        let models = model_entries(&provider_kinds, self.models_env.as_deref());
+        let count = members.len();
+        self.pool
+            .store(Arc::new(PoolSnapshot { members, models }));
+        Ok(count)
     }
 
     pub fn force_health(&self, id: &str, health: Health) {
@@ -111,6 +128,8 @@ impl AppState {
             .unwrap_or(0);
 
         let accounts = self
+            .pool
+            .load()
             .members
             .iter()
             .map(|m| {

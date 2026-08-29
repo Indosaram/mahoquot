@@ -15,18 +15,27 @@ use stats::{build_view, fetch_stats, MonitorView};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    App, AppHandle, Manager, PhysicalPosition, Runtime, WebviewWindow,
+    App, AppHandle, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewWindow,
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const NOTCH_WINDOW_LABEL: &str = "notch";
 const TRAY_ID: &str = "mahoquot";
-const NOTCH_WIDTH: f64 = 420.0;
-const NOTCH_HEIGHT: f64 = 420.0;
+const NOTCH_EXPANDED_WIDTH: f64 = 420.0;
+const NOTCH_EXPANDED_HEIGHT: f64 = 480.0;
+const NOTCH_COMPACT_WIDTH: f64 = 200.0;
+const NOTCH_COMPACT_HEIGHT: f64 = 44.0;
 const NOTCH_TOP_OFFSET: f64 = 0.0;
 const GATEWAY_PORT: u16 = tray::GATEWAY_PORT;
 
 struct GatewayProcess(std::sync::Mutex<Option<std::process::Child>>);
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum GatewayLifecycleStatus {
+    Running,
+    Stopped,
+}
 
 fn gateway_listening() -> bool {
     std::net::TcpStream::connect(("127.0.0.1", GATEWAY_PORT)).is_ok()
@@ -42,9 +51,9 @@ fn spawn_gateway() -> Option<std::process::Child> {
         exe.as_deref(),
     )?;
     let auth_dir = std::env::var("AUTH_DIR").unwrap_or_else(|_| {
-        std::env::var("HOME")
-            .map(|home| format!("{home}/.mahoquot/auth"))
-            .unwrap_or_else(|_| ".mahoquot/auth".to_string())
+        tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+            .display()
+            .to_string()
     });
     match std::process::Command::new(&bin).env("AUTH_DIR", auth_dir).spawn() {
         Ok(child) => {
@@ -56,6 +65,50 @@ fn spawn_gateway() -> Option<std::process::Child> {
             None
         }
     }
+}
+
+#[tauri::command]
+fn gateway_status() -> GatewayLifecycleStatus {
+    if gateway_listening() {
+        GatewayLifecycleStatus::Running
+    } else {
+        GatewayLifecycleStatus::Stopped
+    }
+}
+
+#[tauri::command]
+fn start_gateway(
+    process: tauri::State<'_, GatewayProcess>,
+) -> Result<GatewayLifecycleStatus, String> {
+    if gateway_listening() {
+        return Ok(GatewayLifecycleStatus::Running);
+    }
+    let child = spawn_gateway().ok_or_else(|| "gateway binary unavailable".to_string())?;
+    let mut owned = process
+        .0
+        .lock()
+        .map_err(|_| "gateway process state unavailable".to_string())?;
+    *owned = Some(child);
+    Ok(GatewayLifecycleStatus::Running)
+}
+
+#[tauri::command]
+fn stop_gateway(
+    process: tauri::State<'_, GatewayProcess>,
+) -> Result<GatewayLifecycleStatus, String> {
+    let mut owned = process
+        .0
+        .lock()
+        .map_err(|_| "gateway process state unavailable".to_string())?;
+    if let Some(mut child) = owned.take() {
+        child
+            .kill()
+            .map_err(|error| format!("failed to stop gateway: {error}"))?;
+        let _ = child.wait();
+    } else if gateway_listening() {
+        return Ok(GatewayLifecycleStatus::Running);
+    }
+    Ok(GatewayLifecycleStatus::Stopped)
 }
 
 fn notched_monitor<R: Runtime>(
@@ -97,11 +150,12 @@ fn position_notch_window<R: Runtime>(
         width: f64::from(monitor_size.width) / scale_factor,
         height: f64::from(monitor_size.height) / scale_factor,
     };
+    let outer = window.outer_size()?;
     let position = tray::calculate_notch_window_physical_position(
         &display,
         &tray::WindowDimensions {
-            width: NOTCH_WIDTH,
-            height: NOTCH_HEIGHT,
+            width: f64::from(outer.width) / scale_factor,
+            height: f64::from(outer.height) / scale_factor,
         },
         &tray::NotchInsets {
             top_offset: NOTCH_TOP_OFFSET,
@@ -147,6 +201,25 @@ fn apply_menu_bar_level<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn apply_dock_icon() {
+    use objc::{class, msg_send, sel, sel_impl};
+    let bytes = include_bytes!("../icons/icon.png");
+    unsafe {
+        let data: *mut objc::runtime::Object =
+            msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() length: bytes.len()];
+        let image: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
+        let image: *mut objc::runtime::Object = msg_send![image, initWithData: data];
+        if image.is_null() {
+            eprintln!("failed to decode mahoquot dock icon");
+            return;
+        }
+        let app: *mut objc::runtime::Object =
+            msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, setApplicationIconImage: image];
+    }
+}
+
 fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) else {
         return;
@@ -165,6 +238,28 @@ fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
     if let Err(error) = result {
         eprintln!("failed to toggle Mahoquot notch window: {error}");
     }
+}
+
+fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
+    let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) else {
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let _ = window.set_size(LogicalSize::new(width, height));
+    if let Err(error) = position_notch_window(app, &window) {
+        eprintln!("failed to reposition resized notch: {error}");
+    }
+    println!("notch resized width={width} height={height} scale={scale}");
+}
+
+#[tauri::command]
+fn expand_notch(app: tauri::AppHandle) {
+    resize_notch(&app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
+}
+
+#[tauri::command]
+fn collapse_notch(app: tauri::AppHandle) {
+    resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
 }
 
 fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
@@ -218,7 +313,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     )?;
     let menu = Menu::with_items(app, &[&toggle, &refresh, &gateway, &separator, &quit])?;
 
-    let mut tray_icon = TrayIconBuilder::with_id(TRAY_ID)
+    let tray_icon = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .title("Mahoquot")
         .tooltip("Mahoquot")
@@ -228,12 +323,10 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
                 handle_tray_action(app, action);
             }
         });
-    if let Some(icon) = app.default_window_icon().cloned() {
-        tray_icon = tray_icon
-            .icon(icon)
-            .icon_as_template(cfg!(target_os = "macos"));
-    }
     tray_icon.build(app)?;
+
+    #[cfg(target_os = "macos")]
+    apply_dock_icon();
 
     let notch = app
         .get_webview_window(NOTCH_WINDOW_LABEL)
@@ -352,10 +445,15 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_stats,
             gateway_url,
+            gateway_status,
+            start_gateway,
+            stop_gateway,
             reset_account,
             warm_account,
             warm_all,
-            refresh_usage
+            refresh_usage,
+            expand_notch,
+            collapse_notch
         ])
         .setup(initialize_native_ui)
         .on_window_event(|window, event| {

@@ -17,7 +17,10 @@ fn json_status(status: StatusCode, body: Value) -> Response {
 const ACCOUNT_ORDER_FILE: &str = ".mahoquot-account-order.json";
 
 fn is_credential_filename(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with(".json") && name != ACCOUNT_ORDER_FILE
+    let lowered = name.to_ascii_lowercase();
+    lowered.ends_with(".json")
+        && name != ACCOUNT_ORDER_FILE
+        && lowered != "telemetry.json"
 }
 
 fn ordered_names(dir: &std::path::Path) -> Vec<String> {
@@ -235,7 +238,12 @@ async fn import_local_claude(State(state): State<Arc<AppState>>) -> Response {
     }
     let rendered = serde_json::to_string_pretty(&stored).unwrap_or_default();
     match write_atomically(&dir.join("claude-local.json"), &rendered) {
-        Ok(()) => json_status(StatusCode::OK, json!({ "status": "ok", "name": "claude-local.json" })),
+        Ok(()) => {
+            if let Err(error) = state.rescan_pool() {
+                eprintln!("pool rescan failed after claude import: {error}");
+            }
+            json_status(StatusCode::OK, json!({ "status": "ok", "name": "claude-local.json" }))
+        }
         Err(err) => json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": err.to_string() })),
     }
 }
@@ -271,7 +279,12 @@ async fn create_auth_file(State(state): State<Arc<AppState>>, raw: bytes::Bytes)
         }
     };
     match write_atomically(&dir.join(name), &rendered) {
-        Ok(()) => json_status(StatusCode::OK, json!({ "status": "ok", "name": name })),
+        Ok(()) => {
+            if let Err(error) = state.rescan_pool() {
+                eprintln!("pool rescan failed after credential write: {error}");
+            }
+            json_status(StatusCode::OK, json!({ "status": "ok", "name": name }))
+        }
         Err(err) => json_status(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({ "error": format!("failed to write auth file: {err}") }),
@@ -375,7 +388,12 @@ async fn delete_auth_file(
     }
     let dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
     match std::fs::remove_file(dir.join(name)) {
-        Ok(()) => json_status(StatusCode::OK, json!({ "status": "ok" })),
+        Ok(()) => {
+            if let Err(error) = state.rescan_pool() {
+                eprintln!("pool rescan failed after credential delete: {error}");
+            }
+            json_status(StatusCode::OK, json!({ "status": "ok" }))
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             json_status(StatusCode::NOT_FOUND, json!({ "error": "auth not found" }))
         }
@@ -395,7 +413,7 @@ async fn auth_file_models(
     }
     json_status(
         StatusCode::OK,
-        json!({ "models": crate::models_route::models_payload(&state.models, 0) }),
+        json!({ "models": crate::models_route::models_payload(&state.pool.load().models, 0) }),
     )
 }
 
@@ -603,5 +621,19 @@ mod tests {
         ] {
             validate_provider_credential(&credential).expect("reference shape accepted");
         }
+    }
+}
+
+#[cfg(test)]
+mod reserved_file_tests {
+    use super::is_credential_filename;
+
+    #[test]
+    fn reserved_data_files_are_not_listed_as_credentials() {
+        assert!(!is_credential_filename("telemetry.json"));
+        assert!(!is_credential_filename("TELEMETRY.JSON"));
+        assert!(!is_credential_filename("config.yaml"));
+        assert!(is_credential_filename("codex-1.json"));
+        assert!(!is_credential_filename(".mahoquot-account-order.json"));
     }
 }

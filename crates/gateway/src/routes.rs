@@ -170,7 +170,7 @@ async fn models_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    Json(models_payload(&state.models, now_unix))
+    Json(models_payload(&state.pool.load().models, now_unix))
 }
 
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -180,6 +180,8 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
         .unwrap_or(0);
 
     let accounts: Vec<PromAccount> = state
+        .pool
+        .load()
         .members
         .iter()
         .map(|m| {

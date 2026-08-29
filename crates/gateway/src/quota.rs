@@ -287,7 +287,7 @@ fn getrandom(buf: &mut [u8]) {
 
 pub async fn refresh_all_usage(state: &Arc<AppState>) {
     let mut tasks = Vec::new();
-    for m in state.members.clone() {
+    for m in state.pool.load().members.clone() {
         let state = Arc::clone(state);
         tasks.push(tokio::spawn(async move {
             // Logged rather than discarded: a silently failing quota poll is
