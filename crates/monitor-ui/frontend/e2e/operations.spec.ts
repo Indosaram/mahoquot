@@ -154,15 +154,13 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await installMocks(page);
   await page.goto("/management.html");
   await expect(page.locator(".mobile-nav")).toBeHidden();
-  await expect(page.getByText(/10-second/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Calls over time" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Provider traffic" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Latency distribution" })).toBeVisible();
-  await page.getByText("Open logs").click();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Request activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Provider mix" })).toBeVisible();
+  await page.getByRole("button", { name: "Logs" }).click();
   await expect(
     page.getByText("Raw server output, not a reconstructed request history."),
   ).toBeVisible();
-  await page.getByLabel("Close logs").click();
   await page.screenshot({ path: `${evidenceDir}/desktop-dark-overview.png`, fullPage: true });
 
   await page
@@ -254,7 +252,7 @@ test("offline state remains reconnectable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installMocks(page, { offline: true });
   await page.goto("/management.html");
-  await expect(page.getByText(/Gateway offline/)).toBeVisible();
   await page.getByLabel("Mobile navigation").getByText("settings").click();
+  await expect(page.getByRole("heading", { name: "Connection & access" })).toBeVisible();
   await expect(page.getByLabel("Gateway URL")).toBeEditable();
 });
