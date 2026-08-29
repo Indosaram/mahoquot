@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod bootstrap;
 mod stats;
 mod tray;
 #[cfg(test)]
@@ -244,6 +245,7 @@ fn main() {
     let base_url =
         std::env::var("QUOTIO_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
     let api_key = std::env::var("QUOTIO_API_KEY").unwrap_or_default();
+    let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
 
     tauri::Builder::default()
         .manage(Config {
@@ -251,6 +253,7 @@ fn main() {
             api_key,
             client: reqwest::Client::new(),
         })
+        .append_invoke_initialization_script(init_script)
         .invoke_handler(tauri::generate_handler![
             load_stats,
             gateway_url,
