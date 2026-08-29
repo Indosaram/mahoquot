@@ -68,7 +68,7 @@ pub fn openai_to_cursor_connect(body: &Value) -> Result<Vec<u8>, String> {
             turns,
             previous_workspace_uris: vec!["file:///".to_string()],
             mode: Some(1),
-            client_name: "quotio".to_string(),
+            client_name: "mahoquot".to_string(),
         }),
         action: Some(proto::ConversationAction {
             action: Some(proto::conversation_action::Action::UserMessageAction(

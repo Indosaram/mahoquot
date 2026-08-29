@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { type Page, expect, test } from "@playwright/test";
 
-const evidenceDir = "/tmp/quotio-notch-qa";
+const evidenceDir = "/tmp/mahoquot-notch-qa";
 
 const deterministicStats = {
   uptime_secs: 7_200,
@@ -47,9 +47,9 @@ const deterministicStats = {
 
 const installMocks = async (page: Page) => {
   await page.addInitScript(() => {
-    localStorage.setItem("quotio.base", "");
-    localStorage.setItem("quotio.key", "relay-test-key");
-    localStorage.setItem("quotio.mgmt", "management-test-key");
+    localStorage.setItem("mahoquot.base", "");
+    localStorage.setItem("mahoquot.key", "relay-test-key");
+    localStorage.setItem("mahoquot.mgmt", "management-test-key");
     window.open = () => null;
   });
   await page.route("**/admin/stats", (route) => route.fulfill({ json: deterministicStats }));
@@ -66,19 +66,55 @@ test.beforeAll(async () => {
   await mkdir(evidenceDir, { recursive: true });
 });
 
-test("compact notch surface renders live summary and account rows", async ({ page }) => {
-  await page.setViewportSize({ width: 380, height: 480 });
+test("renders live compact notch panel", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 560 });
   await installMocks(page);
   await page.goto("/management.html?surface=notch");
 
-  const notchSurface = page.locator('[data-quotio-surface="notch"]');
-  await expect(notchSurface).toBeVisible();
+  const surface = page.locator('[data-mahoquot-surface="notch"]');
+  await expect(surface).toBeVisible();
 
-  // Expect live summary and account rows
-  await expect(notchSurface.locator('[data-testid="notch-summary"], .notch-summary, [data-component="summary"]')).toBeVisible();
-  await expect(notchSurface.getByText("notch-codex@example.com")).toBeVisible();
-  await expect(notchSurface.getByText("notch-claude@example.com")).toBeVisible();
-  await expect(notchSurface.getByText("notch-cooldown@example.com")).toBeVisible();
+  const transparentBackground = await page.evaluate(() => {
+    const body = getComputedStyle(document.body).backgroundColor;
+    const root = getComputedStyle(document.documentElement).backgroundColor;
+    return { body, root };
+  });
+  expect(transparentBackground.body).toBe("rgba(0, 0, 0, 0)");
+  expect(transparentBackground.root).toBe("rgba(0, 0, 0, 0)");
+
+  await expect(surface.getByTestId("notch-ring-codex")).toBeVisible();
+  await expect(surface.getByTestId("notch-ring-claude")).toBeVisible();
+  await expect(surface.getByTestId("notch-ring-antigravity")).toBeVisible();
+
+  await page.getByTestId("notch-ring-codex").hover();
+  const tooltip = surface.getByTestId("notch-tooltip-codex");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("Resets");
 
   await page.screenshot({ path: `${evidenceDir}/notch-panel.png` });
+});
+
+test("shows onboarding hint ring when no accounts are connected", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 560 });
+  const emptyStats = { ...deterministicStats, accounts: [] };
+  await page.addInitScript(() => {
+    localStorage.setItem("mahoquot.base", "");
+    localStorage.setItem("mahoquot.key", "relay-test-key");
+    localStorage.setItem("mahoquot.mgmt", "management-test-key");
+  });
+  await page.route("**/admin/stats", (route) => route.fulfill({ json: emptyStats }));
+  await page.route("**/admin/accounts/**", (route) => route.fulfill({ json: { ok: true } }));
+  await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: { files: [] } }),
+  );
+  await page.route(/\/v0\/management\/logs(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: { lines: [] } }),
+  );
+  await page.goto("/management.html?surface=notch");
+
+  const surface = page.locator('[data-mahoquot-surface="notch"]');
+  await expect(surface.getByTestId("notch-empty-ring")).toBeVisible();
+  await page.getByTestId("notch-empty-ring").hover();
+  await expect(surface.getByTestId("notch-tooltip-empty")).toBeVisible();
+  await expect(surface.getByTestId("notch-tooltip-empty")).toContainText("No accounts");
 });

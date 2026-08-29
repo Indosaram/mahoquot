@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use quotio_types::Strategy;
+use mahoquot_types::Strategy;
 
 use crate::inbound::ApiKeys;
 use crate::management::settings::{RemoteManagement, RoutingSettings, Settings};
@@ -52,7 +52,7 @@ impl GatewayConfig {
         let models_env = std::env::var("MODELS").ok();
 
         let refresh_url = std::env::var("REFRESH_URL")
-            .unwrap_or_else(|_| quotio_providers::refresh::REFRESH_TOKEN_URL.to_string());
+            .unwrap_or_else(|_| mahoquot_providers::refresh::REFRESH_TOKEN_URL.to_string());
 
         let auth_refresh_enabled =
             !matches!(std::env::var("AUTH_REFRESH").as_deref(), Ok("false" | "0"));

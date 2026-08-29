@@ -1,20 +1,20 @@
-use quotio_gateway::monitor::{MonitorState, PromAccount};
+use mahoquot_gateway::monitor::{MonitorState, PromAccount};
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use http_body_util::BodyExt;
-use quotio_gateway::config::GatewayConfig;
-use quotio_gateway::inbound::ApiKeys;
-use quotio_gateway::management::observability::append_log_line;
-use quotio_gateway::routes::create_app;
-use quotio_gateway::state::AppState;
+use mahoquot_gateway::config::GatewayConfig;
+use mahoquot_gateway::inbound::ApiKeys;
+use mahoquot_gateway::management::observability::append_log_line;
+use mahoquot_gateway::routes::create_app;
+use mahoquot_gateway::state::AppState;
 use tower::ServiceExt;
 
 #[tokio::test]
 async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
     let auth_dir = std::env::temp_dir().join(format!(
-        "quotio-monitor-restart-{}",
+        "mahoquot-monitor-restart-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
@@ -166,11 +166,11 @@ fn test_render_prometheus() {
     let rendered = monitor.render_prometheus(10000, &accounts);
 
     let metric_names = [
-        "quotio_uptime_seconds",
-        "quotio_in_flight_requests",
-        "quotio_ttft_milliseconds",
-        "quotio_account_requests_total",
-        "quotio_account_cooldown_until_seconds",
+        "mahoquot_uptime_seconds",
+        "mahoquot_in_flight_requests",
+        "mahoquot_ttft_milliseconds",
+        "mahoquot_account_requests_total",
+        "mahoquot_account_cooldown_until_seconds",
     ];
     for name in &metric_names {
         assert!(
@@ -214,7 +214,7 @@ fn test_render_prometheus() {
             trimmed
         );
 
-        if trimmed.starts_with("quotio_account_cooldown_until_seconds") {
+        if trimmed.starts_with("mahoquot_account_cooldown_until_seconds") {
             cooldown_lines.push(trimmed.to_string());
         }
     }

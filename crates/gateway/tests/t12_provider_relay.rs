@@ -11,9 +11,9 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::post;
 use axum::Router;
-use quotio_gateway::config::GatewayConfig;
-use quotio_gateway::routes::create_app;
-use quotio_gateway::state::AppState;
+use mahoquot_gateway::config::GatewayConfig;
+use mahoquot_gateway::routes::create_app;
+use mahoquot_gateway::state::AppState;
 use prost::Message;
 
 static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -104,7 +104,7 @@ async fn start_gateway(
 
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        api_keys: quotio_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
         auth_refresh_enabled: false,
         max_failover: 3,
         config_path: auth_dir.join("config.yaml"),
@@ -396,8 +396,8 @@ fn connect_frame(payload: &[u8], flags: u8) -> Vec<u8> {
 
 #[tokio::test]
 async fn cursor_relays_connect_protobuf_and_decodes_text_delta() {
-    let server_text = quotio_gateway::compat::cursor_fixture_text("cursor-ok");
-    let server_end = quotio_gateway::compat::cursor_fixture_turn_end();
+    let server_text = mahoquot_gateway::compat::cursor_fixture_text("cursor-ok");
+    let server_end = mahoquot_gateway::compat::cursor_fixture_turn_end();
     let mut response = connect_frame(&server_text.encode_to_vec(), 0);
     response.extend_from_slice(&connect_frame(&server_end.encode_to_vec(), 0));
     response.extend_from_slice(&connect_frame(b"{}", 2));
@@ -461,7 +461,7 @@ async fn cursor_keeps_request_open_and_replies_to_server_kv_frames() {
         let initial = request.next().await.unwrap().unwrap();
         assert!(initial.windows(4).any(|window| window == b"ping"));
 
-        let get_blob = quotio_gateway::compat::cursor_fixture_get_blob(42);
+        let get_blob = mahoquot_gateway::compat::cursor_fixture_get_blob(42);
         let first = Bytes::from(connect_frame(&get_blob.encode_to_vec(), 0));
         let stream = futures::stream::once(async move {
             Ok::<Bytes, std::convert::Infallible>(first)
@@ -475,10 +475,10 @@ async fn cursor_keeps_request_open_and_replies_to_server_kv_frames() {
             .expect("gateway closed the Cursor request body before the KV reply")
             .expect("missing Cursor KV reply")
             .expect("Cursor request body error");
-            assert!(quotio_gateway::compat::cursor_is_get_blob_reply(&reply, 42));
+            assert!(mahoquot_gateway::compat::cursor_is_get_blob_reply(&reply, 42));
 
-            let text = quotio_gateway::compat::cursor_fixture_text("duplex-ok");
-            let end = quotio_gateway::compat::cursor_fixture_turn_end();
+            let text = mahoquot_gateway::compat::cursor_fixture_text("duplex-ok");
+            let end = mahoquot_gateway::compat::cursor_fixture_turn_end();
             let mut frames = connect_frame(&text.encode_to_vec(), 0);
             frames.extend_from_slice(&connect_frame(&end.encode_to_vec(), 0));
             frames.extend_from_slice(&connect_frame(b"{}", 2));
@@ -571,10 +571,10 @@ async fn codex_does_not_claim_models_owned_by_loaded_provider_accounts() {
         )
         .unwrap();
     }
-    let members = quotio_gateway::account::load_account_members(&dir).unwrap();
+    let members = mahoquot_gateway::account::load_account_members(&dir).unwrap();
     let codex = members
         .iter()
-        .find(|member| member.kind() == quotio_gateway::account::ProviderKind::Codex)
+        .find(|member| member.kind() == mahoquot_gateway::account::ProviderKind::Codex)
         .unwrap();
     assert!(!codex.supports_model("claude-sonnet-4-5-20250929"));
     assert!(!codex.supports_model("kiro/claude-haiku-4-5-20251001"));

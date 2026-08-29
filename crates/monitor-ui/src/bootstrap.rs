@@ -6,9 +6,9 @@ pub fn console_initialization_script(base_url: &str, api_key: &str) -> String {
     let base = sanitize(base_url);
     let key = sanitize(api_key);
     format!(
-        "localStorage.setItem('quotio.base', '{base}');\n\
-         localStorage.setItem('quotio.key', '{key}');\n\
-         localStorage.setItem('quotio.mgmt', '{key}');"
+        "localStorage.setItem('mahoquot.base', '{base}');\n\
+         localStorage.setItem('mahoquot.key', '{key}');\n\
+         localStorage.setItem('mahoquot.mgmt', '{key}');"
     )
 }
 
@@ -29,9 +29,9 @@ mod tests {
         // when the initialization script is built
         let script = console_initialization_script("http://127.0.0.1:18885", "final-gate-key");
         // then the console storage receives all three keys
-        assert!(script.contains("setItem('quotio.base', 'http://127.0.0.1:18885')"));
-        assert!(script.contains("setItem('quotio.key', 'final-gate-key')"));
-        assert!(script.contains("setItem('quotio.mgmt', 'final-gate-key')"));
+        assert!(script.contains("setItem('mahoquot.base', 'http://127.0.0.1:18885')"));
+        assert!(script.contains("setItem('mahoquot.key', 'final-gate-key')"));
+        assert!(script.contains("setItem('mahoquot.mgmt', 'final-gate-key')"));
     }
 
     #[test]
@@ -53,6 +53,6 @@ mod tests {
         let script = console_initialization_script("http://127.0.0.1:18801", "");
         // then all three keys exist so the console never half-configures
         assert_eq!(script.matches("setItem").count(), 3);
-        assert!(script.contains("setItem('quotio.key', '')"));
+        assert!(script.contains("setItem('mahoquot.key', '')"));
     }
 }

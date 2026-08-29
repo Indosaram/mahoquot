@@ -1,5 +1,5 @@
-use quotio_gateway::compat::events::{CodexEvent, Usage};
-use quotio_gateway::compat::gemini::{openai_to_antigravity, GeminiDecoder};
+use mahoquot_gateway::compat::events::{CodexEvent, Usage};
+use mahoquot_gateway::compat::gemini::{openai_to_antigravity, GeminiDecoder};
 use serde_json::json;
 
 fn decode_all(frames: &[&str]) -> Vec<CodexEvent> {

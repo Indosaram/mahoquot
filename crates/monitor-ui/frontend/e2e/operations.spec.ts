@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { type Page, expect, test } from "@playwright/test";
 
-const evidenceDir = "/tmp/quotio-operations-qa-round2";
+const evidenceDir = "/tmp/mahoquot-operations-qa-round2";
 
 const stats = {
   uptime_secs: 9_425,
@@ -76,9 +76,9 @@ const installMocks = async (
   options?: { managementLocked?: boolean; offline?: boolean },
 ) => {
   await page.addInitScript(() => {
-    localStorage.setItem("quotio.base", "");
-    localStorage.setItem("quotio.key", "relay-test-key");
-    localStorage.setItem("quotio.mgmt", "management-test-key");
+    localStorage.setItem("mahoquot.base", "");
+    localStorage.setItem("mahoquot.key", "relay-test-key");
+    localStorage.setItem("mahoquot.mgmt", "management-test-key");
     window.open = () => null;
   });
   await page.route("**/admin/stats", (route) =>
@@ -154,7 +154,7 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await installMocks(page);
   await page.goto("/management.html");
   await expect(page.locator(".mobile-nav")).toBeHidden();
-  await expect(page.getByText("10-second process snapshots")).toBeVisible();
+  await expect(page.getByText(/10-second/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Calls over time" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Provider traffic" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Latency distribution" })).toBeVisible();

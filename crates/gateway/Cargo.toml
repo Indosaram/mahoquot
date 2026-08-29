@@ -1,20 +1,20 @@
 [package]
-name = "quotio-gateway"
+name = "mahoquot-gateway"
 version.workspace = true
 edition.workspace = true
 
 [lib]
-name = "quotio_gateway"
+name = "mahoquot_gateway"
 path = "src/lib.rs"
 
 [[bin]]
-name = "quotio-gateway"
+name = "mahoquot-gateway"
 path = "src/main.rs"
 
 [dependencies]
-quotio-types.workspace = true
-quotio-router.workspace = true
-quotio-providers.workspace = true
+mahoquot-types.workspace = true
+mahoquot-router.workspace = true
+mahoquot-providers.workspace = true
 tokio.workspace = true
 axum.workspace = true
 hyper.workspace = true

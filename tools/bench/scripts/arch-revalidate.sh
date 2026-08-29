@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Architecture re-validation harness for quotio-rs.
+# Architecture re-validation harness for mahoquot-rs.
 #
 # Tightened methodology vs the first pass (results/BENCHMARK.md), which had these
 # admitted validity threats: fixed tier order (A always first => cold-start bias),
@@ -20,20 +20,20 @@
 #     the pressure probe below measures that contamination directly
 #
 # Never touches live state: isolated fixtures in /tmp/qarch, ports 18820-18830 only,
-# live Quotio config hashed before/after.
+# live Mahoquot config hashed before/after.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BENCH="$ROOT/target/release/bench"
-GWBIN="$ROOT/target/release/quotio-gateway"
-CPBIN="${CPBIN:-/Applications/Quotio.app/Contents/Resources/cli-proxy-api-plus}"
+GWBIN="$ROOT/target/release/mahoquot-gateway"
+CPBIN="${CPBIN:-/Applications/Mahoquot.app/Contents/Resources/cli-proxy-api-plus}"
 W=/tmp/qarch
 JSON="$W/json"
 LOGS="$W/logs"
 ROUNDS="${ROUNDS:-6}"
 SETTLE="${SETTLE:-2}"
 SOCKET_LIMIT="${SOCKET_LIMIT:-3500}"
-LIVE_CONFIG="$HOME/Library/Application Support/Quotio/config.yaml"
+LIVE_CONFIG="$HOME/Library/Application Support/Mahoquot/config.yaml"
 BODY='{"model":"gpt-bench","messages":[{"role":"user","content":"bench"}],"stream":true}'
 
 MOCK20=18820; GW_C=18821; GW_C1=18822; CP_B20=18823
@@ -240,7 +240,7 @@ cat >>"$ROOT/results/ARCH-REVALIDATION.md" <<EOF
 ## Cleanup receipt
 
 - listeners left on bench ports ($ALL_PORTS): $OPEN
-- live Quotio config md5 before / after: \`$GUARD_BEFORE\` / \`$GUARD_AFTER\`
+- live Mahoquot config md5 before / after: \`$GUARD_BEFORE\` / \`$GUARD_AFTER\`
 - temp workdir $W removed: $([[ -d $W ]] && echo no || echo yes)
 - CLIProxyAPI binary under test: $CPBIN
 EOF

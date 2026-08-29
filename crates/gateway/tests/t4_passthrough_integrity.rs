@@ -9,8 +9,8 @@ use axum::routing::post;
 use axum::Router;
 use bytes::Bytes;
 use common::{create_auth_file_json, unique_temp_dir};
-use quotio_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
-use quotio_types::Strategy;
+use mahoquot_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
+use mahoquot_types::Strategy;
 
 #[tokio::test]
 async fn test_t4_passthrough_integrity() {
@@ -58,9 +58,9 @@ async fn test_t4_passthrough_integrity() {
         strategy: Strategy::StrictRoundRobin,
         max_failover: 3,
         log_level: "info".to_string(),
-        api_keys: quotio_gateway::inbound::ApiKeys::default(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::default(),
         models_env: None,
-        refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
+        refresh_url: mahoquot_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: true,
         ..Default::default()
     };

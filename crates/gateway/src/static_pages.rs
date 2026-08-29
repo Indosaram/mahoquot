@@ -41,11 +41,11 @@ mod tests {
 
     #[test]
     fn management_page_is_the_shared_monitor_ui() {
-        assert!(MANAGEMENT_HTML.contains("data-quotio-app=\"operations-console\""));
+        assert!(MANAGEMENT_HTML.contains("data-mahoquot-app=\"operations-console\""));
         assert!(MANAGEMENT_HTML.contains("Overview"));
         assert!(MANAGEMENT_HTML.contains("Accounts"));
         assert!(MANAGEMENT_HTML.contains("Settings"));
-        assert!(MANAGEMENT_HTML.contains("quotio.base"));
+        assert!(MANAGEMENT_HTML.contains("mahoquot.base"));
         assert!(MANAGEMENT_HTML.contains("/admin/stats"));
         assert!(!MANAGEMENT_HTML.contains("<script src="));
         assert!(!MANAGEMENT_HTML.contains("rel=\"stylesheet\" href=\"http"));

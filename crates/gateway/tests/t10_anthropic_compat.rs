@@ -1,8 +1,8 @@
-use quotio_gateway::compat::claude::{
+use mahoquot_gateway::compat::claude::{
     anthropic_to_openai, estimate_input_tokens, messages_payload, render_anthropic_stream,
     stop_reason_for,
 };
-use quotio_gateway::compat::events::{CodexEvent, Usage};
+use mahoquot_gateway::compat::events::{CodexEvent, Usage};
 use serde_json::json;
 
 #[test]

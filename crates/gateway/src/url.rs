@@ -1,4 +1,4 @@
-use quotio_providers::{
+use mahoquot_providers::{
     antigravity_count_tokens_url, antigravity_stream_url, ANTIGRAVITY_UPSTREAM_BASE, UPSTREAM_BASE,
 };
 
@@ -25,13 +25,13 @@ pub fn build_provider_url(
     let base = match kind {
         ProviderKind::Codex => return build_target_url(upstream_override, req_path),
         ProviderKind::Antigravity => return build_antigravity_url(upstream_override),
-        ProviderKind::Claude => quotio_providers::CLAUDE_UPSTREAM_BASE.to_string(),
-        ProviderKind::Cursor => quotio_providers::CURSOR_UPSTREAM_BASE.to_string(),
-        ProviderKind::Zcode => quotio_providers::ZCODE_ANTHROPIC_BASE.to_string(),
+        ProviderKind::Claude => mahoquot_providers::CLAUDE_UPSTREAM_BASE.to_string(),
+        ProviderKind::Cursor => mahoquot_providers::CURSOR_UPSTREAM_BASE.to_string(),
+        ProviderKind::Zcode => mahoquot_providers::ZCODE_ANTHROPIC_BASE.to_string(),
         // Kiro's host is region-templated; the default region is correct for
         // accounts that did not record one.
-        ProviderKind::Kiro => quotio_providers::KIRO_API_HOST_TEMPLATE
-            .replace("{region}", quotio_providers::KIRO_DEFAULT_REGION),
+        ProviderKind::Kiro => mahoquot_providers::KIRO_API_HOST_TEMPLATE
+            .replace("{region}", mahoquot_providers::KIRO_DEFAULT_REGION),
     };
 
     let base = upstream_override.unwrap_or(&base).trim_end_matches('/');

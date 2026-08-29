@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use quotio_gateway::config::GatewayConfig;
-use quotio_gateway::routes::create_app;
-use quotio_gateway::server::run_server;
-use quotio_gateway::state::AppState;
+use mahoquot_gateway::config::GatewayConfig;
+use mahoquot_gateway::routes::create_app;
+use mahoquot_gateway::server::run_server;
+use mahoquot_gateway::state::AppState;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -23,14 +23,14 @@ async fn main() -> anyhow::Result<()> {
         auth_dir = %config.auth_dir.display(),
         strategy = ?config.strategy,
         max_failover = config.max_failover,
-        "starting quotio-gateway"
+        "starting mahoquot-gateway"
     );
 
     let state = Arc::new(AppState::new(&config)?);
     state
         .telemetry
         .spawn_flush_worker(std::time::Duration::from_secs(10));
-    quotio_gateway::quota::spawn_usage_poller(
+    mahoquot_gateway::quota::spawn_usage_poller(
         Arc::clone(&state),
         std::time::Duration::from_secs(config.usage_poll_secs),
     );

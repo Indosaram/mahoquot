@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 SET_OF_MATRIX = {"main": "m20", "acct": "m20", "chunk200": "m200"}
-TIERS = {"A": "A direct mock", "B": "B CLIProxyAPI", "C": "C quotio-gateway", "C1": "C 1-account"}
+TIERS = {"A": "A direct mock", "B": "B CLIProxyAPI", "C": "C mahoquot-gateway", "C1": "C 1-account"}
 
 
 def parse_runs(json_dir):

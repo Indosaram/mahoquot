@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diff every /v0/management route between quotio-rs and a real CLIProxyAPI oracle.
+"""Diff every /v0/management route between mahoquot-rs and a real CLIProxyAPI oracle.
 
 Both targets run on test ports against the same credential pool with the same
 management secret, so a difference is a real contract difference rather than a

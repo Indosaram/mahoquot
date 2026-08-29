@@ -8,8 +8,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::Router;
 use common::{create_auth_file_json, unique_temp_dir};
-use quotio_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
-use quotio_types::{Health, PoolMember, Strategy};
+use mahoquot_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
+use mahoquot_types::{Health, PoolMember, Strategy};
 
 #[derive(Clone)]
 struct MockOAuthState {
@@ -166,7 +166,7 @@ async fn test_t7_refresh_lifecycle() {
             strategy: Strategy::StrictRoundRobin,
             max_failover: 3,
             log_level: "info".to_string(),
-            api_keys: quotio_gateway::inbound::ApiKeys::default(),
+            api_keys: mahoquot_gateway::inbound::ApiKeys::default(),
             models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
@@ -266,7 +266,7 @@ async fn test_t7_refresh_lifecycle() {
             strategy: Strategy::StrictRoundRobin,
             max_failover: 3,
             log_level: "info".to_string(),
-            api_keys: quotio_gateway::inbound::ApiKeys::default(),
+            api_keys: mahoquot_gateway::inbound::ApiKeys::default(),
             models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
@@ -337,7 +337,7 @@ async fn test_t7_refresh_lifecycle() {
             strategy: Strategy::StrictRoundRobin,
             max_failover: 1,
             log_level: "info".to_string(),
-            api_keys: quotio_gateway::inbound::ApiKeys::default(),
+            api_keys: mahoquot_gateway::inbound::ApiKeys::default(),
             models_env: None,
             refresh_url: oauth_url.clone(),
             auth_refresh_enabled: true,
@@ -473,7 +473,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
         strategy: Strategy::StrictRoundRobin,
         max_failover: 3,
         log_level: "info".to_string(),
-        api_keys: quotio_gateway::inbound::ApiKeys::default(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::default(),
         models_env: None,
         refresh_url: oauth_url.clone(),
         auth_refresh_enabled: true,

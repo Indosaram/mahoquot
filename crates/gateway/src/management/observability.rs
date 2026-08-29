@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn listing_reports_real_files_and_skips_directories() {
         // given a log directory holding a file and a subdirectory
-        let dir = std::env::temp_dir().join(format!("quotio-logs-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-logs-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("nested")).expect("dirs");
         std::fs::write(dir.join("app.log"), "hello").expect("write");
         // when listed
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn append_log_line_obeys_the_total_size_cap() {
-        let dir = std::env::temp_dir().join(format!("quotio-log-cap-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-log-cap-{}", std::process::id()));
         let settings = Settings {
             auth_dir: dir.to_string_lossy().to_string(),
             logging_to_file: true,

@@ -185,7 +185,7 @@ pub fn spawn_warmup_loop(state: Arc<AppState>, every: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quotio_providers::{AntigravityAccount, CodexAccount};
+    use mahoquot_providers::{AntigravityAccount, CodexAccount};
 
     #[test]
     fn every_provider_has_a_warmup_path() {

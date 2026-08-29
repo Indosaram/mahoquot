@@ -112,14 +112,14 @@ async fn try_antigravity_quota(
         }
     };
 
-    let url = quotio_providers::antigravity_quota_summary_url(
-        quotio_providers::ANTIGRAVITY_UPSTREAM_BASE,
+    let url = mahoquot_providers::antigravity_quota_summary_url(
+        mahoquot_providers::ANTIGRAVITY_UPSTREAM_BASE,
     );
     let resp = state
         .http_client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
-        .header("User-Agent", quotio_providers::ANTIGRAVITY_USER_AGENT)
+        .header("User-Agent", mahoquot_providers::ANTIGRAVITY_USER_AGENT)
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({ "project": project }))
         .timeout(Duration::from_secs(20))

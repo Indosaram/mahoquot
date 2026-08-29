@@ -14,9 +14,9 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-quotio-types = { path = "crates/types" }
-quotio-router = { path = "crates/router" }
-quotio-providers = { path = "crates/providers" }
+mahoquot-types = { path = "crates/types" }
+mahoquot-router = { path = "crates/router" }
+mahoquot-providers = { path = "crates/providers" }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 rand = "0.8"

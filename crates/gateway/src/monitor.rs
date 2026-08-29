@@ -223,32 +223,32 @@ impl MonitorState {
 
     pub fn render_prometheus(&self, now_unix_ms: i64, accounts: &[PromAccount]) -> String {
         let mut out = String::new();
-        let _ = writeln!(out, "# HELP quotio_uptime_seconds Process uptime in seconds.\n# TYPE quotio_uptime_seconds gauge\nquotio_uptime_seconds {}", self.uptime_secs(now_unix_ms));
-        let _ = writeln!(out, "# HELP quotio_in_flight_requests Current number of in-flight requests.\n# TYPE quotio_in_flight_requests gauge\nquotio_in_flight_requests {}", self.in_flight());
+        let _ = writeln!(out, "# HELP mahoquot_uptime_seconds Process uptime in seconds.\n# TYPE mahoquot_uptime_seconds gauge\nmahoquot_uptime_seconds {}", self.uptime_secs(now_unix_ms));
+        let _ = writeln!(out, "# HELP mahoquot_in_flight_requests Current number of in-flight requests.\n# TYPE mahoquot_in_flight_requests gauge\nmahoquot_in_flight_requests {}", self.in_flight());
 
         let ttft = self.ttft_percentiles();
         let _ = writeln!(
             out,
-            "# HELP quotio_ttft_milliseconds TTFT percentiles in milliseconds.\n# TYPE quotio_ttft_milliseconds gauge\nquotio_ttft_milliseconds{{quantile=\"0.5\"}} {}\nquotio_ttft_milliseconds{{quantile=\"0.9\"}} {}\nquotio_ttft_milliseconds{{quantile=\"0.99\"}} {}",
+            "# HELP mahoquot_ttft_milliseconds TTFT percentiles in milliseconds.\n# TYPE mahoquot_ttft_milliseconds gauge\nmahoquot_ttft_milliseconds{{quantile=\"0.5\"}} {}\nmahoquot_ttft_milliseconds{{quantile=\"0.9\"}} {}\nmahoquot_ttft_milliseconds{{quantile=\"0.99\"}} {}",
             ttft.p50_ms, ttft.p90_ms, ttft.p99_ms
         );
 
-        let _ = writeln!(out, "# HELP quotio_account_requests_total Total request count per account.\n# TYPE quotio_account_requests_total counter");
+        let _ = writeln!(out, "# HELP mahoquot_account_requests_total Total request count per account.\n# TYPE mahoquot_account_requests_total counter");
         for acc in accounts {
             let id = escape_label_value(&acc.id);
             let _ = writeln!(
                 out,
-                "quotio_account_requests_total{{account=\"{id}\",outcome=\"ok\"}} {}",
+                "mahoquot_account_requests_total{{account=\"{id}\",outcome=\"ok\"}} {}",
                 acc.ok
             );
             let _ = writeln!(
                 out,
-                "quotio_account_requests_total{{account=\"{id}\",outcome=\"fail\"}} {}",
+                "mahoquot_account_requests_total{{account=\"{id}\",outcome=\"fail\"}} {}",
                 acc.fails
             );
         }
 
-        let _ = writeln!(out, "# HELP quotio_account_cooldown_until_seconds Cooldown target timestamp in seconds.\n# TYPE quotio_account_cooldown_until_seconds gauge");
+        let _ = writeln!(out, "# HELP mahoquot_account_cooldown_until_seconds Cooldown target timestamp in seconds.\n# TYPE mahoquot_account_cooldown_until_seconds gauge");
         for acc in accounts {
             let id = escape_label_value(&acc.id);
             let cooldown = match acc.cooldown_until_unix_ms {
@@ -257,7 +257,7 @@ impl MonitorState {
             };
             let _ = writeln!(
                 out,
-                "quotio_account_cooldown_until_seconds{{account=\"{id}\"}} {cooldown}"
+                "mahoquot_account_cooldown_until_seconds{{account=\"{id}\"}} {cooldown}"
             );
         }
         out

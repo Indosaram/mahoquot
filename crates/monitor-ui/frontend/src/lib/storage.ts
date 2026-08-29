@@ -9,9 +9,9 @@ export const isTauriEnvironment = (): boolean => {
 };
 
 export const migrateStoredGatewayUrl = (): string => {
-  const current = localStorage.getItem("quotio.base");
+  const current = localStorage.getItem("mahoquot.base");
   if (current === OBSOLETE_GATEWAY_URL) {
-    localStorage.setItem("quotio.base", DEFAULT_GATEWAY_URL);
+    localStorage.setItem("mahoquot.base", DEFAULT_GATEWAY_URL);
     return DEFAULT_GATEWAY_URL;
   }
   if (current !== null) {
@@ -29,7 +29,7 @@ export const getGatewayBaseUrl = (): string => {
 
 export const setGatewayBaseUrl = (url: string): void => {
   const normalized = url.trim().replace(/\/+$/, "");
-  localStorage.setItem("quotio.base", normalized);
+  localStorage.setItem("mahoquot.base", normalized);
 };
 
 export const validateGatewayBaseUrl = (value: string): string | null => {
@@ -46,15 +46,15 @@ export const validateGatewayBaseUrl = (value: string): string | null => {
 };
 
 export const getRelayKey = (): string => {
-  return localStorage.getItem("quotio.key") || "qkey";
+  return localStorage.getItem("mahoquot.key") || "qkey";
 };
 
 export const setRelayKey = (key: string): void => {
-  localStorage.setItem("quotio.key", key.trim());
+  localStorage.setItem("mahoquot.key", key.trim());
 };
 
 export const getTheme = (): "dark" | "light" => {
-  const saved = localStorage.getItem("quotio.theme");
+  const saved = localStorage.getItem("mahoquot.theme");
   if (saved === "light" || saved === "dark") {
     return saved;
   }
@@ -65,6 +65,6 @@ export const getTheme = (): "dark" | "light" => {
 };
 
 export const setTheme = (theme: "dark" | "light"): void => {
-  localStorage.setItem("quotio.theme", theme);
+  localStorage.setItem("mahoquot.theme", theme);
   document.documentElement.setAttribute("data-theme", theme);
 };

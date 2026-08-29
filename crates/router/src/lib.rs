@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use quotio_types::{PoolMember, SessionHint, Strategy};
+use mahoquot_types::{PoolMember, SessionHint, Strategy};
 
 #[derive(Default, Debug)]
 struct RouterState {
@@ -121,7 +121,7 @@ impl Router {
     }
 
     /// Report the result of serving member `id`. Reserved for future weighting.
-    pub fn feedback(&self, _id: &str, _outcome: quotio_types::Outcome) {}
+    pub fn feedback(&self, _id: &str, _outcome: mahoquot_types::Outcome) {}
 
     pub fn strategy(&self) -> Strategy {
         self.strategy
@@ -133,7 +133,7 @@ impl Router {
 mod red_tests {
     //! INTENTIONALLY FAILING at scaffold (documented RED baseline).
     use super::*;
-    use quotio_types::{Health, PoolMember};
+    use mahoquot_types::{Health, PoolMember};
 
     struct M {
         id: String,

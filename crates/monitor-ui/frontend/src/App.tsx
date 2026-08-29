@@ -78,19 +78,6 @@ const emptyStats: AdminStats = {
   history: [],
 };
 
-const latencyP50 = (stats: AdminStats): number | null => {
-  if (typeof stats.ttft === "number") return stats.ttft;
-  if (
-    stats.ttft &&
-    typeof stats.ttft === "object" &&
-    typeof stats.ttft.p50_ms === "number" &&
-    stats.ttft.p50_ms > 0
-  ) {
-    return stats.ttft.p50_ms;
-  }
-  return null;
-};
-
 const formatQuotaPercent = (percent: number): string => {
   if (percent > 0 && percent < 0.01) return "<0.01";
   if (percent < 1) return percent.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
@@ -167,6 +154,17 @@ const providerLogos: Readonly<Record<string, string>> = {
   kiro: kiroLogo,
 };
 
+const providerRingColors: Readonly<Record<string, string>> = {
+  claude: "#D97757",
+  codex: "#10A37F",
+  antigravity: "#3186FF",
+  kiro: "#993FF5",
+  cursor: "#8E8E93",
+};
+
+const providerRingColor = (provider: string): string =>
+  providerRingColors[provider.trim().toLowerCase()] ?? "#8E8E93";
+
 const ProviderGlyph = ({ provider }: { provider: string }) => {
   const normalized = provider.trim().toLowerCase();
   const logo = providerLogos[normalized];
@@ -201,7 +199,7 @@ export default function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [logsOpen, setLogsOpen] = useState(false);
   const [provider, setProvider] = useState(
-    () => window.sessionStorage.getItem("quotio.provider") ?? "all",
+    () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState("");
@@ -266,7 +264,16 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    window.sessionStorage.setItem("quotio.provider", provider);
+    if (surface === "notch") {
+      document.documentElement.dataset.surface = "notch";
+      return () => {
+        delete document.documentElement.dataset.surface;
+      };
+    }
+  }, [surface]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem("mahoquot.provider", provider);
   }, [provider]);
 
   useEffect(() => {
@@ -469,102 +476,111 @@ export default function App() {
 
   if (surface === "notch") {
     return (
-      <div className="notch-shell" data-quotio-surface="notch">
+      <div className="notch-shell" data-mahoquot-surface="notch">
         <div className="notch-surface">
-          <header className="notch-summary" data-testid="notch-summary" data-component="summary">
-            <div className="notch-summary-brand">
-              <span className={`status-dot ${loadState === "online" ? "online" : ""}`} />
-              <strong className="notch-summary-title">Quotio</strong>
-              <Badge tone={loadState === "online" ? "ok" : "bad"}>
-                {loadState === "online" ? "Online" : loadState.replace("-", " ")}
-              </Badge>
-            </div>
-            {loadState === "online" ? (
-              <div className="notch-summary-stats">
-                <span>{stats.in_flight} active</span>
-                <span>•</span>
-                <span>{stats.served} served</span>
-                {(() => {
-                  const p50 = latencyP50(stats);
-                  return p50 !== null ? (
-                    <>
-                      <span>•</span>
-                      <span>{Math.round(p50)}ms</span>
-                    </>
-                  ) : null;
-                })()}
-              </div>
-            ) : null}
-          </header>
-
-          {loadState === "online" ? (
-            <div className="notch-accounts-list">
-              {accounts.length ? (
-                accounts.map((account) => {
-                  const rows = quotaRows(account);
-                  const primaryQuota = rows[0];
-                  const usedPct = primaryQuota?.usedPercent ?? null;
-                  const resetSec =
-                    primaryQuota?.resetSeconds ?? account.cooldownRemainingSecs ?? null;
-                  const isWarn = usedPct !== null && usedPct >= 70 && usedPct < 90;
-                  const isBad =
-                    account.health === "error" ||
-                    account.health === "cooldown" ||
-                    (usedPct !== null && usedPct >= 90);
-
-                  return (
-                    <div className="notch-account-row" key={account.id}>
-                      <div className="notch-account-icon">
-                        <ProviderGlyph provider={account.provider} />
-                      </div>
-                      <div className="notch-account-info">
-                        <span className="notch-account-id" title={account.id}>
-                          {account.id}
-                        </span>
-                        <div className="notch-account-meta">
-                          <span className="capitalize">{account.provider}</span>
-                          {resetSec !== null && resetSec > 0 ? (
-                            <>
-                              <span>•</span>
-                              <span>reset {formatResetTime(resetSec)}</span>
-                            </>
-                          ) : null}
+          {loadState === "online" && accounts.length ? (
+            accounts.map((account) => {
+              const rows = quotaRows(account);
+              const usedPct = rows[0]?.usedPercent ?? null;
+              const clamped = usedPct === null ? 0 : Math.min(100, Math.max(0, usedPct));
+              const circumference = 2 * Math.PI * 20;
+              const color = providerRingColor(account.provider);
+              return (
+                <div
+                  className="notch-ring-item"
+                  key={account.id}
+                  data-provider={account.provider}
+                  data-testid={`notch-ring-${account.provider}`}
+                >
+                  <div className="notch-ring-wrap">
+                    <svg
+                      className="notch-ring"
+                      viewBox="0 0 48 48"
+                      width="44"
+                      height="44"
+                      aria-hidden="true"
+                    >
+                      <circle className="notch-ring-track" cx="24" cy="24" r="20" />
+                      <circle
+                        className="notch-ring-fill"
+                        cx="24"
+                        cy="24"
+                        r="20"
+                        stroke={color}
+                        strokeDasharray={circumference}
+                        strokeDashoffset={circumference * (1 - clamped / 100)}
+                        transform="rotate(-90 24 24)"
+                      />
+                    </svg>
+                    <span className="notch-ring-logo">
+                      <ProviderGlyph provider={account.provider} />
+                    </span>
+                  </div>
+                  <span className="notch-ring-pct">
+                    {usedPct === null ? "—" : `${Math.round(usedPct)}%`}
+                  </span>
+                  <div
+                    className="notch-tooltip"
+                    role="tooltip"
+                    data-testid={`notch-tooltip-${account.provider}`}
+                  >
+                    <div className="notch-tooltip-head">
+                      <ProviderGlyph provider={account.provider} />
+                      <strong className="capitalize">{account.provider}</strong>
+                    </div>
+                    {rows.slice(0, 2).map((row, index) => (
+                      <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
+                        <div className="notch-tooltip-label">{row.name}</div>
+                        <div className="notch-tooltip-bar">
+                          <i
+                            style={{
+                              width: `${Math.min(100, Math.max(0, row.usedPercent))}%`,
+                              background: index === 0 ? color : "var(--ok)",
+                            }}
+                          />
+                        </div>
+                        <div className="notch-tooltip-meta">
+                          <span>{formatQuotaPercent(row.usedPercent)}% Used</span>
+                          <small>
+                            Resets{" "}
+                            {row.resetSeconds === null
+                              ? "later"
+                              : formatResetTime(row.resetSeconds)}
+                          </small>
                         </div>
                       </div>
-                      <div className="notch-account-status">
-                        {usedPct !== null ? (
-                          <div className="notch-account-usage">
-                            <span className="notch-account-usage-pct">
-                              {formatQuotaPercent(usedPct)}%
-                            </span>
-                            <div className="notch-account-usage-track">
-                              <i
-                                className={`notch-account-usage-fill ${isBad ? "bad" : isWarn ? "warn" : ""}`}
-                                style={{ width: `${Math.min(100, Math.max(0, usedPct))}%` }}
-                              />
-                            </div>
-                          </div>
-                        ) : null}
-                        <HealthBadge account={account} />
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="notch-empty">No accounts connected</div>
-              )}
-            </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
           ) : (
-            <div className="notch-offline-state">
-              <AlertTriangle size={18} />
-              <span>
-                {loadState === "relay-locked"
-                  ? "Relay key required to access gateway telemetry"
-                  : "Gateway offline — waiting for connection"}
-              </span>
-              <Button onClick={() => void refresh()} aria-label="Retry connection">
-                <RefreshCw size={13} /> Reconnect
-              </Button>
+            <div className="notch-empty-ring" data-testid="notch-empty-ring">
+              <div className="notch-ring-wrap">
+                <svg
+                  className="notch-ring"
+                  viewBox="0 0 48 48"
+                  width="44"
+                  height="44"
+                  aria-hidden="true"
+                >
+                  <circle className="notch-ring-track" cx="24" cy="24" r="20" />
+                </svg>
+                <span className="notch-ring-logo">
+                  <strong>Q</strong>
+                </span>
+              </div>
+              <div className="notch-tooltip" role="tooltip" data-testid="notch-tooltip-empty">
+                <div className="notch-tooltip-head">
+                  <strong>Mahoquot</strong>
+                </div>
+                <div className="notch-tooltip-row">
+                  <div className="notch-tooltip-label">No accounts connected</div>
+                  <div className="notch-tooltip-meta">
+                    <span>Onboard in Operations Console</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -573,12 +589,12 @@ export default function App() {
   }
 
   return (
-    <div className="app" data-quotio-app="operations-console">
+    <div className="app" data-mahoquot-app="operations-console">
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">Q</span>
           <div>
-            <strong>Quotio</strong>
+            <strong>Mahoquot</strong>
             <small>Operations console</small>
           </div>
         </div>

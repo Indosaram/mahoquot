@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use bytes::Bytes;
-use quotio_types::{Health, PoolMember};
+use mahoquot_types::{Health, PoolMember};
 
 use crate::cp_routes;
 use crate::inbound::require_api_key;

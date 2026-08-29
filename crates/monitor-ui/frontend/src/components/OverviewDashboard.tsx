@@ -38,6 +38,8 @@ export const OverviewDashboard = ({
   const successRate = outcomes > 0 ? (successes / outcomes) * 100 : 100;
   const latest = samples.at(-1);
   const peak = Math.max(0, ...samples.map((sample) => sample.requests));
+  const chartMax = Math.max(1, peak);
+  const latestY = 34 - ((latest?.requests ?? 0) / chartMax) * 30;
   const maxProviderRequests = Math.max(1, ...providers.map((provider) => provider.requests));
 
   return (
@@ -47,7 +49,7 @@ export const OverviewDashboard = ({
           <span className="live-indicator">
             <i className={online ? "online" : ""} /> {online ? "Live" : "Unavailable"}
           </span>
-          <span>10-second process snapshots</span>
+          <span>10-second live samples · 30-day history</span>
         </div>
         <Button onClick={onOpenLogs}>
           <TerminalSquare size={14} /> Open logs
@@ -85,31 +87,51 @@ export const OverviewDashboard = ({
             <span className="kicker">REQUEST ACTIVITY</span>
             <h2>Calls over time</h2>
           </div>
-          <div className="chart-summary">
-            <span>
-              Latest <strong>{latest?.requests ?? 0}</strong>
-            </span>
-            <span>
-              Peak <strong>{peak}</strong>
-            </span>
+          <div className="chart-meta">
+            <div className="chart-legend" aria-label="Request outcome legend">
+              <span>
+                <i className="success" /> Successful
+              </span>
+              <span>
+                <i className="failed" /> Failed
+              </span>
+            </div>
+            <div className="chart-summary">
+              <span>
+                Latest <strong>{latest?.requests ?? 0}</strong>
+              </span>
+              <span>
+                Peak <strong>{peak}</strong>
+              </span>
+            </div>
           </div>
         </div>
-        <div className="request-chart" role="img" aria-label="Request activity over time">
-          <svg viewBox="0 0 100 36" preserveAspectRatio="none">
-            <title>Request activity over time</title>
-            <defs>
-              <linearGradient id="request-area" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.28" />
-                <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            <path d="M0 34H100 M0 22H100 M0 10H100" className="chart-grid-lines" />
-            <polygon points={`0,34 ${chartPoints(samples)} 100,34`} fill="url(#request-area)" />
-            <polyline points={chartPoints(samples)} className="request-line" />
-          </svg>
-          {!samples.some((sample) => sample.requests > 0) ? (
-            <span className="chart-empty">Requests will appear here as traffic arrives.</span>
-          ) : null}
+        <div className="chart-frame">
+          <div className="chart-scale" aria-hidden="true">
+            <span>{peak}</span>
+            <span>{Math.round(peak / 2)}</span>
+            <span>0</span>
+          </div>
+          <div className="request-chart" role="img" aria-label="Request activity over time">
+            <svg viewBox="0 0 100 36" preserveAspectRatio="none">
+              <title>Request activity over time</title>
+              <defs>
+                <linearGradient id="request-area" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.3" />
+                  <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <path d="M0 34H100 M0 22H100 M0 10H100" className="chart-grid-lines" />
+              <polygon points={`0,34 ${chartPoints(samples)} 100,34`} fill="url(#request-area)" />
+              <polyline points={chartPoints(samples)} className="request-line" />
+              {samples.length ? (
+                <circle cx="100" cy={latestY} r="1.1" className="request-point" />
+              ) : null}
+            </svg>
+            {!samples.some((sample) => sample.requests > 0) ? (
+              <span className="chart-empty">Requests will appear here as traffic arrives.</span>
+            ) : null}
+          </div>
         </div>
         <div className="chart-axis">
           <span>
@@ -139,7 +161,13 @@ export const OverviewDashboard = ({
                 <div key={provider.provider}>
                   <div>
                     <strong>{providerName(provider.provider)}</strong>
-                    <span>{compact.format(provider.requests)} calls</span>
+                    <span>
+                      {compact.format(provider.requests)} calls ·{" "}
+                      {provider.requests
+                        ? Math.round((provider.successes / provider.requests) * 100)
+                        : 100}
+                      % success
+                    </span>
                   </div>
                   <div className="traffic-track">
                     <i style={{ width: `${(provider.requests / maxProviderRequests) * 100}%` }} />
@@ -206,8 +234,8 @@ export const OverviewDashboard = ({
         </Card>
       </div>
       <div className="snapshot-note">
-        <Badge tone="neutral">Process scope</Badge>
-        Counters and chart history reset when the gateway or console restarts.
+        <Badge tone="neutral">30-day retention</Badge>
+        Request history is persisted for 30 days and survives gateway and console restarts.
       </div>
     </div>
   );

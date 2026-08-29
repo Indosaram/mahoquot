@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use quotio_gateway::config::GatewayConfig;
-use quotio_gateway::inbound::ApiKeys;
-use quotio_gateway::routes::create_app;
-use quotio_gateway::state::AppState;
+use mahoquot_gateway::config::GatewayConfig;
+use mahoquot_gateway::inbound::ApiKeys;
+use mahoquot_gateway::routes::create_app;
+use mahoquot_gateway::state::AppState;
 use tower::ServiceExt;
 
 const MANIFEST: &str = include_str!("../../../.omo/upstream/route-groups.json");
@@ -56,7 +56,7 @@ fn stamped(response: &axum::response::Response) -> bool {
 async fn every_manifest_management_route_answers_from_a_registered_handler() {
     // given a live gateway with the management surface mounted
     let auth_dir = std::env::temp_dir().join(format!(
-        "quotio-route-gate-{}",
+        "mahoquot-route-gate-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
@@ -100,7 +100,7 @@ async fn every_manifest_management_route_answers_from_a_registered_handler() {
 async fn an_unimplemented_management_path_answers_the_bare_fallback() {
     // given the same live gateway
     let auth_dir = std::env::temp_dir().join(format!(
-        "quotio-route-gate-negative-{}",
+        "mahoquot-route-gate-negative-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");

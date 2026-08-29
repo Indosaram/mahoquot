@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use quotio_router::Router;
-use quotio_types::{Health, PoolMember};
+use mahoquot_router::Router;
+use mahoquot_types::{Health, PoolMember};
 
 use crate::account::{load_account_members, AccountMember, ProviderKind};
 use crate::config::GatewayConfig;
@@ -94,7 +94,7 @@ impl AppState {
         &self,
         member: &AccountMember,
         presented_token: Option<&str>,
-    ) -> Result<bool, quotio_providers::refresh_exec::RefreshError> {
+    ) -> Result<bool, mahoquot_providers::refresh_exec::RefreshError> {
         let did_refresh = member
             .refresh(&self.http_client, &self.refresh_url, presented_token)
             .await?;

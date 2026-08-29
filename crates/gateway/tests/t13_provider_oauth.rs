@@ -11,11 +11,11 @@ use axum::routing::{get, post};
 use axum::Router;
 use base64::prelude::*;
 use common::unique_temp_dir;
-use quotio_gateway::config::GatewayConfig;
-use quotio_gateway::routes::create_app;
-use quotio_gateway::state::AppState;
-use quotio_providers::claude::ClaudeAccount;
-use quotio_providers::cursor::CursorAccount;
+use mahoquot_gateway::config::GatewayConfig;
+use mahoquot_gateway::routes::create_app;
+use mahoquot_gateway::state::AppState;
+use mahoquot_providers::claude::ClaudeAccount;
+use mahoquot_providers::cursor::CursorAccount;
 use serde_json::{json, Value};
 
 const API_KEY: &str = "test-api-key-42";
@@ -101,7 +101,7 @@ async fn test_anthropic_oauth_flow_end_to_end() {
 
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        api_keys: quotio_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
         ..GatewayConfig::default()
     };
     let app_state = Arc::new(AppState::new(&config).unwrap());
@@ -247,7 +247,7 @@ async fn test_cursor_oauth_flow_end_to_end() {
 
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        api_keys: quotio_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
         ..GatewayConfig::default()
     };
     let app_state = Arc::new(AppState::new(&config).unwrap());
@@ -340,7 +340,7 @@ async fn test_oauth_session_cancellation() {
 
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        api_keys: quotio_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
         ..GatewayConfig::default()
     };
     let app_state = Arc::new(AppState::new(&config).unwrap());

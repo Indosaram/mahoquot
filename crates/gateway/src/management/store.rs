@@ -88,7 +88,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "quotio-store-{tag}-{}-{:?}",
+            "mahoquot-store-{tag}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

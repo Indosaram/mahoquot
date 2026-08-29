@@ -1,5 +1,5 @@
 [package]
-name = "quotio-monitor-ui"
+name = "mahoquot-monitor-ui"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,3 +15,11 @@ tokio = { workspace = true }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# objc 0.2.7 (terminal release) expands `cfg(feature = "cargo-clippy")` inside
+# its msg_send! macro; declare the value so unexpected_cfgs stays a real signal.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"

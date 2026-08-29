@@ -37,7 +37,7 @@ const stats = {
 
 describe("operations console", () => {
   beforeEach(() => {
-    localStorage.setItem("quotio.base", "http://127.0.0.1:18801");
+    localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -81,7 +81,7 @@ describe("operations console", () => {
   it("exposes exactly the approved primary surfaces and snapshot caveat", async () => {
     render(<App />);
     await screen.findByText(
-      "Counters and chart history reset when the gateway or console restarts.",
+      "Request history is persisted for 30 days and survives gateway and console restarts.",
     );
     const nav = screen.getByRole("navigation", { name: "Primary navigation" });
     expect(nav).toHaveTextContent("Overview");
@@ -92,6 +92,9 @@ describe("operations console", () => {
     expect(screen.getByText("Success rate")).toBeInTheDocument();
     expect(screen.getByText("Provider traffic")).toBeInTheDocument();
     expect(screen.getByText("Latency distribution")).toBeInTheDocument();
+    expect(screen.getByText("Successful")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText(/8 calls · 100% success/)).toBeInTheDocument();
     expect(screen.queryByText("long-runtime-id@example.com")).not.toBeInTheDocument();
     expect(screen.queryByText("POOL HEALTH")).not.toBeInTheDocument();
   });
@@ -100,9 +103,8 @@ describe("operations console", () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
     try {
       render(<App />);
-      expect(await screen.findByTestId("notch-summary")).toBeInTheDocument();
-      expect(screen.getByText("long-runtime-id@example.com")).toBeInTheDocument();
-      expect(screen.getByText("Online")).toBeInTheDocument();
+      expect(await screen.findByTestId("notch-ring-codex")).toBeInTheDocument();
+      expect(screen.getByTestId("notch-tooltip-codex")).toBeInTheDocument();
       expect(
         screen.queryByRole("navigation", { name: "Primary navigation" }),
       ).not.toBeInTheDocument();
@@ -139,7 +141,7 @@ describe("operations console", () => {
       configurable: true,
       value: { writeText },
     });
-    localStorage.setItem("quotio.key", "secret-api-key");
+    localStorage.setItem("mahoquot.key", "secret-api-key");
     render(<App />);
     fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
     const input = screen.getByLabelText("API key");

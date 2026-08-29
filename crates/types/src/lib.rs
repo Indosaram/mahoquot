@@ -1,4 +1,4 @@
-//! Shared domain model for quotio-rs.
+//! Shared domain model for mahoquot-rs.
 //! M1 인터페이스는 잠김(LOCKED): 변경은 리드 승인 필요.
 
 /// Affinity hint extracted from an inbound request.

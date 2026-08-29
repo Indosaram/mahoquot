@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use quotio_providers::{
+use mahoquot_providers::{
     ANTIGRAVITY_MODELS, CLAUDE_MODELS, KIRO_MODELS, ZCODE_MODELS,
 };
 

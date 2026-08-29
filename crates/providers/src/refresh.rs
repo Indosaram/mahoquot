@@ -105,7 +105,7 @@ pub fn build_kiro_social_refresh_request(refresh_token: &str, region: &str) -> R
         json_body: Some(serde_json::json!({"refreshToken": refresh_token})),
         headers: vec![(
             "user-agent".to_string(),
-            "KiroIDE-0.7.45-quotio".to_string(),
+            "KiroIDE-0.7.45-mahoquot".to_string(),
         )],
     }
 }

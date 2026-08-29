@@ -221,7 +221,7 @@ async fn test_headers_and_body_json_literal_pinning() {
     let raw_headers = vec![
         "Authorization: Bearer test-token".to_string(),
         "X-Custom-Trace: req-12345".to_string(),
-        "User-Agent: quotio-bench".to_string(),
+        "User-Agent: mahoquot-bench".to_string(),
     ];
     let parsed = parse_headers(&raw_headers).expect("parse headers");
     assert_eq!(
@@ -234,7 +234,7 @@ async fn test_headers_and_body_json_literal_pinning() {
     );
     assert_eq!(
         parsed.get("user-agent").expect("agent header"),
-        "quotio-bench"
+        "mahoquot-bench"
     );
     assert_eq!(
         parsed.get("content-type").expect("content type"),

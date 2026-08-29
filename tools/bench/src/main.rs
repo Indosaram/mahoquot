@@ -9,7 +9,7 @@ mod stats;
 mod tests;
 
 #[derive(Parser, Debug)]
-#[command(name = "bench", about = "Quotio benchmark and mock upstream harness")]
+#[command(name = "bench", about = "Mahoquot benchmark and mock upstream harness")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

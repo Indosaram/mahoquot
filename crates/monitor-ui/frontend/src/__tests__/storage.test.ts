@@ -18,10 +18,10 @@ describe("Storage and Port Migration", () => {
   });
 
   it("migrates exact obsolete port 18871 to 18801", () => {
-    localStorage.setItem("quotio.base", "http://127.0.0.1:18871");
+    localStorage.setItem("mahoquot.base", "http://127.0.0.1:18871");
     const migrated = migrateStoredGatewayUrl();
     expect(migrated).toBe("http://127.0.0.1:18801");
-    expect(localStorage.getItem("quotio.base")).toBe("http://127.0.0.1:18801");
+    expect(localStorage.getItem("mahoquot.base")).toBe("http://127.0.0.1:18801");
   });
 
   it("validates typed gateway URL input without rejecting same-origin blank", () => {
@@ -36,10 +36,10 @@ describe("Storage and Port Migration", () => {
   });
 
   it("does not alter non-18871 custom URLs", () => {
-    localStorage.setItem("quotio.base", "http://127.0.0.1:9000");
+    localStorage.setItem("mahoquot.base", "http://127.0.0.1:9000");
     const migrated = migrateStoredGatewayUrl();
     expect(migrated).toBe("http://127.0.0.1:9000");
-    expect(localStorage.getItem("quotio.base")).toBe("http://127.0.0.1:9000");
+    expect(localStorage.getItem("mahoquot.base")).toBe("http://127.0.0.1:9000");
   });
 
   it("stores one API key slot", () => {
@@ -48,7 +48,7 @@ describe("Storage and Port Migration", () => {
     setRelayKey("custom-api-key");
 
     expect(getRelayKey()).toBe("custom-api-key");
-    expect(localStorage.getItem("quotio.key")).toBe("custom-api-key");
+    expect(localStorage.getItem("mahoquot.key")).toBe("custom-api-key");
   });
 
   it("sets and normalizes gateway base url", () => {

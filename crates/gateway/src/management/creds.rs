@@ -14,7 +14,7 @@ fn json_status(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
 
-const ACCOUNT_ORDER_FILE: &str = ".quotio-account-order.json";
+const ACCOUNT_ORDER_FILE: &str = ".mahoquot-account-order.json";
 
 fn is_credential_filename(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(".json") && name != ACCOUNT_ORDER_FILE
@@ -309,7 +309,7 @@ fn validate_provider_credential(content: &Value) -> Result<(), String> {
         }
         "zcode" => {
             let key = required_string(content, "access_token")?;
-            if !quotio_providers::zcode::is_provisioned_api_key(key) {
+            if !mahoquot_providers::zcode::is_provisioned_api_key(key) {
                 return Err("zcode access_token must be a provisioned {id}.{secret} key".into());
             }
             required_string(content, "refresh_token")?;
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn a_credential_listing_reports_type_and_email_from_the_file() {
         // given a credential file on disk
-        let dir = std::env::temp_dir().join(format!("quotio-creds-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-creds-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         std::fs::write(
             dir.join("acct.json"),
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn writing_a_credential_leaves_no_temp_file() {
         // given a credential written atomically
-        let dir = std::env::temp_dir().join(format!("quotio-creds-w-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-creds-w-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         write_atomically(&dir.join("x.json"), "{}").expect("writes");
         // when the directory is listed

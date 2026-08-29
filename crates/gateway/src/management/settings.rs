@@ -71,9 +71,9 @@ fn default_max_retry() -> usize {
 /// The persisted settings document, mirroring the YAML keys CLIProxyAPI uses
 /// so a `config.yaml` written by either proxy is readable by the other.
 ///
-/// Only the fields quotio-rs actually honours are modelled. `extra` captures
+/// Only the fields mahoquot-rs actually honours are modelled. `extra` captures
 /// every other key verbatim so round-tripping a CLIProxyAPI config through
-/// quotio never silently drops settings this build does not implement.
+/// mahoquot never silently drops settings this build does not implement.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     #[serde(default = "default_port")]
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn persist_then_load_round_trips() {
         // given a settings document persisted to a temp dir
-        let dir = std::env::temp_dir().join(format!("quotio-settings-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-settings-{}", std::process::id()));
         let path = dir.join("config.yaml");
         let settings = Settings {
             port: 18899,
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn persist_leaves_no_temp_file_behind() {
         // given a persisted config
-        let dir = std::env::temp_dir().join(format!("quotio-settings-tmp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-settings-tmp-{}", std::process::id()));
         let path = dir.join("config.yaml");
         Settings::default().persist(&path).expect("persists");
         // when the directory is listed

@@ -1,4 +1,4 @@
-# Quotio Operations Console Design System
+# Mahoquot Operations Console Design System
 
 ## 1. Design Philosophy
 - **Mode:** Operate. High information density, scanability, precise metrics, tabular numbers, system fonts.

@@ -1,5 +1,5 @@
 [package]
-name = "quotio-types"
+name = "mahoquot-types"
 version.workspace = true
 edition.workspace = true
 

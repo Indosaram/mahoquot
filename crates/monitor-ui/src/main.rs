@@ -20,17 +20,72 @@ use tauri::{
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const NOTCH_WINDOW_LABEL: &str = "notch";
-const TRAY_ID: &str = "quotio";
+const TRAY_ID: &str = "mahoquot";
 const NOTCH_WIDTH: f64 = 420.0;
-const NOTCH_HEIGHT: f64 = 210.0;
-const NOTCH_TOP_OFFSET: f64 = 36.0;
-const NOTCH_RIGHT_OFFSET: f64 = 16.0;
+const NOTCH_HEIGHT: f64 = 420.0;
+const NOTCH_TOP_OFFSET: f64 = 0.0;
+const GATEWAY_PORT: u16 = tray::GATEWAY_PORT;
+
+struct GatewayProcess(std::sync::Mutex<Option<std::process::Child>>);
+
+fn gateway_listening() -> bool {
+    std::net::TcpStream::connect(("127.0.0.1", GATEWAY_PORT)).is_ok()
+}
+
+fn spawn_gateway() -> Option<std::process::Child> {
+    if !tray::should_spawn_gateway(gateway_listening()) {
+        return None;
+    }
+    let exe = std::env::current_exe().ok();
+    let bin = tray::resolve_gateway_binary(
+        std::env::var("MAHOQUOT_GATEWAY_BIN").ok(),
+        exe.as_deref(),
+    )?;
+    let auth_dir = std::env::var("AUTH_DIR").unwrap_or_else(|_| {
+        std::env::var("HOME")
+            .map(|home| format!("{home}/.mahoquot/auth"))
+            .unwrap_or_else(|_| ".mahoquot/auth".to_string())
+    });
+    match std::process::Command::new(&bin).env("AUTH_DIR", auth_dir).spawn() {
+        Ok(child) => {
+            println!("mahoquot-gateway spawned pid={}", child.id());
+            Some(child)
+        }
+        Err(error) => {
+            eprintln!("failed to spawn mahoquot-gateway: {error}");
+            None
+        }
+    }
+}
+
+fn notched_monitor<R: Runtime>(
+    app: &AppHandle<R>,
+) -> tauri::Result<Option<tauri::Monitor>> {
+    let monitors = app.available_monitors()?;
+    let summaries: Vec<tray::MonitorSummary> = monitors
+        .iter()
+        .map(|monitor| tray::MonitorSummary {
+            scale_factor: monitor.scale_factor(),
+            width: monitor.size().width,
+            height: monitor.size().height,
+        })
+        .collect();
+    if let Some(index) = tray::pick_notched_monitor_index(&summaries) {
+        println!(
+            "notch monitor selected name={:?} scale={}",
+            monitors[index].name(),
+            monitors[index].scale_factor()
+        );
+        return Ok(Some(monitors[index].clone()));
+    }
+    app.primary_monitor()
+}
 
 fn position_notch_window<R: Runtime>(
     app: &AppHandle<R>,
     window: &WebviewWindow<R>,
 ) -> tauri::Result<()> {
-    let Some(monitor) = app.primary_monitor()? else {
+    let Some(monitor) = notched_monitor(app)? else {
         return Ok(());
     };
     let scale_factor = monitor.scale_factor();
@@ -50,7 +105,6 @@ fn position_notch_window<R: Runtime>(
         },
         &tray::NotchInsets {
             top_offset: NOTCH_TOP_OFFSET,
-            right_offset: NOTCH_RIGHT_OFFSET,
         },
         scale_factor,
     );
@@ -61,16 +115,35 @@ fn position_notch_window<R: Runtime>(
     ))
 }
 
-fn show_operations_console<R: Runtime>(app: &AppHandle<R>) {
+fn toggle_operations_console<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };
-    let result = window
-        .unminimize()
-        .and_then(|_| window.show())
-        .and_then(|_| window.set_focus());
+    let result = if window.is_visible().unwrap_or(false) {
+        window.hide()
+    } else {
+        window
+            .unminimize()
+            .and_then(|_| window.show())
+            .and_then(|_| window.set_focus())
+    };
     if let Err(error) = result {
-        eprintln!("failed to show Quotio Operations Console: {error}");
+        eprintln!("failed to toggle Mahoquot Operations Console: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_menu_bar_level<R: Runtime>(window: &WebviewWindow<R>) {
+    use objc::{msg_send, sel, sel_impl};
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as *mut objc::runtime::Object;
+    unsafe {
+        let level: i64 = 25;
+        let _: () = msg_send![ns_window, setLevel: level];
+        let behavior: i64 = (1 << 0) | (1 << 8);
+        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
     }
 }
 
@@ -81,12 +154,16 @@ fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
     let result = if window.is_visible().unwrap_or(false) {
         window.hide()
     } else {
-        position_notch_window(app, &window)
-            .and_then(|_| window.show())
+        window
+            .show()
+            .and_then(|_| {
+                apply_menu_bar_level(&window);
+                position_notch_window(app, &window)
+            })
             .and_then(|_| window.set_focus())
     };
     if let Err(error) = result {
-        eprintln!("failed to toggle Quotio notch window: {error}");
+        eprintln!("failed to toggle Mahoquot notch window: {error}");
     }
 }
 
@@ -94,7 +171,7 @@ fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
     for label in [MAIN_WINDOW_LABEL, NOTCH_WINDOW_LABEL] {
         if let Some(window) = app.get_webview_window(label) {
             if let Err(error) = window.eval("window.location.reload()") {
-                eprintln!("failed to refresh Quotio window {label}: {error}");
+                eprintln!("failed to refresh Mahoquot window {label}: {error}");
             }
         }
     }
@@ -102,9 +179,9 @@ fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
 
 fn handle_tray_action<R: Runtime>(app: &AppHandle<R>, action: tray::TrayMenuAction) {
     match action {
-        tray::TrayMenuAction::ToggleWindow => toggle_notch_window(app),
+        tray::TrayMenuAction::ToggleNotch => toggle_notch_window(app),
         tray::TrayMenuAction::RefreshUsage => refresh_windows(app),
-        tray::TrayMenuAction::OpenGateway => show_operations_console(app),
+        tray::TrayMenuAction::ToggleConsole => toggle_operations_console(app),
         tray::TrayMenuAction::Quit => app.exit(0),
     }
 }
@@ -113,7 +190,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     let toggle = MenuItem::with_id(
         app,
         tray::MENU_ID_TOGGLE,
-        "Show / Hide Quotio Notch",
+        "Show / Hide Mahoquot Notch",
         true,
         None::<&str>,
     )?;
@@ -127,7 +204,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     let gateway = MenuItem::with_id(
         app,
         tray::MENU_ID_GATEWAY,
-        "Open Operations Console",
+        "Show / Hide Operations Console",
         true,
         None::<&str>,
     )?;
@@ -135,7 +212,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     let quit = MenuItem::with_id(
         app,
         tray::MENU_ID_QUIT,
-        "Quit Quotio",
+        "Quit Mahoquot",
         true,
         None::<&str>,
     )?;
@@ -143,8 +220,8 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
 
     let mut tray_icon = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
-        .title("Quotio")
-        .tooltip("Quotio")
+        .title("Mahoquot")
+        .tooltip("Mahoquot")
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
             if let Some(action) = tray::resolve_tray_menu_action(event.id().as_ref()) {
@@ -166,7 +243,23 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         return Err("missing main window".into());
     }
 
-    println!("quotio-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
+    let _ = notch.show();
+    apply_menu_bar_level(&notch);
+    position_notch_window(app.handle(), &notch)?;
+    let handle = app.handle().clone();
+    let notch_clone = notch.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Err(error) = position_notch_window(&handle, &notch_clone) {
+            eprintln!("delayed notch positioning failed: {error}");
+            return;
+        }
+        if let Ok(position) = notch_clone.outer_position() {
+            println!("notch position settled x={} y={}", position.x, position.y);
+        }
+    });
+
+    println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
     Ok(())
 }
 
@@ -242,12 +335,14 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 }
 
 fn main() {
+    let gateway = GatewayProcess(std::sync::Mutex::new(spawn_gateway()));
     let base_url =
-        std::env::var("QUOTIO_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
-    let api_key = std::env::var("QUOTIO_API_KEY").unwrap_or_default();
+        std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
+    let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();
     let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
 
     tauri::Builder::default()
+        .manage(gateway)
         .manage(Config {
             base_url,
             api_key,
@@ -269,10 +364,23 @@ fn main() {
                     api.prevent_close();
                 }
                 if let Err(error) = window.hide() {
-                    eprintln!("failed to hide Quotio window {}: {error}", window.label());
+                    eprintln!("failed to hide Mahoquot window {}: {error}", window.label());
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start quotio monitor");
+        .build(tauri::generate_context!())
+        .expect("failed to build mahoquot monitor")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let gateway = app.state::<GatewayProcess>();
+                let mut child_guard = match gateway.0.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                };
+                if let Some(child) = child_guard.as_mut() {
+                    let _ = child.kill();
+                    println!("mahoquot-gateway terminated");
+                }
+            }
+        });
 }

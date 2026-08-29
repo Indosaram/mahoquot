@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn persisted_buckets_survive_store_recreation() {
-        let dir = std::env::temp_dir().join(format!("quotio-telemetry-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mahoquot-telemetry-{}", std::process::id()));
         let path = dir.join("telemetry.json");
         let store = TelemetryStore::load(path.clone());
         store.record(1_800, "codex", true);

@@ -1,20 +1,8 @@
-//! Tests for Quotio tray menu ID / action mapping and macOS notch top-right window positioning.
-//!
-//! These tests specify the contracts that the production `tray` module must implement.
-
 use crate::tray::{
-    calculate_notch_window_position,
-    calculate_notch_window_physical_position,
-    resolve_tray_menu_action,
-    DisplayBounds,
-    NotchInsets,
-    TrayMenuAction,
-    WindowDimensions,
-    WindowPosition,
-    MENU_ID_GATEWAY,
-    MENU_ID_QUIT,
-    MENU_ID_REFRESH,
-    MENU_ID_TOGGLE,
+    calculate_notch_window_position, calculate_notch_window_physical_position,
+    resolve_gateway_binary, should_spawn_gateway, DisplayBounds, NotchInsets, WindowDimensions,
+    MonitorSummary, WindowPosition, MENU_ID_GATEWAY, MENU_ID_QUIT, MENU_ID_REFRESH,
+    MENU_ID_TOGGLE, pick_notched_monitor_index,
 };
 
 #[test]
@@ -26,29 +14,7 @@ fn tray_menu_ids_match_contract_constants() {
 }
 
 #[test]
-fn tray_menu_action_resolution_maps_known_ids() {
-    assert_eq!(
-        resolve_tray_menu_action("tray_toggle_window"),
-        Some(TrayMenuAction::ToggleWindow)
-    );
-    assert_eq!(
-        resolve_tray_menu_action("tray_refresh_usage"),
-        Some(TrayMenuAction::RefreshUsage)
-    );
-    assert_eq!(
-        resolve_tray_menu_action("tray_open_gateway"),
-        Some(TrayMenuAction::OpenGateway)
-    );
-    assert_eq!(
-        resolve_tray_menu_action("tray_quit"),
-        Some(TrayMenuAction::Quit)
-    );
-    assert_eq!(resolve_tray_menu_action("unknown_menu_item"), None);
-    assert_eq!(resolve_tray_menu_action(""), None);
-}
-
-#[test]
-fn notch_position_calculates_top_right_placement_on_standard_notch_display() {
+fn notch_position_attaches_island_to_right_edge() {
     let screen = DisplayBounds {
         origin_x: 0.0,
         origin_y: 0.0,
@@ -56,24 +22,19 @@ fn notch_position_calculates_top_right_placement_on_standard_notch_display() {
         height: 1117.0,
     };
     let window = WindowDimensions {
-        width: 380.0,
-        height: 520.0,
+        width: 76.0,
+        height: 420.0,
     };
-    let insets = NotchInsets {
-        top_offset: 36.0,
-        right_offset: 16.0,
-    };
+    let insets = NotchInsets { top_offset: 0.0 };
 
     let pos: WindowPosition = calculate_notch_window_position(&screen, &window, &insets);
 
-    // X: right-aligned with inset padding (1728 - 380 - 16 = 1332)
-    // Y: positioned below the notch / menubar area (36)
-    assert_eq!(pos.x, 1332.0);
-    assert_eq!(pos.y, 36.0);
+    assert_eq!(pos.x, 1652.0);
+    assert_eq!(pos.y, 0.0);
 }
 
 #[test]
-fn notch_position_calculates_top_right_placement_on_secondary_display() {
+fn notch_position_right_edge_respects_secondary_display_origin() {
     let screen = DisplayBounds {
         origin_x: 1920.0,
         origin_y: 0.0,
@@ -81,19 +42,15 @@ fn notch_position_calculates_top_right_placement_on_secondary_display() {
         height: 1080.0,
     };
     let window = WindowDimensions {
-        width: 400.0,
-        height: 600.0,
+        width: 76.0,
+        height: 420.0,
     };
-    let insets = NotchInsets {
-        top_offset: 32.0,
-        right_offset: 20.0,
-    };
+    let insets = NotchInsets { top_offset: 0.0 };
 
-    let pos: WindowPosition = calculate_notch_window_position(&screen, &window, &insets);
+    let pos = calculate_notch_window_position(&screen, &window, &insets);
 
-    // Screen starts at x = 1920: pos.x = 1920 + 1920 - 400 - 20 = 3420
-    assert_eq!(pos.x, 3420.0);
-    assert_eq!(pos.y, 32.0);
+    assert_eq!(pos.x, 3764.0);
+    assert_eq!(pos.y, 0.0);
 }
 
 #[test]
@@ -101,21 +58,17 @@ fn notch_position_clamps_when_window_exceeds_display_bounds() {
     let screen = DisplayBounds {
         origin_x: 0.0,
         origin_y: 0.0,
-        width: 300.0,
+        width: 40.0,
         height: 400.0,
     };
     let oversized_window = WindowDimensions {
-        width: 380.0,
-        height: 500.0,
+        width: 76.0,
+        height: 420.0,
     };
-    let insets = NotchInsets {
-        top_offset: 30.0,
-        right_offset: 10.0,
-    };
+    let insets = NotchInsets { top_offset: 12.0 };
 
     let pos = calculate_notch_window_position(&screen, &oversized_window, &insets);
 
-    // Window must clamp to display origin rather than overflowing negative coordinates
     assert!(pos.x >= screen.origin_x);
     assert!(pos.y >= screen.origin_y);
 }
@@ -129,23 +82,64 @@ fn notch_position_physical_calculation_applies_scale_factor() {
         height: 1117.0,
     };
     let window = WindowDimensions {
-        width: 380.0,
-        height: 520.0,
+        width: 76.0,
+        height: 420.0,
     };
-    let insets = NotchInsets {
-        top_offset: 36.0,
-        right_offset: 16.0,
-    };
-    let scale_factor = 2.0;
+    let insets = NotchInsets { top_offset: 0.0 };
 
-    let physical_pos = calculate_notch_window_physical_position(
-        &screen,
-        &window,
-        &insets,
-        scale_factor,
+    let physical_pos =
+        calculate_notch_window_physical_position(&screen, &window, &insets, 2.0);
+
+    assert_eq!(physical_pos.x, 3304.0);
+    assert_eq!(physical_pos.y, 0.0);
+}
+
+#[test]
+fn gateway_spawn_is_skipped_when_port_already_listening() {
+    assert!(should_spawn_gateway(false));
+    assert!(!should_spawn_gateway(true));
+}
+
+#[test]
+fn gateway_binary_resolves_env_override_then_exe_sibling() {
+    assert_eq!(
+        resolve_gateway_binary(
+            Some("/custom/mahoquot-gateway".to_string()),
+            Some(std::path::Path::new("/opt/app")),
+        )
+        .as_deref(),
+        Some(std::path::Path::new("/custom/mahoquot-gateway"))
     );
+    assert_eq!(
+        resolve_gateway_binary(None, Some(std::path::Path::new("/opt/app/mahoquot-monitor-ui")))
+            .as_deref(),
+        Some(std::path::Path::new("/opt/app/mahoquot-gateway"))
+    );
+    assert_eq!(resolve_gateway_binary(None, None), None);
+}
 
-    // Logical x = 1332.0, y = 36.0 -> Physical x = 2664.0, y = 72.0
-    assert_eq!(physical_pos.x, 2664.0);
-    assert_eq!(physical_pos.y, 72.0);
+#[test]
+fn notched_monitor_prefers_retina_panel_for_island_placement() {
+    let monitors = [
+        MonitorSummary {
+            scale_factor: 1.0,
+            width: 1958,
+            height: 1080,
+        },
+        MonitorSummary {
+            scale_factor: 2.0,
+            width: 1512,
+            height: 982,
+        },
+    ];
+    assert_eq!(pick_notched_monitor_index(&monitors), Some(1));
+    assert_eq!(pick_notched_monitor_index(&[]), None);
+    assert_eq!(
+        pick_notched_monitor_index(&[MonitorSummary {
+            scale_factor: 1.0,
+            width: 1958,
+            height: 1080,
+        }]),
+        None
+    );
 }

@@ -15,4 +15,4 @@ createServer((request, response) => {
   response.end("not found");
 }).listen(4173, "127.0.0.1");
 
-console.log("quotio-e2e-ready");
+console.log("mahoquot-e2e-ready");

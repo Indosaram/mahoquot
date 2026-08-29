@@ -1,8 +1,8 @@
-# Quotio operations console design contract
+# Mahoquot operations console design contract
 
 ## 1. Product direction
 
-Quotio is a dense local operations console, not a marketing surface. Preserve the existing dark charcoal shell, orange operational accent, compact account cards, and direct status language. New controls must look native to the existing Overview / Accounts / Settings application.
+Mahoquot is a dense local operations console, not a marketing surface. Preserve the existing dark charcoal shell, orange operational accent, compact account cards, and direct status language. New controls must look native to the existing Overview / Accounts / Settings application.
 
 ## 2. Tokens
 

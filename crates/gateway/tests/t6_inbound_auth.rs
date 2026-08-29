@@ -6,16 +6,16 @@ use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use axum::Router;
 use http_body_util::BodyExt;
-use quotio_gateway::inbound::{require_api_key, ApiKeys};
-use quotio_gateway::models_route::{model_ids_from_env, models_payload};
-use quotio_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
-use quotio_types::Strategy;
+use mahoquot_gateway::inbound::{require_api_key, ApiKeys};
+use mahoquot_gateway::models_route::{model_ids_from_env, models_payload};
+use mahoquot_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
+use mahoquot_types::Strategy;
 use tower::ServiceExt;
 
 #[tokio::test]
 async fn management_uses_the_same_api_key_as_proxy_routes() {
     let auth_dir = std::env::temp_dir().join(format!(
-        "quotio-unified-key-{}",
+        "mahoquot-unified-key-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
@@ -27,7 +27,7 @@ async fn management_uses_the_same_api_key_as_proxy_routes() {
         log_level: "info".to_string(),
         api_keys: ApiKeys::new(vec!["one-key".to_string()]),
         models_env: None,
-        refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
+        refresh_url: mahoquot_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: false,
         usage_poll_secs: 120,
         config_path: auth_dir.join("config.yaml"),
@@ -158,7 +158,7 @@ async fn test_inbound_auth_cases() {
 
     // (h) models_payload and model_ids_from_env
     let payload = models_payload(
-        &[quotio_gateway::models_route::ModelEntry {
+        &[mahoquot_gateway::models_route::ModelEntry {
             id: "m1".to_string(),
             owned_by: "openai".to_string(),
         }],
@@ -192,21 +192,21 @@ async fn test_inbound_auth_cases() {
     // (i) full app routing with non-empty API_KEYS: /healthz and /metrics are public (200), /v1/models is protected (401)
     let temp_dir = std::env::temp_dir().join(format!("qgw-test-t6-exempt-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).unwrap();
-    let config = quotio_gateway::config::GatewayConfig {
+    let config = mahoquot_gateway::config::GatewayConfig {
             usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
-        strategy: quotio_types::Strategy::StrictRoundRobin,
+        strategy: mahoquot_types::Strategy::StrictRoundRobin,
         max_failover: 3,
         log_level: "info".to_string(),
         api_keys: ApiKeys::from_env_value("secret_key"),
         models_env: None,
-        refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
+        refresh_url: mahoquot_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: true,
         ..Default::default()
     };
-    let state = Arc::new(quotio_gateway::state::AppState::new(&config).unwrap());
-    let full_app = quotio_gateway::routes::create_app(state);
+    let state = Arc::new(mahoquot_gateway::state::AppState::new(&config).unwrap());
+    let full_app = mahoquot_gateway::routes::create_app(state);
 
     // /healthz without key -> 200
     let req = Request::builder()

@@ -3,12 +3,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use quotio_providers::refresh_exec::{apply_refresh_to_file, execute_refresh_spec, RefreshError};
-use quotio_providers::{
+use mahoquot_providers::refresh_exec::{apply_refresh_to_file, execute_refresh_spec, RefreshError};
+use mahoquot_providers::{
     derive_identity_slug, is_antigravity_model, load_antigravity_account, AntigravityAccount, ClaudeAccount, CodexAccount, CursorAccount,
     KiroAccount, LoadError, ZcodeAccount,
 };
-use quotio_types::{Health, PoolMember};
+use mahoquot_types::{Health, PoolMember};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProviderKind {
@@ -39,25 +39,25 @@ impl ProviderKind {
         match self {
             ProviderKind::Codex => {
                 !is_antigravity_model(model)
-                    && !quotio_providers::is_claude_model(model)
-                    && !quotio_providers::is_zcode_model(model)
+                    && !mahoquot_providers::is_claude_model(model)
+                    && !mahoquot_providers::is_zcode_model(model)
                     && !model.starts_with("cursor-")
                     && !model.starts_with("cursor/")
                     && !model.starts_with("kiro/")
                     && model != "auto-kiro"
             }
             ProviderKind::Antigravity => is_antigravity_model(model),
-            ProviderKind::Claude => quotio_providers::is_claude_model(model),
+            ProviderKind::Claude => mahoquot_providers::is_claude_model(model),
             ProviderKind::Cursor => {
-                model.starts_with("cursor/") || quotio_providers::is_cursor_model(model)
+                model.starts_with("cursor/") || mahoquot_providers::is_cursor_model(model)
             }
             ProviderKind::Kiro => {
                 model == "auto-kiro"
                     || model
                         .strip_prefix("kiro/")
-                        .is_some_and(quotio_providers::is_kiro_model)
+                        .is_some_and(mahoquot_providers::is_kiro_model)
             }
-            ProviderKind::Zcode => quotio_providers::is_zcode_model(model),
+            ProviderKind::Zcode => mahoquot_providers::is_zcode_model(model),
         }
     }
 
@@ -165,7 +165,7 @@ impl ProviderAccount {
                 ),
                 (
                     "anthropic-beta".to_string(),
-                    quotio_providers::CLAUDE_BETA_HEADER.to_string(),
+                    mahoquot_providers::CLAUDE_BETA_HEADER.to_string(),
                 ),
                 ("anthropic-version".to_string(), "2023-06-01".to_string()),
                 ("content-type".to_string(), "application/json".to_string()),
@@ -198,7 +198,7 @@ impl ProviderAccount {
                 ("amz-sdk-request".to_string(), "attempt=1; max=3".to_string()),
                 (
                     "user-agent".to_string(),
-                    "aws-sdk-js/1.0.27 KiroIDE-0.7.45-quotio".to_string(),
+                    "aws-sdk-js/1.0.27 KiroIDE-0.7.45-mahoquot".to_string(),
                 ),
             ],
             Self::Zcode(a) => vec![
@@ -238,22 +238,22 @@ impl ProviderAccount {
         }
     }
 
-    fn refresh_request(&self) -> quotio_providers::RefreshRequest {
+    fn refresh_request(&self) -> mahoquot_providers::RefreshRequest {
         match self {
             Self::Antigravity(a) => {
-                quotio_providers::build_antigravity_refresh_request(&a.refresh_token)
+                mahoquot_providers::build_antigravity_refresh_request(&a.refresh_token)
             }
-            Self::Claude(a) => quotio_providers::build_claude_refresh_request(&a.refresh_token),
-            Self::Cursor(a) => quotio_providers::build_cursor_refresh_request(&a.refresh_token),
+            Self::Claude(a) => mahoquot_providers::build_claude_refresh_request(&a.refresh_token),
+            Self::Cursor(a) => mahoquot_providers::build_cursor_refresh_request(&a.refresh_token),
             Self::Kiro(a) => match a.auth_mode {
-                quotio_providers::KiroAuthMode::Social => {
-                    quotio_providers::build_kiro_social_refresh_request(
+                mahoquot_providers::KiroAuthMode::Social => {
+                    mahoquot_providers::build_kiro_social_refresh_request(
                         &a.refresh_token,
                         a.effective_region(),
                     )
                 }
-                quotio_providers::KiroAuthMode::Idc => {
-                    quotio_providers::build_kiro_idc_refresh_request(
+                mahoquot_providers::KiroAuthMode::Idc => {
+                    mahoquot_providers::build_kiro_idc_refresh_request(
                         &a.refresh_token,
                         a.effective_region(),
                         &a.client_id,
@@ -261,7 +261,7 @@ impl ProviderAccount {
                     )
                 }
             },
-            other => quotio_providers::build_refresh_request(&other.refresh_token()),
+            other => mahoquot_providers::build_refresh_request(&other.refresh_token()),
         }
     }
 }
@@ -443,7 +443,7 @@ impl AccountMember {
     pub fn reload_from_file(&self) -> Result<(), LoadError> {
         let reloaded = match self.kind() {
             ProviderKind::Codex => {
-                let mut a = quotio_providers::load_codex_account(&self.file_path)?;
+                let mut a = mahoquot_providers::load_codex_account(&self.file_path)?;
                 if a.identity_slug.is_empty() {
                     a.identity_slug = self.id.clone();
                 }
@@ -517,8 +517,8 @@ impl AccountMember {
             let base = self
                 .upstream_override
                 .as_deref()
-                .unwrap_or(quotio_providers::ZCODE_API_BASE);
-            quotio_providers::refresh_exec::execute_zcode_refresh(
+                .unwrap_or(mahoquot_providers::ZCODE_API_BASE);
+            mahoquot_providers::refresh_exec::execute_zcode_refresh(
                 client,
                 base,
                 &self.refresh_token(),
@@ -539,7 +539,7 @@ impl AccountMember {
 /// Antigravity loaders parse it themselves, so this mirrors their comparison for
 /// the providers that store nothing but the timestamp.
 fn expired_at_is_past(expired: &str, now_unix: i64) -> bool {
-    match quotio_providers::parse_expired_unix(expired) {
+    match mahoquot_providers::parse_expired_unix(expired) {
         Some(exp) => now_unix >= exp,
         None => true,
     }
@@ -588,7 +588,7 @@ mod identity_tests {
     #[test]
     fn antigravity_provider_name_slug_is_replaced_by_filename_identity() {
         let dir = std::env::temp_dir().join(format!(
-            "quotio-antigravity-identity-{}",
+            "mahoquot-antigravity-identity-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).expect("temp auth dir");
@@ -648,10 +648,10 @@ fn list_all_auth_files(auth_dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.ends_with(".json") && n != ".quotio-account-order.json")
+                .is_some_and(|n| n.ends_with(".json") && n != ".mahoquot-account-order.json")
         })
         .collect();
-    let order = std::fs::read_to_string(auth_dir.join(".quotio-account-order.json"))
+    let order = std::fs::read_to_string(auth_dir.join(".mahoquot-account-order.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
         .unwrap_or_default();
@@ -728,7 +728,7 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             let slug = file_path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .map(quotio_providers::derive_antigravity_slug_from_filename)
+                .map(mahoquot_providers::derive_antigravity_slug_from_filename)
                 .filter(|_| kind == ProviderKind::Antigravity)
                 .unwrap_or_else(|| derive_identity_slug(&file_path));
             set_identity_slug(&mut inner, slug);

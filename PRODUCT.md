@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-**Backend (settled by the existing codebase):** Rust workspace, edition 2021, resolver 2. Axum 0.8 + Hyper 1 + Tokio. Crates: `quotio-types` (zero-dependency domain traits), `quotio-router` (pure routing algorithms, no async runtime), `quotio-providers` (credential loaders + OAuth refresh), `quotio-gateway` (HTTP proxy, protocol translation, management API), `quotio-monitor-ui` (Tauri v2 desktop shell), `tools/bench`.
+**Backend (settled by the existing codebase):** Rust workspace, edition 2021, resolver 2. Axum 0.8 + Hyper 1 + Tokio. Crates: `mahoquot-types` (zero-dependency domain traits), `mahoquot-router` (pure routing algorithms, no async runtime), `mahoquot-providers` (credential loaders + OAuth refresh), `mahoquot-gateway` (HTTP proxy, protocol translation, management API), `mahoquot-monitor-ui` (Tauri v2 desktop shell), `tools/bench`.
 
 **UI (decided this session):** the incumbent single-file, no-toolchain constraint is **not binding**. The user wants a real design system in the shadcn mold — token-driven, componentized, consistency enforced by the system rather than by hand-written CSS in one file.
 
@@ -16,7 +16,7 @@ Undecided: whether that means literally adopting shadcn/ui (React + Tailwind + R
 
 ## Users
 
-Developers. Specifically: a developer running Quotio on their own machine, holding several personal LLM subscription accounts (Codex/OpenAI, Anthropic, Antigravity/Gemini, Kimi, xAI), driving them through coding agents and CLIs that speak the OpenAI, Anthropic, or Gemini wire protocols.
+Developers. Specifically: a developer running Mahoquot on their own machine, holding several personal LLM subscription accounts (Codex/OpenAI, Anthropic, Antigravity/Gemini, Kimi, xAI), driving them through coding agents and CLIs that speak the OpenAI, Anthropic, or Gemini wire protocols.
 
 The situation that defines the product: one account hits a quota window mid-work and the agent stops. The user wants the next request to land on a different account without touching the client, and wants to see — at a glance — which windows are burning down and when they reset.
 
@@ -45,7 +45,7 @@ What a neighboring proxy could not truthfully copy:
 - Credentials are OAuth account files on disk under `AUTH_DIR`. Adding an account is a browser OAuth flow the gateway mints (`/v0/management/{provider}-auth-url`); two providers (Kimi, xAI) use device-code flow.
 - The monitor UI is one HTML file serving **two surfaces**: the Tauri v2 desktop shell (`frontendDist: ui`, window 1100x720) and the gateway's own embedded `/management.html`. Inside Tauri the page has no origin, so it addresses the gateway absolutely and is constrained by the app CSP (`connect-src 'self' http://127.0.0.1:* http://localhost:*`); served from the gateway it uses relative paths. Any UI rework must keep both surfaces working from one source.
 - The UI polls `/admin/usage` every 5 seconds. It is a glanceable monitor left open beside an editor, not a page someone visits deliberately.
-- Quotio also exists as a shipping macOS app (`/Applications/Quotio.app`) whose current engine is a Go CLIProxyAPI fork (`cli-proxy-api-plus`). This workspace is the replacement engine and is benchmarked against that binary.
+- Mahoquot also exists as a shipping macOS app (`/Applications/Mahoquot.app`) whose current engine is a Go CLIProxyAPI fork (`cli-proxy-api-plus`). This workspace is the replacement engine and is benchmarked against that binary.
 
 ## Capabilities and Constraints
 
@@ -60,7 +60,7 @@ What a neighboring proxy could not truthfully copy:
 
 **Constraints**
 
-- Health transitions are owned by the gateway, never the router; `quotio-types` and `quotio-router` stay free of network and async-runtime dependencies.
+- Health transitions are owned by the gateway, never the router; `mahoquot-types` and `mahoquot-router` stay free of network and async-runtime dependencies.
 - Never retry after downstream headers or bytes are committed.
 - Never buffer a full streaming response when raw byte streaming is possible.
 - Never block Tokio worker threads with blocking I/O.
@@ -78,7 +78,7 @@ Account (not "key"), provider, pool, quota window, reset, cooldown, warm/warmup,
 
 ## Brand Commitments
 
-- Name: **Quotio**. Desktop product name "Quotio Monitor", bundle identifier `dev.quotio.monitor`.
+- Name: **Mahoquot**. Desktop product name "Mahoquot Monitor", bundle identifier `dev.mahoquot.monitor`.
 - Existing accent color `#f0801a` (orange) and a wordmark-plus-dot lockup in the sidebar. Not confirmed as binding; treated as incumbent, not law.
 - Provider identity uses each vendor's real logo geometry so a provider is identifiable at 16px. This is deliberate and should survive any redesign.
 

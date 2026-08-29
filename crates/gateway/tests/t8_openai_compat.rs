@@ -9,8 +9,8 @@ use axum::routing::post;
 use axum::Router;
 use bytes::Bytes;
 use common::{create_auth_file_json, unique_temp_dir};
-use quotio_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
-use quotio_types::Strategy;
+use mahoquot_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
+use mahoquot_types::Strategy;
 use serde_json::{json, Value};
 
 const TEXT_STREAM: &str = concat!(
@@ -116,9 +116,9 @@ async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
         strategy: Strategy::StrictRoundRobin,
         max_failover: 3,
         log_level: "warn".to_string(),
-        api_keys: quotio_gateway::inbound::ApiKeys::default(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::default(),
         models_env: None,
-        refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
+        refresh_url: mahoquot_providers::refresh::REFRESH_TOKEN_URL.to_string(),
         auth_refresh_enabled: false,
         ..Default::default()
     };
@@ -163,7 +163,7 @@ fn test_t8_request_translation_shape() {
     });
 
     let translated =
-        quotio_gateway::compat::openai_to_codex(openai.to_string().as_bytes()).unwrap();
+        mahoquot_gateway::compat::openai_to_codex(openai.to_string().as_bytes()).unwrap();
     let body: Value = serde_json::from_slice(&translated.body).unwrap();
 
     assert_eq!(translated.model, "gpt-5.6-sol");

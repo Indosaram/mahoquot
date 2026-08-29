@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use quotio_gateway::account::{load_account_members, ProviderKind};
+use mahoquot_gateway::account::{load_account_members, ProviderKind};
 
 /// Tests in this file run concurrently in one process, so the directory name
 /// needs a per-instance counter: pid alone collides between them and the loader

@@ -1,4 +1,4 @@
-use quotio_types::Health;
+use mahoquot_types::Health;
 use serde::Serialize;
 use std::sync::atomic::AtomicU64;
 

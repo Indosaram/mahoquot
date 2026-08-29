@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use quotio_types::{Health, Outcome, PoolMember, SessionHint};
+use mahoquot_types::{Health, Outcome, PoolMember, SessionHint};
 
 use crate::account::AccountMember;
 use crate::compat;
@@ -168,12 +168,12 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
                 .as_ref()
                 .ok_or_else(|| "Kiro requires an OpenAI-shaped request".to_string())?;
             return Ok(UpstreamTarget {
-                url: quotio_providers::kiro_generate_url(
+                url: mahoquot_providers::kiro_generate_url(
                     member.upstream_override.as_deref(),
                     member
                         .kiro_region()
                         .as_deref()
-                        .unwrap_or(quotio_providers::KIRO_DEFAULT_REGION),
+                        .unwrap_or(mahoquot_providers::KIRO_DEFAULT_REGION),
                 ),
                 body: Bytes::from(
                     serde_json::to_vec(&compat::kiro::openai_to_kiro_with_profile(
@@ -1007,7 +1007,7 @@ mod routing_tests {
 
     fn six_provider_state() -> (AppState, std::path::PathBuf) {
         let auth_dir = std::env::temp_dir().join(format!(
-            "quotio-routing-{}-{}",
+            "mahoquot-routing-{}-{}",
             std::process::id(),
             rand::random::<u64>()
         ));

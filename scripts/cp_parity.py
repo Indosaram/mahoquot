@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Compare quotio's OpenAI/Anthropic surface against a live CLIProxyAPI.
+"""Compare mahoquot's OpenAI/Anthropic surface against a live CLIProxyAPI.
 
 Both endpoints must be running against the same credential pool. Shapes are
 compared, not token-for-token content: upstream text is non-deterministic.
 
-  python3 scripts/cp_parity.py --quotio 127.0.0.1:18871:qkey \
+  python3 scripts/cp_parity.py --mahoquot 127.0.0.1:18871:qkey \
                                --cp 127.0.0.1:18872:cpkey
 """
 
@@ -73,11 +73,11 @@ def msg_body(stream):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--quotio", required=True)
+    ap.add_argument("--mahoquot", required=True)
     ap.add_argument("--cp", required=True)
     args = ap.parse_args()
 
-    qb, qk = endpoint(args.quotio)
+    qb, qk = endpoint(args.mahoquot)
     cb, ck = endpoint(args.cp)
     r = Report()
 
@@ -89,22 +89,22 @@ def main():
     # CP advertises models it cannot route (e.g. claude-* with no such account)
     # and omits the top-level `object`, so parity here is "every advertised
     # model is routable", not set equality with CP.
-    r.check("models: quotio declares object=list", q.get("object") == "list")
+    r.check("models: mahoquot declares object=list", q.get("object") == "list")
     r.check("models: entry shape matches",
             keyshape(q["data"][0]).keys() >= {"id", "object", "owned_by"})
-    r.check("models: target model advertised by quotio", MODEL in qi)
+    r.check("models: target model advertised by mahoquot", MODEL in qi)
     r.check("models: advertised owners are real providers",
             {m["owned_by"] for m in q["data"]} <= {"openai", "google"},
             f"owners={sorted({m['owned_by'] for m in q['data']})}")
     r.check("models: overlap with cp is non-trivial", len(qi & ci) >= 15,
-            f"shared={len(qi & ci)} quotio={len(qi)} cp={len(ci)}")
+            f"shared={len(qi & ci)} mahoquot={len(qi)} cp={len(ci)}")
 
     print("\n/v1/chat/completions (non-stream)")
     qj = json.loads(call(qb, qk, "/v1/chat/completions", chat_body(False)))
     cj = json.loads(call(cb, ck, "/v1/chat/completions", chat_body(False)))
     r.check("chat: object", qj.get("object") == cj.get("object"),
             f"{qj.get('object')!r} vs {cj.get('object')!r}")
-    # CP echoes the upstream's resolved model id; quotio echoes the requested
+    # CP echoes the upstream's resolved model id; mahoquot echoes the requested
     # alias. Both are valid OpenAI shapes, so only the type is comparable.
     r.check("chat: model is a non-empty string",
             isinstance(qj.get("model"), str) and bool(qj["model"]),
@@ -115,7 +115,7 @@ def main():
             qj["choices"][0]["finish_reason"] == cj["choices"][0]["finish_reason"])
     r.check("chat: usage keys",
             set(qj["usage"]) >= set(cj["usage"]) - {"prompt_tokens_details"},
-            f"quotio={sorted(qj['usage'])}")
+            f"mahoquot={sorted(qj['usage'])}")
     r.check("chat: content non-empty", bool(qj["choices"][0]["message"]["content"].strip()))
 
     print("\n/v1/chat/completions (stream)")
@@ -170,7 +170,7 @@ def main():
     r.check("count_tokens: key set", set(qc) == set(cc), f"{sorted(qc)} vs {sorted(cc)}")
     r.check("count_tokens: positive integer",
             isinstance(qc.get("input_tokens"), int) and qc["input_tokens"] > 0,
-            f"quotio={qc.get('input_tokens')} cp={cc.get('input_tokens')}")
+            f"mahoquot={qc.get('input_tokens')} cp={cc.get('input_tokens')}")
 
     print("\n/v1/completions")
     qcp = json.loads(call(qb, qk, "/v1/completions",

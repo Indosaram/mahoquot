@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Quotio Monitor",
+  "productName": "Mahoquot Monitor",
   "version": "0.1.0",
-  "identifier": "dev.quotio.monitor",
+  "identifier": "dev.mahoquot.monitor",
   "build": {
     "frontendDist": "ui"
   },
@@ -11,18 +11,18 @@
     "windows": [
       {
         "label": "main",
-        "title": "Quotio Operations Console",
-        "url": "index.html",
+        "title": "Mahoquot Operations Console",
+        "url": "index.html?v=2",
         "width": 1100,
         "height": 720,
         "resizable": true
       },
       {
         "label": "notch",
-        "title": "Quotio",
-        "url": "index.html?surface=notch",
+        "title": "Mahoquot",
+        "url": "index.html?surface=notch&v=2",
         "width": 420,
-        "height": 210,
+        "height": 420,
         "resizable": false,
         "decorations": false,
         "transparent": true,

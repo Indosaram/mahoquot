@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub const USER_AGENT: &str = "codex_cli_rs/0.55.0 (Macintosh; arm64) quotio-rs";
+pub const USER_AGENT: &str = "codex_cli_rs/0.55.0 (Macintosh; arm64) mahoquot-rs";
 pub const UPSTREAM_BASE: &str = "https://chatgpt.com/backend-api/codex";
 
 #[derive(Debug, thiserror::Error)]
