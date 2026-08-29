@@ -42,6 +42,7 @@ struct RelayPlan {
     client_stream: bool,
     include_usage: bool,
     openai_body: Option<serde_json::Value>,
+    original_body: Bytes,
 }
 
 struct UpstreamTarget {
@@ -104,6 +105,63 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
     }
 
     if member.kind() != crate::account::ProviderKind::Antigravity {
+        if member.kind() == crate::account::ProviderKind::Cursor {
+            let openai = plan
+                .openai_body
+                .as_ref()
+                .ok_or_else(|| "Cursor requires an OpenAI-shaped request".to_string())?;
+            return Ok(UpstreamTarget {
+                url: crate::url::build_provider_url(
+                    member.kind(),
+                    member.upstream_override.as_deref(),
+                    "/agent.v1.AgentService/Run",
+                ),
+                body: Bytes::from(compat::cursor::openai_to_cursor_connect(openai)?),
+                protocol: compat::Protocol::Cursor,
+            });
+        }
+        if member.kind() == crate::account::ProviderKind::Kiro {
+            let openai = plan
+                .openai_body
+                .as_ref()
+                .ok_or_else(|| "Kiro requires an OpenAI-shaped request".to_string())?;
+            return Ok(UpstreamTarget {
+                url: crate::url::build_provider_url(
+                    member.kind(),
+                    member.upstream_override.as_deref(),
+                    "/generateAssistantResponse",
+                ),
+                body: Bytes::from(serde_json::to_vec(&compat::kiro::openai_to_kiro(openai)?)
+                    .map_err(|e| e.to_string())?),
+                protocol: compat::Protocol::Kiro,
+            });
+        }
+        if matches!(
+            member.kind(),
+            crate::account::ProviderKind::Claude | crate::account::ProviderKind::Zcode
+        ) {
+            let body = if plan.mode == RelayMode::Anthropic {
+                plan.original_body.clone()
+            } else {
+                let openai = plan
+                    .openai_body
+                    .as_ref()
+                    .ok_or_else(|| "Anthropic provider requires an OpenAI-shaped request".to_string())?;
+                Bytes::from(
+                    serde_json::to_vec(&compat::claude::openai_to_anthropic(openai)?)
+                        .map_err(|e| e.to_string())?,
+                )
+            };
+            return Ok(UpstreamTarget {
+                url: crate::url::build_provider_url(
+                    member.kind(),
+                    member.upstream_override.as_deref(),
+                    "/v1/messages",
+                ),
+                body,
+                protocol: compat::Protocol::Anthropic,
+            });
+        }
         return Ok(UpstreamTarget {
             url: crate::url::build_provider_url(
                 member.kind(),
@@ -279,20 +337,22 @@ fn build_plan(
             } else {
                 None
             },
-            body: body_bytes,
+            body: body_bytes.clone(),
             mode,
             client_stream: true,
             include_usage: false,
             openai_body: None,
+            original_body: body_bytes.clone(),
         }),
         RelayMode::GeminiCountTokens => Ok(RelayPlan {
             upstream_path: req_path.to_string(),
             model: compat::extract_model(&body_bytes),
-            body: body_bytes,
+            body: body_bytes.clone(),
             mode,
             client_stream: false,
             include_usage: false,
             openai_body: None,
+            original_body: body_bytes.clone(),
         }),
         RelayMode::Anthropic => {
             let anthropic: serde_json::Value = serde_json::from_slice(&body_bytes)
@@ -309,6 +369,7 @@ fn build_plan(
                 client_stream: translated.stream,
                 include_usage: translated.include_usage,
                 openai_body: Some(openai),
+                original_body: body_bytes,
             })
         }
         RelayMode::GeminiNative => {
@@ -321,11 +382,12 @@ fn build_plan(
             Ok(RelayPlan {
                 upstream_path: req_path.to_string(),
                 model: compat::extract_model(&body_bytes),
-                body: body_bytes,
+                body: body_bytes.clone(),
                 mode,
                 client_stream: stream,
                 include_usage: false,
                 openai_body: None,
+                original_body: body_bytes.clone(),
             })
         }
         RelayMode::OpenAiCompat | RelayMode::LegacyCompletions => match compat::openai_to_codex(&body_bytes) {
@@ -337,6 +399,7 @@ fn build_plan(
                 client_stream: translated.stream,
                 include_usage: translated.include_usage,
                 openai_body: serde_json::from_slice(&body_bytes).ok(),
+                original_body: body_bytes,
             }),
             Err(err) => Err(err.to_string()),
         },
@@ -352,11 +415,21 @@ fn reply_shape(mode: RelayMode) -> compat::ReplyShape {
 }
 
 fn eligible_indices(state: &AppState, model: Option<&str>, now_ms: i64) -> Vec<usize> {
+    let model_owned_by_dedicated_provider = model.is_some_and(|model| {
+        state.members.iter().any(|member| {
+            member.kind() != crate::account::ProviderKind::Codex
+                && member.kind().serves_model(model)
+        })
+    });
     state
         .members
         .iter()
         .enumerate()
         .filter(|(_, m)| m.health().is_available(now_ms))
+        .filter(|(_, m)| {
+            !(model_owned_by_dedicated_provider
+                && m.kind() == crate::account::ProviderKind::Codex)
+        })
         .filter(|(_, m)| model.is_none_or(|model| m.supports_model(model)))
         .map(|(i, _)| i)
         .collect()
@@ -445,8 +518,55 @@ async fn finish_success(
         return Err("upstream body is not an event stream: html response".to_string());
     }
 
-    let (first, stream) = compat::open_stream(resp).await?;
+    if !plan.client_stream
+        && protocol == compat::Protocol::Anthropic
+        && content_type
+            .as_deref()
+            .is_some_and(|ct| ct.starts_with("application/json"))
+    {
+        let raw = resp.bytes().await.map_err(|e| e.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
+        let output = if plan.mode == RelayMode::Anthropic {
+            value
+        } else {
+            compat::claude::anthropic_json_to_openai(&value, &plan.model.clone().unwrap_or_default(), created)
+        };
+        return Ok(body_response(
+            StatusCode::OK,
+            Some("application/json"),
+            Bytes::from(output.to_string()),
+        ));
+    }
+
+    let (first, stream) = compat::open_stream(resp, protocol).await?;
     let model = plan.model.clone().unwrap_or_default();
+
+    if plan.mode == RelayMode::Anthropic && plan.client_stream {
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
+        let body = compat::streaming_body(
+            first,
+            stream,
+            model,
+            created,
+            false,
+            protocol,
+            compat::ReplyShape::Anthropic,
+        );
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(body)
+            .unwrap_or_else(|_| {
+                (StatusCode::INTERNAL_SERVER_ERROR, "failed to build body").into_response()
+            }));
+    }
 
     if plan.mode == RelayMode::Anthropic {
         let raw = compat::collect_stream(first, stream).await?;

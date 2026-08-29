@@ -1,6 +1,35 @@
 pub mod claude;
+pub mod cursor;
+mod cursor_proto;
+
+#[doc(hidden)]
+pub fn cursor_fixture_text(text: &str) -> cursor_proto::AgentServerMessage {
+    cursor_proto::AgentServerMessage {
+        message: Some(cursor_proto::agent_server_message::Message::InteractionUpdate(
+            cursor_proto::InteractionUpdate {
+                message: Some(cursor_proto::interaction_update::Message::TextDelta(
+                    cursor_proto::TextDeltaUpdate { text: text.to_string() },
+                )),
+            },
+        )),
+    }
+}
+
+#[doc(hidden)]
+pub fn cursor_fixture_turn_end() -> cursor_proto::AgentServerMessage {
+    cursor_proto::AgentServerMessage {
+        message: Some(cursor_proto::agent_server_message::Message::InteractionUpdate(
+            cursor_proto::InteractionUpdate {
+                message: Some(cursor_proto::interaction_update::Message::TurnEnded(
+                    cursor_proto::TurnEndedUpdate {},
+                )),
+            },
+        )),
+    }
+}
 pub mod events;
 pub mod gemini;
+pub mod kiro;
 pub mod render;
 pub mod request;
 
@@ -44,10 +73,18 @@ fn preview(bytes: &[u8]) -> String {
         .to_string()
 }
 
-pub async fn open_stream(resp: reqwest::Response) -> Result<(Bytes, UpstreamStream), String> {
+pub async fn open_stream(
+    resp: reqwest::Response,
+    protocol: Protocol,
+) -> Result<(Bytes, UpstreamStream), String> {
     let mut stream: UpstreamStream = Box::pin(resp.bytes_stream());
     match stream.next().await {
-        Some(Ok(first)) if looks_like_sse(&first) => Ok((first, stream)),
+        Some(Ok(first))
+            if matches!(protocol, Protocol::Kiro | Protocol::Cursor)
+                || looks_like_sse(&first) =>
+        {
+            Ok((first, stream))
+        }
         Some(Ok(other)) => Err(format!(
             "upstream body is not an event stream: {}",
             preview(&other)
@@ -69,12 +106,17 @@ pub async fn collect_stream(first: Bytes, mut stream: UpstreamStream) -> Result<
 pub enum Protocol {
     Codex,
     Antigravity,
+    Anthropic,
+    Kiro,
+    Cursor,
 }
 
-#[derive(Default)]
 struct ProtocolParser {
     sse: SseParser,
     gemini: Option<gemini::GeminiDecoder>,
+    anthropic: Option<claude::AnthropicDecoder>,
+    kiro: Option<kiro::KiroDecoder>,
+    cursor: Option<cursor::CursorDecoder>,
 }
 
 impl ProtocolParser {
@@ -84,11 +126,33 @@ impl ProtocolParser {
             gemini: match protocol {
                 Protocol::Codex => None,
                 Protocol::Antigravity => Some(gemini::GeminiDecoder::new()),
+                Protocol::Anthropic => None,
+                Protocol::Kiro => None,
+                Protocol::Cursor => None,
             },
+            anthropic: (protocol == Protocol::Anthropic).then(claude::AnthropicDecoder::new),
+            kiro: (protocol == Protocol::Kiro).then(kiro::KiroDecoder::new),
+            cursor: (protocol == Protocol::Cursor).then(cursor::CursorDecoder::new),
         }
     }
 
     fn push(&mut self, chunk: &[u8], events: &mut Vec<CodexEvent>) {
+        if let Some(decoder) = self.cursor.as_mut() {
+            decoder.decode(chunk, events);
+            return;
+        }
+        if let Some(decoder) = self.kiro.as_mut() {
+            decoder.decode(chunk, events);
+            return;
+        }
+        if let Some(decoder) = self.anthropic.as_mut() {
+            let mut frames = Vec::new();
+            self.sse.push_raw_data(chunk, &mut frames);
+            for frame in frames {
+                decoder.decode(&frame, events);
+            }
+            return;
+        }
         match self.gemini.as_mut() {
             None => self.sse.push(chunk, events),
             Some(decoder) => {
@@ -102,6 +166,23 @@ impl ProtocolParser {
     }
 
     fn finish(&mut self, events: &mut Vec<CodexEvent>) {
+        if let Some(decoder) = self.cursor.as_mut() {
+            decoder.finish(events);
+            return;
+        }
+        if let Some(decoder) = self.kiro.as_mut() {
+            decoder.finish(events);
+            return;
+        }
+        if let Some(decoder) = self.anthropic.as_mut() {
+            let mut frames = Vec::new();
+            self.sse.finish_raw_data(&mut frames);
+            for frame in frames {
+                decoder.decode(&frame, events);
+            }
+            decoder.finish(events);
+            return;
+        }
         match self.gemini.as_mut() {
             None => self.sse.finish(events),
             Some(decoder) => {
@@ -129,6 +210,7 @@ struct TranslateState {
 enum StreamRenderer {
     OpenAi(Box<ChunkRenderer>),
     Gemini(Box<GeminiChunkRenderer>),
+    Anthropic(Box<claude::AnthropicStreamRenderer>),
 }
 
 impl StreamRenderer {
@@ -136,6 +218,7 @@ impl StreamRenderer {
         match self {
             Self::OpenAi(r) => r.render(event),
             Self::Gemini(r) => r.render(event),
+            Self::Anthropic(r) => r.render(event),
         }
     }
 
@@ -143,6 +226,7 @@ impl StreamRenderer {
         match self {
             Self::OpenAi(r) => r.close_unterminated(),
             Self::Gemini(r) => r.close_unterminated(),
+            Self::Anthropic(r) => r.close_unterminated(),
         }
     }
 
@@ -150,6 +234,7 @@ impl StreamRenderer {
         match self {
             Self::OpenAi(r) => r.terminated(),
             Self::Gemini(r) => r.terminated(),
+            Self::Anthropic(r) => r.terminated(),
         }
     }
 }
@@ -163,10 +248,14 @@ pub fn streaming_body(
     protocol: Protocol,
     shape: ReplyShape,
 ) -> Body {
-    let renderer = if shape == ReplyShape::Gemini {
-        StreamRenderer::Gemini(Box::new(GeminiChunkRenderer::new(model, created)))
-    } else {
-        StreamRenderer::OpenAi(Box::new(ChunkRenderer::new(model, created, include_usage)))
+    let renderer = match shape {
+        ReplyShape::Gemini => {
+            StreamRenderer::Gemini(Box::new(GeminiChunkRenderer::new(model, created)))
+        }
+        ReplyShape::Anthropic => StreamRenderer::Anthropic(Box::new(
+            claude::AnthropicStreamRenderer::new(model, created),
+        )),
+        _ => StreamRenderer::OpenAi(Box::new(ChunkRenderer::new(model, created, include_usage))),
     };
     let mut state = TranslateState {
         upstream,
@@ -233,6 +322,7 @@ pub enum ReplyShape {
     Chat,
     TextCompletion,
     Gemini,
+    Anthropic,
 }
 
 pub fn aggregate(
@@ -257,6 +347,7 @@ pub fn aggregate(
             ReplyShape::Chat => aggregator.into_completion(),
             ReplyShape::TextCompletion => aggregator.into_text_completion(),
             ReplyShape::Gemini => aggregator.into_gemini(),
+            ReplyShape::Anthropic => aggregator.into_completion(),
         }),
     }
 }

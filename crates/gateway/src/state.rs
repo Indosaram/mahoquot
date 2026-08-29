@@ -51,11 +51,8 @@ impl AppState {
         let metrics = Arc::new(GatewayMetrics::default());
         let monitor = Arc::new(MonitorState::default());
         let api_keys = Arc::new(config.api_keys.clone());
-        let has_codex = members.iter().any(|m| m.kind() == ProviderKind::Codex);
-        let has_antigravity = members
-            .iter()
-            .any(|m| m.kind() == ProviderKind::Antigravity);
-        let models = model_entries(has_codex, has_antigravity, config.models_env.as_deref());
+        let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
+        let models = model_entries(&provider_kinds, config.models_env.as_deref());
         let refresh_url = config.refresh_url.clone();
         let auth_refresh_enabled = config.auth_refresh_enabled;
         let settings = Arc::new(SettingsStore::load_or(

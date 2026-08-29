@@ -34,7 +34,16 @@ pub async fn execute_refresh_spec(
     url: &str,
     req_spec: &crate::refresh::RefreshRequest,
 ) -> Result<Tokens, RefreshError> {
-    let resp = client.post(url).form(&req_spec.form_fields).send().await?;
+    let request = client.post(url);
+    let request = req_spec
+        .headers
+        .iter()
+        .fold(request, |request, (name, value)| request.header(name, value));
+    let request = match &req_spec.json_body {
+        Some(body) => request.json(body),
+        None => request.form(&req_spec.form_fields),
+    };
+    let resp = request.send().await?;
 
     let status = resp.status();
     let body = resp.text().await?;
@@ -47,6 +56,88 @@ pub async fn execute_refresh_spec(
     }
 
     crate::refresh::parse_refresh_response(&body).map_err(RefreshError::Parse)
+}
+
+pub async fn execute_zcode_refresh(
+    client: &reqwest::Client,
+    api_base: &str,
+    upstream_token: &str,
+) -> Result<Tokens, RefreshError> {
+    let base = api_base.trim_end_matches('/');
+    let login: serde_json::Value = client
+        .post(format!("{base}/api/auth/z/login"))
+        .json(&serde_json::json!({"token": upstream_token}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let business = login["data"]["access_token"]
+        .as_str()
+        .ok_or_else(|| RefreshError::Parse("Z-code login missing access_token".to_string()))?;
+    let customer: serde_json::Value = client
+        .get(format!("{base}/api/biz/customer/getCustomerInfo"))
+        .bearer_auth(business)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let organizations = customer["data"]["organizations"]
+        .as_array()
+        .ok_or_else(|| RefreshError::Parse("Z-code customer missing organizations".to_string()))?;
+    let organization = organizations
+        .iter()
+        .find(|entry| entry["isDefault"] == true)
+        .or_else(|| organizations.first())
+        .ok_or_else(|| RefreshError::Parse("Z-code customer has no organization".to_string()))?;
+    let org_id = organization["id"]
+        .as_str()
+        .ok_or_else(|| RefreshError::Parse("Z-code organization missing id".to_string()))?;
+    let projects = organization["projects"]
+        .as_array()
+        .ok_or_else(|| RefreshError::Parse("Z-code organization missing projects".to_string()))?;
+    let project = projects
+        .iter()
+        .find(|entry| entry["isDefault"] == true)
+        .or_else(|| projects.first())
+        .ok_or_else(|| RefreshError::Parse("Z-code organization has no project".to_string()))?;
+    let project_id = project["id"]
+        .as_str()
+        .ok_or_else(|| RefreshError::Parse("Z-code project missing id".to_string()))?;
+    let path = format!("/api/biz/v1/organization/{org_id}/projects/{project_id}/api_keys");
+    let keys: serde_json::Value = client
+        .get(format!("{base}{path}"))
+        .bearer_auth(business)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let key_id = keys["data"]
+        .as_array()
+        .and_then(|entries| entries.iter().find(|entry| entry["name"] == "zcode-api-key"))
+        .and_then(|entry| entry["apiKey"].as_str().or_else(|| entry["id"].as_str()))
+        .ok_or_else(|| RefreshError::Parse("Z-code API key not found".to_string()))?;
+    let copied: serde_json::Value = client
+        .get(format!("{base}{path}/copy/{key_id}"))
+        .bearer_auth(business)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let secret = copied["data"]["secretKey"]
+        .as_str()
+        .or_else(|| copied["secretKey"].as_str())
+        .ok_or_else(|| RefreshError::Parse("Z-code API key copy missing secret".to_string()))?;
+    Ok(Tokens {
+        access_token: format!("{key_id}.{secret}"),
+        refresh_token: Some(upstream_token.to_string()),
+        id_token: None,
+        token_type: Some("Bearer".to_string()),
+        expires_in: Some(10 * 365 * 24 * 3600),
+    })
 }
 
 pub fn apply_refresh_to_file(
@@ -183,6 +274,141 @@ mod tests {
             }
             other => panic!("expected Status error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn claude_refresh_uses_anthropic_json_contract() {
+        let app = Router::new().route(
+            "/v1/oauth/token",
+            post(|headers: axum::http::HeaderMap, body: String| async move {
+                assert_eq!(
+                    headers.get("content-type").and_then(|v| v.to_str().ok()),
+                    Some("application/json")
+                );
+                let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(value["grant_type"], "refresh_token");
+                assert_eq!(value["client_id"], "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+                assert_eq!(value["refresh_token"], "claude-rt");
+                (
+                    axum::http::StatusCode::OK,
+                    [("content-type", "application/json")],
+                    r#"{"access_token":"new-claude","refresh_token":"new-rt","expires_in":3600}"#,
+                )
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let spec = crate::refresh::build_claude_refresh_request("claude-rt");
+        let tokens = execute_refresh_spec(
+            &reqwest::Client::new(),
+            &format!("http://{addr}/v1/oauth/token"),
+            &spec,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "new-claude");
+    }
+
+    #[tokio::test]
+    async fn cursor_refresh_uses_bearer_empty_json_and_camelcase_response() {
+        let app = Router::new().route(
+            "/auth/exchange_user_api_key",
+            post(|headers: axum::http::HeaderMap, body: String| async move {
+                assert_eq!(headers["authorization"], "Bearer cursor-rt");
+                assert_eq!(body, "{}");
+                (
+                    axum::http::StatusCode::OK,
+                    [("content-type", "application/json")],
+                    r#"{"accessToken":"cursor-new","refreshToken":"cursor-new-rt"}"#,
+                )
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let spec = crate::refresh::build_cursor_refresh_request("cursor-rt");
+        let tokens = execute_refresh_spec(
+            &reqwest::Client::new(),
+            &format!("http://{addr}/auth/exchange_user_api_key"),
+            &spec,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "cursor-new");
+        assert_eq!(tokens.refresh_token.as_deref(), Some("cursor-new-rt"));
+    }
+
+    #[tokio::test]
+    async fn kiro_social_refresh_uses_refresh_token_json() {
+        let app = Router::new().route(
+            "/refreshToken",
+            post(|body: String| async move {
+                let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(value["refreshToken"], "kiro-rt");
+                (
+                    axum::http::StatusCode::OK,
+                    [("content-type", "application/json")],
+                    r#"{"accessToken":"kiro-new","refreshToken":"kiro-new-rt","expiresIn":3600}"#,
+                )
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let spec = crate::refresh::build_kiro_social_refresh_request("kiro-rt", "us-east-1");
+        let tokens = execute_refresh_spec(
+            &reqwest::Client::new(),
+            &format!("http://{addr}/refreshToken"),
+            &spec,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "kiro-new");
+    }
+
+    #[tokio::test]
+    async fn zcode_refresh_reprovisions_composite_api_key() {
+        let app = Router::new()
+            .route(
+                "/api/auth/z/login",
+                post(|body: String| async move {
+                    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+                    assert_eq!(value["token"], "zai-upstream");
+                    axum::Json(serde_json::json!({"data":{"access_token":"business"}}))
+                }),
+            )
+            .route(
+                "/api/biz/customer/getCustomerInfo",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"data":{"organizations":[{"id":"org","isDefault":true,"projects":[{"id":"proj","isDefault":true}]}]}}))
+                }),
+            )
+            .route(
+                "/api/biz/v1/organization/org/projects/proj/api_keys",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"data":[{"id":"key-id","name":"zcode-api-key"}]}))
+                }),
+            )
+            .route(
+                "/api/biz/v1/organization/org/projects/proj/api_keys/copy/key-id",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"data":{"secretKey":"key-secret"}}))
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let tokens = execute_zcode_refresh(
+            &reqwest::Client::new(),
+            &format!("http://{addr}"),
+            "zai-upstream",
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "key-id.key-secret");
+        assert_eq!(tokens.refresh_token.as_deref(), Some("zai-upstream"));
     }
 
     #[tokio::test]

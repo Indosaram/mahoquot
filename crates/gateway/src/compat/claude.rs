@@ -2,6 +2,113 @@ use serde_json::{json, Map, Value};
 
 use super::events::{CodexEvent, Usage};
 
+#[derive(Default)]
+pub struct AnthropicDecoder {
+    started: bool,
+    input_tokens: u64,
+    output_tokens: u64,
+    next_tool_index: u64,
+}
+
+impl AnthropicDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn decode(&mut self, frame: &[u8], out: &mut Vec<CodexEvent>) {
+        let Ok(value) = serde_json::from_slice::<Value>(frame) else {
+            return;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                self.started = true;
+                self.input_tokens = value["message"]["usage"]["input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
+                out.push(CodexEvent::Created {
+                    response_id: value["message"]["id"]
+                        .as_str()
+                        .unwrap_or("msg_anthropic")
+                        .to_string(),
+                });
+            }
+            Some("content_block_start") if value["content_block"]["type"] == "tool_use" => {
+                out.push(CodexEvent::ToolCallBegin {
+                    output_index: self.next_tool_index,
+                    call_id: value["content_block"]["id"]
+                        .as_str()
+                        .unwrap_or("toolu_anthropic")
+                        .to_string(),
+                    name: value["content_block"]["name"]
+                        .as_str()
+                        .unwrap_or("tool")
+                        .trim_start_matches("custom_")
+                        .to_string(),
+                });
+                self.next_tool_index += 1;
+            }
+            Some("content_block_delta") => match value["delta"]["type"].as_str() {
+                Some("text_delta") => {
+                    if let Some(text) = value["delta"]["text"].as_str() {
+                        out.push(CodexEvent::TextDelta(text.to_string()));
+                    }
+                }
+                Some("thinking_delta") | Some("reasoning_delta") => {
+                    if let Some(text) = value["delta"]["thinking"]
+                        .as_str()
+                        .or_else(|| value["delta"]["text"].as_str())
+                    {
+                        out.push(CodexEvent::TextDelta(text.to_string()));
+                    }
+                }
+                Some("signature_delta") => {
+                    if let Some(signature) = value["delta"]["signature"].as_str() {
+                        out.push(CodexEvent::ReasoningSignature(signature.to_string()));
+                    }
+                }
+                Some("input_json_delta") => {
+                    if let Some(delta) = value["delta"]["partial_json"].as_str() {
+                        out.push(CodexEvent::ToolArgsDelta {
+                            output_index: self.next_tool_index.saturating_sub(1),
+                            delta: delta.to_string(),
+                        });
+                    }
+                }
+                _ => {}
+            },
+            Some("message_delta") => {
+                self.output_tokens = value["usage"]["output_tokens"].as_u64().unwrap_or(0);
+            }
+            Some("message_stop") => {
+                self.started = false;
+                out.push(CodexEvent::Completed {
+                    usage: Some(Usage {
+                        prompt_tokens: self.input_tokens,
+                        completion_tokens: self.output_tokens,
+                        total_tokens: self.input_tokens + self.output_tokens,
+                        cached_tokens: 0,
+                        reasoning_tokens: 0,
+                    }),
+                });
+            }
+            Some("error") => out.push(CodexEvent::Failed {
+                message: value["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Anthropic upstream error")
+                    .to_string(),
+            }),
+            _ => {}
+        }
+    }
+
+    pub fn finish(&mut self, out: &mut Vec<CodexEvent>) {
+        if self.started {
+            self.started = false;
+            out.push(CodexEvent::Completed { usage: None });
+        }
+    }
+}
+
 pub fn anthropic_to_openai(body: &Value) -> Result<Value, String> {
     let model = body
         .get("model")
@@ -133,6 +240,141 @@ pub fn anthropic_to_openai(body: &Value) -> Result<Value, String> {
     }
 
     Ok(Value::Object(out))
+}
+
+pub fn openai_to_anthropic(body: &Value) -> Result<Value, String> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing model".to_string())?;
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing messages".to_string())?;
+    let mut system = Vec::new();
+    let mut out = Vec::new();
+    for message in messages {
+        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        if role == "system" || role == "developer" {
+            if let Some(text) = message.get("content").and_then(Value::as_str) {
+                system.push(text.to_string());
+            }
+            continue;
+        }
+        if role == "tool" {
+            out.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": message.get("tool_call_id").and_then(Value::as_str).unwrap_or(""),
+                    "content": message.get("content").cloned().unwrap_or(Value::String(String::new())),
+                }]
+            }));
+            continue;
+        }
+        let mut content = match message.get("content") {
+            Some(Value::String(text)) => vec![json!({"type":"text","text":text})],
+            Some(Value::Array(blocks)) => blocks.clone(),
+            _ => Vec::new(),
+        };
+        if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+            for call in calls {
+                let input = call["function"]["arguments"]
+                    .as_str()
+                    .and_then(|raw| serde_json::from_str(raw).ok())
+                    .unwrap_or_else(|| json!({}));
+                content.push(json!({
+                    "type": "tool_use",
+                    "id": call["id"],
+                    "name": call["function"]["name"],
+                    "input": input,
+                }));
+            }
+        }
+        out.push(json!({"role": role, "content": content}));
+    }
+    let tools: Vec<Value> = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool.get("function"))
+        .map(|function| {
+            let name = function["name"].as_str().unwrap_or("tool");
+            json!({
+                "name": format!("custom_{name}"),
+                "description": function["description"],
+                "input_schema": function.get("parameters").cloned().unwrap_or_else(|| json!({"type":"object"})),
+            })
+        })
+        .collect();
+    let mut result = json!({
+        "model": model,
+        "messages": out,
+        "max_tokens": body.get("max_tokens").and_then(Value::as_u64).unwrap_or(4096),
+        "stream": body.get("stream").and_then(Value::as_bool).unwrap_or(false),
+    });
+    if !system.is_empty() {
+        result["system"] = Value::String(system.join("\n\n"));
+    }
+    if !tools.is_empty() {
+        result["tools"] = Value::Array(tools);
+    }
+    for key in ["temperature", "top_p", "stop_sequences"] {
+        if let Some(value) = body.get(key) {
+            result[key] = value.clone();
+        }
+    }
+    Ok(result)
+}
+
+pub fn anthropic_json_to_openai(body: &Value, model: &str, created: i64) -> Value {
+    let content = body
+        .get("content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let text = content
+        .iter()
+        .filter(|block| block["type"] == "text")
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    let tool_calls: Vec<Value> = content
+        .iter()
+        .filter(|block| block["type"] == "tool_use")
+        .map(|block| {
+            json!({
+                "id": block["id"],
+                "type": "function",
+                "function": {
+                    "name": block["name"].as_str().unwrap_or("tool").trim_start_matches("custom_"),
+                    "arguments": block["input"].to_string(),
+                }
+            })
+        })
+        .collect();
+    let mut message = json!({"role":"assistant","content":text});
+    if !tool_calls.is_empty() {
+        message["tool_calls"] = Value::Array(tool_calls);
+    }
+    json!({
+        "id": body.get("id").cloned().unwrap_or_else(|| json!(format!("chatcmpl-{created}"))),
+        "object": "chat.completion",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": if body["stop_reason"] == "tool_use" { "tool_calls" } else { "stop" },
+        }],
+        "usage": {
+            "prompt_tokens": body["usage"]["input_tokens"].as_u64().unwrap_or(0),
+            "completion_tokens": body["usage"]["output_tokens"].as_u64().unwrap_or(0),
+            "total_tokens": body["usage"]["input_tokens"].as_u64().unwrap_or(0)
+                + body["usage"]["output_tokens"].as_u64().unwrap_or(0),
+        }
+    })
 }
 
 fn system_to_text(system: &Value) -> Option<String> {
@@ -315,4 +557,141 @@ pub fn render_anthropic_stream(
 
 fn sse(event: &str, payload: &Value) -> String {
     format!("event: {event}\ndata: {payload}\n\n")
+}
+
+pub struct AnthropicStreamRenderer {
+    id: String,
+    model: String,
+    started: bool,
+    text_open: bool,
+    terminated: bool,
+    tool_index: u64,
+    current_tool_index: Option<u64>,
+}
+
+impl AnthropicStreamRenderer {
+    pub fn new(model: String, created: i64) -> Self {
+        Self {
+            id: format!("msg_{created}"),
+            model,
+            started: false,
+            text_open: false,
+            terminated: false,
+            tool_index: 0,
+            current_tool_index: None,
+        }
+    }
+
+    fn frame(event: &str, value: Value) -> bytes::Bytes {
+        bytes::Bytes::from(sse(event, &value))
+    }
+
+    fn ensure_started(&mut self, out: &mut Vec<bytes::Bytes>) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+        out.push(Self::frame(
+            "message_start",
+            json!({
+                "type":"message_start",
+                "message":{
+                    "id":self.id,"type":"message","role":"assistant","content":[],
+                    "model":self.model,"stop_reason":Value::Null,"stop_sequence":Value::Null,
+                    "usage":{"input_tokens":0,"output_tokens":0}
+                }
+            }),
+        ));
+    }
+
+    fn close_text(&mut self, out: &mut Vec<bytes::Bytes>) {
+        if self.text_open {
+            self.text_open = false;
+            out.push(Self::frame(
+                "content_block_stop",
+                json!({"type":"content_block_stop","index":0}),
+            ));
+        }
+    }
+
+    pub fn render(&mut self, event: CodexEvent) -> Vec<bytes::Bytes> {
+        let mut out = Vec::new();
+        self.ensure_started(&mut out);
+        match event {
+            CodexEvent::Created { response_id } => {
+                if !response_id.is_empty() {
+                    self.id = response_id;
+                }
+            }
+            CodexEvent::TextDelta(text) => {
+                if !self.text_open {
+                    self.text_open = true;
+                    out.push(Self::frame(
+                        "content_block_start",
+                        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                    ));
+                }
+                out.push(Self::frame(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
+                ));
+            }
+            CodexEvent::ReasoningSignature(signature) => out.push(Self::frame(
+                "content_block_delta",
+                json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":signature}}),
+            )),
+            CodexEvent::ToolCallBegin { call_id, name, .. } => {
+                self.close_text(&mut out);
+                let index = self.tool_index + 1;
+                self.tool_index = index;
+                self.current_tool_index = Some(index);
+                out.push(Self::frame(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":index,"content_block":{"type":"tool_use","id":call_id,"name":name,"input":{}}}),
+                ));
+            }
+            CodexEvent::ToolArgsDelta { delta, .. } => {
+                let index = self.current_tool_index.unwrap_or(1);
+                out.push(Self::frame(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":index,"delta":{"type":"input_json_delta","partial_json":delta}}),
+                ));
+            }
+            CodexEvent::Completed { usage } => {
+                self.close_text(&mut out);
+                if let Some(index) = self.current_tool_index.take() {
+                    out.push(Self::frame(
+                        "content_block_stop",
+                        json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                let stop = if self.tool_index > 0 { "tool_use" } else { "end_turn" };
+                out.push(Self::frame(
+                    "message_delta",
+                    json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":Value::Null},"usage":{"output_tokens":usage.map(|u|u.completion_tokens).unwrap_or(0)}}),
+                ));
+                out.push(Self::frame("message_stop", json!({"type":"message_stop"})));
+                self.terminated = true;
+            }
+            CodexEvent::Failed { message } => {
+                out.push(Self::frame(
+                    "error",
+                    json!({"type":"error","error":{"type":"api_error","message":message}}),
+                ));
+                self.terminated = true;
+            }
+        }
+        out
+    }
+
+    pub fn close_unterminated(&mut self) -> Vec<bytes::Bytes> {
+        if self.terminated {
+            return Vec::new();
+        }
+        self.render(CodexEvent::Completed { usage: None })
+    }
+
+    pub fn terminated(&self) -> bool {
+        self.terminated
+    }
 }

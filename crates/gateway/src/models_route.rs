@@ -1,6 +1,10 @@
 use serde_json::{json, Value};
 
-use quotio_providers::ANTIGRAVITY_MODELS;
+use quotio_providers::{
+    ANTIGRAVITY_MODELS, CLAUDE_MODELS, KIRO_MODELS, ZCODE_MODELS,
+};
+
+use crate::account::ProviderKind;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ModelEntry {
@@ -36,13 +40,12 @@ pub fn model_ids_from_env(raw: Option<&str>) -> Vec<String> {
 /// Advertise a model only when an account that can actually serve it is loaded,
 /// so a client selecting from /v1/models never gets a routing failure.
 pub fn model_entries(
-    has_codex: bool,
-    has_antigravity: bool,
+    providers: &[ProviderKind],
     env_override: Option<&str>,
 ) -> Vec<ModelEntry> {
     let mut entries: Vec<ModelEntry> = Vec::new();
 
-    if has_codex {
+    if providers.contains(&ProviderKind::Codex) {
         for id in model_ids_from_env(env_override) {
             entries.push(ModelEntry {
                 id,
@@ -51,11 +54,39 @@ pub fn model_entries(
         }
     }
 
-    if has_antigravity {
+    if providers.contains(&ProviderKind::Antigravity) {
         for id in ANTIGRAVITY_MODELS {
             entries.push(ModelEntry {
                 id: id.to_string(),
                 owned_by: "google".to_string(),
+            });
+        }
+    }
+
+    for (kind, owned_by, models) in [
+        (ProviderKind::Claude, "anthropic", CLAUDE_MODELS),
+        (ProviderKind::Zcode, "z-ai", ZCODE_MODELS),
+        (ProviderKind::Kiro, "kiro", KIRO_MODELS),
+    ] {
+        if providers.contains(&kind) {
+            for id in models {
+                let id = if kind == ProviderKind::Kiro {
+                    format!("kiro/{id}")
+                } else {
+                    id.to_string()
+                };
+                entries.push(ModelEntry {
+                    id,
+                    owned_by: owned_by.to_string(),
+                });
+            }
+        }
+    }
+    if providers.contains(&ProviderKind::Cursor) {
+        for id in ["cursor/auto", "cursor/auto-cost", "cursor/auto-balance", "cursor/auto-intelligence"] {
+            entries.push(ModelEntry {
+                id: id.to_string(),
+                owned_by: "cursor".to_string(),
             });
         }
     }
@@ -88,24 +119,27 @@ mod tests {
 
     #[test]
     fn entries_track_loaded_providers() {
-        let codex_only = model_entries(true, false, None);
+        let codex_only = model_entries(&[ProviderKind::Codex], None);
         assert_eq!(codex_only.len(), 7);
         assert!(codex_only.iter().all(|e| e.owned_by == "openai"));
 
-        let ag_only = model_entries(false, true, None);
+        let ag_only = model_entries(&[ProviderKind::Antigravity], None);
         assert_eq!(ag_only.len(), 13);
         assert!(ag_only.iter().any(|e| e.id == "gemini-3.7-flash-high"));
         assert!(ag_only.iter().all(|e| e.owned_by == "google"));
 
-        let both = model_entries(true, true, None);
+        let both = model_entries(&[ProviderKind::Codex, ProviderKind::Antigravity], None);
         assert_eq!(both.len(), 20);
 
-        assert!(model_entries(false, false, None).is_empty());
+        assert!(model_entries(&[], None).is_empty());
     }
 
     #[test]
     fn env_override_scopes_codex_only() {
-        let entries = model_entries(true, true, Some("gpt-x, gpt-y"));
+        let entries = model_entries(
+            &[ProviderKind::Codex, ProviderKind::Antigravity],
+            Some("gpt-x, gpt-y"),
+        );
         let codex: Vec<_> = entries.iter().filter(|e| e.owned_by == "openai").collect();
         assert_eq!(codex.len(), 2);
         assert_eq!(codex[0].id, "gpt-x");

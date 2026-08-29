@@ -37,11 +37,18 @@ impl ProviderKind {
     /// open-ended rule, since its model names are not enumerable.
     pub fn serves_model(&self, model: &str) -> bool {
         match self {
-            ProviderKind::Codex => !is_antigravity_model(model),
+            ProviderKind::Codex => {
+                !is_antigravity_model(model)
+                    && !quotio_providers::is_claude_model(model)
+                    && !quotio_providers::is_zcode_model(model)
+                    && !model.starts_with("cursor/")
+                    && !model.starts_with("kiro/")
+                    && model != "auto-kiro"
+            }
             ProviderKind::Antigravity => is_antigravity_model(model),
             ProviderKind::Claude => quotio_providers::is_claude_model(model),
-            ProviderKind::Cursor => quotio_providers::is_cursor_model(model),
-            ProviderKind::Kiro => quotio_providers::is_kiro_model(model),
+            ProviderKind::Cursor => model.starts_with("cursor/"),
+            ProviderKind::Kiro => model.starts_with("kiro/") || model == "auto-kiro",
             ProviderKind::Zcode => quotio_providers::is_zcode_model(model),
         }
     }
@@ -128,19 +135,67 @@ impl ProviderAccount {
                     "anthropic-beta".to_string(),
                     quotio_providers::CLAUDE_BETA_HEADER.to_string(),
                 ),
+                ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                ("content-type".to_string(), "application/json".to_string()),
             ],
-            Self::Cursor(a) => vec![(
-                "authorization".to_string(),
-                format!("Bearer {}", a.access_token),
-            )],
-            Self::Kiro(a) => vec![(
-                "authorization".to_string(),
-                format!("Bearer {}", a.access_token),
-            )],
-            Self::Zcode(a) => vec![(
-                "authorization".to_string(),
-                format!("Bearer {}", a.access_token),
-            )],
+            Self::Cursor(a) => vec![
+                (
+                    "authorization".to_string(),
+                    format!("Bearer {}", a.access_token),
+                ),
+                ("content-type".to_string(), "application/connect+proto".to_string()),
+                ("connect-protocol-version".to_string(), "1".to_string()),
+                ("connect-timeout-ms".to_string(), "300000".to_string()),
+                ("x-ghost-mode".to_string(), "true".to_string()),
+                ("x-cursor-client-version".to_string(), "cli-2026.07.08-0c04a8a".to_string()),
+                ("x-cursor-client-type".to_string(), "cli".to_string()),
+                ("te".to_string(), "trailers".to_string()),
+            ],
+            Self::Kiro(a) => vec![
+                (
+                    "authorization".to_string(),
+                    format!("Bearer {}", a.access_token),
+                ),
+                ("content-type".to_string(), "application/x-amz-json-1.0".to_string()),
+                (
+                    "x-amz-target".to_string(),
+                    "AmazonCodeWhispererStreamingService.GenerateAssistantResponse".to_string(),
+                ),
+                ("x-amzn-codewhisperer-optout".to_string(), "true".to_string()),
+                ("x-amzn-kiro-agent-mode".to_string(), "vibe".to_string()),
+                ("amz-sdk-request".to_string(), "attempt=1; max=3".to_string()),
+                (
+                    "user-agent".to_string(),
+                    "aws-sdk-js/1.0.27 KiroIDE-0.7.45-quotio".to_string(),
+                ),
+            ],
+            Self::Zcode(a) => vec![
+                (
+                    "authorization".to_string(),
+                    format!("Bearer {}", a.access_token),
+                ),
+                ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                ("content-type".to_string(), "application/json".to_string()),
+                ("user-agent".to_string(), "ZCode/3.1.2".to_string()),
+                ("http-referer".to_string(), "https://zcode.z.ai".to_string()),
+                ("x-title".to_string(), "Z Code@electron".to_string()),
+                ("x-zcode-agent".to_string(), "glm".to_string()),
+                ("x-zcode-app-version".to_string(), "3.1.2".to_string()),
+                ("x-release-channel".to_string(), "production".to_string()),
+                (
+                    "x-platform".to_string(),
+                    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+                ),
+                (
+                    "x-os-category".to_string(),
+                    match std::env::consts::OS {
+                        "macos" => "macos",
+                        "windows" => "windows",
+                        _ => "linux",
+                    }
+                    .to_string(),
+                ),
+            ],
         }
     }
 
@@ -156,6 +211,24 @@ impl ProviderAccount {
             Self::Antigravity(a) => {
                 quotio_providers::build_antigravity_refresh_request(&a.refresh_token)
             }
+            Self::Claude(a) => quotio_providers::build_claude_refresh_request(&a.refresh_token),
+            Self::Cursor(a) => quotio_providers::build_cursor_refresh_request(&a.refresh_token),
+            Self::Kiro(a) => match a.auth_mode {
+                quotio_providers::KiroAuthMode::Social => {
+                    quotio_providers::build_kiro_social_refresh_request(
+                        &a.refresh_token,
+                        a.effective_region(),
+                    )
+                }
+                quotio_providers::KiroAuthMode::Idc => {
+                    quotio_providers::build_kiro_idc_refresh_request(
+                        &a.refresh_token,
+                        a.effective_region(),
+                        &a.client_id,
+                        &a.client_secret,
+                    )
+                }
+            },
             other => quotio_providers::build_refresh_request(&other.refresh_token()),
         }
     }
@@ -384,7 +457,20 @@ impl AccountMember {
         } else {
             spec.url.as_str()
         };
-        let tokens = execute_refresh_spec(client, url, &spec).await?;
+        let tokens = if self.kind() == ProviderKind::Zcode {
+            let base = self
+                .upstream_override
+                .as_deref()
+                .unwrap_or(quotio_providers::ZCODE_API_BASE);
+            quotio_providers::refresh_exec::execute_zcode_refresh(
+                client,
+                base,
+                &self.refresh_token(),
+            )
+            .await?
+        } else {
+            execute_refresh_spec(client, url, &spec).await?
+        };
         apply_refresh_to_file(&self.file_path, &tokens, now_unix)?;
         if let Err(e) = self.reload_from_file() {
             return Err(RefreshError::Parse(e.to_string()));

@@ -127,7 +127,7 @@ fn each_provider_only_claims_models_it_can_actually_serve() {
     assert!(!by_kind(ProviderKind::Claude).supports_model("gpt-5.6-sol"));
 
     // ...but each must claim its own catalogue.
-    assert!(by_kind(ProviderKind::Kiro).supports_model("claude-haiku-4-5-20251001"));
+    assert!(by_kind(ProviderKind::Kiro).supports_model("kiro/claude-haiku-4-5-20251001"));
     assert!(by_kind(ProviderKind::Zcode).supports_model("glm-5.2"));
     assert!(by_kind(ProviderKind::Claude).supports_model("claude-sonnet-4-5-20250929"));
 }
