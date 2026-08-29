@@ -4,6 +4,8 @@
 )]
 
 mod stats;
+#[cfg(test)]
+mod tray_tests;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -82,7 +84,7 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 
 fn main() {
     let base_url =
-        std::env::var("QUOTIO_URL").unwrap_or_else(|_| "http://127.0.0.1:18871".to_string());
+        std::env::var("QUOTIO_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
     let api_key = std::env::var("QUOTIO_API_KEY").unwrap_or_default();
 
     tauri::Builder::default()
