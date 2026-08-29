@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createGatewayClients } from "../lib/api";
 
@@ -77,6 +79,35 @@ describe("unified gateway auth boundary", () => {
       ),
     ).toBe(true);
     expect(calls[1]?.init?.body).toBe(JSON.stringify({ names: ["b.json", "a.json"] }));
+  });
+
+  it("only starts provider auth on routes the gateway actually serves", async () => {
+    // The mocked e2e routes used to hide that the console asked for
+    // /gemini-cli-auth-url and /kiro-auth-url, which the gateway never served.
+    const contract = JSON.parse(
+      readFileSync(resolve(process.cwd(), "../../../.omo/upstream/route-groups.json"), "utf8"),
+    ) as Record<string, string[]>;
+    const served = new Set([
+      ...(contract.creds_oauth ?? [])
+        .filter((route) => route.startsWith("GET /"))
+        .map((route) => route.slice("GET /".length)),
+      "cursor-auth-url",
+    ]);
+
+    for (const provider of ["codex", "antigravity", "claude", "cursor", "kimi", "xai"]) {
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          calls.push(String(input));
+          return new Response(JSON.stringify({ url: "https://example.com", state: "s" }));
+        }),
+      );
+      const clients = createGatewayClients("http://127.0.0.1:18801", "api-key");
+      await clients.management.beginProviderAuth(provider);
+      const route = (calls[0] ?? "").split("/v0/management/")[1] ?? "";
+      expect(served.has(route), `${provider} -> ${route}`).toBe(true);
+    }
   });
 
   it("reads and writes typed scalar settings through their management routes", async () => {

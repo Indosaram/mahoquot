@@ -146,25 +146,55 @@ export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
   };
 };
 
-export const downsampleTelemetry = (
-  samples: readonly TelemetrySample[],
-  maximumPoints = 240,
-): readonly TelemetrySample[] => {
-  if (samples.length <= maximumPoints) return samples;
-  const bucketSize = Math.ceil(samples.length / maximumPoints);
-  const output: TelemetrySample[] = [];
-  for (let index = 0; index < samples.length; index += bucketSize) {
-    const bucket = samples.slice(index, index + bucketSize);
-    const summary = summarizeTelemetry(bucket);
-    const latest = bucket.at(-1);
-    if (!latest) continue;
-    output.push({
-      ...latest,
-      requests: summary.requests,
-      successes: summary.successes,
-      failures: summary.failures,
-      providers: summary.providers,
-    });
+export interface TelemetryPoint {
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly requests: number;
+  readonly successes: number;
+  readonly failures: number;
+}
+
+/**
+ * Projects sparse, irregularly spaced samples onto a dense grid of fixed-width
+ * buckets covering exactly [now - range, now].
+ *
+ * The chart derives x from array index, so the grid — not the caller — is what
+ * makes the axis time-accurate: every bucket is the same duration, and idle
+ * windows are present as explicit zeros rather than missing entries. Sampling
+ * gaps therefore read as gaps instead of being interpolated away.
+ */
+export const telemetrySeries = (
+  samples: readonly Pick<TelemetrySample, "timestamp" | "requests" | "successes" | "failures">[],
+  range: TelemetryRange,
+  now: number = Date.now(),
+  points = 240,
+): readonly TelemetryPoint[] => {
+  const bucketCount = Math.max(1, Math.floor(points));
+  const windowMs = rangeDurationMs[range];
+  const bucketMs = windowMs / bucketCount;
+  const start = now - windowMs;
+
+  const series: TelemetryPoint[] = Array.from({ length: bucketCount }, (_, index) => ({
+    startMs: start + index * bucketMs,
+    endMs: start + (index + 1) * bucketMs,
+    requests: 0,
+    successes: 0,
+    failures: 0,
+  }));
+
+  for (const sample of samples) {
+    if (sample.timestamp < start || sample.timestamp > now) continue;
+    // The final instant belongs to the last bucket rather than a phantom one.
+    const index = Math.min(bucketCount - 1, Math.floor((sample.timestamp - start) / bucketMs));
+    const bucket = series[index];
+    if (!bucket) continue;
+    series[index] = {
+      ...bucket,
+      requests: bucket.requests + sample.requests,
+      successes: bucket.successes + sample.successes,
+      failures: bucket.failures + sample.failures,
+    };
   }
-  return output;
+
+  return series;
 };

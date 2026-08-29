@@ -150,7 +150,13 @@ impl ProviderAccount {
             Self::Claude(a) => expired_at_is_past(&a.expired, now_unix),
             Self::Cursor(a) => expired_at_is_past(&a.expired, now_unix),
             Self::Kiro(a) => expired_at_is_past(&a.expired, now_unix),
-            Self::Zcode(a) => expired_at_is_past(&a.expired, now_unix),
+            // A provisioned {id}.{secret} key carries no expiry and cannot be
+            // refreshed, so an absent timestamp means "never expires" here
+            // rather than the "expired" default the OAuth providers take.
+            Self::Zcode(a) => {
+                !mahoquot_providers::zcode::is_provisioned_api_key(&a.access_token)
+                    && expired_at_is_past(&a.expired, now_unix)
+            }
         }
     }
 
@@ -586,6 +592,55 @@ mod identity_tests {
     use super::*;
 
     #[test]
+    fn pool_order_ignores_the_console_display_order() {
+        let dir = std::env::temp_dir().join(format!("mahoquot-pool-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp auth dir");
+        for name in ["codex-a.json", "codex-b.json"] {
+            std::fs::write(
+                dir.join(name),
+                r#"{"type":"codex","access_token":"t","account_id":"a","email":"u@example.com","expired":"2099-01-01T00:00:00Z","id_token":"i","last_refresh":""}"#,
+            )
+            .expect("write credential");
+        }
+        std::fs::write(
+            dir.join(".mahoquot-account-order.json"),
+            r#"["codex-b.json","codex-a.json"]"#,
+        )
+        .expect("write display order");
+
+        let files = list_all_auth_files(&dir).expect("list auth files");
+        let names: Vec<String> = files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .map(str::to_string)
+            .collect();
+
+        assert_eq!(names, vec!["codex-a.json", "codex-b.json"]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn zcode_provisioned_key_never_counts_as_expired() {
+        let provisioned = ProviderAccount::Zcode(mahoquot_providers::ZcodeAccount {
+            access_token: "keyid.keysecret".to_string(),
+            email: "u@example.com".to_string(),
+            expired: String::new(),
+            r#type: "zcode".to_string(),
+            ..Default::default()
+        });
+        assert!(!provisioned.is_expired(4_102_444_800));
+
+        let oauth_token = ProviderAccount::Zcode(mahoquot_providers::ZcodeAccount {
+            access_token: "not-a-provisioned-key".to_string(),
+            email: "u@example.com".to_string(),
+            expired: String::new(),
+            r#type: "zcode".to_string(),
+            ..Default::default()
+        });
+        assert!(oauth_token.is_expired(4_102_444_800));
+    }
+
+    #[test]
     fn antigravity_provider_name_slug_is_replaced_by_filename_identity() {
         let dir = std::env::temp_dir().join(format!(
             "mahoquot-antigravity-identity-{}",
@@ -651,20 +706,10 @@ fn list_all_auth_files(auth_dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
                 .is_some_and(|n| n.ends_with(".json") && n != ".mahoquot-account-order.json")
         })
         .collect();
-    let order = std::fs::read_to_string(auth_dir.join(".mahoquot-account-order.json"))
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .unwrap_or_default();
-    files.sort_by(|a, b| {
-        let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        let b_name = b.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        order
-            .iter()
-            .position(|name| name == a_name)
-            .unwrap_or(usize::MAX)
-            .cmp(&order.iter().position(|name| name == b_name).unwrap_or(usize::MAX))
-            .then_with(|| a_name.cmp(b_name))
-    });
+    // Pool order is filename order and nothing else. `.mahoquot-account-order.json`
+    // is the console's display order; letting it reach the pool would make a
+    // cosmetic drag in the UI silently repoint FillFirst routing.
+    files.sort();
     Ok(files)
 }
 

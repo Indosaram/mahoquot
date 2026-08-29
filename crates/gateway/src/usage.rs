@@ -155,6 +155,19 @@ pub fn parse_antigravity_quota_summary(body: &serde_json::Value, now_unix: i64) 
 /// Hand-rolled because the gateway carries no date dependency and this field
 /// is always UTC with a `Z` suffix; anything else is rejected rather than
 /// guessed at.
+/// `2026-08-30T03:50:00.351899+00:00` — fractional seconds plus a numeric UTC
+/// offset, neither of which the `Z`-only parser above accepts.
+fn parse_offset_datetime_unix(s: &str) -> Option<i64> {
+    let trimmed = s.trim();
+    let base = trimmed
+        .strip_suffix("+00:00")
+        .or_else(|| trimmed.strip_suffix("-00:00"))
+        .or_else(|| trimmed.strip_suffix('Z'))
+        .unwrap_or(trimmed);
+    let base = base.split_once('.').map_or(base, |(head, _)| head);
+    parse_rfc3339_unix(&format!("{base}Z"))
+}
+
 fn parse_rfc3339_unix(s: &str) -> Option<i64> {
     let s = s.strip_suffix('Z')?;
     let (date, time) = s.split_once('T')?;
@@ -278,6 +291,115 @@ pub fn parse_codex_headers(headers: &HashMap<String, String>, now_unix: i64) -> 
         credits_balance: num(&lower, "x-codex-credits-balance"),
         credits_unlimited: flag(&lower, "x-codex-credits-unlimited"),
         has_credits: flag(&lower, "x-codex-credits-has-credits"),
+        reset_credits_available: None,
+        groups: Vec::new(),
+        observed_at_unix: observed,
+    }
+}
+
+/// Quota state from Anthropic's OAuth subscription responses.
+///
+/// The subscription path reports `anthropic-ratelimit-unified-*`, which is a
+/// different family from the API-key `anthropic-ratelimit-tokens-*` headers and
+/// expresses consumption as a 0.0-1.0 utilization fraction rather than a
+/// remaining count, so it is scaled to the percent orientation used everywhere
+/// else here.
+pub fn parse_claude_headers(headers: &HashMap<String, String>, now_unix: i64) -> AccountUsage {
+    let lower: HashMap<String, String> = headers
+        .iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
+        .collect();
+
+    let window = |slug: &str, minutes: i64, name: &str| QuotaWindow {
+        used_percent: num(&lower, &format!("anthropic-ratelimit-unified-{slug}-utilization"))
+            .map(|fraction| (fraction * 100.0).clamp(0.0, 100.0)),
+        window_minutes: Some(minutes),
+        reset_after_seconds: None,
+        reset_at_unix: int(&lower, &format!("anthropic-ratelimit-unified-{slug}-reset")),
+        limit_name: Some(name.to_string()),
+    };
+
+    let primary = window("5h", 300, "Session");
+    let secondary = window("7d", 10_080, "Weekly");
+    let observed = if primary.used_percent.is_none() && secondary.used_percent.is_none() {
+        None
+    } else {
+        Some(now_unix)
+    };
+
+    AccountUsage {
+        plan_type: None,
+        active_limit: text(&lower, "anthropic-ratelimit-unified-representative-claim"),
+        primary: if primary.used_percent.is_none() {
+            QuotaWindow::default()
+        } else {
+            primary
+        },
+        secondary: if secondary.used_percent.is_none() {
+            QuotaWindow::default()
+        } else {
+            secondary
+        },
+        credits_balance: None,
+        credits_unlimited: None,
+        has_credits: None,
+        reset_credits_available: None,
+        groups: Vec::new(),
+        observed_at_unix: observed,
+    }
+}
+
+/// Quota state from Anthropic's OAuth usage endpoint.
+///
+/// `GET /api/oauth/usage` answers `{five_hour,seven_day}{utilization,resets_at}`,
+/// so a Claude account can report quota without waiting for traffic to flow
+/// through the gateway.
+///
+/// Unlike the relay's `unified-*` headers, this endpoint's `utilization` is
+/// ALREADY a percent (live capture: `80.0` for an 80% session window), and its
+/// `resets_at` carries a numeric offset rather than `Z`.
+pub fn parse_claude_usage_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
+    let window = |key: &str, minutes: i64, name: &str| {
+        let node = &body[key];
+        QuotaWindow {
+            used_percent: node
+                .get("utilization")
+                .and_then(serde_json::Value::as_f64)
+                .map(|percent| percent.clamp(0.0, 100.0)),
+            window_minutes: Some(minutes),
+            reset_after_seconds: None,
+            reset_at_unix: node
+                .get("resets_at")
+                .and_then(serde_json::Value::as_str)
+                .and_then(parse_offset_datetime_unix),
+            limit_name: Some(name.to_string()),
+        }
+    };
+
+    let primary = window("five_hour", 300, "Session");
+    let secondary = window("seven_day", 10_080, "Weekly");
+    let observed = if primary.used_percent.is_none() && secondary.used_percent.is_none() {
+        None
+    } else {
+        Some(now_unix)
+    };
+
+    AccountUsage {
+        plan_type: None,
+        active_limit: None,
+        primary: if primary.used_percent.is_none() {
+            QuotaWindow::default()
+        } else {
+            primary
+        },
+        secondary: if secondary.used_percent.is_none() {
+            QuotaWindow::default()
+        } else {
+            secondary
+        },
+        credits_balance: None,
+        credits_unlimited: None,
+        has_credits: None,
         reset_credits_available: None,
         groups: Vec::new(),
         observed_at_unix: observed,
@@ -632,5 +754,52 @@ mod tests {
         assert!(u.groups.is_empty());
         assert_eq!(u.primary.used_percent, None);
         assert_eq!(u.observed_at_unix, Some(42));
+    }
+
+    #[test]
+    fn claude_subscription_headers_become_session_and_weekly_windows() {
+        let headers: HashMap<String, String> = [
+            ("anthropic-ratelimit-unified-status", "allowed"),
+            ("anthropic-ratelimit-unified-5h-utilization", "0.03"),
+            ("anthropic-ratelimit-unified-5h-reset", "1765944000"),
+            ("anthropic-ratelimit-unified-7d-utilization", "0.12"),
+            ("anthropic-ratelimit-unified-7d-reset", "1766030400"),
+            (
+                "anthropic-ratelimit-unified-representative-claim",
+                "five_hour",
+            ),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+        let usage = parse_claude_headers(&headers, 99);
+
+        assert_eq!(usage.primary.used_percent, Some(3.0));
+        assert_eq!(usage.primary.window_minutes, Some(300));
+        assert_eq!(usage.primary.reset_at_unix, Some(1765944000));
+        assert_eq!(usage.primary.limit_name.as_deref(), Some("Session"));
+        assert_eq!(usage.secondary.used_percent, Some(12.0));
+        assert_eq!(usage.secondary.window_minutes, Some(10_080));
+        assert_eq!(usage.secondary.limit_name.as_deref(), Some("Weekly"));
+        assert_eq!(usage.active_limit.as_deref(), Some("five_hour"));
+        assert_eq!(usage.observed_at_unix, Some(99));
+    }
+
+    #[test]
+    fn claude_api_key_headers_report_no_subscription_window() {
+        let headers: HashMap<String, String> = [
+            ("anthropic-ratelimit-tokens-limit", "20000"),
+            ("anthropic-ratelimit-tokens-remaining", "19000"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+        let usage = parse_claude_headers(&headers, 99);
+
+        assert_eq!(usage.observed_at_unix, None);
+        assert!(usage.primary.is_empty());
+        assert!(usage.secondary.is_empty());
     }
 }

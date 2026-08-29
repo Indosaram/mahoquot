@@ -1,31 +1,33 @@
 import {
   AlertTriangle,
-  BookOpenText,
-  ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  ChevronUp,
   CircleGauge,
   Copy,
+  GripVertical,
   KeyRound,
-  Moon,
   Network,
+  Plus,
   RefreshCw,
   RotateCcw,
   Route,
   Settings2,
   Sparkles,
-  Sun,
   TerminalSquare,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import antigravityLogo from "./assets/provider-logos/antigravity.svg";
 import claudeLogo from "./assets/provider-logos/claude.svg";
 import codexLogo from "./assets/provider-logos/codex.svg";
 import cursorLogo from "./assets/provider-logos/cursor.svg";
+import kimiLogo from "./assets/provider-logos/kimi.svg";
 import kiroLogo from "./assets/provider-logos/kiro.svg";
+import xaiLogo from "./assets/provider-logos/xai.svg";
+import zcodeLogo from "./assets/provider-logos/zcode.svg";
+import { ContextMenu, type ContextMenuItem, useContextMenu } from "./components/ContextMenu";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { Badge, Button, Card, Field, Input } from "./components/ui";
 import {
@@ -35,16 +37,20 @@ import {
 } from "./lib/accounts";
 import { GatewayError, createGatewayClients } from "./lib/api";
 import type { ProviderAuthStatus } from "./lib/api";
+import { wantsNativeMenu } from "./lib/context-menu";
 import {
   type GatewayLifecycleStatus,
   getGatewayLifecycle,
   startManagedGateway,
   stopManagedGateway,
 } from "./lib/native";
+import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/notch";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import {
   getGatewayBaseUrl,
   getRelayKey,
+  getTheme,
+  setTheme as persistTheme,
   setGatewayBaseUrl,
   setRelayKey,
   validateGatewayBaseUrl,
@@ -95,9 +101,101 @@ const formatQuotaPercent = (percent: number): string => {
 
 type QuotaRow = {
   readonly name: string;
+  /** Model pool the window meters, e.g. "Gemini Models". Null when the provider
+   * reports one flat pool, so there is nothing to disambiguate. */
+  readonly group: string | null;
   readonly usedPercent: number;
   readonly resetSeconds: number | null;
 };
+
+/** The group already names the pool, so "Weekly Limit Remaining" reduces to
+ * "Weekly" beside a remaining percentage. */
+const windowLabel = (raw: string): string =>
+  raw
+    .replace(/\s*limit(\s+remaining)?$/i, "")
+    .replace(/\s*remaining$/i, "")
+    .trim() || raw;
+
+type OnboardingMethod = {
+  /** Passed to beginOnboarding; identifies the flow, not the provider. */
+  readonly id: string;
+  readonly name: string;
+  readonly hint: string;
+};
+
+/** One tile per provider. A provider with several ways in keeps them behind its
+ * own tile rather than scattering each method across the grid. */
+const ONBOARDING_PROVIDERS: readonly {
+  readonly glyph: string;
+  readonly name: string;
+  readonly methods: readonly OnboardingMethod[];
+}[] = [
+  {
+    glyph: "claude",
+    name: "Claude",
+    methods: [
+      {
+        id: "claude",
+        name: "Sign in with Anthropic",
+        hint: "Opens the Claude OAuth consent page.",
+      },
+      {
+        id: "claude-local",
+        name: "Import Claude Code subscription",
+        hint: "Reuses the credential the Claude Code CLI already stores on this machine.",
+      },
+    ],
+  },
+  {
+    glyph: "codex",
+    name: "Codex",
+    methods: [{ id: "codex", name: "Sign in with OpenAI", hint: "Opens the Codex consent page." }],
+  },
+  {
+    glyph: "antigravity",
+    name: "Antigravity",
+    methods: [
+      {
+        id: "antigravity",
+        name: "Sign in with Google",
+        hint: "Opens the Antigravity consent page.",
+      },
+    ],
+  },
+  {
+    glyph: "cursor",
+    name: "Cursor",
+    methods: [
+      { id: "cursor", name: "Sign in with Cursor", hint: "Opens the Cursor consent page." },
+    ],
+  },
+  {
+    glyph: "kimi",
+    name: "Kimi",
+    methods: [{ id: "kimi", name: "Sign in with Moonshot", hint: "Opens the Kimi consent page." }],
+  },
+  {
+    glyph: "xai",
+    name: "xAI",
+    methods: [{ id: "xai", name: "Sign in with xAI", hint: "Opens the xAI consent page." }],
+  },
+  {
+    glyph: "zcode",
+    name: "Z.ai",
+    methods: [
+      {
+        id: "zcode-key",
+        name: "Paste a provisioned API key",
+        // Z.ai's OAuth redirects to zcode://oauth/callback, a scheme no server
+        // can receive, so the key is entered rather than captured.
+        hint: "Z.ai issues an {id}.{secret} key; OAuth cannot be captured by this console.",
+      },
+    ],
+  },
+];
+
+const errorMessage = (reason: unknown): string =>
+  reason instanceof Error ? reason.message : "unknown error";
 
 const resetSeconds = (resetAtUnix?: number | null, after?: number | null): number | null => {
   if (typeof resetAtUnix === "number") {
@@ -115,8 +213,10 @@ const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
         typeof bucket.used_percent === "number"
           ? [
               {
-                name:
+                name: windowLabel(
                   bucket.display_name || group.display_name || group.models || `Quota ${index + 1}`,
+                ),
+                group: group.display_name || group.models || null,
                 usedPercent: bucket.used_percent,
                 resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
               },
@@ -125,10 +225,11 @@ const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
       ),
     ) ?? [];
   if (grouped.length) return grouped;
-  return [
+  const flat: readonly (QuotaRow | null)[] = [
     usage.primary && typeof usage.primary.used_percent === "number"
       ? {
           name: usage.primary.limit_name || "Primary window",
+          group: null,
           usedPercent: usage.primary.used_percent,
           resetSeconds: resetSeconds(
             usage.primary.reset_at_unix,
@@ -139,6 +240,7 @@ const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
     usage.secondary && typeof usage.secondary.used_percent === "number"
       ? {
           name: usage.secondary.limit_name || "Secondary window",
+          group: null,
           usedPercent: usage.secondary.used_percent,
           resetSeconds: resetSeconds(
             usage.secondary.reset_at_unix,
@@ -146,7 +248,8 @@ const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
           ),
         }
       : null,
-  ].filter((row): row is QuotaRow => row !== null);
+  ];
+  return flat.filter((row): row is QuotaRow => row !== null);
 };
 
 const providerLabel = (value: string): string =>
@@ -160,7 +263,10 @@ const providerLogos: Readonly<Record<string, string>> = {
   claude: claudeLogo,
   codex: codexLogo,
   cursor: cursorLogo,
+  kimi: kimiLogo,
   kiro: kiroLogo,
+  xai: xaiLogo,
+  zcode: zcodeLogo,
 };
 
 const providerRingColors: Readonly<Record<string, string>> = {
@@ -174,6 +280,26 @@ const providerRingColors: Readonly<Record<string, string>> = {
 const providerRingColor = (provider: string): string =>
   providerRingColors[provider.trim().toLowerCase()] ?? "#8E8E93";
 
+/** Logos shipped as a single dark fill, which needs inverting on dark themes. */
+const MONOCHROME_LOGOS: ReadonlySet<string> = new Set(["cursor", "kimi", "xai", "zcode"]);
+
+/** The notch paints one flat tint: brand plates and gradients turn to noise on
+ * the black island, so the artwork is used as a mask instead of an image. */
+const NotchGlyph = ({ provider }: { provider: string }) => {
+  const normalized = provider.trim().toLowerCase();
+  const logo = providerLogos[normalized];
+  return logo ? (
+    <span
+      className="provider-logo"
+      aria-hidden="true"
+      data-testid={`provider-logo-${normalized}`}
+      style={{ "--glyph": `url(${logo})` } as React.CSSProperties}
+    />
+  ) : (
+    <TerminalSquare size={15} />
+  );
+};
+
 const ProviderGlyph = ({ provider }: { provider: string }) => {
   const normalized = provider.trim().toLowerCase();
   const logo = providerLogos[normalized];
@@ -184,7 +310,9 @@ const ProviderGlyph = ({ provider }: { provider: string }) => {
       aria-hidden="true"
       data-testid={`provider-logo-${normalized}`}
       className={
-        normalized === "cursor" ? "provider-logo provider-logo-monochrome" : "provider-logo"
+        MONOCHROME_LOGOS.has(normalized)
+          ? "provider-logo provider-logo-monochrome"
+          : "provider-logo"
       }
     />
   ) : (
@@ -197,10 +325,46 @@ const HealthBadge = ({ account }: { account: NormalizedAccount }) => {
   return <Badge tone={tone}>{account.health.replace("_", " ")}</Badge>;
 };
 
+const accountMenuItems = (account: NormalizedAccount): ContextMenuItem[] => {
+  const identifier = account.runtimeId ?? account.credentialName;
+  const items: ContextMenuItem[] = [
+    { label: "Copy account name", run: () => navigator.clipboard.writeText(account.label) },
+  ];
+  if (identifier) {
+    items.push({ label: "Copy account ID", run: () => navigator.clipboard.writeText(identifier) });
+  }
+  return items;
+};
+
 export default function App() {
   const [surface, setSurface] = useState<Surface>(getInitialSurface);
+  const { menu, openMenu, closeMenu } = useContextMenu();
+
+  useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      if (wantsNativeMenu(event.target)) {
+        return;
+      }
+      event.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      document.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (hoverCloseTimer.current) window.clearTimeout(hoverCloseTimer.current);
+    },
+    [],
+  );
   const [notchExpanded, setNotchExpanded] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [notchOpen, setNotchOpen] = useState(false);
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+  const [nativeCursor, setNativeCursor] = useState<LocalPoint | null>(null);
+  const hoverCloseTimer = useRef<number | undefined>(undefined);
+  const [theme, setTheme] = useState(getTheme);
   const [baseUrl, setBaseUrlState] = useState(getGatewayBaseUrl());
   const [relayKey, setRelayKeyState] = useState(getRelayKey());
   const [stats, setStats] = useState<AdminStats>(emptyStats);
@@ -214,6 +378,14 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState("");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState("");
+  const [openMethods, setOpenMethods] = useState<(typeof ONBOARDING_PROVIDERS)[number] | null>(
+    null,
+  );
+  const [dragging, setDragging] = useState("");
+  const [zcodeForm, setZcodeForm] = useState<{ email: string; key: string } | null>(null);
+  const [credentialsError, setCredentialsError] = useState("");
+  const [logsError, setLogsError] = useState("");
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
   const [configYaml, setConfigYaml] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
@@ -251,16 +423,26 @@ export default function App() {
       firstLoad.current = false;
       return;
     }
-    try {
-      const [nextCredentials, nextLogs] = await Promise.all([
-        clients.management.credentials(),
-        clients.management.logs(),
-      ]);
-      setCredentials(nextCredentials);
-      setLogs(nextLogs.lines);
-    } catch {
+    // These two are independent: the gateway rejects /logs outright while file
+    // logging is disabled, and folding both into one Promise.all used to wipe the
+    // credential inventory on every poll, silently stripping account management.
+    const [credentialResult, logResult] = await Promise.allSettled([
+      clients.management.credentials(),
+      clients.management.logs(),
+    ]);
+    if (credentialResult.status === "fulfilled") {
+      setCredentials(credentialResult.value);
+      setCredentialsError("");
+    } else {
       setCredentials([]);
+      setCredentialsError(errorMessage(credentialResult.reason));
+    }
+    if (logResult.status === "fulfilled") {
+      setLogs(logResult.value.lines);
+      setLogsError("");
+    } else {
       setLogs([]);
+      setLogsError(errorMessage(logResult.reason));
     }
   }, [clients, gatewayLifecycle]);
 
@@ -298,6 +480,88 @@ export default function App() {
     ).__TAURI__;
     api?.core?.invoke(notchExpanded ? "expand_notch" : "collapse_notch");
   }, [notchExpanded, surface]);
+
+  // The native window must already be large before the island grows into it,
+  // and must stay large until the island has finished folding away.
+  useEffect(() => {
+    if (surface !== "notch") return;
+    if (!notchExpanded) {
+      setNotchOpen(false);
+      return;
+    }
+    const frame = requestAnimationFrame(() => setNotchOpen(true));
+    return () => cancelAnimationFrame(frame);
+  }, [notchExpanded, surface]);
+
+  // macOS delivers pointer events only to the active app, so an unfocused notch
+  // never sees mouseenter. The native global monitor owns hover and tells us.
+  useEffect(() => {
+    if (surface !== "notch") return;
+    const api = (
+      window as {
+        __TAURI__?: {
+          event?: {
+            listen: (
+              event: string,
+              handler: (message: { payload: boolean }) => void,
+            ) => Promise<() => void>;
+          };
+        };
+      }
+    ).__TAURI__;
+    if (!api?.event?.listen) return;
+    const disposers: (() => void)[] = [];
+    let cancelled = false;
+    const subscribe = (event: string, handler: (payload: unknown) => void) => {
+      void api.event
+        ?.listen(event, (message: { payload: unknown }) => handler(message.payload))
+        .then((unlisten) => {
+          if (cancelled) unlisten();
+          else disposers.push(unlisten);
+        });
+    };
+    subscribe("notch-hover", (payload) => setNotchExpanded(Boolean(payload)));
+    subscribe("notch-cursor", (payload) => setNativeCursor((payload as LocalPoint | null) ?? null));
+    return () => {
+      cancelled = true;
+      for (const dispose of disposers) dispose();
+    };
+  }, [surface]);
+
+  const openNotchTooltip = useCallback((provider: string) => {
+    if (hoverCloseTimer.current) window.clearTimeout(hoverCloseTimer.current);
+    hoverCloseTimer.current = undefined;
+    setActiveTooltip(provider);
+  }, []);
+
+  const scheduleNotchTooltipClose = useCallback(() => {
+    if (hoverCloseTimer.current) window.clearTimeout(hoverCloseTimer.current);
+    // Brief grace lets the pointer cross the gap between icon and tooltip.
+    hoverCloseTimer.current = window.setTimeout(() => setActiveTooltip(null), 150);
+  }, []);
+
+  useEffect(() => {
+    if (!notchOpen) setActiveTooltip(null);
+  }, [notchOpen]);
+
+  // The webview gets no pointer events while another app is frontmost, so the
+  // forwarded native cursor drives stage-two hover instead.
+  useEffect(() => {
+    if (surface !== "notch" || !notchOpen) return;
+    if (!nativeCursor) {
+      scheduleNotchTooltipClose();
+      return;
+    }
+    const targets = [...document.querySelectorAll<HTMLElement>("[data-hover-provider]")].map(
+      (element) => ({
+        provider: element.dataset.hoverProvider as string,
+        rect: element.getBoundingClientRect(),
+      }),
+    );
+    const hit = providerAtPoint(nativeCursor, targets);
+    if (hit) openNotchTooltip(hit);
+    else scheduleNotchTooltipClose();
+  }, [nativeCursor, notchOpen, surface, openNotchTooltip, scheduleNotchTooltipClose]);
 
   useEffect(() => {
     window.sessionStorage.setItem("mahoquot.provider", provider);
@@ -368,12 +632,13 @@ export default function App() {
     setNotice("");
     try {
       await clients.management.removeCredential(account.credentialName);
-      setNotice("Credential removed — restart required to rebuild the runtime pool.");
+      setNotice("Credential removed from the runtime pool.");
       await refresh();
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
       setPending("");
+      setConfirmRemove("");
     }
   };
 
@@ -384,14 +649,30 @@ export default function App() {
     const nextIndex = index + direction;
     if (index < 0 || nextIndex < 0 || nextIndex >= names.length) return;
     [names[index], names[nextIndex]] = [names[nextIndex] as string, names[index] as string];
-    setPending(`order:${account.id}`);
+    await applyCredentialOrder(names, account.id);
+  };
+
+  const dropCredentialOn = async (target: NormalizedAccount) => {
+    const source = dragging;
+    setDragging("");
+    if (!source || !target.credentialName || source === target.credentialName) return;
+    const names = credentials.map((credential) => credential.name);
+    const from = names.indexOf(source);
+    const to = names.indexOf(target.credentialName);
+    if (from < 0 || to < 0) return;
+    names.splice(to, 0, ...names.splice(from, 1));
+    await applyCredentialOrder(names, target.id);
+  };
+
+  const applyCredentialOrder = async (names: readonly string[], accountId: string) => {
+    setPending(`order:${accountId}`);
     setNotice("");
     try {
       await clients.management.saveCredentialOrder(names);
       setCredentials(
         [...credentials].sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name)),
       );
-      setNotice("Account order saved — restart required to update runtime routing order.");
+      setNotice("Account order saved. This is a display order and does not change routing.");
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
@@ -405,8 +686,12 @@ export default function App() {
     try {
       if (nextProvider === "claude-local") {
         await clients.management.importLocalClaude();
-        setNotice("Claude Code subscription imported — gateway restart required.");
+        setNotice("Claude Code subscription imported and live in the runtime pool.");
         await refresh();
+        return;
+      }
+      if (nextProvider === "zcode-key") {
+        setZcodeForm({ email: "", key: "" });
         return;
       }
       const auth = await clients.management.beginProviderAuth(nextProvider);
@@ -417,13 +702,75 @@ export default function App() {
       window.addEventListener("focus", refreshOnFocus, { once: true });
       window.open(auth.url, "_blank", "noopener,noreferrer");
       setAuthorization({ provider: nextProvider, state: auth.state, status: "pending" });
-      setNotice("Authorization pending. Approve in the provider window, then check status here.");
+      setNotice("Authorization pending. Approve in the provider window; this updates itself.");
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
       setPending("");
     }
   };
+
+  const submitZcodeKey = async () => {
+    if (!zcodeForm) return;
+    setPending("auth:zcode-key");
+    setNotice("");
+    try {
+      await clients.management.createZcodeCredential(zcodeForm.email.trim(), zcodeForm.key.trim());
+      setZcodeForm(null);
+      setOpenMethods(null);
+      setNotice("Z.ai key saved and live in the runtime pool.");
+      await refresh();
+    } catch (error) {
+      setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setPending("");
+    }
+  };
+
+  const reauthenticate = async (account: NormalizedAccount) => {
+    setOnboardingOpen(true);
+    await beginOnboarding(account.provider);
+  };
+
+  // Approval happens in a separate browser window the console cannot observe,
+  // so the session polls itself instead of stranding the user on "Pending".
+  const authPending = authorization?.status === "pending";
+  const authProvider = authorization?.provider ?? "";
+  const authState = authorization?.state ?? "";
+  useEffect(() => {
+    if (!authPending) return;
+    const provider = authProvider;
+    const state = authState;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await clients.management.providerAuthStatus(state);
+        if (cancelled || result.status === "pending") return;
+        setAuthorization({
+          provider,
+          state,
+          status: result.status,
+          ...(result.error ? { error: result.error } : {}),
+        });
+        if (result.status === "ok") {
+          setNotice(`${providerLabel(provider)} authorization completed.`);
+          await refresh();
+        } else {
+          setNotice(`Action failed: ${result.error ?? "authorization failed"}`);
+        }
+      } catch {
+        // A transient failure while the provider window is still open is not
+        // an authorization outcome; the next tick retries.
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // `refresh` is intentionally excluded: it is rebuilt every render, and
+    // depending on it would tear the interval down before it can ever fire.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: see above
+  }, [authPending, authProvider, authState, clients]);
 
   const checkAuthorization = async () => {
     if (!authorization) return;
@@ -442,7 +789,7 @@ export default function App() {
       } else if (result.status === "error") {
         setNotice(`Action failed: ${result.error ?? "authorization failed"}`);
       } else {
-        setNotice("Authorization pending. Complete approval, then check again.");
+        setNotice("Authorization still pending. Approve in the provider window.");
       }
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
@@ -466,7 +813,7 @@ export default function App() {
         clients.management.saveScalar("request-retry", retry),
         clients.management.saveScalar("logging-to-file", loggingToFile),
       ]);
-      setNotice("Proxy settings saved — restart required for runtime-affecting changes.");
+      setNotice("Proxy settings saved and applied.");
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
@@ -512,7 +859,7 @@ export default function App() {
     setNotice("");
     try {
       await clients.management.saveConfigYaml(configYaml);
-      setNotice("Configuration saved — restart required for runtime-affecting changes.");
+      setNotice("Configuration saved and applied.");
       setConfigOpen(false);
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
@@ -522,129 +869,146 @@ export default function App() {
   };
 
   if (surface === "notch") {
-    return (
-      <div className="notch-shell" data-mahoquot-surface="notch">
+    const notchGroups =
+      loadState === "online" && accounts.length
+        ? groupNotchProviders(
+            accounts.map((account) => ({
+              provider: account.provider,
+              label: account.label || account.email || account.id,
+              rows: quotaRows(account).map((row) => ({
+                name: row.name,
+                usedPercent: row.usedPercent,
+                resetSeconds: row.resetSeconds,
+              })),
+            })),
+          )
+        : [];
+    const renderNotchTooltip = (group: (typeof notchGroups)[number]) => (
+      <div className="notch-tooltip-anchor">
         <div
-          className={`notch-hover-zone${notchExpanded ? " expanded" : ""}`}
-          onMouseEnter={() => setNotchExpanded(true)}
-          data-testid="notch-hover-zone"
-        />
-        <div
-          className={`notch-surface${notchExpanded ? " expanded" : ""}`}
-          onMouseLeave={() => setNotchExpanded(false)}
+          className="notch-tooltip"
+          role="tooltip"
+          data-testid={`notch-tooltip-${group.provider}`}
+          data-hover-provider={group.provider}
+          onMouseEnter={() => openNotchTooltip(group.provider)}
+          onMouseLeave={scheduleNotchTooltipClose}
         >
-          {!notchExpanded ? (
-            <div className="notch-compact-row">
-              <span className={`status-dot ${loadState === "online" ? "online" : ""}`} />
-              <strong>Quotio</strong>
-              {accounts.length ? (
-                <span className="notch-compact-count">{accounts.length}</span>
-              ) : null}
+          <div className="notch-tooltip-head">
+            <ProviderGlyph provider={group.provider} />
+            <strong className="capitalize">{group.provider}</strong>
+            <span className="notch-tooltip-count">
+              {group.accountCount} account{group.accountCount > 1 ? "s" : ""}
+            </span>
+          </div>
+          {group.accounts.map((entry) => (
+            <div
+              className="notch-tooltip-account"
+              key={entry.label}
+              data-testid={`notch-tooltip-account-${entry.label}`}
+            >
+              <div className="notch-tooltip-account-name">{entry.label}</div>
+              {entry.rows.length ? (
+                entry.rows.slice(0, 2).map((row, index) => (
+                  <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
+                    <div className="notch-tooltip-label">{row.name}</div>
+                    <div className="notch-tooltip-bar">
+                      <i
+                        style={{
+                          width: `${Math.min(100, Math.max(0, row.usedPercent))}%`,
+                          background: index === 0 ? providerRingColor(group.provider) : "var(--ok)",
+                        }}
+                      />
+                    </div>
+                    <div className="notch-tooltip-meta">
+                      <span>{formatQuotaPercent(row.usedPercent)}% Used</span>
+                      <small>
+                        Resets{" "}
+                        {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
+                      </small>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="notch-tooltip-row">
+                  <div className="notch-tooltip-label">No quota reported</div>
+                </div>
+              )}
             </div>
-          ) : loadState === "online" && accounts.length ? (
-            accounts.map((account) => {
-              const rows = quotaRows(account);
-              const usedPct = rows[0]?.usedPercent ?? null;
-              const clamped = usedPct === null ? 0 : Math.min(100, Math.max(0, usedPct));
-              const color = providerRingColor(account.provider);
-              return (
+          ))}
+        </div>
+      </div>
+    );
+    return (
+      <div
+        className={`notch-shell${notchExpanded ? " expanded" : ""}${notchOpen ? " open" : ""}`}
+        data-mahoquot-surface="notch"
+        onMouseEnter={() => setNotchExpanded(true)}
+        onMouseLeave={() => setNotchExpanded(false)}
+      >
+        <div
+          className="notch-trigger-strip"
+          data-testid="notch-trigger-strip"
+          aria-label="Show provider quotas"
+        />
+        <div className={`notch-surface${notchOpen ? " expanded" : ""}`}>
+          {notchExpanded &&
+            (notchGroups.length ? (
+              notchGroups.map((group) => (
                 <div
                   className="notch-ring-item"
-                  key={account.id}
-                  data-provider={account.provider}
-                  data-testid={`notch-ring-${account.provider}`}
+                  key={group.provider}
+                  data-provider={group.provider}
+                  data-testid={`notch-ring-${group.provider}`}
+                  data-hover-provider={group.provider}
+                  onMouseEnter={() => openNotchTooltip(group.provider)}
+                  onMouseLeave={scheduleNotchTooltipClose}
                 >
                   <div className="notch-ring-wrap">
-                    <svg
-                      className="notch-ring"
-                      viewBox="0 0 56 56"
-                      width="56"
-                      height="56"
-                      aria-hidden="true"
-                    >
-                      <circle className="notch-ring-track" cx="28" cy="28" r="24" />
-                      <circle
-                        className="notch-ring-fill"
-                        cx="28"
-                        cy="28"
-                        r="24"
-                        stroke={color}
-                        strokeDasharray={163.36}
-                        strokeDashoffset={163.36 * (1 - clamped / 100)}
-                        transform="rotate(-90 28 28)"
-                      />
-                    </svg>
                     <span className="notch-ring-logo">
-                      <ProviderGlyph provider={account.provider} />
+                      <NotchGlyph provider={group.provider} />
                     </span>
+                    {group.accountCount > 1 && (
+                      <span className="notch-ring-count">{group.accountCount}</span>
+                    )}
                   </div>
-                  <span className="notch-ring-pct">
-                    {usedPct === null ? "—" : `${Math.round(usedPct)}%`}
+                  {activeTooltip === group.provider && renderNotchTooltip(group)}
+                </div>
+              ))
+            ) : (
+              <div
+                className="notch-empty-ring"
+                data-testid="notch-empty-ring"
+                onMouseEnter={() => openNotchTooltip("__empty__")}
+                onMouseLeave={scheduleNotchTooltipClose}
+              >
+                <div className="notch-ring-wrap">
+                  <span className="notch-ring-logo">
+                    <strong>Q</strong>
                   </span>
-                  <div
-                    className="notch-tooltip"
-                    role="tooltip"
-                    data-testid={`notch-tooltip-${account.provider}`}
-                  >
-                    <div className="notch-tooltip-head">
-                      <ProviderGlyph provider={account.provider} />
-                      <strong className="capitalize">{account.provider}</strong>
-                    </div>
-                    {rows.slice(0, 2).map((row, index) => (
-                      <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
-                        <div className="notch-tooltip-label">{row.name}</div>
-                        <div className="notch-tooltip-bar">
-                          <i
-                            style={{
-                              width: `${Math.min(100, Math.max(0, row.usedPercent))}%`,
-                              background: index === 0 ? color : "var(--ok)",
-                            }}
-                          />
-                        </div>
+                </div>
+                {activeTooltip === "__empty__" && (
+                  <div className="notch-tooltip-anchor">
+                    <div
+                      className="notch-tooltip"
+                      role="tooltip"
+                      data-testid="notch-tooltip-empty"
+                      onMouseEnter={() => openNotchTooltip("__empty__")}
+                      onMouseLeave={scheduleNotchTooltipClose}
+                    >
+                      <div className="notch-tooltip-head">
+                        <strong>Mahoquot</strong>
+                      </div>
+                      <div className="notch-tooltip-row">
+                        <div className="notch-tooltip-label">No accounts connected</div>
                         <div className="notch-tooltip-meta">
-                          <span>{formatQuotaPercent(row.usedPercent)}% Used</span>
-                          <small>
-                            Resets{" "}
-                            {row.resetSeconds === null
-                              ? "later"
-                              : formatResetTime(row.resetSeconds)}
-                          </small>
+                          <span>Onboard in Operations Console</span>
                         </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })
-          ) : (
-            <div className="notch-empty-ring" data-testid="notch-empty-ring">
-              <div className="notch-ring-wrap">
-                <svg
-                  className="notch-ring"
-                  viewBox="0 0 56 56"
-                  width="56"
-                  height="56"
-                  aria-hidden="true"
-                >
-                  <circle className="notch-ring-track" cx="28" cy="28" r="24" />
-                </svg>
-                <span className="notch-ring-logo">
-                  <strong>Q</strong>
-                </span>
+                )}
               </div>
-              <div className="notch-tooltip" role="tooltip" data-testid="notch-tooltip-empty">
-                <div className="notch-tooltip-head">
-                  <strong>Mahoquot</strong>
-                </div>
-                <div className="notch-tooltip-row">
-                  <div className="notch-tooltip-label">No accounts connected</div>
-                  <div className="notch-tooltip-meta">
-                    <span>Onboard in Operations Console</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+            ))}
         </div>
       </div>
     );
@@ -653,7 +1017,8 @@ export default function App() {
   return (
     <div className="app" data-mahoquot-app="operations-console">
       <aside className="sidebar">
-        <div className="brand">
+        <div className="titlebar-drag" data-tauri-drag-region />
+        <div className="brand" data-tauri-drag-region>
           <span className="brand-mark">Q</span>
           <div>
             <strong>Mahoquot</strong>
@@ -684,21 +1049,18 @@ export default function App() {
       </aside>
 
       <main>
-        <header className="topbar">
-          <div>
-            <h1>{surface.charAt(0).toUpperCase() + surface.slice(1)}</h1>
-          </div>
-          <div className="top-actions">
-            <Button aria-label="Refresh snapshot" onClick={() => void refresh()}>
-              <RefreshCw size={15} /> Refresh
-            </Button>
-            <Button
-              aria-label="Toggle theme"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            >
-              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-            </Button>
-          </div>
+        <header className="topbar" data-tauri-drag-region>
+          <h1 data-tauri-drag-region>{surface.charAt(0).toUpperCase() + surface.slice(1)}</h1>
+          {surface === "accounts" ? (
+            <div className="top-actions">
+              <Button aria-label="Refresh snapshot" onClick={() => void refresh()}>
+                <RefreshCw size={15} /> Refresh
+              </Button>
+              <Button aria-label="Add account" onClick={() => setOnboardingOpen(true)}>
+                <Plus size={16} />
+              </Button>
+            </div>
+          ) : null}
         </header>
 
         <div className="mobile-nav" aria-label="Mobile navigation">
@@ -761,11 +1123,53 @@ export default function App() {
                 {notice}
               </output>
             ) : null}
+            {credentialsError ? (
+              <div className="state-panel warning">
+                <AlertTriangle /> Credential inventory unavailable, so adding, removing, and
+                re-authenticating are disabled: {credentialsError}
+              </div>
+            ) : null}
             <div className="account-list">
               {visibleAccounts.map((account) => (
-                <Card key={account.id} className="account-card">
+                <Card
+                  key={account.id}
+                  className="account-card"
+                  draggable={Boolean(account.credentialName) && pending === ""}
+                  data-dragging={dragging === account.credentialName ? "true" : undefined}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    setDragging(account.credentialName ?? "");
+                  }}
+                  onDragOver={(event) => {
+                    if (dragging && account.credentialName) event.preventDefault();
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    void dropCredentialOn(account);
+                  }}
+                  onDragEnd={() => setDragging("")}
+                  onContextMenu={(event) => openMenu(event, accountMenuItems(account))}
+                >
                   <div className="account-card-head">
                     <div className="account-title">
+                      {account.credentialName ? (
+                        <button
+                          type="button"
+                          className="account-drag-handle"
+                          aria-label={`Reorder ${account.label}`}
+                          disabled={pending !== ""}
+                          onKeyDown={(event) => {
+                            // Dragging is mouse-only, so the handle keeps a
+                            // keyboard path to the same reordering.
+                            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                              event.preventDefault();
+                              void moveCredential(account, event.key === "ArrowUp" ? -1 : 1);
+                            }
+                          }}
+                        >
+                          <GripVertical size={14} />
+                        </button>
+                      ) : null}
                       <span className="account-provider-icon">
                         <ProviderGlyph provider={account.provider} />
                       </span>
@@ -777,9 +1181,15 @@ export default function App() {
                           <strong>{account.label}</strong>
                           <HealthBadge account={account} />
                         </div>
-                        <span title={account.runtimeId ?? account.credentialName ?? ""}>
-                          {account.runtimeId ?? account.credentialName ?? "Credential only"}
-                        </span>
+                        {(() => {
+                          const detail =
+                            account.runtimeId ?? account.credentialName ?? "Credential only";
+                          // The label is usually the account email, and repeating it verbatim
+                          // on a second line just costs a row.
+                          return detail === account.label ? null : (
+                            <span title={detail}>{detail}</span>
+                          );
+                        })()}
                       </div>
                     </div>
                     <div className="account-actions">
@@ -809,61 +1219,65 @@ export default function App() {
                       {account.credentialName ? (
                         <>
                           <Button
-                            aria-label={`Move ${account.label} up`}
-                            disabled={
-                              pending !== "" || credentials[0]?.name === account.credentialName
-                            }
-                            onClick={() => void moveCredential(account, -1)}
-                          >
-                            <ChevronUp size={14} />
-                          </Button>
-                          <Button
-                            aria-label={`Move ${account.label} down`}
-                            disabled={
-                              pending !== "" || credentials.at(-1)?.name === account.credentialName
-                            }
-                            onClick={() => void moveCredential(account, 1)}
-                          >
-                            <ChevronDown size={14} />
-                          </Button>
-                          <Button disabled={pending !== ""} onClick={() => setOnboardingOpen(true)}>
-                            Re-auth
-                          </Button>
-                          <Button
-                            aria-label={`Remove ${account.label}`}
+                            aria-label={`Re-authenticate ${account.label}`}
                             disabled={pending !== ""}
-                            onClick={() => void removeCredential(account)}
+                            onClick={() => void reauthenticate(account)}
                           >
-                            <Trash2 size={14} />
-                            {pending === `remove:${account.id}` ? "Removing…" : "Remove"}
+                            {pending === `auth:${account.provider}` ? "Starting…" : "Re-auth"}
                           </Button>
+                          {confirmRemove === account.id ? (
+                            <>
+                              <Button
+                                aria-label={`Confirm removing ${account.label}`}
+                                disabled={pending !== ""}
+                                onClick={() => void removeCredential(account)}
+                              >
+                                <Trash2 size={14} />
+                                {pending === `remove:${account.id}` ? "Removing…" : "Confirm"}
+                              </Button>
+                              <Button
+                                aria-label={`Cancel removing ${account.label}`}
+                                onClick={() => setConfirmRemove("")}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              aria-label={`Remove ${account.label}`}
+                              disabled={pending !== ""}
+                              onClick={() => setConfirmRemove(account.id)}
+                            >
+                              <Trash2 size={14} /> Remove
+                            </Button>
+                          )}
                         </>
                       ) : null}
                     </div>
                   </div>
                   <div className="usage-section">
-                    <span className="usage-label">USAGE</span>
                     {quotaRows(account).length ? (
                       <div className="quota-list">
-                        {quotaRows(account).map((row, index) => {
+                        {quotaRows(account).map((row, index, list) => {
                           const remaining = Math.max(0, 100 - row.usedPercent);
+                          const startsGroup =
+                            row.group !== null && row.group !== list[index - 1]?.group;
                           return (
-                            <div className="quota-row" key={`${row.name}-${index}`}>
-                              <div className="quota-row-head">
-                                <span>
-                                  <Sparkles size={13} /> {row.name}
+                            <Fragment key={`${row.group ?? ""}-${row.name}-${index}`}>
+                              {startsGroup ? <div className="quota-group">{row.group}</div> : null}
+                              <div className="quota-row">
+                                <span className="quota-name">{row.name}</span>
+                                <span className="quota-track">
+                                  <i style={{ width: `${Math.min(100, remaining)}%` }} />
                                 </span>
-                                <div>
+                                <span className="quota-meta">
                                   <strong>{formatQuotaPercent(remaining)}%</strong>
                                   {row.resetSeconds !== null ? (
                                     <small>{formatResetTime(row.resetSeconds)}</small>
                                   ) : null}
-                                </div>
+                                </span>
                               </div>
-                              <div className="quota-track">
-                                <i style={{ width: `${Math.min(100, remaining)}%` }} />
-                              </div>
-                            </div>
+                            </Fragment>
                           );
                         })}
                       </div>
@@ -879,7 +1293,7 @@ export default function App() {
                   ) : null}
                   {!account.runtimeId ? (
                     <div className="restart-note">
-                      Credential saved but not in the runtime pool — restart required.
+                      Credential saved but the gateway could not load it into the runtime pool.
                     </div>
                   ) : null}
                 </Card>
@@ -892,17 +1306,6 @@ export default function App() {
                   : "No accounts or credentials found."}
               </div>
             ) : null}
-            <Card className="onboarding">
-              <BookOpenText />
-              <div>
-                <h2>Provider onboarding</h2>
-                <p>
-                  Add or re-authenticate provider credentials here. Saved credential changes require
-                  a gateway restart before they enter the runtime pool.
-                </p>
-              </div>
-              <Button onClick={() => setOnboardingOpen(true)}>Start onboarding</Button>
-            </Card>
           </div>
         ) : null}
 
@@ -913,10 +1316,8 @@ export default function App() {
                 <h2>Gateway logs</h2>
                 <p>Raw server output, not a reconstructed request history.</p>
               </div>
-              <Button onClick={() => void refresh()}>
-                <RefreshCw size={14} /> Refresh
-              </Button>
             </header>
+            {logsError ? <div className="state-panel warning">{logsError}</div> : null}
             <pre>{logs.length ? logs.join("\n") : "No log lines returned."}</pre>
           </div>
         ) : null}
@@ -1087,6 +1488,32 @@ export default function App() {
                 </Button>
               </div>
             </Card>
+            <Card className="settings-card">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <Settings2 size={17} />
+                </div>
+                <div>
+                  <h2>Appearance</h2>
+                  <p>Choose the color scheme for this console.</p>
+                </div>
+              </header>
+              <Field label="Theme" hint="Saved on this device and applied to the entire console.">
+                <select
+                  aria-label="Theme"
+                  className="input"
+                  value={theme}
+                  onChange={(event) => {
+                    const nextTheme = event.currentTarget.value === "light" ? "light" : "dark";
+                    persistTheme(nextTheme);
+                    setTheme(nextTheme);
+                  }}
+                >
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                </select>
+              </Field>
+            </Card>
             <Card className="settings-card advanced-card">
               <header className="settings-card-head">
                 <div className="settings-icon">
@@ -1113,44 +1540,111 @@ export default function App() {
           <aside className="drawer onboarding-drawer" aria-label="Provider onboarding">
             <div className="section-head">
               <div>
-                <span className="kicker">CREDENTIAL LIFECYCLE</span>
-                <h2>Add or re-authenticate</h2>
+                <h2>Add Account</h2>
+                <span className="kicker">Click any provider to add multiple accounts</span>
               </div>
               <Button aria-label="Close onboarding" onClick={() => setOnboardingOpen(false)}>
                 <X />
               </Button>
             </div>
-            <p>
-              Select a provider to begin its gateway-managed authorization flow. This console will
-              not claim success until the credential appears in the management inventory.
-            </p>
-            <div className="provider-options">
-              {(
-                [
-                  ["codex", "Codex / OpenAI"],
-                  ["antigravity", "Antigravity / Gemini"],
-                  ["claude", "Claude OAuth"],
-                  ["claude-local", "Import Claude Code subscription"],
-                  ["kiro", "Kiro"],
-                  ["cursor", "Cursor"],
-                ] as const
-              ).map(([id, name]) => (
+            {zcodeForm ? (
+              <div className="provider-methods">
                 <button
                   type="button"
-                  key={id}
-                  disabled={pending !== ""}
-                  onClick={() => void beginOnboarding(id)}
+                  className="provider-methods-back"
+                  onClick={() => setZcodeForm(null)}
                 >
-                  <span className="provider-option-label">
-                    <span className="provider-tab-icon">
-                      <ProviderGlyph provider={id === "claude-local" ? "claude" : id} />
-                    </span>
-                    {pending === `auth:${id}` ? "Starting…" : name}
-                  </span>
-                  <ChevronRight size={16} />
+                  <ChevronLeft size={15} /> All providers
                 </button>
-              ))}
-            </div>
+                <div className="provider-methods-head">
+                  <span className="provider-option-icon" aria-hidden="true">
+                    <ProviderGlyph provider="zcode" />
+                  </span>
+                  <strong>Z.ai</strong>
+                </div>
+                <label className="zcode-field">
+                  <span>Account email</span>
+                  <input
+                    aria-label="Z.ai account email"
+                    value={zcodeForm.email}
+                    onChange={(event) => setZcodeForm({ ...zcodeForm, email: event.target.value })}
+                  />
+                </label>
+                <label className="zcode-field">
+                  <span>Provisioned API key</span>
+                  <input
+                    aria-label="Z.ai provisioned API key"
+                    placeholder="{id}.{secret}"
+                    value={zcodeForm.key}
+                    onChange={(event) => setZcodeForm({ ...zcodeForm, key: event.target.value })}
+                  />
+                </label>
+                <Button
+                  disabled={pending !== "" || !zcodeForm.email.trim() || !zcodeForm.key.trim()}
+                  onClick={() => void submitZcodeKey()}
+                >
+                  {pending === "auth:zcode-key" ? "Saving…" : "Save key"}
+                </Button>
+              </div>
+            ) : openMethods ? (
+              <div className="provider-methods">
+                <button
+                  type="button"
+                  className="provider-methods-back"
+                  onClick={() => setOpenMethods(null)}
+                >
+                  <ChevronLeft size={15} /> All providers
+                </button>
+                <div className="provider-methods-head">
+                  <span className="provider-option-icon" aria-hidden="true">
+                    <ProviderGlyph provider={openMethods.glyph} />
+                  </span>
+                  <strong>{openMethods.name}</strong>
+                </div>
+                {openMethods.methods.map((method) => (
+                  <button
+                    type="button"
+                    key={method.id}
+                    className="provider-method"
+                    disabled={pending !== ""}
+                    onClick={() => void beginOnboarding(method.id)}
+                  >
+                    <span>
+                      <strong>{pending === `auth:${method.id}` ? "Starting…" : method.name}</strong>
+                      <small>{method.hint}</small>
+                    </span>
+                    <ChevronRight size={16} />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="provider-options">
+                {ONBOARDING_PROVIDERS.map((provider) => {
+                  const owned = accounts.filter(
+                    (account) => account.provider === provider.glyph,
+                  ).length;
+                  const only = provider.methods.length === 1 ? provider.methods[0] : null;
+                  return (
+                    <button
+                      type="button"
+                      key={provider.glyph}
+                      disabled={pending !== ""}
+                      onClick={() =>
+                        only ? void beginOnboarding(only.id) : setOpenMethods(provider)
+                      }
+                    >
+                      <span className="provider-option-icon" aria-hidden="true">
+                        <ProviderGlyph provider={provider.glyph} />
+                        {owned ? <i className="provider-option-count">{owned}</i> : null}
+                      </span>
+                      <span className="provider-option-label">
+                        {only && pending === `auth:${only.id}` ? "Starting…" : provider.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {authorization ? (
               <div className="authorization-status">
                 <div>
@@ -1160,7 +1654,7 @@ export default function App() {
                       ? "Completed"
                       : authorization.status === "error"
                         ? (authorization.error ?? "Failed")
-                        : "Pending provider approval"}
+                        : "Waiting for provider approval…"}
                   </span>
                 </div>
                 {authorization.status === "pending" ? (
@@ -1172,10 +1666,6 @@ export default function App() {
                 ) : null}
               </div>
             ) : null}
-            <div className="restart-note">
-              New or changed credentials are saved immediately but require a gateway restart before
-              joining the runtime pool.
-            </div>
           </aside>
         </div>
       ) : null}
@@ -1210,13 +1700,10 @@ export default function App() {
                 {pending === "config:save" ? "Saving…" : "Save configuration"}
               </Button>
             </div>
-            <div className="restart-note">
-              Saved configuration is persisted immediately; runtime-affecting changes require a
-              gateway restart.
-            </div>
           </aside>
         </div>
       ) : null}
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }

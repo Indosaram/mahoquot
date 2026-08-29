@@ -92,6 +92,73 @@ describe("Account Normalization and Quota Capability", () => {
     expect(acc.health).toBe("not_loaded");
   });
 
+  it("binds a subscription import whose runtime id shares nothing with its credential file", () => {
+    const accounts: AdminStats["accounts"] = [
+      {
+        id: "claude-code",
+        provider: "claude",
+        health: { status: "available" },
+        ok: 5,
+        fails: 0,
+        reset_at_unix_ms: null,
+        last_error: null,
+        ttft: null,
+        usage: null,
+      },
+    ];
+    const creds: AuthFileItem[] = [
+      {
+        name: "claude-local.json",
+        size: 180,
+        auth_index: "claude-local",
+        path: "/auth/claude-local.json",
+        label: "claude-local",
+        disabled: false,
+        unavailable: false,
+        runtime_only: false,
+        type: "claude",
+        email: "owner@example.com",
+      },
+    ];
+
+    const normalized = mergeAccountsAndCredentials(accounts, creds);
+    expect(normalized.length).toBe(1);
+    const acc = normalized[0] as NormalizedAccount;
+    expect(acc.runtimeId).toBe("claude-code");
+    expect(acc.credentialName).toBe("claude-local.json");
+    expect(acc.isCredentialOnly).toBe(false);
+  });
+
+  it("leaves ambiguous provider pairings unbound instead of guessing", () => {
+    const accounts: AdminStats["accounts"] = ["claude-code", "claude-code-2"].map((id) => ({
+      id,
+      provider: "claude",
+      health: { status: "available" },
+      ok: 1,
+      fails: 0,
+      reset_at_unix_ms: null,
+      last_error: null,
+      ttft: null,
+      usage: null,
+    }));
+    const creds: AuthFileItem[] = ["claude-a.json", "claude-b.json"].map((name) => ({
+      name,
+      size: 100,
+      auth_index: name,
+      path: `/auth/${name}`,
+      label: name,
+      disabled: false,
+      unavailable: false,
+      runtime_only: false,
+      type: "claude",
+      email: `${name}@example.com`,
+    }));
+
+    const normalized = mergeAccountsAndCredentials(accounts, creds);
+    expect(normalized.filter((acc) => acc.runtimeId && acc.credentialName)).toHaveLength(0);
+    expect(normalized.filter((acc) => acc.isCredentialOnly)).toHaveLength(2);
+  });
+
   it("classifies quota capability properly without fake 0% for unsupported providers", () => {
     expect(getQuotaCapability("codex", { plan_type: "plus" })).toBe("supported");
     expect(
@@ -99,8 +166,35 @@ describe("Account Normalization and Quota Capability", () => {
         groups: [{ display_name: "G", buckets: [] }],
       }),
     ).toBe("supported");
-    expect(getQuotaCapability("claude", null)).toBe("unsupported");
+    expect(getQuotaCapability("claude", null)).toBe("supported");
+    expect(getQuotaCapability("anthropic", null)).toBe("supported");
     expect(getQuotaCapability("kiro", null)).toBe("unsupported");
+  });
+
+  it("orders the displayed list by the credential inventory, not the pool order", () => {
+    const runtime = [
+      { id: "a@example.com", provider: "codex", health: "available", ok: 1, fails: 0 },
+      { id: "b@example.com", provider: "codex", health: "available", ok: 1, fails: 0 },
+    ];
+    const credential = (name: string, email: string) => ({
+      name,
+      size: 1,
+      auth_index: name,
+      path: `/auth/${name}`,
+      label: email,
+      disabled: false,
+      unavailable: false,
+      runtime_only: false,
+      type: "codex",
+      email,
+    });
+
+    const merged = mergeAccountsAndCredentials(runtime, [
+      credential("codex-b.json", "b@example.com"),
+      credential("codex-a.json", "a@example.com"),
+    ]);
+
+    expect(merged.map((account) => account.id)).toEqual(["b@example.com", "a@example.com"]);
   });
 
   it("derives correct health state including cooldown countdown", () => {

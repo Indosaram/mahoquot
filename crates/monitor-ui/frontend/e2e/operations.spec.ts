@@ -103,23 +103,28 @@ const installMocks = async (
       contentType: "application/yaml",
     });
   });
-  await page.route(/\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file)$/, (route) => {
-    if (options?.managementLocked) return route.fulfill({ status: 401, body: "locked" });
-    if (route.request().method() === "PUT") return route.fulfill({ json: { status: "ok" } });
-    const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("proxy-url")) return route.fulfill({ json: { "proxy-url": "" } });
-    if (path.endsWith("routing/strategy")) {
-      return route.fulfill({ json: { strategy: "round-robin" } });
-    }
-    if (path.endsWith("request-retry")) {
-      return route.fulfill({ json: { "request-retry": 3 } });
-    }
-    return route.fulfill({ json: { "logging-to-file": false } });
-  });
-  await page.route(/\/v0\/management\/(codex|gemini-cli|anthropic|kiro|cursor)-auth-url$/, (route) =>
-    route.fulfill({
-      json: { status: "ok", url: "https://example.com/authorize", state: "e2e-auth-state" },
-    }),
+  await page.route(
+    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file)$/,
+    (route) => {
+      if (options?.managementLocked) return route.fulfill({ status: 401, body: "locked" });
+      if (route.request().method() === "PUT") return route.fulfill({ json: { status: "ok" } });
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("proxy-url")) return route.fulfill({ json: { "proxy-url": "" } });
+      if (path.endsWith("routing/strategy")) {
+        return route.fulfill({ json: { strategy: "round-robin" } });
+      }
+      if (path.endsWith("request-retry")) {
+        return route.fulfill({ json: { "request-retry": 3 } });
+      }
+      return route.fulfill({ json: { "logging-to-file": false } });
+    },
+  );
+  await page.route(
+    /\/v0\/management\/(codex|antigravity|anthropic|cursor|kimi|xai)-auth-url$/,
+    (route) =>
+      route.fulfill({
+        json: { status: "ok", url: "https://example.com/authorize", state: "e2e-auth-state" },
+      }),
   );
   await page.route(/\/v0\/management\/get-auth-status\?state=.*/, (route) =>
     route.fulfill({ json: { status: "ok", provider: "codex" } }),
@@ -127,6 +132,69 @@ const installMocks = async (
 };
 
 test.beforeAll(async () => mkdir(evidenceDir, { recursive: true }));
+
+test("keeps the topbar anchored while scoping controls to their surfaces", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await installMocks(page);
+  await page.goto("/management.html");
+
+  const overviewTitle = page.getByRole("heading", { name: "Overview", exact: true });
+  await expect(overviewTitle).toBeVisible();
+  const overviewBox = await overviewTitle.boundingBox();
+  expect(overviewBox).not.toBeNull();
+  await expect(page.getByRole("button", { name: "Refresh snapshot" })).toHaveCount(0);
+  await expect(page.getByLabel("Theme")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Accounts" }).click();
+  const accountsBox = await page
+    .getByRole("heading", { name: "Accounts", exact: true })
+    .boundingBox();
+  expect(accountsBox?.x).toBe(overviewBox?.x);
+  await expect(page.getByRole("button", { name: "Refresh snapshot" })).toBeVisible();
+  await expect(page.getByLabel("Theme")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Logs" }).click();
+  const logsBox = await page.getByRole("heading", { name: "Logs", exact: true }).boundingBox();
+  expect(logsBox?.x).toBe(overviewBox?.x);
+  await expect(page.getByRole("button", { name: "Refresh snapshot" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  const settingsBox = await page
+    .getByRole("heading", { name: "Settings", exact: true })
+    .boundingBox();
+  expect(settingsBox?.x).toBe(overviewBox?.x);
+  await expect(page.getByRole("button", { name: "Refresh snapshot" })).toHaveCount(0);
+  await expect(page.getByLabel("Theme")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Toggle theme" })).toHaveCount(0);
+  await page.screenshot({ path: `${evidenceDir}/topbar-scoped-controls.png`, fullPage: true });
+});
+
+test("keeps the add-account action in the top bar", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await installMocks(page);
+  await page.goto("/management.html");
+  await page
+    .getByRole("button", { name: /Accounts/ })
+    .first()
+    .click();
+
+  const topActions = page.locator(".top-actions");
+  const add = page.getByRole("button", { name: "Add account" });
+  await expect(add).toBeVisible();
+  const actionsBox = await topActions.boundingBox();
+  const addBox = await add.boundingBox();
+  expect(actionsBox).not.toBeNull();
+  expect(addBox).not.toBeNull();
+  expect((addBox?.x ?? 0) + (addBox?.width ?? 0)).toBeLessThanOrEqual(
+    (actionsBox?.x ?? 0) + (actionsBox?.width ?? 0) + 1,
+  );
+  await expect(page.locator(".onboarding")).toHaveCount(0);
+
+  await add.click();
+  await expect(page.getByRole("heading", { name: "Add Account" })).toBeVisible();
+  await page.screenshot({ path: `${evidenceDir}/accounts-add-account.png`, fullPage: true });
+});
 
 test("provider onboarding uses bundled official brand logos", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
@@ -136,12 +204,12 @@ test("provider onboarding uses bundled official brand logos", async ({ page }) =
     .getByRole("button", { name: /Accounts/ })
     .first()
     .click();
-  await page.getByText("Start onboarding").click();
+  await page.getByRole("button", { name: "Add account" }).click();
 
-  for (const provider of ["codex", "antigravity", "claude", "kiro", "cursor"]) {
+  for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
     await expect(page.getByTestId(`provider-logo-${provider}`).last()).toBeVisible();
   }
-  await page.getByRole("button", { name: /Codex \/ OpenAI/ }).click();
+  await page.getByRole("button", { name: "Codex", exact: true }).click();
   await expect(page.getByText(/Authorization pending/)).toBeVisible();
   await page.getByRole("button", { name: "Check authorization status" }).click();
   await expect(page.getByText(/Codex authorization completed/)).toBeVisible();
@@ -169,7 +237,9 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
     .click();
   await page.getByText("Claude", { exact: true }).click();
   await expect(page.getByText("Not reported by provider").first()).toBeVisible();
-  await expect(page.getByText("Credential saved but not in the runtime pool")).toBeVisible();
+  await expect(
+    page.getByText("Credential saved but the gateway could not load it into the runtime pool"),
+  ).toBeVisible();
   await page.getByText("Kiro", { exact: true }).click();
   await expect(page.getByText("Provider authentication failed")).toBeVisible();
   await page.getByText("Codex", { exact: true }).click();
@@ -189,9 +259,9 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   );
   await page.getByRole("button", { name: "Reset window" }).first().click();
   await expect(page.getByText(/Action failed/)).toBeVisible();
-  await page.getByText("Start onboarding").click();
-  await expect(page.getByRole("heading", { name: "Add or re-authenticate" })).toBeVisible();
-  for (const provider of ["codex", "antigravity", "claude", "kiro", "cursor"]) {
+  await page.getByRole("button", { name: "Add account" }).click();
+  await expect(page.getByRole("heading", { name: "Add Account" })).toBeVisible();
+  for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
     await expect(page.getByTestId(`provider-logo-${provider}`).last()).toBeVisible();
   }
   await page.screenshot({ path: `${evidenceDir}/desktop-dark-provider-icons.png`, fullPage: true });
@@ -228,8 +298,8 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await expect(yaml).toContainText("strict-round-robin");
   await yaml.fill("port: 18801\nrouting:\n  strategy: fill-first\n");
   await page.getByRole("button", { name: "Save configuration" }).click();
-  await expect(page.getByText(/Configuration saved — restart required/)).toBeVisible();
-  await page.getByLabel("Toggle theme").click();
+  await expect(page.getByText(/Configuration saved and applied/)).toBeVisible();
+  await page.getByLabel("Theme").selectOption("light");
   await page.screenshot({ path: `${evidenceDir}/desktop-light-settings.png`, fullPage: true });
 });
 
@@ -243,7 +313,8 @@ test("mobile responsive state without management controls", async ({ page }) => 
   await expect(page.getByText(/Management API disabled/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add credential" })).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/mobile-dark-accounts-locked.png`, fullPage: true });
-  await page.getByLabel("Toggle theme").click();
+  await page.getByLabel("Mobile navigation").getByText("settings").click();
+  await page.getByLabel("Theme").selectOption("light");
   await page.getByLabel("Mobile navigation").getByText("overview").click();
   await page.screenshot({ path: `${evidenceDir}/mobile-light-overview.png`, fullPage: true });
 });

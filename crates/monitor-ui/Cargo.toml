@@ -32,3 +32,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+# Global NSEvent monitors take an Objective-C block; the notch needs one to see
+# the cursor while another app is frontmost.
+block = "0.1"

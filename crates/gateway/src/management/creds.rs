@@ -325,9 +325,10 @@ fn validate_provider_credential(content: &Value) -> Result<(), String> {
             if !mahoquot_providers::zcode::is_provisioned_api_key(key) {
                 return Err("zcode access_token must be a provisioned {id}.{secret} key".into());
             }
-            required_string(content, "refresh_token")?;
             required_string(content, "email")?;
-            required_string(content, "expired")?;
+            // A provisioned key never expires and has nothing to refresh from,
+            // so demanding those two fields would reject the only credential
+            // shape an operator can actually paste.
         }
         "codex" | "antigravity" => {}
         _ => return Err(format!("unsupported credential type {kind}")),
@@ -585,6 +586,20 @@ mod tests {
         assert_eq!(
             validate_provider_credential(&invalid_zcode),
             Err("zcode access_token must be a provisioned {id}.{secret} key".to_string())
+        );
+    }
+
+    #[test]
+    fn zcode_accepts_a_pasted_provisioned_key_without_oauth_fields() {
+        // The console can only ever supply these two fields for Z.ai, because a
+        // provisioned key has no refresh token and no expiry.
+        assert_eq!(
+            validate_provider_credential(&json!({
+                "type": "zcode",
+                "access_token": "keyid.keysecret",
+                "email": "u@example.com"
+            })),
+            Ok(())
         );
     }
 

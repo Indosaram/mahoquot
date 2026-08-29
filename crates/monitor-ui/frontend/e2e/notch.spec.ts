@@ -42,6 +42,14 @@ const deterministicStats = {
       fails: 3,
       usage: { groups: [{ display_name: "Gemini Pro", buckets: [{ used_percent: 88 }] }] },
     },
+    {
+      id: "notch-second-antigravity@example.com",
+      provider: "antigravity",
+      health: { status: "available" },
+      ok: 30,
+      fails: 0,
+      usage: { groups: [{ display_name: "Gemini Pro", buckets: [{ used_percent: 12 }] }] },
+    },
   ],
 };
 
@@ -66,7 +74,7 @@ test.beforeAll(async () => {
   await mkdir(evidenceDir, { recursive: true });
 });
 
-test("renders live compact notch panel", async ({ page }) => {
+test("keeps an empty thin right-edge strip until hovered", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 560 });
   await installMocks(page);
   await page.goto("/management.html?surface=notch");
@@ -76,8 +84,18 @@ test("renders live compact notch panel", async ({ page }) => {
 
   const notchSurface = surface.locator(".notch-surface");
   const compactBox = await notchSurface.boundingBox();
-  expect(compactBox?.height ?? 999).toBeLessThanOrEqual(56);
-
+  expect(compactBox?.width ?? 999).toBeLessThanOrEqual(10);
+  expect(compactBox?.height ?? 0).toBeGreaterThanOrEqual(160);
+  const viewportWidth = await page.evaluate(() => document.documentElement.clientWidth);
+  expect((compactBox?.x ?? 0) + (compactBox?.width ?? 0)).toBe(viewportWidth);
+  const shell = surface;
+  await expect(shell).toHaveCSS("width", "8px");
+  await expect(shell).toHaveCSS("height", "180px");
+  await expect(surface.getByTestId("notch-trigger-strip")).toBeVisible();
+  await expect(surface.getByTestId("notch-trigger-strip")).toBeEmpty();
+  // The idle strip must be visually empty: no provider content, no lettering.
+  await expect(surface).toHaveText("");
+  await expect(surface.getByTestId("notch-ring-codex")).toHaveCount(0);
   const transparentBackground = await page.evaluate(() => {
     const body = getComputedStyle(document.body).backgroundColor;
     const root = getComputedStyle(document.documentElement).backgroundColor;
@@ -86,24 +104,58 @@ test("renders live compact notch panel", async ({ page }) => {
   expect(transparentBackground.body).toBe("rgba(0, 0, 0, 0)");
   expect(transparentBackground.root).toBe("rgba(0, 0, 0, 0)");
 
-  await surface.locator(".notch-hover-zone").hover();
+  await surface.getByTestId("notch-trigger-strip").hover();
   await expect(notchSurface).toHaveClass(/expanded/);
-  await expect(notchSurface).toHaveCSS("height", "440px");
+  // Icons animate in from the strip rather than appearing fully formed.
+  await expect(surface.locator(".notch-ring-item").first()).toHaveCSS("opacity", "1");
+  await expect(shell).toHaveCSS("width", "420px");
+  await expect(shell).toHaveCSS("height", "480px");
+  await expect(notchSurface).toHaveCSS("width", "96px");
+  // The island hugs its icons, so assert it opened and stayed within bounds
+  // rather than pinning a height that changes with provider count.
+  const islandHeight = (await notchSurface.boundingBox())?.height ?? 0;
+  expect(islandHeight).toBeGreaterThan(80);
+  expect(islandHeight).toBeLessThanOrEqual(440);
   const expandedBox = await notchSurface.boundingBox();
   expect(expandedBox?.height ?? 0).toBeGreaterThan(200);
 
   await expect(surface.getByTestId("notch-ring-codex")).toBeVisible();
   await expect(surface.getByTestId("notch-ring-claude")).toBeVisible();
   await expect(surface.getByTestId("notch-ring-antigravity")).toBeVisible();
+  // Two antigravity accounts must still collapse into exactly one icon.
+  await expect(surface.getByTestId("notch-ring-antigravity")).toHaveCount(1);
+  await expect(surface.locator(".notch-ring-item")).toHaveCount(3);
 
-  await page.mouse.move(10, 520);
+  for (const provider of ["codex", "claude", "antigravity"]) {
+    await expect(surface.getByTestId(`notch-tooltip-${provider}`)).toBeHidden();
+  }
+
+  await page.mouse.move(481, 280);
   await expect(notchSurface).not.toHaveClass(/expanded/);
 
-  await surface.locator(".notch-hover-zone").hover();
+  await surface.getByTestId("notch-trigger-strip").hover();
   await page.getByTestId("notch-ring-codex").hover();
   const tooltip = surface.getByTestId("notch-tooltip-codex");
   await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("35% Used");
   await expect(tooltip).toContainText("Resets");
+  await expect(surface.getByTestId("notch-tooltip-claude")).toBeHidden();
+
+  await page.getByTestId("notch-ring-antigravity").hover();
+  const pooled = surface.getByTestId("notch-tooltip-antigravity");
+  await expect(pooled).toBeVisible();
+  await expect(pooled).toContainText("2 accounts");
+  // Both pooled accounts stay individually visible, each with its own usage.
+  await expect(pooled.locator(".notch-tooltip-account")).toHaveCount(2);
+  await expect(pooled).toContainText("88% Used");
+  await expect(pooled).toContainText("12% Used");
+
+  // The account list must survive the pointer travelling onto it, and scroll.
+  const pooledBox = (await pooled.boundingBox())!;
+  await page.mouse.move(pooledBox.x + pooledBox.width / 2, pooledBox.y + pooledBox.height / 2);
+  await expect(pooled).toBeVisible();
+  await expect(pooled).toHaveCSS("pointer-events", "auto");
+  await expect(notchSurface).toHaveClass(/expanded/);
 
   await page.screenshot({ path: `${evidenceDir}/notch-panel.png` });
 });
@@ -129,8 +181,12 @@ test("shows onboarding hint ring when no accounts are connected", async ({ page 
   const surface = page.locator('[data-mahoquot-surface="notch"]');
   const notchSurface = surface.locator(".notch-surface");
   await expect(notchSurface).toBeVisible();
-  await surface.locator(".notch-hover-zone").hover();
-  await expect(notchSurface).toHaveCSS("height", "440px");
+  await surface.getByTestId("notch-trigger-strip").hover();
+  // The island hugs its icons, so assert it opened and stayed within bounds
+  // rather than pinning a height that changes with provider count.
+  const islandHeight = (await notchSurface.boundingBox())?.height ?? 0;
+  expect(islandHeight).toBeGreaterThan(80);
+  expect(islandHeight).toBeLessThanOrEqual(440);
   await expect(surface.getByTestId("notch-empty-ring")).toBeVisible();
   await page.getByTestId("notch-empty-ring").hover();
   await expect(surface.getByTestId("notch-tooltip-empty")).toBeVisible();

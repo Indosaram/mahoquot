@@ -6,6 +6,7 @@ import {
   persistedTelemetrySamples,
   providerTotals,
   summarizeTelemetry,
+  telemetrySeries,
 } from "../lib/telemetry";
 
 const snapshot = (served: number, ok: number, fails: number): AdminStats => ({
@@ -80,6 +81,64 @@ describe("request telemetry sampling", () => {
       3, 2,
     ]);
     expect(filterTelemetryRange(samples, "1h", now)).toHaveLength(3);
+  });
+
+  it("places a burst at its real position in the window instead of stretching it", () => {
+    const now = 2_000_000_000_000;
+    // Two buckets one minute apart, viewed through a 1d window: the burst is
+    // recent, so it must land at the right edge rather than spanning the axis.
+    const series = telemetrySeries(
+      [
+        { timestamp: now - 60_000, requests: 3_200, successes: 3_200, failures: 0 },
+        { timestamp: now - 1_000, requests: 801, successes: 801, failures: 0 },
+      ],
+      "1d",
+      now,
+      24,
+    );
+    expect(series).toHaveLength(24);
+    expect(series.at(-1)?.requests).toBe(4_001);
+    // Everything before the final bucket is genuinely idle.
+    expect(series.slice(0, -1).every((point) => point.requests === 0)).toBe(true);
+  });
+
+  it("zero-fills idle buckets instead of interpolating across the gap", () => {
+    const now = 2_000_000_000_000;
+    const series = telemetrySeries(
+      [
+        { timestamp: now - 55 * 60_000, requests: 10, successes: 10, failures: 0 },
+        { timestamp: now - 5 * 60_000, requests: 20, successes: 20, failures: 0 },
+      ],
+      "1h",
+      now,
+      6,
+    );
+    expect(series.map((point) => point.requests)).toEqual([10, 0, 0, 0, 0, 20]);
+  });
+
+  it("spaces buckets by elapsed time, not by sample ordering", () => {
+    const now = 2_000_000_000_000;
+    const series = telemetrySeries(
+      [
+        { timestamp: now - 50 * 60_000, requests: 5, successes: 5, failures: 0 },
+        { timestamp: now - 6 * 60_000, requests: 7, successes: 7, failures: 0 },
+        { timestamp: now - 2 * 60_000, requests: 9, successes: 9, failures: 0 },
+      ],
+      "1h",
+      now,
+      6,
+    );
+    // Index-based bucketing would emit 5/7/9 across three evenly spaced slots.
+    // With 10-minute buckets, -50m lands in bucket 1 and the two recent samples
+    // collapse into the final bucket.
+    expect(series.map((point) => point.requests)).toEqual([0, 5, 0, 0, 0, 16]);
+  });
+
+  it("reports a stable window even when no traffic was recorded", () => {
+    const now = 2_000_000_000_000;
+    const series = telemetrySeries([], "30m", now, 4);
+    expect(series).toHaveLength(4);
+    expect(series.every((point) => point.requests === 0)).toBe(true);
   });
 
   it("summarizes requests outcomes and providers inside the selected range", () => {

@@ -2,22 +2,30 @@ import { useMemo, useState } from "react";
 import type { AdminStats } from "../lib/schemas";
 import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
 import {
+  type TelemetryPoint,
   type TelemetryRange,
   type TelemetrySample,
-  downsampleTelemetry,
   filterTelemetryRange,
   summarizeTelemetry,
+  telemetrySeries,
 } from "../lib/telemetry";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
-const chartPoints = (samples: readonly TelemetrySample[]): string => {
-  const values = samples.length ? samples.map((sample) => sample.requests) : [0];
+// Every point is one equal-duration bucket, so index maps straight to elapsed time.
+const chartPoints = (series: readonly TelemetryPoint[]): string => {
+  const values = series.length ? series.map((point) => point.requests) : [0];
   const max = Math.max(1, ...values);
   const denominator = Math.max(1, values.length - 1);
   return values
     .map((value, index) => `${(index / denominator) * 100},${34 - (value / max) * 30}`)
     .join(" ");
+};
+
+// Persisted buckets carry no latency, so percentiles come from live stats.
+const latency = (stats: AdminStats, pick: "p50_ms" | "p90_ms"): string => {
+  const value = typeof stats.ttft === "number" ? stats.ttft : stats.ttft?.[pick];
+  return value === undefined || value <= 0 ? "—" : `${Math.round(value)} ms`;
 };
 
 const providerName = (provider: string): string =>
@@ -32,7 +40,7 @@ export const OverviewDashboard = ({
 }) => {
   const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
   const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
-  const chartSamples = useMemo(() => downsampleTelemetry(filtered), [filtered]);
+  const series = useMemo(() => telemetrySeries(filtered, range), [filtered, range]);
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
   const outcomes = summary.successes + summary.failures;
   const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
@@ -77,6 +85,14 @@ export const OverviewDashboard = ({
           <span>In flight</span>
           <strong>{stats.in_flight}</strong>
         </div>
+        <div>
+          <span>p50</span>
+          <strong>{latency(stats, "p50_ms")}</strong>
+        </div>
+        <div>
+          <span>p90</span>
+          <strong>{latency(stats, "p90_ms")}</strong>
+        </div>
       </div>
 
       <section className="minimal-chart-section">
@@ -95,14 +111,12 @@ export const OverviewDashboard = ({
             </defs>
             <path d="M0 34H100 M0 18H100" className="minimal-chart-grid" />
             <polygon
-              points={`0,34 ${chartPoints(chartSamples)} 100,34`}
+              points={`0,34 ${chartPoints(series)} 100,34`}
               fill="url(#minimal-request-area)"
             />
-            <polyline points={chartPoints(chartSamples)} className="minimal-request-line" />
+            <polyline points={chartPoints(series)} className="minimal-request-line" />
           </svg>
-          {!chartSamples.some((sample) => sample.requests > 0) ? (
-            <span>No requests yet</span>
-          ) : null}
+          {!series.some((point) => point.requests > 0) ? <span>No requests yet</span> : null}
         </div>
       </section>
 

@@ -12,7 +12,7 @@ use mahoquot_types::{Health, Outcome, PoolMember, SessionHint};
 
 use crate::account::AccountMember;
 use crate::compat;
-use crate::usage::parse_codex_headers;
+use crate::usage::{parse_claude_headers, parse_codex_headers};
 use crate::state::AppState;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -551,17 +551,27 @@ fn select_index(
         .and_then(|idx| origin.get(idx).copied())
 }
 
-/// Codex reports quota state on every response; antigravity sends none, so its
-/// accounts stay "unknown" rather than being reported as having full quota.
-fn capture_usage(member: &AccountMember, headers: &HeaderMap) {
-    if member.kind() != crate::account::ProviderKind::Codex {
-        return;
+/// Codex and Claude both report quota state on every response, under different
+/// header families; antigravity sends none on the relay path and is polled
+/// separately, so its accounts stay "unknown" rather than being reported as
+/// having full quota.
+pub(crate) fn usage_header_prefix(kind: crate::account::ProviderKind) -> Option<&'static str> {
+    match kind {
+        crate::account::ProviderKind::Codex => Some("x-codex-"),
+        crate::account::ProviderKind::Claude => Some("anthropic-ratelimit-"),
+        _ => None,
     }
+}
+
+fn capture_usage(member: &AccountMember, headers: &HeaderMap) {
+    let Some(prefix) = usage_header_prefix(member.kind()) else {
+        return;
+    };
     let map: std::collections::HashMap<String, String> = headers
         .iter()
         .filter_map(|(k, v)| {
             let name = k.as_str();
-            if !name.starts_with("x-codex-") {
+            if !name.starts_with(prefix) {
                 return None;
             }
             Some((name.to_string(), v.to_str().ok()?.to_string()))
@@ -574,7 +584,29 @@ fn capture_usage(member: &AccountMember, headers: &HeaderMap) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    member.set_usage(parse_codex_headers(&map, now));
+    let usage = match member.kind() {
+        crate::account::ProviderKind::Claude => parse_claude_headers(&map, now),
+        _ => parse_codex_headers(&map, now),
+    };
+    if usage.observed_at_unix.is_some() {
+        member.set_usage(usage);
+    }
+}
+
+#[cfg(test)]
+mod usage_capture_tests {
+    use super::usage_header_prefix;
+    use crate::account::ProviderKind;
+
+    #[test]
+    fn claude_responses_are_scanned_for_subscription_quota_headers() {
+        assert_eq!(
+            usage_header_prefix(ProviderKind::Claude),
+            Some("anthropic-ratelimit-")
+        );
+        assert_eq!(usage_header_prefix(ProviderKind::Codex), Some("x-codex-"));
+        assert_eq!(usage_header_prefix(ProviderKind::Antigravity), None);
+    }
 }
 
 async fn finish_success(

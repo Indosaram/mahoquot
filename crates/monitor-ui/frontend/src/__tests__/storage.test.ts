@@ -3,6 +3,7 @@ import {
   getGatewayBaseUrl,
   getRelayKey,
   getTelemetryRange,
+  getTheme,
   migrateStoredGatewayUrl,
   setGatewayBaseUrl,
   setRelayKey,
@@ -33,6 +34,17 @@ describe("Storage and Port Migration", () => {
     expect(localStorage.getItem("mahoquot.telemetry-range")).toBe("7d");
     localStorage.setItem("mahoquot.telemetry-range", "forever");
     expect(getTelemetryRange()).toBe("1d");
+  });
+
+  it("falls back to dark when the system theme API is unavailable", () => {
+    const matchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: undefined });
+
+    try {
+      expect(getTheme()).toBe("dark");
+    } finally {
+      Object.defineProperty(window, "matchMedia", { configurable: true, value: matchMedia });
+    }
   });
 
   it("validates typed gateway URL input without rejecting same-origin blank", () => {

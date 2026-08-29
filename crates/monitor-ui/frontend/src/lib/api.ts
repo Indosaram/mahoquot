@@ -43,6 +43,7 @@ export interface GatewayClients {
     configYaml(): Promise<string>;
     saveConfigYaml(yaml: string): Promise<void>;
     removeCredential(name: string): Promise<void>;
+    createZcodeCredential(email: string, apiKey: string): Promise<void>;
     saveCredentialOrder(names: readonly string[]): Promise<void>;
     importLocalClaude(): Promise<void>;
     beginProviderAuth(provider: string): Promise<{ readonly url: string; readonly state: string }>;
@@ -100,6 +101,16 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           body: yaml,
         });
       },
+      createZcodeCredential: async (email, apiKey) => {
+        await requestJson(`${base}/v0/management/auth-files`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: `zcode-${email}.json`,
+            content: { type: "zcode", access_token: apiKey, email },
+          }),
+        });
+      },
       removeCredential: async (name) => {
         await requestJson(
           `${base}/v0/management/auth-files?name=${encodeURIComponent(name)}`,
@@ -122,10 +133,11 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       beginProviderAuth: async (provider) => {
         const endpoint: Record<string, string> = {
           codex: "codex-auth-url",
-          antigravity: "gemini-cli-auth-url",
+          antigravity: "antigravity-auth-url",
           claude: "anthropic-auth-url",
           cursor: "cursor-auth-url",
-          kiro: "kiro-auth-url",
+          kimi: "kimi-auth-url",
+          xai: "xai-auth-url",
         };
         const route = endpoint[provider];
         if (!route) throw new GatewayError(`Unsupported provider: ${provider}`, 400);

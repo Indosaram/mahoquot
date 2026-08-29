@@ -11,6 +11,11 @@ const CODEX_RESET_URL: &str =
 /// The reset endpoint is a write and rejects clients that don't look like the
 /// official CLI, so requests mirror the Codex CLI user agent.
 const CODEX_USER_AGENT: &str = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal";
+const CLAUDE_API_BASE: &str = "https://api.anthropic.com";
+const CLAUDE_USAGE_PATH: &str = "/api/oauth/usage";
+/// Undocumented and version-dated: the endpoint is gated on this exact beta
+/// header, and a new date means the payload can change without notice.
+const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -56,10 +61,83 @@ pub async fn refresh_account_usage(
     match member.kind() {
         ProviderKind::Codex => refresh_codex_usage(state, member).await,
         ProviderKind::Antigravity => refresh_antigravity_usage(state, member).await,
-        ProviderKind::Claude | ProviderKind::Cursor | ProviderKind::Kiro | ProviderKind::Zcode => {
+        ProviderKind::Claude => refresh_claude_usage(state, member).await,
+        ProviderKind::Cursor | ProviderKind::Kiro | ProviderKind::Zcode => {
             Err(QuotaError::Unsupported)
         }
     }
+}
+
+/// Claude subscription quota, polled rather than scraped off relayed responses.
+///
+/// The relay only sees `anthropic-ratelimit-unified-*` when traffic actually
+/// flows through this gateway, which leaves an idle account permanently blank;
+/// this endpoint is what Claude Code's own usage display reads.
+async fn refresh_claude_usage(
+    state: &AppState,
+    member: &Arc<AccountMember>,
+) -> Result<(), QuotaError> {
+    if state.auth_refresh_enabled && member.is_expired(now_unix()) {
+        let _ = state.refresh_member(member, None).await;
+    }
+    let used = member.access_token();
+    match try_claude_usage(state, member).await {
+        Err(QuotaError::Unauthorized) if state.auth_refresh_enabled => {
+            state
+                .refresh_member(member, Some(&used))
+                .await
+                .map_err(|e| QuotaError::Upstream(format!("refresh failed: {e}")))?;
+            try_claude_usage(state, member).await
+        }
+        other => other,
+    }
+}
+
+async fn try_claude_usage(
+    state: &AppState,
+    member: &Arc<AccountMember>,
+) -> Result<(), QuotaError> {
+    let token = member.access_token();
+    if token.is_empty() {
+        return Err(QuotaError::Unauthorized);
+    }
+    let base = member
+        .upstream_override
+        .as_deref()
+        .unwrap_or(CLAUDE_API_BASE)
+        .trim_end_matches('/');
+
+    let resp = state
+        .http_client
+        .get(format!("{base}{CLAUDE_USAGE_PATH}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", CLAUDE_OAUTH_BETA)
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| QuotaError::Upstream(e.to_string()))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(QuotaError::Unauthorized);
+    }
+    // Anthropic throttles this endpoint hard and gives no Retry-After. A 429 is
+    // a stale read, not a quota fact, so the previous snapshot is left alone.
+    if !status.is_success() {
+        return Err(QuotaError::Upstream(format!("usage http {status}")));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| QuotaError::Upstream(e.to_string()))?;
+    let parsed = crate::usage::parse_claude_usage_summary(&body, now_unix());
+    if parsed.observed_at_unix.is_none() {
+        return Err(QuotaError::Upstream("usage payload had no windows".into()));
+    }
+    member.set_usage(parsed);
+    Ok(())
 }
 
 /// Antigravity's per-model-group quota.

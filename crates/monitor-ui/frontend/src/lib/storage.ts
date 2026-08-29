@@ -72,7 +72,11 @@ export const getTheme = (): "dark" | "light" => {
   if (saved === "light" || saved === "dark") {
     return saved;
   }
-  if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: light)").matches) {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: light)").matches
+  ) {
     return "light";
   }
   return "dark";

@@ -64,6 +64,9 @@ export const getQuotaCapability = (
   if (p.includes("antigravity")) {
     return usage && (usage.groups?.length ?? 0) > 0 ? "supported" : "unsupported";
   }
+  if (p.includes("claude") || p.includes("anthropic")) {
+    return "supported";
+  }
   return "unsupported";
 };
 
@@ -121,6 +124,69 @@ export const formatResetTime = (sec: number | null | undefined): string => {
   return `${s}s`;
 };
 
+const providerOf = (value: string | undefined): string => (value || "").toLowerCase();
+
+const credentialProvider = (credential: AuthFileItem): string =>
+  providerOf(credential.type || credential.provider);
+
+const sharesProvider = (accountProvider: string, credential: AuthFileItem): boolean => {
+  const credProvider = credentialProvider(credential);
+  if (!credProvider || !accountProvider) return true;
+  return credProvider === accountProvider || accountProvider.includes(credProvider);
+};
+
+/**
+ * Bind each runtime pool member to the credential file it was loaded from.
+ *
+ * Most providers expose the account email as the runtime id, so identity matching
+ * covers them. Subscription imports such as Claude Code report an opaque runtime id
+ * (`claude-code`) that shares neither email nor filename with its credential file,
+ * which used to split one account into an unmanageable runtime card plus a phantom
+ * "not loaded" credential card. When a provider has exactly one unbound account and
+ * one unbound credential left, that pairing is unambiguous, so bind it.
+ */
+const pairAccountsWithCredentials = (
+  runtimeAccounts: readonly AccountStats[],
+  credentialFiles: readonly AuthFileItem[],
+  matched: Set<string>,
+): Map<string, AuthFileItem> => {
+  const pairing = new Map<string, AuthFileItem>();
+
+  for (const account of runtimeAccounts) {
+    const accountEmail = extractEmail(account.id);
+    const accountProvider = providerOf(account.provider || "unknown");
+    const credential = credentialFiles.find((c) => {
+      if (matched.has(c.name)) return false;
+      const credEmail = extractEmail(c.email || c.account || c.name);
+      return (
+        sharesProvider(accountProvider, c) && (credEmail === accountEmail || c.name === account.id)
+      );
+    });
+    if (credential) {
+      matched.add(credential.name);
+      pairing.set(account.id, credential);
+    }
+  }
+
+  const unpaired = runtimeAccounts.filter((account) => !pairing.has(account.id));
+  for (const account of unpaired) {
+    const accountProvider = providerOf(account.provider || "unknown");
+    const rivals = unpaired.filter(
+      (other) => providerOf(other.provider || "unknown") === accountProvider,
+    );
+    const candidates = credentialFiles.filter(
+      (c) => !matched.has(c.name) && credentialProvider(c) === accountProvider,
+    );
+    const credential = candidates[0];
+    if (rivals.length === 1 && candidates.length === 1 && credential) {
+      matched.add(credential.name);
+      pairing.set(account.id, credential);
+    }
+  }
+
+  return pairing;
+};
+
 export const mergeAccountsAndCredentials = (
   runtimeAccounts: readonly AccountStats[],
   credentialFiles: readonly AuthFileItem[],
@@ -128,22 +194,11 @@ export const mergeAccountsAndCredentials = (
   const result: NormalizedAccount[] = [];
   const matchedCreds = new Set<string>();
   const nowMs = Date.now();
+  const pairing = pairAccountsWithCredentials(runtimeAccounts, credentialFiles, matchedCreds);
 
   for (const r of runtimeAccounts) {
     const rEmail = extractEmail(r.id);
-    const rProv = (r.provider || "unknown").toLowerCase();
-
-    // Match by provider and email or direct name
-    const cred = credentialFiles.find((c) => {
-      const cEmail = extractEmail(c.email || c.account || c.name);
-      const cProv = (c.type || c.provider || "").toLowerCase();
-      const provMatch = !cProv || !rProv || cProv === rProv || rProv.includes(cProv);
-      return provMatch && (cEmail === rEmail || c.name === r.id);
-    });
-
-    if (cred) {
-      matchedCreds.add(cred.name);
-    }
+    const cred = pairing.get(r.id);
 
     const health = deriveAccountHealth(r.health, r.reset_at_unix_ms, r.ok, r.fails);
     const cooldownRemaining = r.reset_at_unix_ms
@@ -230,6 +285,14 @@ export const mergeAccountsAndCredentials = (
       },
     });
   }
+
+  // Display order follows the credential inventory, which the console reorders
+  // on its own. The runtime pool sorts itself, so this never moves routing.
+  const rank = new Map(credentialFiles.map((c, index) => [c.name, index]));
+  const rankOf = (account: NormalizedAccount): number =>
+    (account.credentialName ? rank.get(account.credentialName) : undefined) ??
+    Number.MAX_SAFE_INTEGER;
+  result.sort((a, b) => rankOf(a) - rankOf(b));
 
   return result;
 };

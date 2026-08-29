@@ -38,6 +38,8 @@ const stats = {
 describe("operations console", () => {
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
+    localStorage.removeItem("mahoquot.theme");
+    document.documentElement.removeAttribute("data-theme");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -75,7 +77,7 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    expect(screen.getByText("Provider onboarding")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add account" })).toBeInTheDocument();
   });
 
   it("exposes exactly the approved primary surfaces and snapshot caveat", async () => {
@@ -101,6 +103,405 @@ describe("operations console", () => {
     expect(screen.queryByText(/Live/i)).not.toBeInTheDocument();
     expect(screen.queryByText("long-runtime-id@example.com")).not.toBeInTheDocument();
     expect(screen.queryByText("POOL HEALTH")).not.toBeInTheDocument();
+  });
+
+  it("keeps refresh in Accounts and theme selection in Settings", async () => {
+    render(<App />);
+    await screen.findByText("Requests");
+
+    expect(screen.queryByRole("button", { name: "Refresh snapshot" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Theme")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Toggle theme" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    expect(screen.getByRole("button", { name: "Refresh snapshot" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Theme")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Toggle theme" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText("Logs").at(0) as HTMLElement);
+    expect(screen.queryByRole("button", { name: "Refresh snapshot" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Theme")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
+    expect(screen.queryByRole("button", { name: "Refresh snapshot" })).not.toBeInTheDocument();
+    const theme = await screen.findByLabelText("Theme");
+    expect(theme).toHaveValue("dark");
+
+    fireEvent.change(theme, { target: { value: "light" } });
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "light"));
+    expect(localStorage.getItem("mahoquot.theme")).toBe("light");
+  });
+
+  it("detects provider approval without a manual status click", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let statusCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("codex-auth-url")) {
+          return new Response(
+            JSON.stringify({ url: "https://example.com/auth", state: "auth-77" }),
+          );
+        }
+        if (url.includes("get-auth-status")) {
+          statusCalls += 1;
+          return new Response(
+            JSON.stringify(
+              statusCalls > 1 ? { status: "ok", provider: "codex" } : { status: "pending" },
+            ),
+          );
+        }
+        return new Response(JSON.stringify({ status: "ok" }));
+      }),
+    );
+    vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
+    expect(await screen.findByText(/Waiting for provider approval/i)).toBeInTheDocument();
+
+    // No click on "Check authorization status" — the session polls itself.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6500);
+    });
+    expect(await screen.findByText(/Codex authorization completed/i)).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("reorders accounts by dragging one card onto another", async () => {
+    const orderStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "a@example.com",
+          provider: "codex",
+          health: { status: "available" },
+          ok: 1,
+          fails: 0,
+        },
+        {
+          id: "b@example.com",
+          provider: "codex",
+          health: { status: "available" },
+          ok: 1,
+          fails: 0,
+        },
+      ],
+    };
+    const credential = (name: string, email: string) => ({
+      name,
+      size: 1,
+      auth_index: name,
+      path: `/auth/${name}`,
+      label: email,
+      disabled: false,
+      unavailable: false,
+      runtime_only: false,
+      type: "codex",
+      email,
+    });
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "PUT" && url.includes("auth-files/order")) {
+          bodies.push(String(init.body ?? ""));
+          return new Response(JSON.stringify({ status: "ok" }));
+        }
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(orderStats));
+        if (url.includes("auth-files")) {
+          return new Response(
+            JSON.stringify({
+              files: [
+                credential("codex-a.json", "a@example.com"),
+                credential("codex-b.json", "b@example.com"),
+              ],
+            }),
+          );
+        }
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    await screen.findByLabelText("Reorder a@example.com");
+
+    const cards = document.querySelectorAll(".account-card");
+    const first = cards[0] as HTMLElement;
+    const second = cards[1] as HTMLElement;
+    const dataTransfer = { effectAllowed: "", setData: vi.fn(), getData: vi.fn() };
+    fireEvent.dragStart(first, { dataTransfer });
+    fireEvent.dragOver(second, { dataTransfer });
+    fireEvent.drop(second, { dataTransfer });
+
+    await waitFor(() => expect(bodies.length).toBe(1));
+    expect(JSON.parse(bodies[0] ?? "{}")).toEqual({
+      names: ["codex-b.json", "codex-a.json"],
+    });
+  });
+
+  it("adds a Z.ai account by writing a provisioned key credential", async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "POST") calls.push({ url, body: String(init.body ?? "") });
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        return new Response(JSON.stringify({ status: "ok" }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
+
+    fireEvent.change(screen.getByLabelText("Z.ai account email"), {
+      target: { value: "me@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Z.ai provisioned API key"), {
+      target: { value: "keyid.keysecret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save key" }));
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/v0/management/auth-files"))).toBe(true),
+    );
+    const written = calls.find((call) => call.url.endsWith("/v0/management/auth-files"));
+    expect(JSON.parse(written?.body ?? "{}")).toEqual({
+      name: "zcode-me@example.com.json",
+      content: { type: "zcode", access_token: "keyid.keysecret", email: "me@example.com" },
+    });
+  });
+
+  it("shows Claude subscription usage windows", async () => {
+    const claudeStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "claude-code",
+          provider: "claude",
+          health: { status: "available" },
+          ok: 3,
+          fails: 0,
+          usage: {
+            active_limit: "five_hour",
+            primary: {
+              used_percent: 3,
+              window_minutes: 300,
+              limit_name: "Session",
+              reset_after_seconds: 3600,
+            },
+            secondary: {
+              used_percent: 12,
+              window_minutes: 10080,
+              limit_name: "Weekly",
+              reset_after_seconds: 172800,
+            },
+          },
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(claudeStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+
+    expect(await screen.findByText("Session")).toBeInTheDocument();
+    expect(screen.getByText("Weekly")).toBeInTheDocument();
+    expect(screen.getByText("97%")).toBeInTheDocument();
+    expect(screen.getByText("88%")).toBeInTheDocument();
+    expect(screen.queryByText("Not reported by provider")).not.toBeInTheDocument();
+  });
+
+  it("names the model pool each quota window meters", async () => {
+    const groupedStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "pooled@example.com",
+          provider: "antigravity",
+          health: { status: "available" },
+          ok: 4,
+          fails: 0,
+          usage: {
+            groups: [
+              {
+                display_name: "Gemini Models",
+                buckets: [
+                  { display_name: "Weekly Limit Remaining", used_percent: 0 },
+                  { display_name: "Five Hour Limit Remaining", used_percent: 0 },
+                ],
+              },
+              {
+                display_name: "Claude and GPT Models",
+                buckets: [{ display_name: "Weekly Limit Remaining", used_percent: 0 }],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(groupedStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+
+    // Two pools each report a weekly window, so the window name alone cannot say
+    // which limit it belongs to.
+    expect(await screen.findByText("Gemini Models")).toBeInTheDocument();
+    expect(screen.getByText("Claude and GPT Models")).toBeInTheDocument();
+    expect(screen.getAllByText("Weekly")).toHaveLength(2);
+    expect(screen.getByText("Five Hour")).toBeInTheDocument();
+    expect(screen.queryByText(/Limit Remaining/)).not.toBeInTheDocument();
+  });
+
+  it("keeps account management when the gateway refuses the log endpoint", async () => {
+    const managedStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "pooled@example.com",
+          provider: "codex",
+          health: { status: "available" },
+          ok: 2,
+          fails: 0,
+        },
+      ],
+    };
+    const files = {
+      files: [
+        {
+          name: "codex-pooled.json",
+          size: 200,
+          auth_index: "codex-pooled",
+          path: "/auth/codex-pooled.json",
+          label: "pooled",
+          disabled: false,
+          unavailable: false,
+          runtime_only: false,
+          type: "codex",
+          email: "pooled@example.com",
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(managedStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify(files));
+        // The gateway rejects this outright while file logging is disabled.
+        if (url.includes("/logs")) {
+          return new Response(JSON.stringify({ error: "logging to file disabled" }), {
+            status: 400,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+
+    // A refused log read must not strip the credential inventory.
+    expect(await screen.findByRole("button", { name: "Remove pooled" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Re-authenticate pooled" })).toBeInTheDocument();
+  });
+
+  it("manages a subscription account with re-auth and confirmed removal", async () => {
+    const requests: { url: string; method: string }[] = [];
+    const claudeStats = {
+      ...stats,
+      accounts: [
+        { id: "claude-code", provider: "claude", health: { status: "available" }, ok: 3, fails: 0 },
+      ],
+    };
+    const files = {
+      files: [
+        {
+          name: "claude-local.json",
+          size: 180,
+          auth_index: "claude-local",
+          path: "/auth/claude-local.json",
+          label: "claude-local",
+          disabled: false,
+          unavailable: false,
+          runtime_only: false,
+          type: "claude",
+          email: "owner@example.com",
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        requests.push({ url, method: init?.method ?? "GET" });
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(claudeStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify(files));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+
+    // The imported subscription is one manageable account, not a runtime card plus a
+    // phantom "not loaded" credential card.
+    expect(await screen.findByLabelText("claude 1 account")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Re-authenticate claude-local" }),
+    ).toBeInTheDocument();
+
+    // Removal takes two deliberate clicks so one stray click cannot destroy a credential.
+    fireEvent.click(screen.getByRole("button", { name: "Remove claude-local" }));
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm removing claude-local" }));
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) => request.method === "DELETE" && request.url.includes("claude-local.json"),
+        ),
+      ).toBe(true),
+    );
   });
 
   it("updates Overview totals when the telemetry range changes", async () => {
@@ -156,9 +557,8 @@ describe("operations console", () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
     try {
       render(<App />);
-      expect(await screen.findByTestId("notch-hover-zone")).toBeInTheDocument();
-      expect(screen.getByText("Quotio")).toBeInTheDocument();
-      expect(screen.getByText("1")).toBeInTheDocument();
+      expect(await screen.findByLabelText("Show provider quotas")).toBeInTheDocument();
+      expect(screen.queryByText("Quotio")).not.toBeInTheDocument();
       expect(
         screen.queryByRole("navigation", { name: "Primary navigation" }),
       ).not.toBeInTheDocument();
@@ -213,11 +613,12 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    fireEvent.click(await screen.findByText("Start onboarding"));
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
     expect(screen.getByRole("complementary", { name: "Provider onboarding" })).toBeInTheDocument();
-    expect(screen.getByText("Add or re-authenticate")).toBeInTheDocument();
-    expect(screen.getByText(/will not claim success/)).toBeInTheDocument();
-    expect(screen.getAllByText(/require a gateway restart/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Add Account")).toBeInTheDocument();
+    // The gateway rescans its pool on every credential write, so the console
+    // must not tell anyone to restart it.
+    expect(screen.queryByText(/restart/i)).not.toBeInTheDocument();
   });
 
   it("renders bundled official logos for every onboarding provider", async () => {
@@ -225,9 +626,9 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    fireEvent.click(await screen.findByText("Start onboarding"));
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
 
-    for (const provider of ["codex", "antigravity", "claude", "kiro", "cursor"]) {
+    for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
       expect(screen.getAllByTestId(`provider-logo-${provider}`).length).toBeGreaterThan(0);
     }
   });
@@ -266,7 +667,6 @@ describe("operations console", () => {
     fireEvent.click(accounts);
     expect(await screen.findByRole("radio", { name: "codex 1 account" })).toBeInTheDocument();
     expect(screen.getByText("Pro")).toBeInTheDocument();
-    expect(screen.getByText("USAGE")).toBeInTheDocument();
     expect(screen.getByText("Session")).toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
     expect(screen.getByText("1h 0m")).toBeInTheDocument();
@@ -333,7 +733,9 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    fireEvent.click(await screen.findByRole("button", { name: /Start onboarding/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    // Claude offers two ways in, so its tile opens a method list first.
+    fireEvent.click(await screen.findByRole("button", { name: "Claude" }));
     fireEvent.click(
       await screen.findByRole("button", { name: /Import Claude Code subscription/i }),
     );
@@ -368,8 +770,8 @@ describe("operations console", () => {
 
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
-    fireEvent.click(await screen.findByRole("button", { name: /Start onboarding/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /Codex \/ OpenAI/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
     expect(await screen.findByText(/Authorization pending/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Check authorization status/i }));
 

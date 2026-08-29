@@ -23,12 +23,74 @@ const NOTCH_WINDOW_LABEL: &str = "notch";
 const TRAY_ID: &str = "mahoquot";
 const NOTCH_EXPANDED_WIDTH: f64 = 420.0;
 const NOTCH_EXPANDED_HEIGHT: f64 = 480.0;
-const NOTCH_COMPACT_WIDTH: f64 = 200.0;
-const NOTCH_COMPACT_HEIGHT: f64 = 44.0;
-const NOTCH_TOP_OFFSET: f64 = 0.0;
+const NOTCH_COMPACT_WIDTH: f64 = 8.0;
+const NOTCH_COMPACT_HEIGHT: f64 = 180.0;
+const NOTCH_VERTICAL_OFFSET: f64 = 0.0;
 const GATEWAY_PORT: u16 = tray::GATEWAY_PORT;
 
+// NSStatusWindowLevel: floats above regular windows and the menu bar extras.
+#[cfg(target_os = "macos")]
+const NS_STATUS_WINDOW_LEVEL: i64 = 25;
+// NSWindowCollectionBehaviorCanJoinAllSpaces | Stationary: follows space
+// switches instead of being stranded on the space where it was created.
+#[cfg(target_os = "macos")]
+const NS_WINDOW_BEHAVIOR_ALL_SPACES_STATIONARY: i64 = (1 << 0) | (1 << 8);
+
 struct GatewayProcess(std::sync::Mutex<Option<std::process::Child>>);
+
+/// Mirrors the gateway child's pid for the signal path. A SIGTERM/SIGINT never
+/// reaches `RunEvent::ExitRequested`, so without this the gateway would outlive
+/// the app that owns it and strand the port for the next launch.
+static GATEWAY_CHILD_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+extern "C" fn terminate_gateway_on_signal(signal: i32) {
+    let pid = GATEWAY_CHILD_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
+    if pid > 0 {
+        unsafe {
+            libc_kill(pid, 15);
+        }
+    }
+    unsafe {
+        signal_raw(signal, 0);
+        raise_raw(signal);
+    }
+}
+
+extern "C" {
+    #[link_name = "kill"]
+    fn libc_kill(pid: i32, sig: i32) -> i32;
+    #[link_name = "signal"]
+    fn signal_raw(sig: i32, handler: usize) -> usize;
+    #[link_name = "raise"]
+    fn raise_raw(sig: i32) -> i32;
+}
+
+fn install_gateway_signal_guard() {
+    unsafe {
+        signal_raw(15, terminate_gateway_on_signal as usize);
+        signal_raw(2, terminate_gateway_on_signal as usize);
+        signal_raw(1, terminate_gateway_on_signal as usize);
+    }
+}
+
+/// Shared source of truth for the notch's expanded state: the native hover
+/// watcher and the `expand_notch`/`collapse_notch` commands both read and
+/// write it, so neither can disagree with the other about the window's size.
+struct NotchHoverState(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+/// Tokens returned by `addGlobal/LocalMonitorForEventsMatchingMask:`, kept so
+/// the monitors can be removed (and their blocks released) at exit instead of
+/// firing against a half-torn-down app.
+#[cfg(target_os = "macos")]
+struct NotchHoverMonitors(
+    std::sync::Mutex<[*mut objc::runtime::Object; 2]>,
+);
+// Raw ObjC pointers are not `Send`/`Sync`; the tokens are only ever read on
+// the main thread inside `removeMonitor:` at exit.
+#[cfg(target_os = "macos")]
+unsafe impl Send for NotchHoverMonitors {}
+#[cfg(target_os = "macos")]
+unsafe impl Sync for NotchHoverMonitors {}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,9 +103,35 @@ fn gateway_listening() -> bool {
     std::net::TcpStream::connect(("127.0.0.1", GATEWAY_PORT)).is_ok()
 }
 
+/// Frees the gateway port by terminating the orphan bound to it, so the app can
+/// own the gateway it talks to.
+fn reclaim_gateway_port() {
+    let Ok(output) = std::process::Command::new("lsof")
+        .args(["-tnP", &format!("-iTCP:{GATEWAY_PORT}"), "-sTCP:LISTEN"])
+        .output()
+    else {
+        return;
+    };
+    for pid in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<i32>().ok())
+    {
+        println!("reclaiming gateway port from orphan pid={pid}");
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+    }
+    for _ in 0..40 {
+        if !gateway_listening() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn spawn_gateway() -> Option<std::process::Child> {
-    if !tray::should_spawn_gateway(gateway_listening()) {
-        return None;
+    if tray::gateway_startup_action(gateway_listening()) == tray::GatewayStartup::ReclaimThenSpawn {
+        reclaim_gateway_port();
     }
     let exe = std::env::current_exe().ok();
     let bin = tray::resolve_gateway_binary(
@@ -58,6 +146,8 @@ fn spawn_gateway() -> Option<std::process::Child> {
     match std::process::Command::new(&bin).env("AUTH_DIR", auth_dir).spawn() {
         Ok(child) => {
             println!("mahoquot-gateway spawned pid={}", child.id());
+            GATEWAY_CHILD_PID.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+            install_gateway_signal_guard();
             Some(child)
         }
         Err(error) => {
@@ -138,6 +228,26 @@ fn position_notch_window<R: Runtime>(
     app: &AppHandle<R>,
     window: &WebviewWindow<R>,
 ) -> tauri::Result<()> {
+    let scale = window.scale_factor()?;
+    let outer = window.outer_size()?;
+    position_notch_window_sized(
+        app,
+        window,
+        tray::WindowDimensions {
+            width: f64::from(outer.width) / scale,
+            height: f64::from(outer.height) / scale,
+        },
+    )
+}
+
+/// Placement must be derived from the size the window is *becoming*: querying
+/// `outer_size()` right after `set_size()` still reports the previous frame, so
+/// the notch would be anchored for the old size and then grow off-screen.
+fn position_notch_window_sized<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &WebviewWindow<R>,
+    logical: tray::WindowDimensions,
+) -> tauri::Result<()> {
     let Some(monitor) = notched_monitor(app)? else {
         return Ok(());
     };
@@ -150,15 +260,11 @@ fn position_notch_window<R: Runtime>(
         width: f64::from(monitor_size.width) / scale_factor,
         height: f64::from(monitor_size.height) / scale_factor,
     };
-    let outer = window.outer_size()?;
     let position = tray::calculate_notch_window_physical_position(
         &display,
-        &tray::WindowDimensions {
-            width: f64::from(outer.width) / scale_factor,
-            height: f64::from(outer.height) / scale_factor,
-        },
+        &logical,
         &tray::NotchInsets {
-            top_offset: NOTCH_TOP_OFFSET,
+            vertical_offset: NOTCH_VERTICAL_OFFSET,
         },
         scale_factor,
     );
@@ -194,11 +300,212 @@ fn apply_menu_bar_level<R: Runtime>(window: &WebviewWindow<R>) {
     };
     let ns_window = ns_window as *mut objc::runtime::Object;
     unsafe {
-        let level: i64 = 25;
-        let _: () = msg_send![ns_window, setLevel: level];
-        let behavior: i64 = (1 << 0) | (1 << 8);
-        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+        let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+        let _: () = msg_send![
+            ns_window,
+            setCollectionBehavior: NS_WINDOW_BEHAVIOR_ALL_SPACES_STATIONARY
+        ];
+        // Re-classing a live NSWindow to NSPanel blanks its rendered content, and
+        // the panel styling is unnecessary anyway: the native cursor forwarding in
+        // `sync_notch_hover` owns hover, so nothing here depends on DOM pointer
+        // events reaching an inactive app.
+        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+        let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: true];
+
     }
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgPoint {
+    x: f64,
+    y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgRect {
+    origin: CgPoint,
+    size: CgSize,
+}
+
+#[cfg(target_os = "macos")]
+fn notch_screen_rect<R: Runtime>(window: &WebviewWindow<R>) -> Option<tray::ScreenRect> {
+    use objc::{msg_send, sel, sel_impl};
+    let ns_window = window.ns_window().ok()? as *mut objc::runtime::Object;
+    let frame: CgRect = unsafe { msg_send![ns_window, frame] };
+    Some(tray::ScreenRect {
+        x: frame.origin.x,
+        y: frame.origin.y,
+        width: frame.size.width,
+        height: frame.size.height,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn cursor_location() -> tray::CursorPoint {
+    use objc::{class, msg_send, sel, sel_impl};
+    let point: CgPoint = unsafe { msg_send![class!(NSEvent), mouseLocation] };
+    tray::CursorPoint {
+        x: point.x,
+        y: point.y,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn sync_notch_hover(app: &AppHandle, expanded: &std::sync::atomic::AtomicBool) {
+    use std::sync::atomic::Ordering;
+    use tauri::Emitter;
+
+    let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) else {
+        return;
+    };
+    if !window.is_visible().unwrap_or(false) {
+        return;
+    }
+    let Some(rect) = notch_screen_rect(&window) else {
+        return;
+    };
+    let cursor = cursor_location();
+    if !tray::screen_rect_touches_display(&rect, &display_logical_bounds(app)) {
+        // The window drifted off every connected display (monitor unplugged,
+        // resolution or arrangement changed). Re-anchor it and skip hover for
+        // this sample: the frame AppKit reports next will be on-screen again.
+        if let Err(error) = position_notch_window(app, &window) {
+            eprintln!("failed to re-anchor off-screen notch: {error}");
+        }
+        return;
+    }
+    let was_open = expanded.load(Ordering::Relaxed);
+    // Opening needs a deliberate touch of the strip, but staying open only needs
+    // the pointer to remain in the edge corridor, so travelling out to the
+    // detail card never folds the panel away mid-reach.
+    let inside = if was_open {
+        tray::cursor_within_panel_corridor(&rect, &display_logical_bounds(app), &cursor)
+    } else {
+        tray::cursor_within(&rect, &cursor)
+    };
+    if was_open {
+        // wry's WKWebView builds its own tracking areas, which stay silent while
+        // another app is frontmost, so the webview can never hit-test the icons
+        // itself. Forward the pointer the global monitor can still see.
+        let _ = app.emit_to(
+            tauri::EventTarget::webview_window(NOTCH_WINDOW_LABEL),
+            "notch-cursor",
+            tray::cursor_to_window_local(&rect, &cursor),
+        );
+    }
+    let Some(transition) = tray::notch_hover_transition(was_open, inside) else {
+        return;
+    };
+    let open = transition == tray::HoverTransition::Expand;
+    expanded.store(open, Ordering::Relaxed);
+    if open {
+        resize_notch(app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
+    } else {
+        resize_notch(app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
+    }
+    let _ = app.emit_to(
+        tauri::EventTarget::webview_window(NOTCH_WINDOW_LABEL),
+        "notch-hover",
+        open,
+    );
+    println!(
+        "notch hover open={open} rect=({},{},{},{}) cursor=({},{})",
+        rect.x, rect.y, rect.width, rect.height, cursor.x, cursor.y
+    );
+}
+
+/// Logical bounds of every connected display in AppKit screen space (origin
+/// bottom-left). Tauri reports physical coordinates with a top-left origin;
+/// positions only flip vertically, so each monitor's y range survives a
+/// straight scale division untouched.
+#[cfg(target_os = "macos")]
+fn display_logical_bounds(app: &AppHandle) -> Vec<tray::ScreenRect> {
+    let monitors = app.available_monitors().unwrap_or_default();
+    monitors
+        .iter()
+        .map(|monitor| {
+            let scale = monitor.scale_factor();
+            let position = monitor.position();
+            let size = monitor.size();
+            tray::ScreenRect {
+                x: f64::from(position.x) / scale,
+                y: f64::from(position.y) / scale,
+                width: f64::from(size.width) / scale,
+                height: f64::from(size.height) / scale,
+            }
+        })
+        .collect()
+}
+
+/// The notch never takes focus, and macOS routes pointer events only to the
+/// frontmost app, so the webview's own mouseenter never fires while the user
+/// works elsewhere. A global NSEvent monitor gives us the cursor regardless.
+#[cfg(target_os = "macos")]
+fn start_notch_hover_watch(
+    app: &AppHandle,
+    expanded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use block::ConcreteBlock;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let global_handle = app.clone();
+    let global_state = expanded.clone();
+    let global_handler = ConcreteBlock::new(move |_event: *mut objc::runtime::Object| {
+        sync_notch_hover(&global_handle, &global_state);
+    })
+    .copy();
+
+    // A global monitor is silent while Mahoquot itself is frontmost, so the
+    // active-app case needs a local monitor, which must hand the event back.
+    let local_handle = app.clone();
+    let local_state = expanded;
+    let local_handler = ConcreteBlock::new(
+        move |event: *mut objc::runtime::Object| -> *mut objc::runtime::Object {
+            sync_notch_hover(&local_handle, &local_state);
+            event
+        },
+    )
+    .copy();
+
+    unsafe {
+        let mouse_moved_mask: u64 = 1 << 5;
+        let global_token: *mut objc::runtime::Object = msg_send![
+            class!(NSEvent),
+            addGlobalMonitorForEventsMatchingMask: mouse_moved_mask
+            handler: &*global_handler
+        ];
+        if global_token.is_null() {
+            eprintln!("failed to install notch hover monitor for background use");
+        }
+        let local_token: *mut objc::runtime::Object = msg_send![
+            class!(NSEvent),
+            addLocalMonitorForEventsMatchingMask: mouse_moved_mask
+            handler: &*local_handler
+        ];
+        if local_token.is_null() {
+            eprintln!("failed to install notch hover monitor for foreground use");
+        }
+        app.manage(NotchHoverMonitors(std::sync::Mutex::new([
+            global_token,
+            local_token,
+        ])));
+    }
+    println!("notch hover watch armed");
+    // The monitors own the blocks until they are removed at exit.
+    std::mem::forget(global_handler);
+    std::mem::forget(local_handler);
 }
 
 #[cfg(target_os = "macos")]
@@ -245,20 +552,38 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
         return;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
+    if let Ok(current) = window.outer_size() {
+        let logical = current.to_logical::<f64>(scale);
+        if (logical.width - width).abs() < 1.0 && (logical.height - height).abs() < 1.0 {
+            return;
+        }
+    }
+    let target = tray::WindowDimensions { width, height };
+    // Anchor first, then resize: the window grows from an already-correct
+    // top-left instead of spilling past the right screen edge for a frame.
+    if let Err(error) = position_notch_window_sized(app, &window, target) {
+        eprintln!("failed to anchor notch before resize: {error}");
+    }
     let _ = window.set_size(LogicalSize::new(width, height));
-    if let Err(error) = position_notch_window(app, &window) {
+    if let Err(error) = position_notch_window_sized(app, &window, target) {
         eprintln!("failed to reposition resized notch: {error}");
     }
     println!("notch resized width={width} height={height} scale={scale}");
 }
 
 #[tauri::command]
-fn expand_notch(app: tauri::AppHandle) {
+fn expand_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>) {
+    state
+        .0
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     resize_notch(&app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
 }
 
 #[tauri::command]
-fn collapse_notch(app: tauri::AppHandle) {
+fn collapse_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>) {
+    state
+        .0
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
 }
 
@@ -275,10 +600,69 @@ fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
 fn handle_tray_action<R: Runtime>(app: &AppHandle<R>, action: tray::TrayMenuAction) {
     match action {
         tray::TrayMenuAction::ToggleNotch => toggle_notch_window(app),
-        tray::TrayMenuAction::RefreshUsage => refresh_windows(app),
+        tray::TrayMenuAction::RefreshUsage => {
+            refresh_windows(app);
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = refresh_tray_quota(&handle).await {
+                    eprintln!("tray quota refresh failed: {error}");
+                }
+            });
+        }
         tray::TrayMenuAction::ToggleConsole => toggle_operations_console(app),
         tray::TrayMenuAction::Quit => app.exit(0),
     }
+}
+
+/// Rebuilds the tray menu with one live quota line per reporting account.
+async fn refresh_tray_quota<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let (client, base_url, api_key) = {
+        let config = app.state::<Config>();
+        (config.client.clone(), config.base_url.clone(), config.api_key.clone())
+    };
+    let stats = fetch_stats(&client, &base_url, &api_key).await?;
+    let rows = stats::quota_menu_lines(&stats);
+
+    let toggle = MenuItem::with_id(app, tray::MENU_ID_TOGGLE, "Show / Hide Mahoquot Notch", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let refresh = MenuItem::with_id(app, tray::MENU_ID_REFRESH, "Refresh Usage", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let gateway = MenuItem::with_id(app, tray::MENU_ID_GATEWAY, "Show / Hide Operations Console", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    let quit = MenuItem::with_id(app, tray::MENU_ID_QUIT, "Quit mahoquot", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let quota_header = MenuItem::with_id(app, "quota-header", "Quota (live)", false, None::<&str>)
+        .map_err(|e| e.to_string())?;
+
+    let mut quota_refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
+    quota_refs.push(&separator);
+    quota_refs.push(&quota_header);
+    let row_items: Vec<MenuItem<R>> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            MenuItem::with_id(app, format!("quota-row-{index}"), row, false, None::<&str>)
+                .map_err(|e| e.to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    let empty_item = MenuItem::with_id(app, "quota-empty", "No usage reported", false, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    if row_items.is_empty() {
+        quota_refs.push(&empty_item);
+    } else {
+        for item in &row_items {
+            quota_refs.push(item);
+        }
+    }
+
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<R>> =
+        vec![&toggle, &refresh, &gateway];
+    refs.extend(quota_refs);
+    refs.push(&quit);
+    let menu = Menu::with_items(app, &refs).map_err(|e| e.to_string())?;
+    let tray = app.tray_by_id(TRAY_ID).ok_or("tray unavailable")?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())
 }
 
 fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
@@ -313,17 +697,38 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     )?;
     let menu = Menu::with_items(app, &[&toggle, &refresh, &gateway, &separator, &quit])?;
 
-    let tray_icon = TrayIconBuilder::with_id(TRAY_ID)
+    let mut tray_icon = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
-        .title("Mahoquot")
-        .tooltip("Mahoquot")
+        .tooltip("mahoquot")
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
             if let Some(action) = tray::resolve_tray_menu_action(event.id().as_ref()) {
                 handle_tray_action(app, action);
             }
         });
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray_icon = tray_icon.icon(icon).icon_as_template(false);
+    }
     tray_icon.build(app)?;
+
+    {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                match refresh_tray_quota(&handle).await {
+                    Ok(()) => {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    }
+                    Err(error) => {
+                        // the embedded gateway may still be binding at startup;
+                        // retry quickly before settling into the steady cadence
+                        eprintln!("tray quota refresh failed: {error}");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                }
+            }
+        });
+    }
 
     #[cfg(target_os = "macos")]
     apply_dock_icon();
@@ -350,7 +755,17 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         if let Ok(position) = notch_clone.outer_position() {
             println!("notch position settled x={} y={}", position.x, position.y);
         }
+        #[cfg(target_os = "macos")]
+        if let Some(rect) = notch_screen_rect(&notch_clone) {
+            println!(
+                "notch hover target rect x={} y={} w={} h={}",
+                rect.x, rect.y, rect.width, rect.height
+            );
+        }
     });
+
+    #[cfg(target_os = "macos")]
+    start_notch_hover_watch(app.handle(), app.state::<NotchHoverState>().0.clone());
 
     println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
     Ok(())
@@ -434,8 +849,11 @@ fn main() {
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();
     let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(gateway)
+        .manage(NotchHoverState(std::sync::Arc::new(
+            std::sync::atomic::AtomicBool::new(false),
+        )))
         .manage(Config {
             base_url,
             api_key,
@@ -467,16 +885,36 @@ fn main() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("failed to build mahoquot monitor")
-        .run(|app, event| {
+        .expect("failed to build mahoquot monitor");
+    // Re-arm after Tauri/AppKit finish installing their own handlers, otherwise
+    // ours is overwritten during setup and SIGTERM strands the gateway.
+    install_gateway_signal_guard();
+    app.run(|app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                #[cfg(target_os = "macos")]
+                {
+                    use objc::{class, msg_send, sel, sel_impl};
+                    let monitors = app.state::<NotchHoverMonitors>();
+                    if let Ok(tokens) = monitors.0.lock() {
+                        unsafe {
+                            for token in tokens.iter().copied() {
+                                if !token.is_null() {
+                                    let _: () =
+                                        msg_send![class!(NSEvent), removeMonitor: token];
+                                }
+                            }
+                        }
+                    };
+                }
                 let gateway = app.state::<GatewayProcess>();
                 let mut child_guard = match gateway.0.lock() {
                     Ok(guard) => guard,
                     Err(_) => return,
                 };
                 if let Some(child) = child_guard.as_mut() {
+                    GATEWAY_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
                     let _ = child.kill();
+                    let _ = child.wait();
                     println!("mahoquot-gateway terminated");
                 }
             }

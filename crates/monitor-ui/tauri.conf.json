@@ -15,14 +15,17 @@
         "url": "index.html?v=2",
         "width": 1100,
         "height": 720,
-        "resizable": true
+        "resizable": true,
+        "backgroundColor": "#0B0B0D",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "notch",
         "title": "Mahoquot",
         "url": "index.html?surface=notch&v=2",
-        "width": 420,
-        "height": 420,
+        "width": 8,
+        "height": 180,
         "resizable": false,
         "decorations": false,
         "transparent": true,
