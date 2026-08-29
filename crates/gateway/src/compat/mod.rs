@@ -21,7 +21,7 @@ pub fn cursor_fixture_turn_end() -> cursor_proto::AgentServerMessage {
         message: Some(cursor_proto::agent_server_message::Message::InteractionUpdate(
             cursor_proto::InteractionUpdate {
                 message: Some(cursor_proto::interaction_update::Message::TurnEnded(
-                    cursor_proto::TurnEndedUpdate {},
+                    cursor_proto::TurnEndedUpdate::default(),
                 )),
             },
         )),

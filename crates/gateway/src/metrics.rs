@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::sync::atomic::AtomicU64;
 
 use crate::monitor::{LastError, TtftSnapshot};
+use crate::telemetry::TelemetryBucket;
 
 #[derive(Default)]
 pub struct GatewayMetrics {
@@ -57,4 +58,5 @@ pub struct AdminStatsResponse {
     pub exposed_client_errors: u64,
     pub ttft: TtftSnapshot,
     pub accounts: Vec<AccountStats>,
+    pub history: Vec<TelemetryBucket>,
 }

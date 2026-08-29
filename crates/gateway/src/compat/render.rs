@@ -103,6 +103,11 @@ impl GeminiChunkRenderer {
                     .push(Self::candidate(json!([{"text": text}]), None));
                 Vec::new()
             }
+            CodexEvent::ReasoningDelta(text) => {
+                self.pending
+                    .push(Self::candidate(json!([{"text": text, "thought": true}]), None));
+                Vec::new()
+            }
             CodexEvent::ReasoningSignature(sig) => {
                 self.pending
                     .push(Self::candidate(json!([{"thoughtSignature": sig}]), None));
@@ -216,6 +221,7 @@ impl ChunkRenderer {
                 self.role_prelude(&mut out);
                 out.push(self.chunk(json!({"content": text}), None));
             }
+            CodexEvent::ReasoningDelta(_) => {}
             // OpenAI streaming chunks carry no field for a provider reasoning
             // marker, so it is dropped rather than invented into the delta.
             CodexEvent::ReasoningSignature(_) => {}
@@ -343,6 +349,7 @@ impl Aggregator {
                 }
             }
             CodexEvent::TextDelta(text) => self.text.push_str(&text),
+            CodexEvent::ReasoningDelta(_) => {}
             CodexEvent::ToolCallBegin {
                 output_index,
                 call_id,

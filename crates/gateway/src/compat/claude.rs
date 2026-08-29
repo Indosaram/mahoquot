@@ -58,7 +58,7 @@ impl AnthropicDecoder {
                         .as_str()
                         .or_else(|| value["delta"]["text"].as_str())
                     {
-                        out.push(CodexEvent::TextDelta(text.to_string()));
+                        out.push(CodexEvent::ReasoningDelta(text.to_string()));
                     }
                 }
                 Some("signature_delta") => {
@@ -252,29 +252,33 @@ pub fn openai_to_anthropic(body: &Value) -> Result<Value, String> {
         .and_then(Value::as_array)
         .ok_or_else(|| "missing messages".to_string())?;
     let mut system = Vec::new();
-    let mut out = Vec::new();
+    let mut out: Vec<Value> = Vec::new();
     for message in messages {
         let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
         if role == "system" || role == "developer" {
-            if let Some(text) = message.get("content").and_then(Value::as_str) {
+            if let Some(text) = message.get("content").and_then(content_text) {
                 system.push(text.to_string());
             }
             continue;
         }
         if role == "tool" {
-            out.push(json!({
-                "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": message.get("tool_call_id").and_then(Value::as_str).unwrap_or(""),
-                    "content": message.get("content").cloned().unwrap_or(Value::String(String::new())),
-                }]
-            }));
+            let block = json!({
+                "type": "tool_result",
+                "tool_use_id": message.get("tool_call_id").and_then(Value::as_str).unwrap_or(""),
+                "content": message.get("content").cloned().unwrap_or(Value::String(String::new())),
+            });
+            if let Some(last) = out.last_mut().filter(|last| last["role"] == "user") {
+                if let Some(content) = last.get_mut("content").and_then(Value::as_array_mut) {
+                    content.push(block);
+                    continue;
+                }
+            }
+            out.push(json!({"role": "user", "content": [block]}));
             continue;
         }
         let mut content = match message.get("content") {
             Some(Value::String(text)) => vec![json!({"type":"text","text":text})],
-            Some(Value::Array(blocks)) => blocks.clone(),
+            Some(Value::Array(blocks)) => blocks.iter().map(openai_content_to_anthropic).collect(),
             _ => Vec::new(),
         };
         if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
@@ -300,9 +304,9 @@ pub fn openai_to_anthropic(body: &Value) -> Result<Value, String> {
         .flatten()
         .filter_map(|tool| tool.get("function"))
         .map(|function| {
-            let name = function["name"].as_str().unwrap_or("tool");
+            let name = anthropic_tool_name(function["name"].as_str().unwrap_or("tool"));
             json!({
-                "name": format!("custom_{name}"),
+                "name": name,
                 "description": function["description"],
                 "input_schema": function.get("parameters").cloned().unwrap_or_else(|| json!({"type":"object"})),
             })
@@ -326,6 +330,49 @@ pub fn openai_to_anthropic(body: &Value) -> Result<Value, String> {
         }
     }
     Ok(result)
+}
+
+fn content_text(content: &Value) -> Option<String> {
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter(|part| part["type"] == "text")
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join(""),
+        ),
+        _ => None,
+    }
+}
+
+fn openai_content_to_anthropic(part: &Value) -> Value {
+    if part["type"] != "image_url" {
+        return part.clone();
+    }
+    let Some(url) = part["image_url"]["url"].as_str() else {
+        return part.clone();
+    };
+    let Some(data_url) = url.strip_prefix("data:") else {
+        return part.clone();
+    };
+    let Some((media_type, data)) = data_url.split_once(";base64,") else {
+        return part.clone();
+    };
+    json!({
+        "type": "image",
+        "source": {"type":"base64", "media_type":media_type, "data":data},
+    })
+}
+
+fn anthropic_tool_name(name: &str) -> String {
+    const BUILTINS: [&str; 4] = ["web_search", "code_execution", "text_editor", "computer"];
+    if name.starts_with("custom_") || BUILTINS.contains(&name) {
+        name.to_string()
+    } else {
+        format!("custom_{name}")
+    }
 }
 
 pub fn anthropic_json_to_openai(body: &Value, model: &str, created: i64) -> Value {
@@ -566,7 +613,9 @@ pub struct AnthropicStreamRenderer {
     text_open: bool,
     terminated: bool,
     tool_index: u64,
+    next_content_index: u64,
     current_tool_index: Option<u64>,
+    thinking_index: Option<u64>,
 }
 
 impl AnthropicStreamRenderer {
@@ -578,7 +627,9 @@ impl AnthropicStreamRenderer {
             text_open: false,
             terminated: false,
             tool_index: 0,
+            next_content_index: 1,
             current_tool_index: None,
+            thinking_index: None,
         }
     }
 
@@ -636,14 +687,25 @@ impl AnthropicStreamRenderer {
                     json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
                 ));
             }
-            CodexEvent::ReasoningSignature(signature) => out.push(Self::frame(
-                "content_block_delta",
-                json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":signature}}),
-            )),
+            CodexEvent::ReasoningDelta(text) => {
+                let index = self.ensure_thinking_block(&mut out);
+                out.push(Self::frame(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":index,"delta":{"type":"thinking_delta","thinking":text}}),
+                ));
+            }
+            CodexEvent::ReasoningSignature(signature) => {
+                let index = self.ensure_thinking_block(&mut out);
+                out.push(Self::frame(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":index,"delta":{"type":"signature_delta","signature":signature}}),
+                ));
+            }
             CodexEvent::ToolCallBegin { call_id, name, .. } => {
                 self.close_text(&mut out);
-                let index = self.tool_index + 1;
-                self.tool_index = index;
+                let index = self.next_content_index;
+                self.next_content_index += 1;
+                self.tool_index += 1;
                 self.current_tool_index = Some(index);
                 out.push(Self::frame(
                     "content_block_start",
@@ -658,6 +720,12 @@ impl AnthropicStreamRenderer {
                 ));
             }
             CodexEvent::Completed { usage } => {
+                if let Some(index) = self.thinking_index.take() {
+                    out.push(Self::frame(
+                        "content_block_stop",
+                        json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
                 self.close_text(&mut out);
                 if let Some(index) = self.current_tool_index.take() {
                     out.push(Self::frame(
@@ -684,6 +752,20 @@ impl AnthropicStreamRenderer {
         out
     }
 
+    fn ensure_thinking_block(&mut self, out: &mut Vec<bytes::Bytes>) -> u64 {
+        if let Some(index) = self.thinking_index {
+            return index;
+        }
+        let index = self.next_content_index;
+        self.next_content_index += 1;
+        self.thinking_index = Some(index);
+        out.push(Self::frame(
+            "content_block_start",
+            json!({"type":"content_block_start","index":index,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+        ));
+        index
+    }
+
     pub fn close_unterminated(&mut self) -> Vec<bytes::Bytes> {
         if self.terminated {
             return Vec::new();
@@ -693,5 +775,98 @@ impl AnthropicStreamRenderer {
 
     pub fn terminated(&self) -> bool {
         self.terminated
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn system_content_parts_are_preserved() {
+        let translated = openai_to_anthropic(&json!({
+            "model":"claude-sonnet-4-6",
+            "messages":[
+                {"role":"system","content":[{"type":"text","text":"Be concise."}]},
+                {"role":"user","content":"Hello"}
+            ]
+        }))
+        .expect("translation");
+        assert_eq!(translated["system"], "Be concise.");
+    }
+
+    #[test]
+    fn consecutive_tool_results_share_one_user_turn() {
+        let translated = openai_to_anthropic(&json!({
+            "model":"claude-sonnet-4-6",
+            "messages":[
+                {"role":"assistant","content":"","tool_calls":[
+                    {"id":"call_1","type":"function","function":{"name":"one","arguments":"{}"}},
+                    {"id":"call_2","type":"function","function":{"name":"two","arguments":"{}"}}
+                ]},
+                {"role":"tool","tool_call_id":"call_1","content":"first"},
+                {"role":"tool","tool_call_id":"call_2","content":"second"}
+            ]
+        }))
+        .expect("translation");
+        let messages = translated["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"].as_array().expect("blocks").len(), 2);
+    }
+
+    #[test]
+    fn image_parts_translate_to_anthropic_blocks() {
+        let translated = openai_to_anthropic(&json!({
+            "model":"claude-sonnet-4-6",
+            "messages":[{"role":"user","content":[
+                {"type":"text","text":"Describe"},
+                {"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}
+            ]}]
+        }))
+        .expect("translation");
+        let image = &translated["messages"][0]["content"][1];
+        assert_eq!(image["type"], "image");
+        assert_eq!(image["source"]["type"], "base64");
+        assert_eq!(image["source"]["media_type"], "image/png");
+        assert_eq!(image["source"]["data"], "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn thinking_delta_is_not_visible_text() {
+        let mut decoder = AnthropicDecoder::new();
+        let mut events = Vec::new();
+        decoder.decode(
+            br#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"internal"}}"#,
+            &mut events,
+        );
+        assert!(!events.iter().any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
+    }
+
+    #[test]
+    fn signature_delta_opens_a_thinking_block() {
+        let mut renderer = AnthropicStreamRenderer::new("claude-sonnet-4-6".into(), 1);
+        let output = renderer.render(CodexEvent::ReasoningSignature("opaque".into()));
+        let joined = output
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk))
+            .collect::<String>();
+        assert!(joined.contains("\"type\":\"thinking\""), "{joined}");
+        assert!(joined.contains("\"type\":\"signature_delta\""), "{joined}");
+    }
+
+    #[test]
+    fn tool_prefixing_is_idempotent_and_preserves_builtins() {
+        let translated = openai_to_anthropic(&json!({
+            "model":"claude-sonnet-4-6",
+            "messages":[{"role":"user","content":"search"}],
+            "tools":[
+                {"type":"function","function":{"name":"web_search","description":"search"}},
+                {"type":"function","function":{"name":"custom_editor","description":"edit"}}
+            ]
+        }))
+        .expect("translation");
+        assert_eq!(translated["tools"][0]["name"], "web_search");
+        assert_eq!(translated["tools"][1]["name"], "custom_editor");
     }
 }

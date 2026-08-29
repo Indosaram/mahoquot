@@ -34,6 +34,42 @@ struct FinalFailure {
     body: Bytes,
 }
 
+fn now_unix_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn record_request_outcome(
+    state: &AppState,
+    provider: &str,
+    model: Option<&str>,
+    status: u16,
+    success: bool,
+    elapsed_ms: u64,
+) {
+    let timestamp = now_unix_secs();
+    state.telemetry.record(timestamp, provider, success);
+    let settings = state.settings.current();
+    if !settings.logging_to_file {
+        return;
+    }
+    let line = serde_json::json!({
+        "timestamp": timestamp,
+        "provider": provider,
+        "model": model.unwrap_or(""),
+        "status": status,
+        "success": success,
+        "latency_ms": elapsed_ms,
+    })
+    .to_string();
+    let settings = (*settings).clone();
+    tokio::task::spawn_blocking(move || {
+        crate::management::observability::append_log_line(&settings, &line);
+    });
+}
+
 struct RelayPlan {
     upstream_path: String,
     body: Bytes,
@@ -131,13 +167,20 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
                 .as_ref()
                 .ok_or_else(|| "Kiro requires an OpenAI-shaped request".to_string())?;
             return Ok(UpstreamTarget {
-                url: crate::url::build_provider_url(
-                    member.kind(),
+                url: quotio_providers::kiro_generate_url(
                     member.upstream_override.as_deref(),
-                    "/generateAssistantResponse",
+                    member
+                        .kiro_region()
+                        .as_deref()
+                        .unwrap_or(quotio_providers::KIRO_DEFAULT_REGION),
                 ),
-                body: Bytes::from(serde_json::to_vec(&compat::kiro::openai_to_kiro(openai)?)
-                    .map_err(|e| e.to_string())?),
+                body: Bytes::from(
+                    serde_json::to_vec(&compat::kiro::openai_to_kiro_with_profile(
+                        openai,
+                        member.kiro_profile_arn().as_deref(),
+                    )?)
+                    .map_err(|e| e.to_string())?,
+                ),
                 protocol: compat::Protocol::Kiro,
             });
         }
@@ -353,11 +396,17 @@ fn json_error(status: StatusCode, message: &str) -> Response {
 }
 
 fn is_account_scoped_model_rejection(status_code: u16, body: &[u8]) -> bool {
+    if status_code == 402 {
+        return true;
+    }
     if status_code != 400 {
         return false;
     }
     let text = String::from_utf8_lossy(body);
-    text.contains("is not supported when using Codex") || text.contains("model is not supported")
+    text.contains("is not supported when using Codex")
+        || text.contains("model is not supported")
+        || text.contains("INVALID_MODEL_ID")
+        || text.contains("MONTHLY_REQUEST_COUNT")
 }
 
 fn build_plan(
@@ -676,6 +725,7 @@ pub async fn handle_relay(
     headers: &HeaderMap,
     body_bytes: Bytes,
 ) -> Response {
+    let request_started = std::time::Instant::now();
     let _in_flight = state.monitor.track_in_flight();
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -828,7 +878,17 @@ pub async fn handle_relay(
             )
             .await
             {
-                Ok(response) => return response,
+                Ok(response) => {
+                    record_request_outcome(
+                        &state,
+                        member.kind().as_str(),
+                        plan.model.as_deref(),
+                        response.status().as_u16(),
+                        response.status().is_success(),
+                        request_started.elapsed().as_millis() as u64,
+                    );
+                    return response;
+                }
                 Err(reason) => {
                     member.record_fail();
                     state.metrics.failed_over.fetch_add(1, Ordering::Relaxed);

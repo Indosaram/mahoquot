@@ -19,8 +19,6 @@ pub struct GatewayConfig {
     pub auth_refresh_enabled: bool,
     pub usage_poll_secs: u64,
     pub config_path: PathBuf,
-    pub management_env_secret: String,
-    pub management_local_password: String,
 }
 
 impl GatewayConfig {
@@ -63,10 +61,6 @@ impl GatewayConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| auth_dir.join("config.yaml"));
 
-        let management_env_secret = std::env::var("MANAGEMENT_PASSWORD").unwrap_or_default();
-        let management_local_password =
-            std::env::var("MANAGEMENT_LOCAL_PASSWORD").unwrap_or_default();
-
         let usage_poll_secs = std::env::var("USAGE_POLL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -75,8 +69,6 @@ impl GatewayConfig {
 
         Ok(Self {
             config_path,
-            management_env_secret,
-            management_local_password,
             usage_poll_secs,
             port,
             auth_dir,

@@ -3,6 +3,13 @@ use serde_json::{json, Map, Value};
 use super::events::CodexEvent;
 
 pub fn openai_to_kiro(body: &Value) -> Result<Value, String> {
+    openai_to_kiro_with_profile(body, None)
+}
+
+pub fn openai_to_kiro_with_profile(
+    body: &Value,
+    profile_arn: Option<&str>,
+) -> Result<Value, String> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -156,7 +163,7 @@ pub fn openai_to_kiro(body: &Value) -> Result<Value, String> {
         user_input["images"] = Value::Array(current_images);
     }
 
-    Ok(json!({
+    let mut payload = json!({
         "conversationState": {
             "chatTriggerType": "MANUAL",
             "conversationId": format!("{:016x}", rand::random::<u64>()),
@@ -165,7 +172,11 @@ pub fn openai_to_kiro(body: &Value) -> Result<Value, String> {
             },
             "history": history,
         }
-    }))
+    });
+    if let Some(profile_arn) = profile_arn.filter(|value| !value.is_empty()) {
+        payload["profileArn"] = Value::String(profile_arn.to_string());
+    }
+    Ok(payload)
 }
 
 fn normalize_tool_id(id: &str) -> String {
@@ -255,10 +266,10 @@ impl KiroDecoder {
                     call_id: id.to_string(),
                     name: name.to_string(),
                 });
-                if let Some(input) = value.get("input").and_then(Value::as_str) {
+                if let Some(input) = value.get("input") {
                     out.push(CodexEvent::ToolArgsDelta {
                         output_index: index,
-                        delta: input.to_string(),
+                        delta: input.as_str().map(str::to_string).unwrap_or_else(|| input.to_string()),
                     });
                 }
             } else if let Some(input) = value.get("input").and_then(Value::as_str) {
@@ -269,7 +280,7 @@ impl KiroDecoder {
                     });
                 }
             } else if let Some(text) = value.get("text").and_then(Value::as_str) {
-                out.push(CodexEvent::TextDelta(text.to_string()));
+                out.push(CodexEvent::ReasoningDelta(text.to_string()));
             } else if let Some(signature) = value.get("signature").and_then(Value::as_str) {
                 out.push(CodexEvent::ReasoningSignature(signature.to_string()));
             } else if value.get("stopReason").is_some() {
@@ -368,5 +379,30 @@ mod tests {
         assert_eq!(current["userInputMessageContext"]["toolResults"][0]["content"][0]["text"], "done");
         assert_eq!(current["images"][0]["format"], "jpeg");
         assert_eq!(current["images"][0]["source"]["bytes"], "abc");
+    }
+
+    #[test]
+    fn profile_reasoning_and_object_tool_input_follow_reference_wire() {
+        let payload = openai_to_kiro_with_profile(
+            &json!({
+                "model":"kiro/claude-sonnet-4.6",
+                "messages":[{"role":"user","content":"hi"}]
+            }),
+            Some("arn:aws:codewhisperer:us-east-1:123:profile/abc"),
+        )
+        .expect("translation");
+        assert_eq!(
+            payload["profileArn"],
+            "arn:aws:codewhisperer:us-east-1:123:profile/abc"
+        );
+
+        let mut decoder = KiroDecoder::new();
+        let mut events = Vec::new();
+        decoder.decode(
+            br#"{"text":"internal"}{"name":"bash","toolUseId":"call_1","input":{"cmd":"ls"}}"#,
+            &mut events,
+        );
+        assert!(!events.iter().any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
+        assert!(events.iter().any(|event| matches!(event, CodexEvent::ToolArgsDelta { delta, .. } if delta.contains("ls"))));
     }
 }

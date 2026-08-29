@@ -41,14 +41,22 @@ impl ProviderKind {
                 !is_antigravity_model(model)
                     && !quotio_providers::is_claude_model(model)
                     && !quotio_providers::is_zcode_model(model)
+                    && !model.starts_with("cursor-")
                     && !model.starts_with("cursor/")
                     && !model.starts_with("kiro/")
                     && model != "auto-kiro"
             }
             ProviderKind::Antigravity => is_antigravity_model(model),
             ProviderKind::Claude => quotio_providers::is_claude_model(model),
-            ProviderKind::Cursor => model.starts_with("cursor/"),
-            ProviderKind::Kiro => model.starts_with("kiro/") || model == "auto-kiro",
+            ProviderKind::Cursor => {
+                model.starts_with("cursor/") || quotio_providers::is_cursor_model(model)
+            }
+            ProviderKind::Kiro => {
+                model == "auto-kiro"
+                    || model
+                        .strip_prefix("kiro/")
+                        .is_some_and(quotio_providers::is_kiro_model)
+            }
             ProviderKind::Zcode => quotio_providers::is_zcode_model(model),
         }
     }
@@ -68,12 +76,36 @@ impl ProviderKind {
         match value {
             "codex" => Some(Self::Codex),
             "antigravity" => Some(Self::Antigravity),
-            "claude" => Some(Self::Claude),
+            "claude" | "anthropic" => Some(Self::Claude),
             "cursor" => Some(Self::Cursor),
             "kiro" => Some(Self::Kiro),
             "zcode" => Some(Self::Zcode),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod provider_kind_contract_tests {
+    use super::ProviderKind;
+
+    #[test]
+    fn anthropic_credential_type_maps_to_claude() {
+        assert_eq!(ProviderKind::from_type_str("anthropic"), Some(ProviderKind::Claude));
+    }
+
+    #[test]
+    fn codex_does_not_claim_standard_claude_models() {
+        assert!(!ProviderKind::Codex.serves_model("claude-sonnet-4-6"));
+        assert!(ProviderKind::Claude.serves_model("claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn cursor_and_kiro_own_their_reference_models() {
+        assert!(ProviderKind::Cursor.serves_model("cursor-small"));
+        assert!(!ProviderKind::Codex.serves_model("cursor-small"));
+        assert!(ProviderKind::Kiro.serves_model("kiro/claude-sonnet-4.6"));
+        assert!(!ProviderKind::Codex.serves_model("kiro/claude-sonnet-4.6"));
     }
 }
 
@@ -323,6 +355,30 @@ impl AccountMember {
             .project_id()
     }
 
+    pub fn kiro_profile_arn(&self) -> Option<String> {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Kiro(account) if !account.profile_arn.is_empty() => {
+                Some(account.profile_arn.clone())
+            }
+            _ => None,
+        }
+    }
+
+    pub fn kiro_region(&self) -> Option<String> {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Kiro(account) => Some(account.effective_region().to_string()),
+            _ => None,
+        }
+    }
+
     pub fn supports_model(&self, model: &str) -> bool {
         if !self.kind().serves_model(model) {
             return false;
@@ -525,6 +581,40 @@ fn identity_slug_of(account: &ProviderAccount) -> &str {
     }
 }
 
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn antigravity_provider_name_slug_is_replaced_by_filename_identity() {
+        let dir = std::env::temp_dir().join(format!(
+            "quotio-antigravity-identity-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp auth dir");
+        let path = dir.join("antigravity-user@example.com.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "type":"antigravity",
+                "identity_slug":"antigravity",
+                "access_token":"token",
+                "refresh_token":"refresh",
+                "email":"user@example.com",
+                "expired":"2099-01-01T00:00:00Z",
+                "project_id":"project"
+            }"#,
+        )
+        .expect("write credential");
+
+        let members = load_account_members(&dir).expect("load accounts");
+
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, "user@example.com");
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
 /// The filename prefix is the reliable provider signal, not the `type` field:
 /// real Codex credentials carry their PLAN there (`plus`, `pro`), so dispatching
 /// on `type` alone would reject live accounts. `type` is consulted only as a
@@ -558,10 +648,23 @@ fn list_all_auth_files(auth_dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.ends_with(".json"))
+                .is_some_and(|n| n.ends_with(".json") && n != ".quotio-account-order.json")
         })
         .collect();
-    files.sort();
+    let order = std::fs::read_to_string(auth_dir.join(".quotio-account-order.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default();
+    files.sort_by(|a, b| {
+        let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        let b_name = b.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        order
+            .iter()
+            .position(|name| name == a_name)
+            .unwrap_or(usize::MAX)
+            .cmp(&order.iter().position(|name| name == b_name).unwrap_or(usize::MAX))
+            .then_with(|| a_name.cmp(b_name))
+    });
     Ok(files)
 }
 
@@ -618,8 +721,17 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             }
         };
 
-        if identity_slug_of(&inner).is_empty() {
-            set_identity_slug(&mut inner, derive_identity_slug(&file_path));
+        let identity_slug = identity_slug_of(&inner);
+        if identity_slug.is_empty()
+            || (kind == ProviderKind::Antigravity && identity_slug == kind.as_str())
+        {
+            let slug = file_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(quotio_providers::derive_antigravity_slug_from_filename)
+                .filter(|_| kind == ProviderKind::Antigravity)
+                .unwrap_or_else(|| derive_identity_slug(&file_path));
+            set_identity_slug(&mut inner, slug);
         }
 
         let slug = identity_slug_of(&inner).to_string();

@@ -27,6 +27,10 @@ pub const KIRO_GENERATE_PATH: &str = "/generateAssistantResponse";
 /// INVALID_MODEL_ID, which cools down the whole Kiro auth and breaks the
 /// supported models too. Expand only for paid accounts.
 pub const KIRO_MODELS: &[&str] = &[
+    "auto",
+    "claude-sonnet-4.6",
+    "claude-opus-4.6",
+    "claude-haiku-4.5",
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-5-20250929-thinking",
     "claude-haiku-4-5-20251001",
@@ -87,6 +91,8 @@ pub struct KiroAccount {
     pub client_id: String,
     #[serde(default)]
     pub client_secret: String,
+    #[serde(default, rename = "profileArn", alias = "profile_arn")]
+    pub profile_arn: String,
     #[serde(default)]
     pub disabled: bool,
     #[serde(rename = "type")]
@@ -115,6 +121,7 @@ impl std::fmt::Debug for KiroAccount {
             .field("auth_mode", &self.auth_mode)
             .field("client_id", &self.client_id)
             .field("client_secret", &"[REDACTED]")
+            .field("profile_arn", &self.profile_arn)
             .field("disabled", &self.disabled)
             .field("type", &self.r#type)
             .finish()
@@ -211,6 +218,8 @@ mod tests {
 
     #[test]
     fn model_matcher_accepts_known_models_only() {
+        assert!(is_kiro_model("claude-sonnet-4.6"));
+        assert!(is_kiro_model("claude-opus-4.6"));
         assert!(is_kiro_model("claude-haiku-4-5-20251001"));
         assert!(!is_kiro_model("claude-opus-4-5-20251101"));
     }

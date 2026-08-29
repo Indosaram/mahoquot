@@ -50,10 +50,22 @@ pub fn openai_to_cursor_connect(body: &Value) -> Result<Vec<u8>, String> {
         id: "optimization".to_string(),
         value: level.to_string(),
     });
+    let messages = body["messages"].as_array().expect("parsed messages");
+    let root_prompt_messages_json = messages
+        .iter()
+        .filter(|message| matches!(message["role"].as_str(), Some("system" | "developer")))
+        .map(|message| serde_json::to_vec(message).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let turns = messages
+        .iter()
+        .filter(|message| !matches!(message["role"].as_str(), Some("system" | "developer")))
+        .take(messages.len().saturating_sub(1))
+        .map(|message| serde_json::to_vec(message).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
     let run = proto::AgentRunRequest {
         conversation_state: Some(proto::ConversationStateStructure {
-            root_prompt_messages_json: Vec::new(),
-            turns: Vec::new(),
+            root_prompt_messages_json,
+            turns,
             previous_workspace_uris: vec!["file:///".to_string()],
             mode: Some(1),
             client_name: "quotio".to_string(),
@@ -163,6 +175,15 @@ impl CursorDecoder {
             let payload = self.buffer[5..5 + length].to_vec();
             self.buffer.drain(..5 + length);
             if flags & 0x02 != 0 {
+                if let Ok(value) = serde_json::from_slice::<Value>(&payload) {
+                    if let Some(message) = value["error"]["message"].as_str() {
+                        self.completed = true;
+                        out.push(CodexEvent::Failed {
+                            message: message.to_string(),
+                        });
+                        continue;
+                    }
+                }
                 if !self.completed {
                     self.complete(out);
                 }
@@ -197,7 +218,7 @@ impl CursorDecoder {
             }
             Some(proto::interaction_update::Message::ThinkingDelta(delta)) => {
                 if !delta.text.is_empty() {
-                    out.push(CodexEvent::TextDelta(delta.text));
+                    out.push(CodexEvent::ReasoningDelta(delta.text));
                 }
             }
             Some(proto::interaction_update::Message::TokenDelta(delta)) => {
@@ -218,7 +239,18 @@ impl CursorDecoder {
             Some(proto::interaction_update::Message::ToolCallCompleted(call)) => {
                 self.start_tool(call.call_id, call.tool_call, out);
             }
-            Some(proto::interaction_update::Message::TurnEnded(_)) => self.complete(out),
+            Some(proto::interaction_update::Message::TurnEnded(usage)) => {
+                self.completed = true;
+                out.push(CodexEvent::Completed {
+                    usage: Some(super::events::Usage {
+                        prompt_tokens: usage.input_tokens,
+                        completion_tokens: usage.output_tokens,
+                        total_tokens: usage.input_tokens + usage.output_tokens,
+                        cached_tokens: usage.cache_read_tokens + usage.cache_write_tokens,
+                        reasoning_tokens: usage.reasoning_tokens,
+                    }),
+                });
+            }
             _ => {}
         }
     }
@@ -428,5 +460,55 @@ mod tests {
             Some(proto::agent_client_message::Message::ExecClientMessage(reply))
                 if reply.id == 9 && reply.exec_id == "exec-9"
         ));
+    }
+
+    #[test]
+    fn thinking_and_error_trailers_are_not_success_text() {
+        let mut decoder = CursorDecoder::new();
+        let mut events = Vec::new();
+        let thinking = proto::AgentServerMessage {
+            message: Some(proto::agent_server_message::Message::InteractionUpdate(
+                proto::InteractionUpdate {
+                    message: Some(proto::interaction_update::Message::ThinkingDelta(
+                        proto::TextDeltaUpdate { text: "internal".into() },
+                    )),
+                },
+            )),
+        };
+        decoder.decode(&connect_frame(&thinking.encode_to_vec(), 0), &mut events);
+        decoder.decode(
+            &connect_frame(
+                br#"{"error":{"code":"resource_exhausted","message":"quota exceeded"}}"#,
+                2,
+            ),
+            &mut events,
+        );
+        assert!(!events.iter().any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
+        assert!(events.iter().any(|event| matches!(event, CodexEvent::Failed { message } if message.contains("quota exceeded"))));
+    }
+
+    #[test]
+    fn turn_end_usage_is_preserved() {
+        let mut decoder = CursorDecoder::new();
+        let mut events = Vec::new();
+        let ended = proto::AgentServerMessage {
+            message: Some(proto::agent_server_message::Message::InteractionUpdate(
+                proto::InteractionUpdate {
+                    message: Some(proto::interaction_update::Message::TurnEnded(
+                        proto::TurnEndedUpdate {
+                            input_tokens: 150,
+                            output_tokens: 42,
+                            cache_read_tokens: 7,
+                            cache_write_tokens: 3,
+                            reasoning_tokens: 11,
+                        },
+                    )),
+                },
+            )),
+        };
+        decoder.decode(&connect_frame(&ended.encode_to_vec(), 0), &mut events);
+        assert!(events.iter().any(|event| matches!(event, CodexEvent::Completed { usage: Some(usage) }
+            if usage.prompt_tokens == 150 && usage.completion_tokens == 42
+                && usage.cached_tokens == 10 && usage.reasoning_tokens == 11)));
     }
 }

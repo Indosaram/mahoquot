@@ -8,11 +8,11 @@ use quotio_types::{Health, PoolMember};
 use crate::account::{load_account_members, AccountMember, ProviderKind};
 use crate::config::GatewayConfig;
 use crate::inbound::ApiKeys;
-use crate::management::auth::{AttemptLedger, ManagementAuth};
 use crate::management::store::SettingsStore;
 use crate::metrics::{AdminStatsResponse, GatewayMetrics};
 use crate::models_route::{model_entries, ModelEntry};
 use crate::monitor::MonitorState;
+use crate::telemetry::TelemetryStore;
 
 pub struct AppState {
     pub router: Router,
@@ -29,9 +29,7 @@ pub struct AppState {
     pub max_failover: usize,
     pub model_restrictions: AtomicBool,
     pub settings: Arc<SettingsStore>,
-    pub management_attempts: AttemptLedger,
-    management_env_secret: String,
-    management_local_password: String,
+    pub telemetry: Arc<TelemetryStore>,
 }
 
 impl AppState {
@@ -59,12 +57,13 @@ impl AppState {
             config.config_path.clone(),
             config.as_settings(),
         )?);
+        let telemetry = Arc::new(TelemetryStore::load(
+            config.config_path.with_file_name("telemetry.json"),
+        ));
 
         Ok(Self {
             settings,
-            management_attempts: AttemptLedger::default(),
-            management_env_secret: config.management_env_secret.clone(),
-            management_local_password: config.management_local_password.clone(),
+            telemetry,
             router,
             members,
             pool_members,
@@ -79,13 +78,6 @@ impl AppState {
             max_failover: config.max_failover,
             model_restrictions: AtomicBool::new(false),
         })
-    }
-
-    pub fn management_auth(&self) -> ManagementAuth {
-        self.settings.current().management_auth(
-            self.management_env_secret.clone(),
-            self.management_local_password.clone(),
-        )
     }
 
     pub fn find_member(&self, id: &str) -> Option<Arc<AccountMember>> {
@@ -151,6 +143,7 @@ impl AppState {
             exposed_client_errors: self.metrics.exposed_client_errors.load(Ordering::Relaxed),
             ttft: self.monitor.ttft_percentiles(),
             accounts,
+            history: self.telemetry.snapshot(),
         }
     }
 }

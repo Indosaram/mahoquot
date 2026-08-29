@@ -18,7 +18,7 @@ use quotio_providers::claude::ClaudeAccount;
 use quotio_providers::cursor::CursorAccount;
 use serde_json::{json, Value};
 
-const MGMT_SECRET: &str = "test-management-secret-42";
+const API_KEY: &str = "test-api-key-42";
 
 fn url_encode(input: &str) -> String {
     let mut encoded = String::with_capacity(input.len());
@@ -99,10 +99,9 @@ async fn test_anthropic_oauth_flow_end_to_end() {
 
     let mock_token_url = format!("http://127.0.0.1:{anthropic_port}/v1/oauth/token");
 
-    // 2. Start quotio gateway app with management enabled
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        management_env_secret: MGMT_SECRET.to_string(),
+        api_keys: quotio_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
         ..GatewayConfig::default()
     };
     let app_state = Arc::new(AppState::new(&config).unwrap());
@@ -128,7 +127,7 @@ async fn test_anthropic_oauth_flow_end_to_end() {
     );
     let start_resp = client
         .get(&start_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();
@@ -186,7 +185,7 @@ async fn test_anthropic_oauth_flow_end_to_end() {
     );
     let status_resp = client
         .get(&status_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();
@@ -246,10 +245,9 @@ async fn test_cursor_oauth_flow_end_to_end() {
 
     let mock_poll_url = format!("http://127.0.0.1:{cursor_port}/auth/poll");
 
-    // 2. Start quotio gateway app with management enabled
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        management_env_secret: MGMT_SECRET.to_string(),
+        api_keys: quotio_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
         ..GatewayConfig::default()
     };
     let app_state = Arc::new(AppState::new(&config).unwrap());
@@ -275,7 +273,7 @@ async fn test_cursor_oauth_flow_end_to_end() {
     );
     let start_resp = client
         .get(&start_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();
@@ -298,7 +296,7 @@ async fn test_cursor_oauth_flow_end_to_end() {
     );
     let poll1_resp = client
         .get(&status_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();
@@ -309,7 +307,7 @@ async fn test_cursor_oauth_flow_end_to_end() {
     // 5. Second poll: gateway polls mock server, gets 200, writes credential, reports "ok"
     let poll2_resp = client
         .get(&status_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();
@@ -342,7 +340,7 @@ async fn test_oauth_session_cancellation() {
 
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
-        management_env_secret: MGMT_SECRET.to_string(),
+        api_keys: quotio_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
         ..GatewayConfig::default()
     };
     let app_state = Arc::new(AppState::new(&config).unwrap());
@@ -364,7 +362,7 @@ async fn test_oauth_session_cancellation() {
     let start_url = format!("http://127.0.0.1:{gateway_port}/v0/management/anthropic-auth-url");
     let start_resp = client
         .get(&start_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();
@@ -377,7 +375,7 @@ async fn test_oauth_session_cancellation() {
     );
     let cancel_resp = client
         .delete(&cancel_url)
-        .bearer_auth(MGMT_SECRET)
+        .bearer_auth(API_KEY)
         .send()
         .await
         .unwrap();

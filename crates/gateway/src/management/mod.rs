@@ -7,10 +7,9 @@
 //! without it.
 
 pub mod apikeys;
-pub mod auth;
+pub mod gate;
 pub mod core;
 pub mod creds;
-pub mod gate;
 pub mod lists;
 pub mod oauth;
 pub mod observability;
@@ -24,6 +23,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
+use crate::inbound::require_api_key;
 use crate::state::AppState;
 
 pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
@@ -35,9 +35,10 @@ pub fn management_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(core::core_routes())
         .merge(scalars::scalars_routes())
         .layer(axum::middleware::from_fn_with_state(
-            state,
-            gate::require_management_access,
+            state.api_keys.clone(),
+            require_api_key,
         ))
+        .layer(axum::middleware::from_fn(gate::stamp_management_response))
         // An unimplemented management path must answer 404 like upstream's
         // NoRoute. Without this fallback the request escapes the nest and hits
         // the relay's inbound-key layer, which answers 401 with the wrong

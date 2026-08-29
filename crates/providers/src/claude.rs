@@ -27,11 +27,18 @@ pub const CLAUDE_UPSTREAM_BASE: &str = "https://api.anthropic.com";
 pub const CLAUDE_MESSAGES_PATH: &str = "/v1/messages";
 
 pub const CLAUDE_MODELS: &[&str] = &[
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-5-20250929-thinking",
+    "claude-opus-4-6",
+    "claude-opus-4-5",
     "claude-opus-4-5-20251101",
     "claude-opus-4-5-20251101-thinking",
+    "claude-haiku-4-5",
     "claude-haiku-4-5-20251001",
+    "claude-3-7-sonnet-20250219",
+    "claude-3-5-sonnet-20241022",
 ];
 
 pub fn is_claude_model(model: &str) -> bool {
@@ -158,6 +165,9 @@ mod tests {
     #[test]
     fn model_matcher_accepts_known_models_only() {
         assert!(is_claude_model("claude-sonnet-4-5-20250929"));
+        assert!(is_claude_model("claude-sonnet-4-6"));
+        assert!(is_claude_model("claude-opus-4-6"));
+        assert!(is_claude_model("claude-3-7-sonnet-20250219"));
         assert!(is_claude_model("claude-haiku-4-5-20251001"));
         assert!(!is_claude_model("gpt-5.6-sol"));
         assert!(!is_claude_model("glm-5.2"));

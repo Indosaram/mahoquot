@@ -32,9 +32,6 @@ fn require_file_logging(settings: &Settings) -> Option<Response> {
     ))
 }
 
-/// Log routes read whatever is in the log directory. Nothing else in this
-/// build writes there yet, so this is the single entry point that appends a
-/// line, keeping the read and write halves of the contract in one file.
 pub fn append_log_line(settings: &Settings, line: &str) {
     if !settings.logging_to_file {
         return;
@@ -44,13 +41,38 @@ pub fn append_log_line(settings: &Settings, line: &str) {
         return;
     }
     use std::io::Write;
+    let path = dir.join("gateway.log");
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("gateway.log"))
+        .open(&path)
     {
         let _ = writeln!(file, "{line}");
     }
+    let max_bytes = settings.logs_max_total_size_mb.max(0) as u64 * 1024 * 1024;
+    if max_bytes > 0 {
+        trim_log_file(&path, max_bytes);
+    }
+}
+
+fn trim_log_file(path: &std::path::Path, max_bytes: u64) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= max_bytes {
+        return;
+    }
+    let Ok(body) = std::fs::read(path) else {
+        return;
+    };
+    let keep = max_bytes.min(body.len() as u64) as usize;
+    let start = body.len().saturating_sub(keep);
+    let boundary = body[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| start + offset + 1)
+        .unwrap_or(start);
+    let _ = std::fs::write(path, &body[boundary..]);
 }
 
 fn read_log_lines(dir: &std::path::Path) -> Vec<String> {
@@ -261,5 +283,24 @@ mod tests {
         assert_eq!(files[0]["name"], "app.log");
         assert_eq!(files[0]["size"], 5);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn append_log_line_obeys_the_total_size_cap() {
+        let dir = std::env::temp_dir().join(format!("quotio-log-cap-{}", std::process::id()));
+        let settings = Settings {
+            auth_dir: dir.to_string_lossy().to_string(),
+            logging_to_file: true,
+            logs_max_total_size_mb: 1,
+            ..Settings::default()
+        };
+        let line = "x".repeat(700_000);
+        append_log_line(&settings, &line);
+        append_log_line(&settings, &line);
+        let size = std::fs::metadata(dir.join("logs/gateway.log"))
+            .expect("log metadata")
+            .len();
+        assert!(size <= 1024 * 1024);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

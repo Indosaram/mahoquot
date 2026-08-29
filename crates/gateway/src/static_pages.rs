@@ -41,10 +41,18 @@ mod tests {
 
     #[test]
     fn management_page_is_the_shared_monitor_ui() {
-        // Same file the Tauri shell serves via frontendDist — one UI of record.
-        assert!(MANAGEMENT_HTML.contains("/admin/usage"));
-        assert!(MANAGEMENT_HTML.contains("BRAND")); // provider brand marks
-        assert!(MANAGEMENT_HTML.contains("prov-head")); // provider-first IA
-        assert!(MANAGEMENT_HTML.contains("quotio.base")); // same-origin fallback
+        assert!(MANAGEMENT_HTML.contains("data-quotio-app=\"operations-console\""));
+        assert!(MANAGEMENT_HTML.contains("Overview"));
+        assert!(MANAGEMENT_HTML.contains("Accounts"));
+        assert!(MANAGEMENT_HTML.contains("Settings"));
+        assert!(MANAGEMENT_HTML.contains("quotio.base"));
+        assert!(MANAGEMENT_HTML.contains("/admin/stats"));
+        assert!(!MANAGEMENT_HTML.contains("<script src="));
+        assert!(!MANAGEMENT_HTML.contains("rel=\"stylesheet\" href=\"http"));
+        assert!(MANAGEMENT_HTML.len() > 20_000);
+
+        let tauri_main = include_str!("../../monitor-ui/src/main.rs");
+        assert!(tauri_main.contains("http://127.0.0.1:18801"));
+        assert!(!tauri_main.contains("http://127.0.0.1:18871"));
     }
 }

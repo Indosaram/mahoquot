@@ -8,7 +8,58 @@ use axum::Router;
 use http_body_util::BodyExt;
 use quotio_gateway::inbound::{require_api_key, ApiKeys};
 use quotio_gateway::models_route::{model_ids_from_env, models_payload};
+use quotio_gateway::{config::GatewayConfig, routes::create_app, state::AppState};
+use quotio_types::Strategy;
 use tower::ServiceExt;
+
+#[tokio::test]
+async fn management_uses_the_same_api_key_as_proxy_routes() {
+    let auth_dir = std::env::temp_dir().join(format!(
+        "quotio-unified-key-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&auth_dir).expect("auth dir");
+    let config = GatewayConfig {
+        port: 0,
+        auth_dir: auth_dir.clone(),
+        strategy: Strategy::StrictRoundRobin,
+        max_failover: 3,
+        log_level: "info".to_string(),
+        api_keys: ApiKeys::new(vec!["one-key".to_string()]),
+        models_env: None,
+        refresh_url: quotio_providers::refresh::REFRESH_TOKEN_URL.to_string(),
+        auth_refresh_enabled: false,
+        usage_poll_secs: 120,
+        config_path: auth_dir.join("config.yaml"),
+    };
+    let app = create_app(Arc::new(AppState::new(&config).expect("state")));
+
+    let allowed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/auth-files")
+                .header(header::AUTHORIZATION, "Bearer one-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    let denied = app
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/auth-files")
+                .header(header::AUTHORIZATION, "Bearer wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    std::fs::remove_dir_all(auth_dir).ok();
+}
 
 #[tokio::test]
 async fn test_inbound_auth_cases() {

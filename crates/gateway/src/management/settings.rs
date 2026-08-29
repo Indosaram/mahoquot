@@ -2,8 +2,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::auth::ManagementAuth;
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteManagement {
     #[serde(rename = "allow-remote", default)]
@@ -324,14 +322,6 @@ impl Settings {
         })
     }
 
-    pub fn management_auth(&self, env_secret: String, local_password: String) -> ManagementAuth {
-        ManagementAuth {
-            allow_remote: self.remote_management.allow_remote,
-            secret_key: self.remote_management.secret_key.clone(),
-            env_secret,
-            local_password,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -426,23 +416,4 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn management_auth_is_derived_from_the_document_and_environment() {
-        // given a config with a secret and remote access enabled
-        let settings = Settings {
-            remote_management: RemoteManagement {
-                allow_remote: true,
-                secret_key: "file-secret".to_string(),
-                ..RemoteManagement::default()
-            },
-            ..Settings::default()
-        };
-        // when the auth view is derived with an env secret
-        let auth = settings.management_auth("env-secret".to_string(), String::new());
-        // then both sources are carried through
-        assert!(auth.allow_remote);
-        assert_eq!(auth.secret_key, "file-secret");
-        assert_eq!(auth.env_secret, "env-secret");
-        assert!(auth.is_enabled());
-    }
 }

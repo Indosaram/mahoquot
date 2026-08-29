@@ -1,13 +1,7 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use axum::extract::{ConnectInfo, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::extract::Request;
+use axum::http::{HeaderMap, HeaderValue};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
-
-use super::auth::{presented_key, AuthOutcome};
-use crate::state::AppState;
+use axum::response::Response;
 
 /// Identity headers CLIProxyAPI stamps on every management response. Values
 /// track the release this surface mirrors so a client cannot tell the two
@@ -37,45 +31,8 @@ fn stamp(headers: &mut HeaderMap) {
     );
 }
 
-fn error_response(status: StatusCode, message: &str) -> Response {
-    let body = serde_json::json!({ "error": message });
-    let mut response = (status, axum::Json(body)).into_response();
+pub async fn stamp_management_response(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
     stamp(response.headers_mut());
     response
-}
-
-/// Availability + authentication for `/v0/management`, in upstream's order.
-///
-/// Upstream answers **404** when the surface is switched off, so a build with
-/// no management secret is indistinguishable from one that never registered
-/// the routes. Only once available does authentication run, which answers 403
-/// for a caller who may not use the surface at all and 401 for a bad key.
-/// Collapsing these into one status would be observably different.
-pub async fn require_management_access(
-    State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-    next: Next,
-) -> Response {
-    let auth = state.management_auth();
-
-    if !auth.is_enabled() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
-    let ip = peer.ip();
-    let provided = presented_key(req.headers());
-    let outcome = state
-        .management_attempts
-        .authenticate(&auth, &ip.to_string(), ip.is_loopback(), &provided);
-
-    match outcome {
-        AuthOutcome::Allow => {
-            let mut response = next.run(req).await;
-            stamp(response.headers_mut());
-            response
-        }
-        AuthOutcome::Unauthorized(message) => error_response(StatusCode::UNAUTHORIZED, message),
-        AuthOutcome::Forbidden(message) => error_response(StatusCode::FORBIDDEN, &message),
-    }
 }

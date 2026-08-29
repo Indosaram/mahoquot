@@ -15,6 +15,7 @@ pub mod state;
 pub mod quota;
 pub mod realtime;
 pub mod static_pages;
+pub mod telemetry;
 pub mod url;
 pub mod v1beta;
 pub mod warmup;

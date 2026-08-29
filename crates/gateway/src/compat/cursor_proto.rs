@@ -231,7 +231,18 @@ pub struct TokenDeltaUpdate {
     pub tokens: i32,
 }
 #[derive(Clone, PartialEq, prost::Message)]
-pub struct TurnEndedUpdate {}
+pub struct TurnEndedUpdate {
+    #[prost(uint64, tag = "1")]
+    pub input_tokens: u64,
+    #[prost(uint64, tag = "2")]
+    pub output_tokens: u64,
+    #[prost(uint64, tag = "3")]
+    pub cache_read_tokens: u64,
+    #[prost(uint64, tag = "4")]
+    pub cache_write_tokens: u64,
+    #[prost(uint64, tag = "5")]
+    pub reasoning_tokens: u64,
+}
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ToolCallUpdate {
     #[prost(string, tag = "1")]

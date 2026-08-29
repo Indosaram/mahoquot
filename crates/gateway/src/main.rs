@@ -27,6 +27,9 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let state = Arc::new(AppState::new(&config)?);
+    state
+        .telemetry
+        .spawn_flush_worker(std::time::Duration::from_secs(10));
     quotio_gateway::quota::spawn_usage_poller(
         Arc::clone(&state),
         std::time::Duration::from_secs(config.usage_poll_secs),

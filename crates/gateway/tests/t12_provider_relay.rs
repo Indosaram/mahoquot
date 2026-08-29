@@ -82,7 +82,10 @@ fn credential(kind: &str, upstream: &str) -> String {
         "upstream_override": upstream,
     });
     if kind == "kiro" {
-        value["region"] = serde_json::Value::String("us-east-1".to_string());
+        value["region"] = serde_json::Value::String("eu-central-1".to_string());
+        value["profileArn"] = serde_json::Value::String(
+            "arn:aws:codewhisperer:eu-central-1:123:profile/relay".to_string(),
+        );
     }
     serde_json::to_string(&value).unwrap()
 }
@@ -320,6 +323,10 @@ async fn kiro_relays_conversation_state_and_decodes_eventstream() {
 
     let request = seen.lock().unwrap().first().cloned().expect("upstream call");
     assert_eq!(request.path, "/generateAssistantResponse");
+    assert_eq!(
+        request.body["profileArn"],
+        "arn:aws:codewhisperer:eu-central-1:123:profile/relay"
+    );
     assert_eq!(
         request.body["conversationState"]["currentMessage"]["userInputMessage"]["content"],
         "be concise\n\nping"
