@@ -97,14 +97,17 @@
   }
 }
 
-/* Travel is exactly one duplicated copy (50%), so the loop stays seamless; the
-   shared 50vw offset only shifts where the first logo enters. */
+/* Marquee:SymmetricCenterStartSeamlessLoop
+   Travel is exactly one duplicated copy (50%), so the loop stays seamless; the
+   shared offset only shifts where the first logo enters. */
 @keyframes marquee {
   from {
-    transform: translateX(50vw);
+    transform: translateX(var(--marquee-entry-offset));
   }
   to {
-    transform: translateX(calc(50vw - 50%));
+    transform: translateX(
+      calc(var(--marquee-entry-offset) + var(--marquee-loop-distance))
+    );
   }
 }
 

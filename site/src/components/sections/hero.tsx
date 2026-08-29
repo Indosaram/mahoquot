@@ -77,10 +77,14 @@ export function Hero() {
 
       <div className="border-t border-line py-7">
         <div className="mask-fade-edges flex overflow-hidden">
-          <div className="animate-marquee flex w-max items-center">
+          <div
+            data-marquee-track
+            className="animate-marquee flex w-max items-center"
+          >
             {[...PROVIDERS, ...PROVIDERS].map((p, i) => (
               <span
                 key={`${p.name}-${i}`}
+                data-marquee-item
                 className="flex shrink-0 items-center gap-2.5 px-9 text-[15px] font-medium text-ink-faint"
               >
                 <span
