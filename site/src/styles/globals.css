@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@theme {
+  --color-page: #020202;
+  --color-page-raised: #0a0a0a;
+  --color-surface: #0e0e0e;
+  --color-surface-raised: #161616;
+  --color-surface-hover: #1c1c1c;
+
+  --color-line: #1c1c1c;
+  --color-line-strong: #2a2a2a;
+  --color-line-soft: #151515;
+
+  --color-ink: #f2f2f2;
+  --color-ink-soft: #d9d9d9;
+  --color-ink-muted: #8f8f8f;
+  --color-ink-faint: #6b6b6b;
+  --color-ink-ghost: #454545;
+
+  --color-accent: #f0862a;
+  --color-accent-soft: #f5a55c;
+  --color-ok: #4ade80;
+  --color-bad: #f87171;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --shadow-panel: 0 24px 60px -24px rgba(0, 0, 0, 0.9);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+  --color-ring: #f0862a;
+  --marquee-entry-offset: 50vw;
+  --marquee-loop-distance: -50%;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: var(--color-page);
+    color: var(--color-ink-soft);
+    font-family: var(--font-sans);
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background-color: rgba(240, 134, 42, 0.25);
+    color: var(--color-ink);
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-page);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 5px;
+  }
+}
+
+@layer utilities {
+  .rule-x {
+    border-top: 1px solid var(--color-line);
+  }
+
+  .rule-y {
+    border-left: 1px solid var(--color-line);
+  }
+
+  .mask-fade-edges {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 10%,
+      black 90%,
+      transparent
+    );
+  }
+}
+
+/* Travel is exactly one duplicated copy (50%), so the loop stays seamless; the
+   shared 50vw offset only shifts where the first logo enters. */
+@keyframes marquee {
+  from {
+    transform: translateX(50vw);
+  }
+  to {
+    transform: translateX(calc(50vw - 50%));
+  }
+}
+
+.animate-marquee {
+  animation: marquee 46s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
