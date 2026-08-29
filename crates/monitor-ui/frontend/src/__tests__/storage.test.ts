@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   getGatewayBaseUrl,
   getRelayKey,
+  getTelemetryRange,
   migrateStoredGatewayUrl,
   setGatewayBaseUrl,
   setRelayKey,
+  setTelemetryRange,
   validateGatewayBaseUrl,
 } from "../lib/storage";
 
@@ -22,6 +24,15 @@ describe("Storage and Port Migration", () => {
     const migrated = migrateStoredGatewayUrl();
     expect(migrated).toBe("http://127.0.0.1:18801");
     expect(localStorage.getItem("mahoquot.base")).toBe("http://127.0.0.1:18801");
+  });
+
+  it("persists telemetry range and rejects damaged stored values", () => {
+    expect(getTelemetryRange()).toBe("1d");
+    setTelemetryRange("7d");
+    expect(getTelemetryRange()).toBe("7d");
+    expect(localStorage.getItem("mahoquot.telemetry-range")).toBe("7d");
+    localStorage.setItem("mahoquot.telemetry-range", "forever");
+    expect(getTelemetryRange()).toBe("1d");
   });
 
   it("validates typed gateway URL input without rejecting same-origin blank", () => {

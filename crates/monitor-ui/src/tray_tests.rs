@@ -111,7 +111,7 @@ fn gateway_binary_resolves_env_override_then_exe_sibling() {
         Some(std::path::Path::new("/custom/mahoquot-gateway"))
     );
     assert_eq!(
-        resolve_gateway_binary(None, Some(std::path::Path::new("/opt/app/mahoquot-monitor-ui")))
+        resolve_gateway_binary(None, Some(std::path::Path::new("/opt/app/mahoquot")))
             .as_deref(),
         Some(std::path::Path::new("/opt/app/mahoquot-gateway"))
     );

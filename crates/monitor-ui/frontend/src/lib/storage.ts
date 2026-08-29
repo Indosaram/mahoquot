@@ -53,6 +53,20 @@ export const setRelayKey = (key: string): void => {
   localStorage.setItem("mahoquot.key", key.trim());
 };
 
+export type StoredTelemetryRange = "30m" | "1h" | "1d" | "7d" | "30d";
+
+const isTelemetryRange = (value: string | null): value is StoredTelemetryRange =>
+  value === "30m" || value === "1h" || value === "1d" || value === "7d" || value === "30d";
+
+export const getTelemetryRange = (): StoredTelemetryRange => {
+  const saved = localStorage.getItem("mahoquot.telemetry-range");
+  return isTelemetryRange(saved) ? saved : "1d";
+};
+
+export const setTelemetryRange = (range: StoredTelemetryRange): void => {
+  localStorage.setItem("mahoquot.telemetry-range", range);
+};
+
 export const getTheme = (): "dark" | "light" => {
   const saved = localStorage.getItem("mahoquot.theme");
   if (saved === "light" || saved === "dark") {

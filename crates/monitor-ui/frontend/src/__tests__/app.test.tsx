@@ -141,6 +141,17 @@ describe("operations console", () => {
     expect(screen.queryByText("93")).not.toBeInTheDocument();
   });
 
+  it("restores the selected telemetry range after remount", async () => {
+    const first = render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getByRole("radio", { name: "7d" }));
+    expect(localStorage.getItem("mahoquot.telemetry-range")).toBe("7d");
+    first.unmount();
+
+    render(<App />);
+    expect(await screen.findByRole("radio", { name: "7d" })).toBeChecked();
+  });
+
   it("renders compact notch surface when requested via query param", async () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
     try {

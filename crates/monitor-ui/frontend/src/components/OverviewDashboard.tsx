@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { AdminStats } from "../lib/schemas";
+import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
 import {
   type TelemetryRange,
   type TelemetrySample,
@@ -29,7 +30,7 @@ export const OverviewDashboard = ({
   readonly stats: AdminStats;
   readonly samples: readonly TelemetrySample[];
 }) => {
-  const [range, setRange] = useState<TelemetryRange>("1d");
+  const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
   const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
   const chartSamples = useMemo(() => downsampleTelemetry(filtered), [filtered]);
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
@@ -50,7 +51,10 @@ export const OverviewDashboard = ({
               name="telemetry-range"
               value={item}
               checked={range === item}
-              onChange={() => setRange(item)}
+              onChange={() => {
+                setRange(item);
+                setTelemetryRange(item);
+              }}
             />
             <span>{item}</span>
           </label>
