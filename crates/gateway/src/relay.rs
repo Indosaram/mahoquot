@@ -51,6 +51,11 @@ struct UpstreamTarget {
     protocol: compat::Protocol,
 }
 
+struct UpstreamExchange {
+    response: reqwest::Response,
+    cursor_reply: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
+}
+
 fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTarget, String> {
     if plan.mode == RelayMode::GeminiCountTokens {
         if member.kind() != crate::account::ProviderKind::Antigravity {
@@ -195,7 +200,8 @@ async fn send_upstream(
     member: &AccountMember,
     headers: &HeaderMap,
     body_bytes: &Bytes,
-) -> Result<reqwest::Response, reqwest::Error> {
+    protocol: compat::Protocol,
+) -> Result<UpstreamExchange, reqwest::Error> {
     let mut req_builder = state.http_client.post(target_url);
     for (name, val) in member.build_upstream_headers() {
         req_builder = req_builder.header(name, val);
@@ -207,10 +213,41 @@ async fn send_upstream(
         req_builder = req_builder.header(header::CONTENT_TYPE.as_str(), ct);
     }
     let req_start = std::time::Instant::now();
-    let resp = req_builder.body(body_bytes.clone()).send().await?;
+    let (resp, cursor_reply) = if protocol == compat::Protocol::Cursor {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+        let _ = tx.send(body_bytes.clone());
+        let heartbeat_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if heartbeat_tx
+                    .send(Bytes::from(compat::cursor::client_heartbeat_frame()))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let stream = futures::stream::unfold(
+            rx,
+            |mut rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>| async move {
+                rx.recv()
+                    .await
+                    .map(|chunk| (Ok::<Bytes, std::io::Error>(chunk), rx))
+            },
+        );
+        (req_builder.body(reqwest::Body::wrap_stream(stream)).send().await?, Some(tx))
+    } else {
+        (req_builder.body(body_bytes.clone()).send().await?, None)
+    };
     let elapsed_ms = req_start.elapsed().as_secs_f64() * 1000.0;
     state.monitor.record_ttft(member.id(), elapsed_ms);
-    Ok(resp)
+    Ok(UpstreamExchange {
+        response: resp,
+        cursor_reply,
+    })
 }
 
 async fn extract_failure(resp: reqwest::Response, status_code: u16) -> FinalFailure {
@@ -327,16 +364,11 @@ fn build_plan(
     mode: RelayMode,
     req_path: &str,
     body_bytes: Bytes,
-    restricted: bool,
 ) -> Result<RelayPlan, String> {
     match mode {
         RelayMode::Native => Ok(RelayPlan {
             upstream_path: req_path.to_string(),
-            model: if restricted {
-                compat::extract_model(&body_bytes)
-            } else {
-                None
-            },
+            model: compat::extract_model(&body_bytes),
             body: body_bytes.clone(),
             mode,
             client_stream: true,
@@ -439,10 +471,8 @@ fn select_index(
     state: &AppState,
     hint: &SessionHint,
     model: Option<&str>,
-    require_model_support: bool,
 ) -> Option<usize> {
-    let restricted = state.model_restrictions.load(Ordering::Relaxed);
-    let Some(model) = model.filter(|_| restricted || require_model_support) else {
+    let Some(model) = model else {
         return state.router.select(&state.pool_members, hint);
     };
 
@@ -493,8 +523,9 @@ async fn finish_success(
     resp: reqwest::Response,
     status_code: u16,
     created: i64,
-    protocol: compat::Protocol,
+    session: compat::ProtocolSession,
 ) -> Result<Response, String> {
+    let protocol = session.protocol;
     let content_type = content_type_of(&resp);
     capture_usage(member, resp.headers());
 
@@ -555,8 +586,8 @@ async fn finish_success(
             model,
             created,
             false,
-            protocol,
             compat::ReplyShape::Anthropic,
+            session,
         );
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -592,8 +623,8 @@ async fn finish_success(
             model,
             created,
             plan.include_usage,
-            protocol,
             reply_shape(plan.mode),
+            session,
         );
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -605,7 +636,7 @@ async fn finish_success(
             }));
     }
 
-    let raw = compat::collect_stream(first, stream).await?;
+    let raw = compat::collect_stream_with_replies(first, stream, session).await?;
     let completion = compat::aggregate(&raw, model, created, protocol, reply_shape(plan.mode))?;
     member.record_ok();
     state.metrics.served.fetch_add(1, Ordering::Relaxed);
@@ -652,8 +683,7 @@ pub async fn handle_relay(
         .unwrap_or(0);
     let created = now_ms / 1000;
 
-    let restricted = state.model_restrictions.load(Ordering::Relaxed);
-    let plan = match build_plan(mode, req_path, body_bytes, restricted) {
+    let plan = match build_plan(mode, req_path, body_bytes) {
         Ok(plan) => plan,
         Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
     };
@@ -673,18 +703,7 @@ pub async fn handle_relay(
     };
 
     for _ in 0..max_attempts {
-        // Gemini-native verbs only exist on antigravity, so the pool must be
-        // narrowed by model support even when restrictions are globally off.
-        let require_model_support = matches!(
-            plan.mode,
-            RelayMode::GeminiNative | RelayMode::GeminiCountTokens
-        );
-        let chosen_idx = match select_index(
-            &state,
-            &hint,
-            plan.model.as_deref(),
-            require_model_support,
-        ) {
+        let chosen_idx = match select_index(&state, &hint, plan.model.as_deref()) {
             Some(idx) => idx,
             None => break,
         };
@@ -720,7 +739,15 @@ pub async fn handle_relay(
             Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
         };
         let target_url = target.url;
-        let mut resp = match send_upstream(&state, &target_url, &member, headers, &target.body).await
+        let exchange = match send_upstream(
+            &state,
+            &target_url,
+            &member,
+            headers,
+            &target.body,
+            target.protocol,
+        )
+        .await
         {
             Ok(r) => r,
             Err(e) => {
@@ -732,6 +759,8 @@ pub async fn handle_relay(
                 continue;
             }
         };
+        let mut resp = exchange.response;
+        let mut cursor_reply = exchange.cursor_reply;
 
         let mut status_code = resp.status().as_u16();
 
@@ -741,9 +770,19 @@ pub async fn handle_relay(
         {
             match state.refresh_member(&member, Some(&member_at)).await {
                 Ok(_) => {
-                    match send_upstream(&state, &target_url, &member, headers, &target.body).await {
-                        Ok(retry_resp) => {
-                            resp = retry_resp;
+                    match send_upstream(
+                        &state,
+                        &target_url,
+                        &member,
+                        headers,
+                        &target.body,
+                        target.protocol,
+                    )
+                    .await
+                    {
+                        Ok(retry_exchange) => {
+                            resp = retry_exchange.response;
+                            cursor_reply = retry_exchange.cursor_reply;
                             status_code = resp.status().as_u16();
                         }
                         Err(e) => {
@@ -782,7 +821,10 @@ pub async fn handle_relay(
                 resp,
                 status_code,
                 created,
-                target.protocol,
+                compat::ProtocolSession {
+                    protocol: target.protocol,
+                    cursor_reply,
+                },
             )
             .await
             {
@@ -860,5 +902,72 @@ pub async fn handle_relay(
             .body(compat::error_stream_body("all failover attempts failed"))
             .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "upstream failure").into_response()),
         None => json_error(StatusCode::BAD_GATEWAY, "all failover attempts failed"),
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    use crate::config::GatewayConfig;
+
+    fn credential(kind: &str) -> String {
+        let extra = match kind {
+            "codex" => {
+                r#""account_id":"acc","id_token":"id","last_refresh":"2026-01-01T00:00:00Z","#
+            }
+            "antigravity" => r#""project_id":"project","#,
+            "kiro" => r#""region":"us-east-1","#,
+            _ => "",
+        };
+        format!(
+            r#"{{{extra}"identity_slug":"{kind}","access_token":"token","refresh_token":"refresh","email":"{kind}@test.invalid","expired":"2099-01-01T00:00:00Z","type":"{kind}"}}"#
+        )
+    }
+
+    fn six_provider_state() -> (AppState, std::path::PathBuf) {
+        let auth_dir = std::env::temp_dir().join(format!(
+            "quotio-routing-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&auth_dir).expect("create auth dir");
+        for kind in ["codex", "antigravity", "claude", "cursor", "kiro", "zcode"] {
+            std::fs::write(
+                auth_dir.join(format!("{kind}-test.json")),
+                credential(kind),
+            )
+            .expect("write credential");
+        }
+        let config = GatewayConfig {
+            auth_dir: auth_dir.clone(),
+            config_path: auth_dir.join("config.yaml"),
+            auth_refresh_enabled: false,
+            ..GatewayConfig::default()
+        };
+        (AppState::new(&config).expect("state"), auth_dir)
+    }
+
+    #[test]
+    fn default_routing_never_selects_an_account_that_rejects_the_requested_model() {
+        let (state, auth_dir) = six_provider_state();
+        let hint = SessionHint { affinity_key: None };
+
+        for model in [
+            "gpt-5.6-sol",
+            "gemini-3.7-flash-high",
+            "claude-sonnet-4-5-20250929",
+            "glm-5.3",
+            "kiro/claude-haiku-4-5-20251001",
+            "cursor/auto",
+        ] {
+            let selected = select_index(&state, &hint, Some(model)).expect("selection");
+            assert!(
+                state.members[selected].supports_model(model),
+                "model {model} was routed to {}",
+                state.members[selected].kind().as_str()
+            );
+        }
+
+        std::fs::remove_dir_all(auth_dir).ok();
     }
 }

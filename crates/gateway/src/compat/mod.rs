@@ -27,6 +27,37 @@ pub fn cursor_fixture_turn_end() -> cursor_proto::AgentServerMessage {
         )),
     }
 }
+
+#[doc(hidden)]
+pub fn cursor_fixture_get_blob(id: u32) -> cursor_proto::AgentServerMessage {
+    cursor_proto::AgentServerMessage {
+        message: Some(cursor_proto::agent_server_message::Message::KvServerMessage(
+            cursor_proto::KvServerMessage {
+                id,
+                message: Some(cursor_proto::kv_server_message::Message::GetBlobArgs(
+                    cursor_proto::GetBlobArgs { blob_id: vec![1] },
+                )),
+            },
+        )),
+    }
+}
+
+#[doc(hidden)]
+pub fn cursor_is_get_blob_reply(frame: &[u8], expected_id: u32) -> bool {
+    use prost::Message;
+    if frame.len() < 5 {
+        return false;
+    }
+    let Ok(message) = cursor_proto::AgentClientMessage::decode(&frame[5..]) else {
+        return false;
+    };
+    matches!(
+        message.message,
+        Some(cursor_proto::agent_client_message::Message::KvClientMessage(reply))
+            if reply.id == expected_id
+                && matches!(reply.message, Some(cursor_proto::kv_client_message::Message::GetBlobResult(_)))
+    )
+}
 pub mod events;
 pub mod gemini;
 pub mod kiro;
@@ -111,6 +142,11 @@ pub enum Protocol {
     Cursor,
 }
 
+pub struct ProtocolSession {
+    pub protocol: Protocol,
+    pub cursor_reply: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
+}
+
 struct ProtocolParser {
     sse: SseParser,
     gemini: Option<gemini::GeminiDecoder>,
@@ -121,6 +157,13 @@ struct ProtocolParser {
 
 impl ProtocolParser {
     fn new(protocol: Protocol) -> Self {
+        Self::with_cursor_reply(protocol, None)
+    }
+
+    fn with_cursor_reply(
+        protocol: Protocol,
+        cursor_reply: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
+    ) -> Self {
         Self {
             sse: SseParser::default(),
             gemini: match protocol {
@@ -132,7 +175,10 @@ impl ProtocolParser {
             },
             anthropic: (protocol == Protocol::Anthropic).then(claude::AnthropicDecoder::new),
             kiro: (protocol == Protocol::Kiro).then(kiro::KiroDecoder::new),
-            cursor: (protocol == Protocol::Cursor).then(cursor::CursorDecoder::new),
+            cursor: (protocol == Protocol::Cursor).then(|| match cursor_reply {
+                Some(sender) => cursor::CursorDecoder::with_reply_sender(sender),
+                None => cursor::CursorDecoder::new(),
+            }),
         }
     }
 
@@ -245,8 +291,8 @@ pub fn streaming_body(
     model: String,
     created: i64,
     include_usage: bool,
-    protocol: Protocol,
     shape: ReplyShape,
+    session: ProtocolSession,
 ) -> Body {
     let renderer = match shape {
         ReplyShape::Gemini => {
@@ -259,7 +305,7 @@ pub fn streaming_body(
     };
     let mut state = TranslateState {
         upstream,
-        parser: ProtocolParser::new(protocol),
+        parser: ProtocolParser::with_cursor_reply(session.protocol, session.cursor_reply),
         renderer,
         pending: VecDeque::new(),
         drained: false,
@@ -304,6 +350,23 @@ pub fn streaming_body(
             }
         }
     }))
+}
+
+pub async fn collect_stream_with_replies(
+    first: Bytes,
+    mut stream: UpstreamStream,
+    session: ProtocolSession,
+) -> Result<Vec<u8>, String> {
+    let mut parser = ProtocolParser::with_cursor_reply(session.protocol, session.cursor_reply);
+    let mut raw = first.to_vec();
+    let mut ignored = Vec::new();
+    parser.push(&first, &mut ignored);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        parser.push(&chunk, &mut ignored);
+        raw.extend_from_slice(&chunk);
+    }
+    Ok(raw)
 }
 
 fn error_frames(renderer: &mut StreamRenderer, message: &str) -> Vec<Bytes> {

@@ -91,8 +91,9 @@ pub async fn execute_zcode_refresh(
         .find(|entry| entry["isDefault"] == true)
         .or_else(|| organizations.first())
         .ok_or_else(|| RefreshError::Parse("Z-code customer has no organization".to_string()))?;
-    let org_id = organization["id"]
+    let org_id = organization["organizationId"]
         .as_str()
+        .or_else(|| organization["id"].as_str())
         .ok_or_else(|| RefreshError::Parse("Z-code organization missing id".to_string()))?;
     let projects = organization["projects"]
         .as_array()
@@ -102,8 +103,9 @@ pub async fn execute_zcode_refresh(
         .find(|entry| entry["isDefault"] == true)
         .or_else(|| projects.first())
         .ok_or_else(|| RefreshError::Parse("Z-code organization has no project".to_string()))?;
-    let project_id = project["id"]
+    let project_id = project["projectId"]
         .as_str()
+        .or_else(|| project["id"].as_str())
         .ok_or_else(|| RefreshError::Parse("Z-code project missing id".to_string()))?;
     let path = format!("/api/biz/v1/organization/{org_id}/projects/{project_id}/api_keys");
     let keys: serde_json::Value = client
@@ -114,11 +116,30 @@ pub async fn execute_zcode_refresh(
         .error_for_status()?
         .json()
         .await?;
-    let key_id = keys["data"]
+    let existing_key_id = keys["data"]
         .as_array()
         .and_then(|entries| entries.iter().find(|entry| entry["name"] == "zcode-api-key"))
-        .and_then(|entry| entry["apiKey"].as_str().or_else(|| entry["id"].as_str()))
-        .ok_or_else(|| RefreshError::Parse("Z-code API key not found".to_string()))?;
+        .and_then(|entry| entry["apiKey"].as_str().or_else(|| entry["id"].as_str()));
+    let created_key: serde_json::Value;
+    let key_id = match existing_key_id {
+        Some(key_id) => key_id,
+        None => {
+            created_key = client
+                .post(format!("{base}{path}"))
+                .bearer_auth(business)
+                .json(&serde_json::json!({"name": "zcode-api-key"}))
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let entry = created_key.get("data").unwrap_or(&created_key);
+            entry["apiKey"]
+                .as_str()
+                .or_else(|| entry["id"].as_str())
+                .ok_or_else(|| RefreshError::Parse("Z-code API key create missing id".to_string()))?
+        }
+    };
     let copied: serde_json::Value = client
         .get(format!("{base}{path}/copy/{key_id}"))
         .bearer_auth(business)
@@ -409,6 +430,55 @@ mod tests {
         .unwrap();
         assert_eq!(tokens.access_token, "key-id.key-secret");
         assert_eq!(tokens.refresh_token.as_deref(), Some("zai-upstream"));
+    }
+
+    #[tokio::test]
+    async fn zcode_refresh_creates_missing_named_api_key() {
+        let app = Router::new()
+            .route(
+                "/api/auth/z/login",
+                post(|| async {
+                    axum::Json(serde_json::json!({"data":{"access_token":"business"}}))
+                }),
+            )
+            .route(
+                "/api/biz/customer/getCustomerInfo",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"data":{"organizations":[{
+                        "organizationId":"org","isDefault":true,
+                        "projects":[{"projectId":"proj","isDefault":true}]
+                    }]}}))
+                }),
+            )
+            .route(
+                "/api/biz/v1/organization/org/projects/proj/api_keys",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"data":[]}))
+                })
+                .post(|body: String| async move {
+                    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+                    assert_eq!(value["name"], "zcode-api-key");
+                    axum::Json(serde_json::json!({"data":{"apiKey":"created-id"}}))
+                }),
+            )
+            .route(
+                "/api/biz/v1/organization/org/projects/proj/api_keys/copy/created-id",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"data":{"secretKey":"created-secret"}}))
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let tokens = execute_zcode_refresh(
+            &reqwest::Client::new(),
+            &format!("http://{addr}"),
+            "zai-upstream",
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "created-id.created-secret");
     }
 
     #[tokio::test]

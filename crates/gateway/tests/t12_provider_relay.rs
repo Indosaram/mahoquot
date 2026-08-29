@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Bytes;
+use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -401,6 +402,72 @@ async fn cursor_relays_connect_protobuf_and_decodes_text_delta() {
     std::fs::remove_dir_all(auth_dir).ok();
 }
 
+#[tokio::test]
+async fn cursor_keeps_request_open_and_replies_to_server_kv_frames() {
+    use futures::StreamExt;
+
+    async fn duplex(body: Body) -> Response {
+        let mut request = body.into_data_stream();
+        let initial = request.next().await.unwrap().unwrap();
+        assert!(initial.windows(4).any(|window| window == b"ping"));
+
+        let get_blob = quotio_gateway::compat::cursor_fixture_get_blob(42);
+        let first = Bytes::from(connect_frame(&get_blob.encode_to_vec(), 0));
+        let stream = futures::stream::once(async move {
+            Ok::<Bytes, std::convert::Infallible>(first)
+        })
+        .chain(futures::stream::once(async move {
+            let reply = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                request.next(),
+            )
+            .await
+            .expect("gateway closed the Cursor request body before the KV reply")
+            .expect("missing Cursor KV reply")
+            .expect("Cursor request body error");
+            assert!(quotio_gateway::compat::cursor_is_get_blob_reply(&reply, 42));
+
+            let text = quotio_gateway::compat::cursor_fixture_text("duplex-ok");
+            let end = quotio_gateway::compat::cursor_fixture_turn_end();
+            let mut frames = connect_frame(&text.encode_to_vec(), 0);
+            frames.extend_from_slice(&connect_frame(&end.encode_to_vec(), 0));
+            frames.extend_from_slice(&connect_frame(b"{}", 2));
+            Ok(Bytes::from(frames))
+        }));
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/connect+proto")
+            .body(Body::from_stream(stream))
+            .unwrap()
+    }
+
+    let app = Router::new().route("/agent.v1.AgentService/Run", post(duplex));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = format!("http://{}", listener.local_addr().unwrap());
+    let mock_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (gateway, auth_dir, gateway_task) = start_gateway("cursor", &upstream).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "cursor/auto",
+            "stream": true,
+            "messages": [{"role":"user","content":"ping"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "gateway response: {body}");
+    assert!(body.contains("duplex-ok"), "client stream: {body}");
+
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
 #[derive(Clone)]
 struct CursorMockState {
     seen: Arc<Mutex<Vec<SeenRequest>>>,
@@ -411,8 +478,15 @@ async fn capture_cursor(
     State(state): State<CursorMockState>,
     uri: axum::http::Uri,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> impl IntoResponse {
+    use futures::StreamExt;
+    let body = body
+        .into_data_stream()
+        .next()
+        .await
+        .expect("initial Cursor frame")
+        .expect("Cursor request body");
     state.seen.lock().unwrap().push(SeenRequest {
         path: uri.path().to_string(),
         headers,

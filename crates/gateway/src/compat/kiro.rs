@@ -31,11 +31,45 @@ pub fn openai_to_kiro(body: &Value) -> Result<Value, String> {
         return Err("messages contain no user turn".to_string());
     }
 
-    let (current_role, current_text, current_message) = conversational.pop().unwrap();
-    let mut current = current_text;
-    if current_role != "user" {
-        conversational.push((current_role, current, current_message));
-        current = String::new();
+    let mut tool_results = Vec::new();
+    let mut current_images = Vec::new();
+    while conversational.last().is_some_and(|(role, _, _)| *role == "tool") {
+        let (_, content, message) = conversational.pop().unwrap();
+        let id = message
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Kiro tool result missing tool_call_id".to_string())?;
+        let text = if content.trim().is_empty() {
+            "Tool completed without textual output".to_string()
+        } else {
+            content
+        };
+        current_images.extend(images_content(message.get("content").unwrap_or(&Value::Null)));
+        tool_results.push(json!({
+            "toolUseId": normalize_tool_id(id),
+            "content": [{"text": text}],
+            "status": if message.get("is_error").and_then(Value::as_bool) == Some(true) {
+                "error"
+            } else {
+                "success"
+            },
+        }));
+    }
+    tool_results.reverse();
+
+    let mut current = String::new();
+    if let Some((current_role, current_text, current_message)) = conversational.pop() {
+        if current_role == "user" {
+            current = current_text;
+            current_images.extend(images_content(
+                current_message.get("content").unwrap_or(&Value::Null),
+            ));
+        } else {
+            conversational.push((current_role, current_text, current_message));
+        }
+    }
+    if current.is_empty() && !tool_results.is_empty() {
+        current = "Tool results are available in the message context".to_string();
     }
     if !system.is_empty() {
         current = if current.is_empty() {
@@ -59,13 +93,20 @@ pub fn openai_to_kiro(body: &Value) -> Result<Value, String> {
                                 .and_then(|raw| serde_json::from_str(raw).ok())
                                 .unwrap_or_else(|| json!({}));
                             json!({
-                                "toolUseId": call["id"],
+                                "toolUseId": normalize_tool_id(call["id"].as_str().unwrap_or_default()),
                                 "name": call["function"]["name"],
                                 "input": arguments,
                             })
                         })
                         .collect(),
                 );
+            }
+            if let Some(reasoning) = message
+                .get("kiroRedactedReasoning")
+                .or_else(|| message.get("kiro_redacted_reasoning"))
+                .and_then(Value::as_str)
+            {
+                assistant["reasoningContent"] = json!({"redactedContent": reasoning});
             }
             history.push(json!({ "assistantResponseMessage": assistant }));
         } else {
@@ -101,21 +142,34 @@ pub fn openai_to_kiro(body: &Value) -> Result<Value, String> {
         }
     }
 
+    if !tool_results.is_empty() {
+        context.insert("toolResults".to_string(), Value::Array(tool_results));
+    }
+
+    let mut user_input = json!({
+        "content": current,
+        "modelId": model,
+        "origin": "AI_EDITOR",
+        "userInputMessageContext": Value::Object(context),
+    });
+    if !current_images.is_empty() {
+        user_input["images"] = Value::Array(current_images);
+    }
+
     Ok(json!({
         "conversationState": {
             "chatTriggerType": "MANUAL",
             "conversationId": format!("{:016x}", rand::random::<u64>()),
             "currentMessage": {
-                "userInputMessage": {
-                    "content": current,
-                    "modelId": model,
-                    "origin": "AI_EDITOR",
-                    "userInputMessageContext": Value::Object(context),
-                }
+                "userInputMessage": user_input
             },
             "history": history,
         }
     }))
+}
+
+fn normalize_tool_id(id: &str) -> String {
+    id.replace('|', "_")
 }
 
 fn text_content(value: &Value) -> String {
@@ -128,6 +182,28 @@ fn text_content(value: &Value) -> String {
             .join(""),
         _ => String::new(),
     }
+}
+
+fn images_content(value: &Value) -> Vec<Value> {
+    let Value::Array(blocks) = value else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let url = block
+                .get("image_url")
+                .and_then(|image| image.get("url"))
+                .or_else(|| block.get("imageUrl"))
+                .and_then(Value::as_str)?;
+            let encoded = url.strip_prefix("data:image/")?;
+            let (format, bytes) = encoded.split_once(";base64,")?;
+            let format = if format == "jpg" { "jpeg" } else { format };
+            matches!(format, "jpeg" | "png" | "gif" | "webp").then(|| {
+                json!({"format": format, "source": {"bytes": bytes}})
+            })
+        })
+        .collect()
 }
 
 fn sanitize_schema(value: &mut Value) {
@@ -256,5 +332,41 @@ mod tests {
         );
         assert!(events.iter().any(|event| matches!(event, CodexEvent::ToolCallBegin { call_id, name, .. } if call_id == "call_1" && name == "lookup")));
         assert!(events.iter().any(|event| matches!(event, CodexEvent::ToolArgsDelta { delta, .. } if delta.contains("q"))));
+    }
+
+    #[test]
+    fn replays_tool_results_images_and_reasoning_on_kiro_wire() {
+        let payload = openai_to_kiro(&json!({
+            "model": "kiro/claude-haiku-4-5-20251001",
+            "messages": [
+                {"role":"user","content":"look"},
+                {"role":"assistant","content":"", "kiroRedactedReasoning":"blob", "tool_calls":[{
+                    "id":"call|1", "type":"function",
+                    "function":{"name":"inspect","arguments":"{}"}
+                }]},
+                {"role":"tool","tool_call_id":"call|1","content":[
+                    {"type":"text","text":"done"},
+                    {"type":"image_url","image_url":{"url":"data:image/jpg;base64,abc"}}
+                ]}
+            ]
+        }))
+        .unwrap();
+        let state = &payload["conversationState"];
+        assert_eq!(
+            state["history"][1]["assistantResponseMessage"]["toolUses"][0]["toolUseId"],
+            "call_1"
+        );
+        assert_eq!(
+            state["history"][1]["assistantResponseMessage"]["reasoningContent"]["redactedContent"],
+            "blob"
+        );
+        let current = &state["currentMessage"]["userInputMessage"];
+        assert_eq!(
+            current["userInputMessageContext"]["toolResults"][0]["toolUseId"],
+            "call_1"
+        );
+        assert_eq!(current["userInputMessageContext"]["toolResults"][0]["content"][0]["text"], "done");
+        assert_eq!(current["images"][0]["format"], "jpeg");
+        assert_eq!(current["images"][0]["source"]["bytes"], "abc");
     }
 }

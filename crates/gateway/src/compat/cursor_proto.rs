@@ -141,9 +141,38 @@ pub struct CancelAction {}
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ClientHeartbeat {}
 #[derive(Clone, PartialEq, prost::Message)]
-pub struct ExecClientMessage {}
+pub struct ExecClientMessage {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(string, tag = "15")]
+    pub exec_id: String,
+    #[prost(oneof = "exec_client_message::Message", tags = "10")]
+    pub message: Option<exec_client_message::Message>,
+}
+pub mod exec_client_message {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Message {
+        #[prost(message, tag = "10")]
+        RequestContextResult(super::RequestContextResult),
+    }
+}
+
 #[derive(Clone, PartialEq, prost::Message)]
-pub struct KvClientMessage {}
+pub struct KvClientMessage {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(oneof = "kv_client_message::Message", tags = "2, 3")]
+    pub message: Option<kv_client_message::Message>,
+}
+pub mod kv_client_message {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Message {
+        #[prost(message, tag = "2")]
+        GetBlobResult(super::GetBlobResult),
+        #[prost(message, tag = "3")]
+        SetBlobResult(super::SetBlobResult),
+    }
+}
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct AgentServerMessage {
@@ -243,6 +272,123 @@ pub struct McpArgs {
     pub tool_name: String,
 }
 #[derive(Clone, PartialEq, prost::Message)]
-pub struct ExecServerMessage {}
+pub struct ExecServerMessage {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(string, tag = "15")]
+    pub exec_id: String,
+    #[prost(oneof = "exec_server_message::Message", tags = "10")]
+    pub message: Option<exec_server_message::Message>,
+}
+pub mod exec_server_message {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Message {
+        #[prost(message, tag = "10")]
+        RequestContextArgs(super::RequestContextArgs),
+    }
+}
+
 #[derive(Clone, PartialEq, prost::Message)]
-pub struct KvServerMessage {}
+pub struct KvServerMessage {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(oneof = "kv_server_message::Message", tags = "2, 3")]
+    pub message: Option<kv_server_message::Message>,
+}
+pub mod kv_server_message {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Message {
+        #[prost(message, tag = "2")]
+        GetBlobArgs(super::GetBlobArgs),
+        #[prost(message, tag = "3")]
+        SetBlobArgs(super::SetBlobArgs),
+    }
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct GetBlobArgs {
+    #[prost(bytes = "vec", tag = "1")]
+    pub blob_id: Vec<u8>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct GetBlobResult {
+    #[prost(bytes = "vec", optional, tag = "1")]
+    pub blob_data: Option<Vec<u8>>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct SetBlobArgs {
+    #[prost(bytes = "vec", tag = "1")]
+    pub blob_id: Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub blob_data: Vec<u8>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct SetBlobResult {
+    #[prost(message, optional, tag = "1")]
+    pub error: Option<ProtoError>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct ProtoError {}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContextArgs {
+    #[prost(string, optional, tag = "2")]
+    pub notes_session_id: Option<String>,
+    #[prost(string, optional, tag = "3")]
+    pub workspace_id: Option<String>,
+    #[prost(bool, optional, tag = "7")]
+    pub use_cached: Option<bool>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContextResult {
+    #[prost(oneof = "request_context_result::Result", tags = "1, 2, 3")]
+    pub result: Option<request_context_result::Result>,
+}
+pub mod request_context_result {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Result {
+        #[prost(message, tag = "1")]
+        Success(super::RequestContextSuccess),
+        #[prost(message, tag = "2")]
+        Error(super::RequestContextError),
+        #[prost(message, tag = "3")]
+        Rejected(super::RequestContextRejected),
+    }
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContextSuccess {
+    #[prost(message, optional, tag = "1")]
+    pub request_context: Option<RequestContext>,
+    #[prost(bool, optional, tag = "2")]
+    pub served_from_disk_cache: Option<bool>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContextError {
+    #[prost(string, tag = "1")]
+    pub error: String,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContextRejected {
+    #[prost(string, tag = "1")]
+    pub reason: String,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContext {
+    #[prost(message, optional, tag = "4")]
+    pub env: Option<RequestContextEnv>,
+    #[prost(message, repeated, tag = "7")]
+    pub tools: Vec<McpToolDefinition>,
+}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct RequestContextEnv {
+    #[prost(string, tag = "1")]
+    pub os_version: String,
+    #[prost(string, repeated, tag = "2")]
+    pub workspace_paths: Vec<String>,
+    #[prost(string, tag = "3")]
+    pub shell: String,
+    #[prost(bool, tag = "5")]
+    pub sandbox_enabled: bool,
+    #[prost(string, tag = "10")]
+    pub time_zone: String,
+}

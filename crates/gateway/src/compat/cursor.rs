@@ -91,6 +91,18 @@ pub fn openai_to_cursor_connect(body: &Value) -> Result<Vec<u8>, String> {
     Ok(connect_frame(&envelope.encode_to_vec(), 0))
 }
 
+pub fn client_heartbeat_frame() -> Vec<u8> {
+    connect_frame(
+        &proto::AgentClientMessage {
+            message: Some(proto::agent_client_message::Message::ClientHeartbeat(
+                proto::ClientHeartbeat {},
+            )),
+        }
+        .encode_to_vec(),
+        0,
+    )
+}
+
 fn text_content(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -118,11 +130,21 @@ pub struct CursorDecoder {
     output_tokens: u64,
     open_tools: std::collections::HashMap<String, (String, u64)>,
     next_tool_index: u64,
+    reply_tx: Option<tokio::sync::mpsc::UnboundedSender<bytes::Bytes>>,
 }
 
 impl CursorDecoder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_reply_sender(
+        reply_tx: tokio::sync::mpsc::UnboundedSender<bytes::Bytes>,
+    ) -> Self {
+        Self {
+            reply_tx: Some(reply_tx),
+            ..Self::default()
+        }
     }
 
     pub fn decode(&mut self, bytes: &[u8], out: &mut Vec<CodexEvent>) {
@@ -154,8 +176,18 @@ impl CursorDecoder {
     }
 
     fn decode_message(&mut self, message: proto::AgentServerMessage, out: &mut Vec<CodexEvent>) {
-        let Some(proto::agent_server_message::Message::InteractionUpdate(update)) = message.message else {
-            return;
+        let Some(message) = message.message else { return };
+        let update = match message {
+            proto::agent_server_message::Message::InteractionUpdate(update) => update,
+            proto::agent_server_message::Message::KvServerMessage(message) => {
+                self.reply_to_kv(message);
+                return;
+            }
+            proto::agent_server_message::Message::ExecServerMessage(message) => {
+                self.reply_to_exec(message);
+                return;
+            }
+            proto::agent_server_message::Message::ConversationCheckpointUpdate(_) => return,
         };
         match update.message {
             Some(proto::interaction_update::Message::TextDelta(delta)) => {
@@ -189,6 +221,75 @@ impl CursorDecoder {
             Some(proto::interaction_update::Message::TurnEnded(_)) => self.complete(out),
             _ => {}
         }
+    }
+
+    fn send_reply(&self, message: proto::AgentClientMessage) {
+        if let Some(tx) = &self.reply_tx {
+            let _ = tx.send(bytes::Bytes::from(connect_frame(&message.encode_to_vec(), 0)));
+        }
+    }
+
+    fn reply_to_kv(&self, message: proto::KvServerMessage) {
+        let reply = match message.message {
+            Some(proto::kv_server_message::Message::GetBlobArgs(_)) => {
+                proto::kv_client_message::Message::GetBlobResult(proto::GetBlobResult {
+                    blob_data: None,
+                })
+            }
+            Some(proto::kv_server_message::Message::SetBlobArgs(_)) => {
+                proto::kv_client_message::Message::SetBlobResult(proto::SetBlobResult {
+                    error: None,
+                })
+            }
+            None => return,
+        };
+        self.send_reply(proto::AgentClientMessage {
+            message: Some(proto::agent_client_message::Message::KvClientMessage(
+                proto::KvClientMessage {
+                    id: message.id,
+                    message: Some(reply),
+                },
+            )),
+        });
+    }
+
+    fn reply_to_exec(&self, message: proto::ExecServerMessage) {
+        if !matches!(
+            message.message,
+            Some(proto::exec_server_message::Message::RequestContextArgs(_))
+        ) {
+            return;
+        }
+        let context = proto::RequestContext {
+            env: Some(proto::RequestContextEnv {
+                os_version: std::env::consts::OS.to_string(),
+                workspace_paths: vec!["/".to_string()],
+                shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
+                sandbox_enabled: false,
+                time_zone: "UTC".to_string(),
+            }),
+            tools: Vec::new(),
+        };
+        self.send_reply(proto::AgentClientMessage {
+            message: Some(proto::agent_client_message::Message::ExecClientMessage(
+                proto::ExecClientMessage {
+                    id: message.id,
+                    exec_id: message.exec_id,
+                    message: Some(
+                        proto::exec_client_message::Message::RequestContextResult(
+                            proto::RequestContextResult {
+                                result: Some(proto::request_context_result::Result::Success(
+                                    proto::RequestContextSuccess {
+                                        request_context: Some(context),
+                                        served_from_disk_cache: Some(false),
+                                    },
+                                )),
+                            },
+                        ),
+                    ),
+                },
+            )),
+        });
     }
 
     fn start_tool(
@@ -254,5 +355,78 @@ mod tests {
         assert!(run.action.unwrap().action.is_some());
         assert_eq!(run.requested_model.unwrap().model_id, "default");
         assert_eq!(run.mcp_tools.unwrap().mcp_tools[0].name, "lookup");
+    }
+
+    #[test]
+    fn server_kv_and_context_requests_receive_matching_client_replies() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut decoder = CursorDecoder::with_reply_sender(tx);
+        let mut events = Vec::new();
+        for message in [
+            proto::AgentServerMessage {
+                message: Some(proto::agent_server_message::Message::KvServerMessage(
+                    proto::KvServerMessage {
+                        id: 7,
+                        message: Some(proto::kv_server_message::Message::GetBlobArgs(
+                            proto::GetBlobArgs { blob_id: vec![1] },
+                        )),
+                    },
+                )),
+            },
+            proto::AgentServerMessage {
+                message: Some(proto::agent_server_message::Message::KvServerMessage(
+                    proto::KvServerMessage {
+                        id: 8,
+                        message: Some(proto::kv_server_message::Message::SetBlobArgs(
+                            proto::SetBlobArgs {
+                                blob_id: vec![1],
+                                blob_data: vec![2],
+                            },
+                        )),
+                    },
+                )),
+            },
+            proto::AgentServerMessage {
+                message: Some(proto::agent_server_message::Message::ExecServerMessage(
+                    proto::ExecServerMessage {
+                        id: 9,
+                        exec_id: "exec-9".to_string(),
+                        message: Some(
+                            proto::exec_server_message::Message::RequestContextArgs(
+                                proto::RequestContextArgs {
+                                    notes_session_id: None,
+                                    workspace_id: None,
+                                    use_cached: Some(false),
+                                },
+                            ),
+                        ),
+                    },
+                )),
+            },
+        ] {
+            decoder.decode(&connect_frame(&message.encode_to_vec(), 0), &mut events);
+        }
+
+        let replies: Vec<_> = (0..3)
+            .map(|_| {
+                let frame = rx.try_recv().unwrap();
+                proto::AgentClientMessage::decode(&frame[5..]).unwrap()
+            })
+            .collect();
+        assert!(matches!(
+            &replies[0].message,
+            Some(proto::agent_client_message::Message::KvClientMessage(reply))
+                if reply.id == 7 && matches!(reply.message, Some(proto::kv_client_message::Message::GetBlobResult(_)))
+        ));
+        assert!(matches!(
+            &replies[1].message,
+            Some(proto::agent_client_message::Message::KvClientMessage(reply))
+                if reply.id == 8 && matches!(reply.message, Some(proto::kv_client_message::Message::SetBlobResult(_)))
+        ));
+        assert!(matches!(
+            &replies[2].message,
+            Some(proto::agent_client_message::Message::ExecClientMessage(reply))
+                if reply.id == 9 && reply.exec_id == "exec-9"
+        ));
     }
 }
