@@ -2,7 +2,8 @@
 //!
 //! Behaviour is proven by the tests this manifest names; the manifest itself
 //! proves that no reference-backed flow, relay adapter, or catalog provider is
-//! left without a named owner and a live GREEN test. Locators are matched by
+//! left without a named owner and a live GREEN test, or a declared omission
+//! stating why it is not shipped. Locators are matched by
 //! needle rather than by line so that an unrelated edit above a symbol cannot
 //! turn this gate red, and provider rows are checked against a tracked snapshot
 //! of the reference registry rather than a sibling checkout.
@@ -76,8 +77,15 @@ struct Deviation {
 }
 
 #[derive(Deserialize)]
+struct Omission {
+    id: String,
+    reason: String,
+}
+
+#[derive(Deserialize)]
 struct Deviations {
     deviations: Vec<Deviation>,
+    omissions: Vec<Omission>,
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> T {
@@ -250,10 +258,33 @@ fn every_reference_backed_flow_maps_to_an_owner_green_test_and_evidence() {
         }
     }
 
+    // A reference provider Quotio deliberately does not ship is accounted for
+    // by an omission with a reason, never by a silently missing row.
+    let mut omitted = BTreeSet::new();
+    for omission in &deviations.omissions {
+        assert!(
+            reference.contains_key(omission.id.as_str()),
+            "omission {} is not a reference provider",
+            omission.id
+        );
+        assert!(
+            !omission.reason.trim().is_empty(),
+            "omission {} has no reason",
+            omission.id
+        );
+        assert!(
+            !covered.contains(omission.id.as_str()),
+            "{} is omitted but still has a parity row",
+            omission.id
+        );
+        omitted.insert(omission.id.as_str());
+    }
+
     let expected: BTreeSet<&str> = reference.keys().copied().collect();
+    let accounted: BTreeSet<&str> = covered.union(&omitted).copied().collect();
     assert_eq!(
-        covered, expected,
-        "every reference provider must have exactly one parity row"
+        accounted, expected,
+        "every reference provider must have exactly one parity row or a declared omission"
     );
     let owned: BTreeSet<&str> = adapters.keys().copied().collect();
     assert_eq!(

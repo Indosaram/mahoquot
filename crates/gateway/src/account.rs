@@ -311,9 +311,7 @@ impl ProviderAccount {
                     headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
                 }
                 if !a.api_key.is_empty() {
-                    if a.adapter == "azure-openai" {
-                        headers.push(("api-key".to_string(), a.api_key.clone()));
-                    } else if a.adapter == "google" && a.auth_mode != "oauth" {
+                    if a.adapter == "google" && a.auth_mode != "oauth" {
                         headers.push(("x-goog-api-key".to_string(), a.api_key.clone()));
                     } else if a.adapter == "anthropic" && a.auth_mode != "oauth" {
                         headers.push(("x-api-key".to_string(), a.api_key.clone()));

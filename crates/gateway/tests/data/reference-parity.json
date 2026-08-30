@@ -520,32 +520,6 @@
         "needle": "test_command_code_oauth_flow_end_to_end"
       },
       "coverage": "full"
-    },
-    {
-      "id": "azure-openai",
-      "owner": {
-        "path": "crates/gateway/src/account.rs",
-        "needle": "a.adapter == \"azure-openai\""
-      },
-      "green_test": {
-        "path": "crates/gateway/tests/t12_provider_relay.rs",
-        "needle": "azure_openai_account_sends_api_key_header_without_bearer"
-      },
-      "coverage": "partial",
-      "gap": "The reference routes Azure through its Responses passthrough (opencodex/src/adapters/azure.ts); quotio authenticates with the api-key header but relays the chat-completions path."
-    },
-    {
-      "id": "mimo-free",
-      "owner": {
-        "path": "crates/gateway/src/url.rs",
-        "needle": "\"/openai/chat\""
-      },
-      "green_test": {
-        "path": "crates/gateway/tests/t12_provider_relay.rs",
-        "needle": "generic_openai_chat_provider_relays_json_without_codex_translation"
-      },
-      "coverage": "partial",
-      "gap": "The reference mints an anonymous bootstrap JWT and adds X-Mimo-Source/x-session-affinity plus an anti-abuse system marker (opencodex/src/adapters/mimo-free.ts); quotio ports only the canonical endpoint, so an account must carry a pasted token."
     }
   ],
   "providers": [
@@ -580,12 +554,6 @@
     {
       "id": "anthropic-apikey",
       "adapter": "anthropic",
-      "auth_kind": "key",
-      "coverage": "adapter"
-    },
-    {
-      "id": "azure-openai",
-      "adapter": "azure-openai",
       "auth_kind": "key",
       "coverage": "adapter"
     },
@@ -810,12 +778,6 @@
     {
       "id": "mimo",
       "adapter": "openai-chat",
-      "auth_kind": "key",
-      "coverage": "adapter"
-    },
-    {
-      "id": "mimo-free",
-      "adapter": "mimo-free",
       "auth_kind": "key",
       "coverage": "adapter"
     },

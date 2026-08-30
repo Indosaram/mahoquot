@@ -339,40 +339,6 @@ async fn generic_anthropic_adapter_account_relays_native_messages_wire() {
 }
 
 #[tokio::test]
-async fn azure_openai_account_sends_api_key_header_without_bearer() {
-    let response = r#"{"id":"chatcmpl-azure","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"azure-ok"},"finish_reason":"stop"}]}"#;
-    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
-    let (gateway, auth_dir, gateway_task) =
-        start_adapter_gateway("azure-openai", "azure-openai", "gpt-5.3", &upstream).await;
-    let reply = reqwest::Client::new()
-        .post(format!("{gateway}/v1/chat/completions"))
-        .bearer_auth("relay-key")
-        .json(&serde_json::json!({
-            "model": "gpt-5.3",
-            "messages": [{"role": "user", "content": "hello"}],
-            "stream": false
-        }))
-        .send()
-        .await
-        .unwrap();
-    let status = reply.status();
-    let body = reply.text().await.unwrap();
-    assert_eq!(status, StatusCode::OK, "client response: {body}");
-    assert!(body.contains("azure-ok"), "client response: {body}");
-    let request = seen
-        .lock()
-        .unwrap()
-        .first()
-        .cloned()
-        .expect("upstream call");
-    assert_eq!(request.headers.get("api-key").unwrap(), "provider-secret");
-    assert!(!request.headers.contains_key("authorization"));
-    gateway_task.abort();
-    mock_task.abort();
-    std::fs::remove_dir_all(auth_dir).ok();
-}
-
-#[tokio::test]
 async fn generic_openai_chat_provider_relays_json_without_codex_translation() {
     let response = r#"{"id":"chatcmpl-generic","object":"chat.completion","created":1,"model":"deepseek-chat","choices":[{"index":0,"message":{"role":"assistant","content":"generic-ok"},"finish_reason":"stop"}]}"#;
     let (upstream, seen, mock_task) = start_mock(response, "application/json").await;

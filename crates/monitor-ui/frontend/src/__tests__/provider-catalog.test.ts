@@ -49,14 +49,14 @@ describe("provider-catalog", () => {
     expect(missing).toEqual([]);
   });
 
-  it("exports exactly 83 unique production provider IDs", () => {
-    expect(PROVIDER_CATALOG).toHaveLength(83);
-    expect(TOTAL_PROVIDER_COUNT).toBe(83);
-    expect(PROVIDER_IDS).toHaveLength(83);
-    expect(Object.keys(PROVIDER_CATALOG_BY_ID)).toHaveLength(83);
+  it("exports exactly 81 unique production provider IDs", () => {
+    expect(PROVIDER_CATALOG).toHaveLength(81);
+    expect(TOTAL_PROVIDER_COUNT).toBe(81);
+    expect(PROVIDER_IDS).toHaveLength(81);
+    expect(Object.keys(PROVIDER_CATALOG_BY_ID)).toHaveLength(81);
 
     const uniqueIds = new Set(PROVIDER_IDS);
-    expect(uniqueIds.size).toBe(83);
+    expect(uniqueIds.size).toBe(81);
   });
 
   it("ensures every catalog row has strict required fields and valid authKind", () => {
@@ -305,13 +305,18 @@ describe("reference registry parity", () => {
   };
   const deviations = JSON.parse(readFileSync(deviationsUrl, "utf8")) as {
     deviations: readonly { id: string; field: string }[];
+    omissions: readonly { id: string; reason: string }[];
   };
   const comparedFields = ["label", "baseUrl", "adapter", "authKind", "keyOptional"] as const;
   const declared = new Set(deviations.deviations.map((entry) => `${entry.id}.${entry.field}`));
+  const omitted = new Set(deviations.omissions.map((entry) => entry.id));
 
   const differences = () => {
     const found = new Set<string>();
     for (const reference of snapshot.providers) {
+      if (omitted.has(reference.id)) {
+        continue;
+      }
       const entry = PROVIDER_CATALOG_BY_ID[reference.id];
       if (!entry) {
         found.add(`${reference.id}.*`);
@@ -332,9 +337,19 @@ describe("reference registry parity", () => {
     return found;
   };
 
-  it("exposes exactly the providers the reference registry implements", () => {
-    const referenceIds = snapshot.providers.map((provider) => provider.id).sort();
+  it("exposes exactly the reference providers that are not declared omissions", () => {
+    const referenceIds = snapshot.providers
+      .map((provider) => provider.id)
+      .filter((id) => !omitted.has(id))
+      .sort();
     expect([...PROVIDER_IDS].sort()).toEqual(referenceIds);
+  });
+
+  it("keeps every omitted provider out of the catalog with a stated reason", () => {
+    for (const entry of deviations.omissions) {
+      expect(entry.reason.trim()).not.toEqual("");
+      expect(PROVIDER_CATALOG_BY_ID[entry.id]).toBeUndefined();
+    }
   });
 
   it("matches reference provider metadata except where a deviation is declared", () => {
@@ -348,8 +363,7 @@ describe("reference registry parity", () => {
     expect(stale).toEqual([]);
   });
 
-  it("requires a pasted token for providers whose keyless bootstrap is not ported", () => {
-    expect(PROVIDER_CATALOG_BY_ID["mimo-free"]?.keyOptional).toBeUndefined();
+  it("marks the providers whose keyless mode is ported as key-optional", () => {
     expect(PROVIDER_CATALOG_BY_ID.litellm?.keyOptional).toBe(true);
     expect(PROVIDER_CATALOG_BY_ID["opencode-free"]?.keyOptional).toBe(true);
   });
