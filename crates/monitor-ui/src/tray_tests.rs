@@ -423,17 +423,50 @@ fn notched_monitor_prefers_retina_panel_for_island_placement() {
 }
 
 #[test]
-fn default_auth_dir_adopts_the_incumbent_store_when_present() {
+fn a_legacy_store_is_imported_once_into_the_app_owned_dir() {
     // given a home directory carrying the incumbent credential store
     let home =
         std::env::temp_dir().join(format!("mahoquot-auth-dir-legacy-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     let legacy = home.join(".cli-proxy-api");
     std::fs::create_dir_all(&legacy).expect("legacy dir");
+    std::fs::write(
+        legacy.join("codex-user@example.com.json"),
+        r#"{"type":"codex","access_token":"t"}"#,
+    )
+    .expect("credential");
+    std::fs::write(legacy.join("telemetry.json"), r#"{}"#).expect("telemetry");
+    std::fs::write(legacy.join("kimi-device-id"), "device-id").expect("device id");
+    std::fs::write(
+        legacy.join("config.yaml"),
+        "port: 18801\nauth-dir: /old/cli-proxy-api\nrouting:\n  strategy: round-robin\n",
+    )
+    .expect("config");
+
     // when the default auth dir is resolved
     let resolved = default_auth_dir(&home.display().to_string());
-    // then the incumbent store is adopted with no migration step
-    assert_eq!(resolved, legacy);
+
+    // then the app owns its own directory with the state imported into it,
+    // the config points at the app-owned directory, and the legacy store is
+    // left untouched for its original owner
+    assert_eq!(resolved, home.join(".mahoquot/auth"));
+    assert!(resolved.join("codex-user@example.com.json").is_file());
+    assert!(resolved.join("kimi-device-id").is_file());
+    assert!(!resolved.join("telemetry.json").exists());
+    let config = std::fs::read_to_string(resolved.join("config.yaml")).unwrap();
+    assert!(config.contains(&format!("auth-dir: {}", resolved.display())));
+    assert!(!config.contains("/old/cli-proxy-api"));
+    assert!(legacy.join("codex-user@example.com.json").is_file());
+
+    // and a second resolution is the ownership check, not a re-import: newer
+    // legacy files stay out of the app-owned store
+    std::fs::write(
+        legacy.join("codex-added-later.json"),
+        r#"{"type":"codex","access_token":"late"}"#,
+    )
+    .expect("late credential");
+    assert_eq!(default_auth_dir(&home.display().to_string()), resolved);
+    assert!(!resolved.join("codex-added-later.json").exists());
     std::fs::remove_dir_all(&home).ok();
 }
 

@@ -205,13 +205,66 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
 
 /// The incumbent app's credential store wins when it exists, so accounts the
 /// user already had are visible with no migration step.
+/// The app owns its credential store at `~/.mahoquot/auth`. A home carrying the
+/// incumbent CLIProxyAPI store gets a one-time import: credential files are
+/// copied into the app-owned directory and the app never reads or writes the
+/// legacy directory again, so removing the incumbent tool cannot take the
+/// app's accounts with it. Logs and telemetry stay behind.
 pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
-    let legacy = std::path::Path::new(home).join(".cli-proxy-api");
-    if legacy.is_dir() {
-        legacy
-    } else {
-        std::path::Path::new(home).join(".mahoquot/auth")
+    let home_path = std::path::Path::new(home);
+    let app_dir = home_path.join(".mahoquot/auth");
+    if app_dir.is_dir() {
+        return app_dir;
     }
+    let legacy = home_path.join(".cli-proxy-api");
+    if legacy.is_dir() && std::fs::create_dir_all(&app_dir).is_ok() {
+        import_legacy_store(&legacy, &app_dir);
+    }
+    app_dir
+}
+
+fn import_legacy_store(legacy: &std::path::Path, app_dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(legacy) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.path().is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Credentials, the gateway config, and the provider device identity
+        // are the state the app needs; telemetry is a runtime cache the app
+        // regenerates itself.
+        let importable = (name.ends_with(".json") && name != "telemetry.json")
+            || name == "kimi-device-id"
+            || name == "config.yaml";
+        if !importable {
+            continue;
+        }
+        let _ = std::fs::copy(entry.path(), app_dir.join(&name));
+    }
+    repoint_imported_config(app_dir);
+}
+
+/// The migrated `config.yaml` still points `auth-dir:` at the legacy store;
+/// the app now owns that setting, so it must name the app-owned directory.
+fn repoint_imported_config(app_dir: &std::path::Path) {
+    let config = app_dir.join("config.yaml");
+    let Ok(content) = std::fs::read_to_string(&config) else {
+        return;
+    };
+    let repointed = content
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("auth-dir:") {
+                format!("auth-dir: {}", app_dir.display())
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::write(&config, repointed + "\n");
 }
 
 pub fn resolve_gateway_binary(env_override: Option<String>, exe: Option<&Path>) -> Option<PathBuf> {
