@@ -10,6 +10,18 @@ operations console.
 - Architecture overview, code map, and conventions: [`AGENTS.md`](./AGENTS.md)
 - Product contract: [`PRODUCT.md`](./PRODUCT.md) · Design tokens: [`DESIGN.md`](./DESIGN.md)
 - Protocol and failover contracts: [`docs/CONTRACTS.md`](./docs/CONTRACTS.md)
+- Reference parity and provider coverage: [`docs/reference-parity.md`](./docs/reference-parity.md)
+
+## Verification
+
+```bash
+bash scripts/verify.sh
+```
+
+One command runs every gate: `cargo fmt --check`, `cargo clippy -D warnings`,
+`cargo test --workspace`, and the frontend's `tsc --noEmit`, Biome and Vitest.
+Run it before every commit. `tsc` is in there because Vitest does not typecheck:
+a frontend build break once passed 141 green tests and reached a commit.
 
 ## Benchmarks
 
