@@ -270,10 +270,10 @@ const providerRingColors: Readonly<Record<string, string>> = {
 const providerRingColor = (provider: string): string =>
   providerRingColors[provider.trim().toLowerCase()] ?? "#8E8E93";
 
-// Island silhouette: short necks (27px), concave trumpet flares (60px), and a
-// long body (340px) — viewBox 0 0 108 520, shared by shadow/glass/edge layers.
-const NOTCH_ISLAND_PATH =
-  "M108 0H90C88.5 0 88 1 88 3V30C88 68 78 90 0 90V430C78 430 88 452 88 490V517C88 519 88.5 520 90 520H108Z";
+// Island silhouette matching reference: smooth continuous S-curve flare (55px)
+// with vertical screen tangents, rounded convex shoulders, and straight vertical wall.
+// ViewBox 0 0 108 520, shared by shadow/glass/edge layers.
+const NOTCH_ISLAND_PATH = "M108 0 C108 22 0 33 0 55 V465 C0 487 108 498 108 520 Z";
 
 const worstUsedPercent = (rows: readonly { usedPercent: number }[]): number | null => {
   const values = rows.map((row) => row.usedPercent).filter((value) => Number.isFinite(value));
@@ -1242,7 +1242,7 @@ export default function App() {
           {notchGroups.length ? (
             notchGroups.map((group) => {
               const dial = worstUsedPercent(group.rows);
-              const circumference = 2 * Math.PI * 27;
+              const circumference = 2 * Math.PI * 24;
               const used =
                 dial === null ? 0 : (Math.min(100, Math.max(0, dial)) / 100) * circumference;
               return (
@@ -1258,14 +1258,14 @@ export default function App() {
                   onClick={() => openNotchTooltip(group.provider)}
                 >
                   <span className="notch-dial">
-                    <svg className="notch-dial-ring" viewBox="0 0 64 64" aria-hidden="true">
-                      <circle className="notch-dial-track" cx="32" cy="32" r="27" />
+                    <svg className="notch-dial-ring" viewBox="0 0 58 58" aria-hidden="true">
+                      <circle className="notch-dial-track" cx="29" cy="29" r="24" />
                       {dial !== null && (
                         <circle
                           className="notch-dial-arc"
-                          cx="32"
-                          cy="32"
-                          r="27"
+                          cx="29"
+                          cy="29"
+                          r="24"
                           style={{
                             stroke: providerRingColor(group.provider),
                             strokeDasharray: `${used} ${circumference}`,

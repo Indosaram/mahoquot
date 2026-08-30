@@ -19,15 +19,20 @@ html {
 
 :root {
   --bg: #0b0b0d;
+  --bg-rgb: 11 11 13;
   --panel: #141417;
   --panel-2: #1b1b1f;
+  --panel-2-rgb: 27 27 31;
   --panel-3: #232329;
   --line: #26262c;
+  --line-rgb: 38 38 44;
   --line-soft: #1c1c22;
   --fg: #ececf1;
+  --fg-rgb: 236 236 241;
   --fg-dim: #a1a1aa;
   --fg-faint: #71717a;
   --accent: #f0801a;
+  --accent-rgb: 240 128 26;
   --accent-dim: rgba(240, 128, 26, 0.15);
   --accent-fg: #f0801a;
   --ok: #3fb950;
@@ -35,21 +40,27 @@ html {
   --warn: #d29922;
   --warn-dim: rgba(210, 153, 34, 0.15);
   --bad: #f85149;
+  --bad-rgb: 248 81 73;
   --bad-dim: rgba(248, 81, 73, 0.15);
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
   --bg: #f4f4f7;
+  --bg-rgb: 244 244 247;
   --panel: #ffffff;
   --panel-2: #f8f8fa;
+  --panel-2-rgb: 248 248 250;
   --panel-3: #eef0f4;
   --line: #dcdcde;
+  --line-rgb: 220 220 222;
   --line-soft: #eaecef;
   --fg: #111827;
+  --fg-rgb: 17 24 39;
   --fg-dim: #4b5563;
   --fg-faint: #59616d;
   --accent: #c25400;
+  --accent-rgb: 194 84 0;
   --accent-dim: rgba(194, 84, 0, 0.12);
   --accent-fg: #9a4200;
   --ok: #156f30;
@@ -57,6 +68,7 @@ html {
   --warn: #8c5d00;
   --warn-dim: rgba(140, 93, 0, 0.12);
   --bad: #cf222e;
+  --bad-rgb: 207 34 46;
   --bad-dim: rgba(207, 34, 46, 0.12);
   color-scheme: light;
 }
@@ -1844,9 +1856,9 @@ h2 {
   /* Brink sizes the tab to its rings; a fixed height leaves dead black space
      below the icons whenever fewer providers are connected. */
   height: auto;
-  max-height: 440px;
+  max-height: 460px;
   border-radius: 0;
-  padding: 46px 0 52px;
+  padding: 36px 0 42px;
   gap: 22px;
   justify-content: center;
   overflow: visible;
@@ -1873,8 +1885,8 @@ h2 {
 
 .notch-dial {
   position: relative;
-  width: 64px;
-  height: 64px;
+  width: 58px;
+  height: 58px;
   /* spring(response: 0.28, dampingFraction: 0.55) reads as a slight overshoot. */
   transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -1892,21 +1904,21 @@ h2 {
 }
 
 .notch-dial-track {
-  fill: rgba(14, 14, 20, 0.92);
-  stroke: rgba(104, 106, 122, 0.55);
-  stroke-width: 6;
+  fill: #14151c;
+  stroke: rgba(90, 93, 115, 0.45);
+  stroke-width: 5;
 }
 
 .notch-dial-arc {
   fill: none;
-  stroke-width: 6;
+  stroke-width: 5;
   stroke-linecap: round;
 }
 
 .notch-dial-label {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  color: var(--fg);
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
@@ -1934,7 +1946,7 @@ h2 {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   border: 0;
   padding: 0;
   background: transparent;
@@ -1950,8 +1962,8 @@ h2 {
 }
 
 .notch-ring-logo .provider-logo {
-  width: 26px;
-  height: 26px;
+  width: 25px;
+  height: 25px;
 }
 
 .notch-ring-wrap {
