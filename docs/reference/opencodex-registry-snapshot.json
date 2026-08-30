@@ -1,0 +1,594 @@
+{
+  "source": "opencodex/src/providers/registry.ts PROVIDER_REGISTRY",
+  "regenerate": "bun scripts/sync-provider-snapshot.mjs [path-to-opencodex]",
+  "providers": [
+    {
+      "id": "alibaba",
+      "label": "Alibaba Coding Plan",
+      "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "alibaba-token-plan",
+      "label": "Alibaba Token Plan (Beijing)",
+      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "alibaba-token-plan-intl",
+      "label": "Alibaba Token Plan (International)",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "anthropic",
+      "label": "Anthropic Claude",
+      "baseUrl": "https://api.anthropic.com",
+      "adapter": "anthropic",
+      "authKind": "oauth"
+    },
+    {
+      "id": "anthropic-apikey",
+      "label": "Anthropic (API key)",
+      "baseUrl": "https://api.anthropic.com",
+      "adapter": "anthropic",
+      "authKind": "key"
+    },
+    {
+      "id": "azure-openai",
+      "label": "Azure OpenAI",
+      "baseUrl": "https://{resource}.openai.azure.com/openai",
+      "adapter": "azure-openai",
+      "authKind": "key"
+    },
+    {
+      "id": "baseten",
+      "label": "Baseten Model APIs",
+      "baseUrl": "https://inference.baseten.co/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "bizrouter",
+      "label": "BizRouter",
+      "baseUrl": "https://api.bizrouter.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "cerebras",
+      "label": "Cerebras",
+      "baseUrl": "https://api.cerebras.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "chutes",
+      "label": "Chutes",
+      "baseUrl": "https://llm.chutes.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "cline",
+      "label": "Cline",
+      "baseUrl": "https://api.cline.bot/api/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "cline-pass",
+      "label": "ClinePass",
+      "baseUrl": "https://api.cline.bot/api/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "label": "Cloudflare AI Gateway",
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{account-id}/{gateway}/anthropic",
+      "adapter": "anthropic",
+      "authKind": "key"
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "label": "Cloudflare Workers AI",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "command-code",
+      "label": "Command Code - Auth",
+      "baseUrl": "https://api.commandcode.ai",
+      "adapter": "command-code",
+      "authKind": "oauth"
+    },
+    {
+      "id": "commandcode",
+      "label": "Command Code - API",
+      "baseUrl": "https://api.commandcode.ai/provider/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "cursor",
+      "label": "Cursor (experimental)",
+      "baseUrl": "https://api2.cursor.sh",
+      "adapter": "cursor",
+      "authKind": "oauth"
+    },
+    {
+      "id": "deepinfra",
+      "label": "DeepInfra",
+      "baseUrl": "https://api.deepinfra.com/v1/openai",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "digitalocean",
+      "label": "DigitalOcean Serverless Inference",
+      "baseUrl": "https://inference.do-ai.run/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "featherless",
+      "label": "Featherless AI",
+      "baseUrl": "https://api.featherless.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "firepass",
+      "label": "Fire Pass (Fireworks Kimi)",
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "fireworks",
+      "label": "Fireworks",
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "github-copilot",
+      "label": "GitHub Copilot",
+      "baseUrl": "https://api.githubcopilot.com",
+      "adapter": "openai-chat",
+      "authKind": "oauth"
+    },
+    {
+      "id": "gitlab-duo",
+      "label": "GitLab Duo",
+      "baseUrl": "https://cloud.gitlab.com/ai/v1/proxy/openai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "google",
+      "label": "Google Gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "adapter": "google",
+      "authKind": "key"
+    },
+    {
+      "id": "google-antigravity",
+      "label": "Google Antigravity",
+      "baseUrl": "https://daily-cloudcode-pa.googleapis.com",
+      "adapter": "google",
+      "authKind": "oauth"
+    },
+    {
+      "id": "google-vertex",
+      "label": "Google Vertex AI",
+      "baseUrl": "https://aiplatform.googleapis.com",
+      "adapter": "google",
+      "authKind": "key"
+    },
+    {
+      "id": "groq",
+      "label": "Groq",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "huggingface",
+      "label": "Hugging Face",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "hyperbolic",
+      "label": "Hyperbolic",
+      "baseUrl": "https://api.hyperbolic.xyz/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "kilo",
+      "label": "Kilo",
+      "baseUrl": "https://api.kilo.ai/api/gateway",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "kimi",
+      "label": "Kimi",
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "adapter": "openai-chat",
+      "authKind": "oauth"
+    },
+    {
+      "id": "kimi-code",
+      "label": "Kimi (coding)",
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "kiro",
+      "label": "Kiro (AWS CodeWhisperer)",
+      "baseUrl": "https://runtime.us-east-1.kiro.dev",
+      "adapter": "kiro",
+      "authKind": "oauth"
+    },
+    {
+      "id": "litellm",
+      "label": "LiteLLM (self-hosted)",
+      "baseUrl": "http://localhost:4000/v1",
+      "adapter": "openai-chat",
+      "authKind": "key",
+      "keyOptional": true
+    },
+    {
+      "id": "lm-studio",
+      "label": "LM Studio (local)",
+      "baseUrl": "http://localhost:1234/v1",
+      "adapter": "openai-chat",
+      "authKind": "local"
+    },
+    {
+      "id": "mimo",
+      "label": "Xiaomi MiMo (token plan)",
+      "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "mimo-free",
+      "label": "MiMo Free",
+      "baseUrl": "https://api.xiaomimimo.com/api/free-ai/openai/chat",
+      "adapter": "mimo-free",
+      "authKind": "key",
+      "keyOptional": true
+    },
+    {
+      "id": "minimax",
+      "label": "MiniMax — Coding Plan",
+      "baseUrl": "https://api.minimax.io/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "minimax-cn",
+      "label": "MiniMax — Coding Plan (CN)",
+      "baseUrl": "https://api.minimaxi.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "mistral",
+      "label": "Mistral",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "moonshot",
+      "label": "Moonshot (Kimi API)",
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "nanogpt",
+      "label": "NanoGPT",
+      "baseUrl": "https://nano-gpt.com/api/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "nebius",
+      "label": "Nebius Token Factory",
+      "baseUrl": "https://api.tokenfactory.nebius.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "neuralwatt",
+      "label": "Neuralwatt Cloud",
+      "baseUrl": "https://api.neuralwatt.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "nous",
+      "label": "Nous Portal",
+      "baseUrl": "https://inference-api.nousresearch.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "oauth"
+    },
+    {
+      "id": "novita",
+      "label": "Novita AI",
+      "baseUrl": "https://api.novita.ai/openai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "nscale",
+      "label": "Nscale Serverless Inference",
+      "baseUrl": "https://inference.api.nscale.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "nvidia",
+      "label": "NVIDIA NIM",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "ollama",
+      "label": "Ollama (local)",
+      "baseUrl": "http://localhost:11434/v1",
+      "adapter": "openai-chat",
+      "authKind": "local"
+    },
+    {
+      "id": "ollama-cloud",
+      "label": "Ollama Cloud",
+      "baseUrl": "https://ollama.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI (Codex login)",
+      "baseUrl": "https://chatgpt.com/backend-api/codex",
+      "adapter": "openai-responses",
+      "authKind": "forward"
+    },
+    {
+      "id": "openai-apikey",
+      "label": "OpenAI API",
+      "baseUrl": "https://api.openai.com/v1",
+      "adapter": "openai-responses",
+      "authKind": "key"
+    },
+    {
+      "id": "opencode-free",
+      "label": "OpenCode Free",
+      "baseUrl": "https://opencode.ai/zen/v1",
+      "adapter": "openai-chat",
+      "authKind": "key",
+      "keyOptional": true,
+      "staticHeaders": {
+        "User-Agent": "opencode",
+        "x-opencode-client": "desktop"
+      }
+    },
+    {
+      "id": "opencode-go",
+      "label": "opencode go",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "opencode-zen",
+      "label": "opencode zen",
+      "baseUrl": "https://opencode.ai/zen/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "orcarouter",
+      "label": "OrcaRouter",
+      "baseUrl": "https://api.orcarouter.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "parallel",
+      "label": "Parallel",
+      "baseUrl": "https://platform.parallel.ai",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "qianfan",
+      "label": "Qianfan (Baidu)",
+      "baseUrl": "https://qianfan.baidubce.com/v2",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "qwen-cloud",
+      "label": "Qwen Cloud",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "sambanova",
+      "label": "SambaNova Cloud",
+      "baseUrl": "https://api.sambanova.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "scaleway",
+      "label": "Scaleway Generative APIs",
+      "baseUrl": "https://api.scaleway.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "siliconflow",
+      "label": "SiliconFlow",
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "synthetic",
+      "label": "Synthetic",
+      "baseUrl": "https://api.synthetic.new/openai/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "tencent-coding-plan",
+      "label": "Tencent Cloud Coding Plan",
+      "baseUrl": "https://api.lkeap.cloud.tencent.com/coding/v3",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "together",
+      "label": "Together",
+      "baseUrl": "https://api.together.xyz/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "umans",
+      "label": "Umans AI Coding Plan",
+      "baseUrl": "https://api.code.umans.ai",
+      "adapter": "anthropic",
+      "authKind": "key"
+    },
+    {
+      "id": "venice",
+      "label": "Venice",
+      "baseUrl": "https://api.venice.ai/api/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "label": "Vercel AI Gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "vllm",
+      "label": "vLLM (local)",
+      "baseUrl": "http://localhost:8000/v1",
+      "adapter": "openai-chat",
+      "authKind": "local"
+    },
+    {
+      "id": "volcengine",
+      "label": "Volcengine Ark",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "volcengine-agent-plan",
+      "label": "Volcengine Ark Agent Plan",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "adapter": "openai-responses",
+      "authKind": "key"
+    },
+    {
+      "id": "volcengine-coding-plan",
+      "label": "Volcengine Ark Coding Plan",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "vultr",
+      "label": "Vultr Serverless Inference",
+      "baseUrl": "https://api.vultrinference.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "xai",
+      "label": "xAI Grok",
+      "baseUrl": "https://api.x.ai/v1",
+      "adapter": "openai-chat",
+      "authKind": "oauth"
+    },
+    {
+      "id": "xiaomi",
+      "label": "Xiaomi MiMo",
+      "baseUrl": "https://api.xiaomimimo.com/anthropic",
+      "adapter": "anthropic",
+      "authKind": "key"
+    },
+    {
+      "id": "xiaomi-mimo",
+      "label": "Xiaomi MiMo (OpenAI Chat)",
+      "baseUrl": "https://api.xiaomimimo.com/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "zai",
+      "label": "Z.AI — GLM Coding Plan",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "zenmux",
+      "label": "ZenMux",
+      "baseUrl": "https://zenmux.ai/api/v1",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "zhipu-bigmodel",
+      "label": "Zhipu AI — BigModel",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    },
+    {
+      "id": "zhipu-bigmodel-coding",
+      "label": "Zhipu AI — BigModel Coding Plan",
+      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "adapter": "openai-chat",
+      "authKind": "key"
+    }
+  ]
+}

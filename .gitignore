@@ -1,3 +1,9 @@
 /target
 **/target/
 __pycache__/
+.tmp/
+.tmp-*
+crates/gateway/logs/
+crates/monitor-ui/frontend/shots/
+crates/monitor-ui/frontend/test-results/
+crates/monitor-ui/frontend/playwright-report/

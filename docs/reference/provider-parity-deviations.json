@@ -1,0 +1,26 @@
+{
+  "note": "Deliberate differences between the OpenCodex provider registry snapshot and Quotio's provider catalog. Every entry is enforced: an undeclared difference fails provider-catalog.test.ts, and a declared difference that no longer exists fails it too.",
+  "deviations": [
+    {
+      "id": "kiro",
+      "field": "authKind",
+      "reference": "oauth",
+      "current": "key",
+      "reason": "Quotio onboards Kiro by importing an existing credential (crates/gateway/src/management/creds.rs) instead of driving a browser OAuth round trip. The reference flow (opencodex/src/oauth/kiro.ts) also reads a local credential file, so the imported shape is identical; only the entry point differs."
+    },
+    {
+      "id": "command-code",
+      "field": "label",
+      "reference": "Command Code - Auth",
+      "current": "Command Code",
+      "reason": "The reference label distinguishes two onboarding modes in its own picker. Quotio exposes a single Command Code entry whose OAuth callback lifecycle is implemented, so the mode suffix would be misleading in this UI."
+    },
+    {
+      "id": "mimo-free",
+      "field": "keyOptional",
+      "reference": true,
+      "current": null,
+      "reason": "The reference mints an anonymous bootstrap JWT for MiMo Free (opencodex/src/adapters/mimo-free.ts). That flow is not ported, so a Quotio account must carry a pasted token and a keyless save stays blocked on purpose rather than producing an account that cannot authenticate."
+    }
+  ]
+}

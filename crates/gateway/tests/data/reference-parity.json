@@ -1,0 +1,1099 @@
+{
+  "note": "Coverage map for reference-backed flows. Behaviour is proven by the named tests; this manifest proves every reference-backed flow, adapter and catalog provider still has a named owner and a live GREEN test.",
+  "provider_snapshot": "docs/reference/opencodex-registry-snapshot.json",
+  "deviations": "docs/reference/provider-parity-deviations.json",
+  "flows": [
+    {
+      "id": "auth-claude",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/anthropic.ts",
+        "needle": "AUTHORIZE_URL"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "create_anthropic_auth_url"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_anthropic_oauth_flow_end_to_end"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/catalog-scope-green.txt"
+    },
+    {
+      "id": "auth-codex",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/chatgpt.ts",
+        "needle": "code_challenge"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "create_codex_auth_url"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_codex_oauth_flow_persists_a_routable_account"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/catalog-scope-green.txt"
+    },
+    {
+      "id": "auth-antigravity",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/google-antigravity.ts",
+        "needle": "code_challenge"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "create_antigravity_auth_url"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_antigravity_oauth_flow_end_to_end"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/antigravity-oauth-green.txt"
+    },
+    {
+      "id": "auth-xai",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/xai.ts",
+        "needle": "code_challenge"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "create_xai_auth_url"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "xai_pkce_callback_writes_a_live_generic_account"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/generic-oauth-refresh-green.txt"
+    },
+    {
+      "id": "auth-kimi",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/kimi.ts",
+        "needle": "requestDeviceAuthorization"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "\"/kimi-auth-url\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "device_oauth_starts_polls_and_writes_generic_provider_credentials"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/generic-oauth-refresh-green.txt"
+    },
+    {
+      "id": "auth-cursor",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/cursor.ts",
+        "needle": "pollCursorAuth"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "create_cursor_auth_url"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_cursor_oauth_flow_end_to_end"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/catalog-scope-green.txt"
+    },
+    {
+      "id": "auth-copilot",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/github-copilot.ts",
+        "needle": "device_code"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "\"/github-copilot-auth-url\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "device_oauth_starts_polls_and_writes_generic_provider_credentials"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/catalog-scope-green.txt"
+    },
+    {
+      "id": "auth-command-code",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/command-code.ts",
+        "needle": "5959"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/oauth.rs",
+        "needle": "create_command_code_auth_url"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_command_code_oauth_flow_end_to_end"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/command-code-auth-green.txt"
+    },
+    {
+      "id": "auth-kiro-import",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/kiro.ts",
+        "needle": "REFRESH_URL"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "provider_imports_accept_reference_credential_shapes"
+      },
+      "green_test": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "provider_imports_accept_reference_credential_shapes"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/catalog-scope-green.txt"
+    },
+    {
+      "id": "auth-vertex-service-account",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": ".omo/upstream/internal__api__handlers__management__vertex_import.go",
+        "needle": "ImportVertex"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "async fn vertex_import"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t17_account_lifecycle.rs",
+        "needle": "vertex_import_exchanges_service_account_and_joins_google_pool"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/vertex-runtime-green.txt"
+    },
+    {
+      "id": "auth-api-key",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/key-providers.ts",
+        "needle": "apiKey"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "\"generic\" =>"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t17_account_lifecycle.rs",
+        "needle": "generic_openai_key_provider_joins_pool"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/catalog-scope-green.txt"
+    },
+    {
+      "id": "auth-refresh",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/oauth/token-guardian.ts",
+        "needle": "refresh"
+      },
+      "owner": {
+        "path": "crates/providers/src/refresh_exec.rs",
+        "needle": "pub async fn execute_refresh"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t7_refresh.rs",
+        "needle": "generic_oauth_accounts_refresh_with_provider_contracts"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/generic-oauth-refresh-green.txt"
+    },
+    {
+      "id": "auth-atomic-persistence",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/config/atomic-write.ts",
+        "needle": "atomicWriteFile"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "fn write_atomically"
+      },
+      "green_test": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "writing_a_credential_leaves_no_temp_file"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/command-code-auth-green.txt"
+    },
+    {
+      "id": "auth-pool-rescan",
+      "surface": "auth",
+      "disposition": "included",
+      "reference": {
+        "path": ".omo/upstream/internal__api__handlers__management__auth_files_crud.go",
+        "needle": "Delete auth files"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "state.rescan_pool()"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t15_pool_rescan.rs",
+        "needle": "an_imported_credential_appears_in_the_live_pool_without_restart"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/command-code-auth-green.txt"
+    },
+    {
+      "id": "proxy-codex",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/adapters/openai-chat.ts",
+        "needle": "createOpenAIChatAdapter"
+      },
+      "owner": {
+        "path": "crates/gateway/src/account.rs",
+        "needle": "ProviderKind::Codex"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t8_openai_compat.rs",
+        "needle": "test_t8_non_streaming_returns_single_completion"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/live-http-qa-final.txt"
+    },
+    {
+      "id": "proxy-claude",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/adapters/anthropic.ts",
+        "needle": "createAnthropicAdapter"
+      },
+      "owner": {
+        "path": "crates/gateway/src/compat/claude.rs",
+        "needle": "pub fn anthropic_to_openai"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "claude_relays_native_anthropic_wire_end_to_end"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/live-http-anthropic-final.txt"
+    },
+    {
+      "id": "proxy-antigravity",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/adapters/google-antigravity-wire.ts",
+        "needle": "request"
+      },
+      "owner": {
+        "path": "crates/gateway/src/compat/gemini.rs",
+        "needle": "antigravity"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t9_antigravity_compat.rs",
+        "needle": "test_t9_request_targets_antigravity_envelope"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/antigravity-oauth-green.txt"
+    },
+    {
+      "id": "proxy-aistudio",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/adapters/google-http.ts",
+        "needle": "AI Studio direct"
+      },
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "member.generic_adapter().as_deref() == Some(\"google\")"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "google_ai_studio_uses_generativelanguage_wire_and_api_key_header"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/aistudio-pluginhost-green.txt"
+    },
+    {
+      "id": "proxy-vertex",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": ".omo/upstream/internal__api__handlers__management__vertex_import.go",
+        "needle": "Vertex"
+      },
+      "owner": {
+        "path": "crates/providers/src/vertex.rs",
+        "needle": "pub struct VertexAccount"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t19_vertex_runtime.rs",
+        "needle": "test_vertex_runtime_lifecycle_wire_and_refresh"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/vertex-runtime-green.txt"
+    },
+    {
+      "id": "proxy-generic-openai",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/adapters/openai-chat.ts",
+        "needle": "createOpenAIChatAdapter"
+      },
+      "owner": {
+        "path": "crates/gateway/src/account.rs",
+        "needle": "pub struct GenericAccount"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "generic_openai_chat_provider_relays_json_without_codex_translation"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/live-http-qa-final.txt"
+    },
+    {
+      "id": "proxy-responses-compact",
+      "surface": "proxy",
+      "disposition": "included",
+      "reference": {
+        "path": "../opencodex/src/server/responses/compact.ts",
+        "needle": "handleResponsesCompact"
+      },
+      "owner": {
+        "path": "crates/gateway/src/cp_routes.rs",
+        "needle": "pub async fn responses_compact"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t8_openai_compat.rs",
+        "needle": "test_t8_responses_compact_relays_to_codex_upstream"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/cliproxy-routes-green.txt"
+    },
+    {
+      "id": "exclude-xai-media",
+      "surface": "boundary",
+      "disposition": "excluded",
+      "reference": {
+        "path": "../opencodex/src/images/xai-client.ts",
+        "needle": "grok-imagine"
+      },
+      "owner": {
+        "path": "crates/gateway/src/capability.rs",
+        "needle": "unimplemented_media_models_are_not_advertised_as_routable"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t8_openai_compat.rs",
+        "needle": "test_t8_unimplemented_xai_media_models_fail_closed"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/xai-media-scope-green.txt"
+    },
+    {
+      "id": "exclude-websocket",
+      "surface": "boundary",
+      "disposition": "excluded",
+      "reference": {
+        "path": "../opencodex/src/codex/websocket-registry.ts",
+        "needle": "WebSocket"
+      },
+      "owner": {
+        "path": "crates/gateway/src/realtime.rs",
+        "needle": "WebSocket upgrade required"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t8_openai_compat.rs",
+        "needle": "test_t8_unsupported_websocket_transport_fails_before_upgrade"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/websocket-failclosed-green.txt"
+    },
+    {
+      "id": "exclude-pluginhost",
+      "surface": "boundary",
+      "disposition": "excluded",
+      "reference": {
+        "path": ".omo/upstream/internal__api__handlers__management__plugins.go",
+        "needle": "Plugin"
+      },
+      "owner": {
+        "path": "crates/gateway/src/management/mod.rs",
+        "needle": "pub fn management_router"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t14_management_route_parity.rs",
+        "needle": "unimplemented_pluginhost_routes_are_not_advertised_as_handlers"
+      },
+      "evidence": ".omo/ulw-loop/opencodex-cliproxy-auth-proxy/evidence/aistudio-pluginhost-green.txt"
+    }
+  ],
+  "adapters": [
+    {
+      "id": "openai-chat",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "\"/v1/chat/completions\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "generic_openai_chat_provider_relays_json_without_codex_translation"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "anthropic",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "if adapter == \"anthropic\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "generic_anthropic_adapter_account_relays_native_messages_wire"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "openai-responses",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "if adapter == \"openai-responses\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t8_openai_compat.rs",
+        "needle": "test_t8_responses_compact_relays_to_codex_upstream"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "google",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "streamGenerateContent?alt=sse"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "google_ai_studio_uses_generativelanguage_wire_and_api_key_header"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "cursor",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "ProviderKind::Cursor"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "cursor_relays_connect_protobuf_and_decodes_text_delta"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "kiro",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "\"kiro\" =>"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "kiro_relays_conversation_state_and_decodes_eventstream"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "command-code",
+      "owner": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "\"provider\":\"command-code\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_command_code_oauth_flow_end_to_end"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "azure-openai",
+      "owner": {
+        "path": "crates/gateway/src/account.rs",
+        "needle": "a.adapter == \"azure-openai\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "azure_openai_account_sends_api_key_header_without_bearer"
+      },
+      "coverage": "partial",
+      "gap": "The reference routes Azure through its Responses passthrough (opencodex/src/adapters/azure.ts); quotio authenticates with the api-key header but relays the chat-completions path."
+    },
+    {
+      "id": "mimo-free",
+      "owner": {
+        "path": "crates/gateway/src/url.rs",
+        "needle": "\"/openai/chat\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "generic_openai_chat_provider_relays_json_without_codex_translation"
+      },
+      "coverage": "partial",
+      "gap": "The reference mints an anonymous bootstrap JWT and adds X-Mimo-Source/x-session-affinity plus an anti-abuse system marker (opencodex/src/adapters/mimo-free.ts); quotio ports only the canonical endpoint, so an account must carry a pasted token."
+    }
+  ],
+  "providers": [
+    {
+      "id": "alibaba",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "alibaba-token-plan",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "alibaba-token-plan-intl",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "anthropic",
+      "adapter": "anthropic",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_anthropic_oauth_flow_end_to_end"
+      }
+    },
+    {
+      "id": "anthropic-apikey",
+      "adapter": "anthropic",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "azure-openai",
+      "adapter": "azure-openai",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "baseten",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "bizrouter",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "cerebras",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "chutes",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "cline",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "cline-pass",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "adapter": "anthropic",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "command-code",
+      "adapter": "command-code",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_command_code_oauth_flow_end_to_end"
+      }
+    },
+    {
+      "id": "commandcode",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "cursor",
+      "adapter": "cursor",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_cursor_oauth_flow_end_to_end"
+      }
+    },
+    {
+      "id": "deepinfra",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "deepseek",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "digitalocean",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "featherless",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "firepass",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "fireworks",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "github-copilot",
+      "adapter": "openai-chat",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "device_oauth_starts_polls_and_writes_generic_provider_credentials"
+      }
+    },
+    {
+      "id": "gitlab-duo",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "google",
+      "adapter": "google",
+      "auth_kind": "key",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "gemini_pkce_callback_writes_google_adapter_account"
+      }
+    },
+    {
+      "id": "google-antigravity",
+      "adapter": "google",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_antigravity_oauth_flow_end_to_end"
+      }
+    },
+    {
+      "id": "google-vertex",
+      "adapter": "google",
+      "auth_kind": "key",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t17_account_lifecycle.rs",
+        "needle": "vertex_import_exchanges_service_account_and_joins_google_pool"
+      }
+    },
+    {
+      "id": "groq",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "huggingface",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "hyperbolic",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "kilo",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "kimi",
+      "adapter": "openai-chat",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "device_oauth_starts_polls_and_writes_generic_provider_credentials"
+      }
+    },
+    {
+      "id": "kimi-code",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "kiro",
+      "adapter": "kiro",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "provider_imports_accept_reference_credential_shapes"
+      }
+    },
+    {
+      "id": "litellm",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "lm-studio",
+      "adapter": "openai-chat",
+      "auth_kind": "local",
+      "coverage": "adapter"
+    },
+    {
+      "id": "mimo",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "mimo-free",
+      "adapter": "mimo-free",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "minimax",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "minimax-cn",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "mistral",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "moonshot",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "nanogpt",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "nebius",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "neuralwatt",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "nous",
+      "adapter": "openai-chat",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "device_oauth_starts_polls_and_writes_generic_provider_credentials"
+      }
+    },
+    {
+      "id": "novita",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "nscale",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "nvidia",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "ollama",
+      "adapter": "openai-chat",
+      "auth_kind": "local",
+      "coverage": "adapter"
+    },
+    {
+      "id": "ollama-cloud",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "openai",
+      "adapter": "openai-responses",
+      "auth_kind": "forward",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_codex_oauth_flow_persists_a_routable_account"
+      }
+    },
+    {
+      "id": "openai-apikey",
+      "adapter": "openai-responses",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "opencode-free",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "opencode-go",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "opencode-zen",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "openrouter",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "orcarouter",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "parallel",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "qianfan",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "qwen-cloud",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "sambanova",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "scaleway",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "siliconflow",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "synthetic",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "tencent-coding-plan",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "together",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "umans",
+      "adapter": "anthropic",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "venice",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "vllm",
+      "adapter": "openai-chat",
+      "auth_kind": "local",
+      "coverage": "adapter"
+    },
+    {
+      "id": "volcengine",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "volcengine-agent-plan",
+      "adapter": "openai-responses",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "volcengine-coding-plan",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "vultr",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "xai",
+      "adapter": "openai-chat",
+      "auth_kind": "oauth",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "xai_pkce_callback_writes_a_live_generic_account"
+      }
+    },
+    {
+      "id": "xiaomi",
+      "adapter": "anthropic",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "xiaomi-mimo",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "zai",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "zenmux",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "zhipu-bigmodel",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    },
+    {
+      "id": "zhipu-bigmodel-coding",
+      "adapter": "openai-chat",
+      "auth_kind": "key",
+      "coverage": "adapter"
+    }
+  ]
+}
