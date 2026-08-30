@@ -2050,6 +2050,7 @@ h2 {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   pointer-events: auto;
   overscroll-behavior: contain;
+  text-align: left;
 }
 
 .notch-tooltip-head {
@@ -2057,6 +2058,7 @@ h2 {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  text-align: left;
 }
 
 .notch-tooltip-head .provider-logo,
@@ -2083,6 +2085,7 @@ h2 {
   background: rgba(35, 35, 44, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
+  text-align: left;
 }
 
 .notch-tooltip-account::before {
@@ -2095,9 +2098,11 @@ h2 {
 
 .notch-tooltip-account-head {
   display: grid;
+  justify-items: start;
   gap: 3px;
   margin-bottom: 10px;
   padding-left: 2px;
+  text-align: left;
 }
 
 .notch-tooltip-account-head span {
@@ -2106,6 +2111,7 @@ h2 {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-align: left;
 }
 
 .notch-tooltip-account-head strong {
@@ -2115,6 +2121,7 @@ h2 {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
 }
 
 .notch-tooltip-head strong {
@@ -2126,10 +2133,15 @@ h2 {
   margin-top: 12px;
 }
 
+.notch-tooltip-row {
+  text-align: left;
+}
+
 .notch-tooltip-label {
   font-size: 10px;
   color: var(--fg-faint);
   margin-bottom: 5px;
+  text-align: left;
 }
 
 .notch-tooltip-bar {

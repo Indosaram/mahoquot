@@ -6,15 +6,20 @@ import "@testing-library/jest-dom";
 // self-returning stub keeps every context method chain a harmless no-op.
 type AnyRecord = Record<string | symbol, unknown>;
 function makeCanvas2dStub(): AnyRecord {
-  const stub: AnyRecord = new Proxy(function stub() { return stub; } as unknown as AnyRecord, {
-    get: (_target, prop) => {
-      if (prop === Symbol.toPrimitive) return () => 0;
-      if (prop === "width" || prop === "height") return 0;
+  const stub: AnyRecord = new Proxy(
+    function stub() {
       return stub;
+    } as unknown as AnyRecord,
+    {
+      get: (_target, prop) => {
+        if (prop === Symbol.toPrimitive) return () => 0;
+        if (prop === "width" || prop === "height") return 0;
+        return stub;
+      },
+      set: () => true,
+      apply: () => stub,
     },
-    set: () => true,
-    apply: () => stub,
-  });
+  );
   return stub;
 }
 if (typeof HTMLCanvasElement !== "undefined") {

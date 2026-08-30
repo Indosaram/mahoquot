@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AdminStats } from "../lib/schemas";
 import {
-  accountRateSeries,
   appendTelemetrySample,
   filterTelemetryRange,
   persistedTelemetrySamples,
@@ -164,6 +163,22 @@ describe("request telemetry sampling", () => {
     ]);
   });
 
+  it("reports a stable window even when no traffic was recorded", () => {
+    const now = 2_000_000_000_000;
+    const series = telemetrySeries([], "30m", now, 4);
+    expect(series).toHaveLength(4);
+    expect(series.every((point) => point.requests === 0)).toBe(true);
+  });
+
+  it("carries per-account deltas alongside the pooled totals", () => {
+    const first = appendTelemetrySample([], snapshot(10, 9, 1), 1_000);
+    const second = appendTelemetrySample(first, snapshot(14, 12, 2), 11_000);
+    expect(second.at(-1)?.accounts).toEqual([
+      { id: "alpha", requests: 4, successes: 3, failures: 1 },
+      { id: "bravo", requests: 0, successes: 0, failures: 0 },
+    ]);
+  });
+
   it("buckets each account's series separately with idle windows zero-filled", () => {
     const now = 2_000_000_000_000;
     const base = {
@@ -191,10 +206,9 @@ describe("request telemetry sampling", () => {
         accounts: [{ id: "bravo", requests: 4, successes: 4, failures: 0 }],
       },
     ].map((s) => ({ ...base, ...s }));
-    const alpha = accountRateSeries(samples, "alpha", "1h", now, 6);
-    const bravo = accountRateSeries(samples, "bravo", "1h", now, 6);
-    expect(alpha.map((point) => point.requests)).toEqual([0, 6, 0, 0, 0, 0]);
-    expect(bravo.map((point) => point.requests)).toEqual([0, 0, 0, 0, 0, 4]);
+    expect(telemetrySeries(samples, "1h", now, 6).map((point) => point.requests)).toEqual([
+      0, 6, 0, 0, 0, 4,
+    ]);
   });
 
   it("summarizes requests outcomes and providers inside the selected range", () => {

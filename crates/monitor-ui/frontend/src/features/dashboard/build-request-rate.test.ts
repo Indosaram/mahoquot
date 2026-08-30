@@ -2,6 +2,11 @@ import type { AdminStats } from "@/lib/schemas";
 import { describe, expect, it } from "vitest";
 import { buildRequestRate } from "./build-request-rate";
 
+const must = <T>(value: T | null | undefined): T => {
+  if (value === null || value === undefined) throw new Error("missing expected value");
+  return value;
+};
+
 const bucket = (
   minute_unix: number,
   accounts: { account: string; successes: number; failures: number }[],
@@ -49,52 +54,58 @@ describe("buildRequestRate", () => {
   });
 
   it("shapes per-account per-minute series with 60s buckets", () => {
-    const rate = buildRequestRate(
-      stats(
-        [
-          bucket(1_800, [
-            { account: "alpha", successes: 150, failures: 0 },
-            { account: "bravo", successes: 148, failures: 2 },
-          ]),
-          bucket(1_860, [{ account: "alpha", successes: 90, failures: 0 }]),
-        ],
-        { alpha: "available", bravo: "available" },
+    const rate = must(
+      buildRequestRate(
+        stats(
+          [
+            bucket(1_800, [
+              { account: "alpha", successes: 150, failures: 0 },
+              { account: "bravo", successes: 148, failures: 2 },
+            ]),
+            bucket(1_860, [{ account: "alpha", successes: 90, failures: 0 }]),
+          ],
+          { alpha: "available", bravo: "available" },
+        ),
       ),
-    )!;
+    );
     expect(rate.bucketSeconds).toBe(60);
     expect(rate.bucketStarts).toEqual([1_800_000, 1_860_000]);
     expect(rate.rateWindowSeconds).toBe(120);
     expect(rate.accounts).toHaveLength(2);
-    const alpha = rate.accounts.find((a) => a.account === "alpha")!;
+    const alpha = must(rate.accounts.find((a) => a.account === "alpha"));
     expect(alpha.success).toEqual([150, 90]);
     expect(alpha.peakRpm).toEqual([150, 90]);
     expect(alpha.routingState).toBe("available");
   });
 
   it("keeps accounts that only appear in buckets and preserves pool order", () => {
-    const rate = buildRequestRate(
-      stats([bucket(1_800, [{ account: "charlie", successes: 10, failures: 0 }])], {
-        alpha: "available",
-      }),
-    )!;
+    const rate = must(
+      buildRequestRate(
+        stats([bucket(1_800, [{ account: "charlie", successes: 10, failures: 0 }])], {
+          alpha: "available",
+        }),
+      ),
+    );
     expect(rate.accounts.map((a) => a.account)).toEqual(["alpha", "charlie"]);
-    expect(rate.accounts[0]!.peakRpm).toEqual([0]);
+    expect(must(rate.accounts[0]).peakRpm).toEqual([0]);
   });
 
   it("infers routing state from health and flags failures in the guide", () => {
-    const rate = buildRequestRate(
-      stats(
-        [
-          bucket(1_800, [
-            { account: "alpha", successes: 10, failures: 0 },
-            { account: "bravo", successes: 8, failures: 2 },
-          ]),
-        ],
-        { alpha: "available", bravo: "cooling_down" },
+    const rate = must(
+      buildRequestRate(
+        stats(
+          [
+            bucket(1_800, [
+              { account: "alpha", successes: 10, failures: 0 },
+              { account: "bravo", successes: 8, failures: 2 },
+            ]),
+          ],
+          { alpha: "available", bravo: "cooling_down" },
+        ),
       ),
-    )!;
-    const alpha = rate.accounts.find((a) => a.account === "alpha")!;
-    const bravo = rate.accounts.find((a) => a.account === "bravo")!;
+    );
+    const alpha = must(rate.accounts.find((a) => a.account === "alpha"));
+    const bravo = must(rate.accounts.find((a) => a.account === "bravo"));
     expect(alpha.routingState).toBe("available");
     expect(bravo.routingState).toBe("cooling_down");
     expect(alpha.limitRpm).toBeNull();

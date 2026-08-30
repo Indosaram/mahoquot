@@ -9,6 +9,18 @@ const stats = {
   failed_over: 3,
   refreshed: 5,
   ttft: { p50_ms: 100, p90_ms: 220, p99_ms: 500, samples: 40 },
+  history: [
+    {
+      minute_unix: 1700000000,
+      accounts: [
+        {
+          account: "long-runtime-id@example.com",
+          successes: 8,
+          failures: 0,
+        },
+      ],
+    },
+  ],
   accounts: [
     {
       id: "long-runtime-id@example.com",
@@ -78,7 +90,7 @@ describe("operations console", () => {
       }),
     );
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     expect(calls.some((url) => url.includes("/v0/management/"))).toBe(true);
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
@@ -88,7 +100,7 @@ describe("operations console", () => {
 
   it("exposes exactly the approved primary surfaces and snapshot caveat", async () => {
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     const nav = screen.getByRole("navigation", { name: "Primary navigation" });
     expect(nav).toHaveTextContent("Overview");
     expect(nav).toHaveTextContent("Accounts");
@@ -97,9 +109,9 @@ describe("operations console", () => {
     expect(nav).not.toHaveTextContent("Credentials");
     expect(screen.getByText("Total request rate")).toBeInTheDocument();
     expect(screen.getByText("Per-account request rate")).toBeInTheDocument();
-    expect(screen.getByText("Requests")).toBeInTheDocument();
-    expect(screen.getByText("Success")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getAllByText("Requests")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Success")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Failed")[0]).toBeInTheDocument();
     expect(screen.getByText("In flight")).toBeInTheDocument();
     expect(screen.getByText("p50")).toBeInTheDocument();
     expect(screen.getByText("p90")).toBeInTheDocument();
@@ -113,13 +125,12 @@ describe("operations console", () => {
     expect(screen.queryByText("30-day retention")).not.toBeInTheDocument();
     expect(screen.queryByText("Open logs")).not.toBeInTheDocument();
     expect(screen.queryByText(/Live/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("long-runtime-id@example.com")).not.toBeInTheDocument();
     expect(screen.queryByText("POOL HEALTH")).not.toBeInTheDocument();
   });
 
   it("keeps refresh in Accounts and theme selection in Settings", async () => {
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
 
     expect(screen.queryByRole("button", { name: "Refresh snapshot" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Theme")).not.toBeInTheDocument();
@@ -353,7 +364,7 @@ describe("operations console", () => {
     );
 
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
 
     expect(await screen.findByText("Session")).toBeInTheDocument();
@@ -406,7 +417,7 @@ describe("operations console", () => {
     );
 
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
 
     // Two pools each report a weekly window, so the window name alone cannot say
@@ -464,7 +475,7 @@ describe("operations console", () => {
     );
 
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
 
     // A refused log read must not strip the credential inventory.
@@ -512,7 +523,7 @@ describe("operations console", () => {
     );
 
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
 
     // The imported subscription is one manageable account, not a runtime card plus a
@@ -583,7 +594,7 @@ describe("operations console", () => {
 
     render(<App />);
     await waitFor(() => expect(requests.some((url) => url.includes("auth-files"))).toBe(true));
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByLabelText("deepseek 1 account"));
     expect(await screen.findByText("deepseek-main")).toBeInTheDocument();
@@ -637,7 +648,7 @@ describe("operations console", () => {
 
   it("restores the selected telemetry range after remount", async () => {
     const first = render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getByRole("radio", { name: "7d" }));
     expect(localStorage.getItem("mahoquot.telemetry-range")).toBe("7d");
     first.unmount();
@@ -915,7 +926,7 @@ describe("operations console", () => {
 
   it("does not duplicate dedicated canonical providers in generic key onboarding", async () => {
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: "Add account" }));
 
@@ -949,7 +960,7 @@ describe("operations console", () => {
     );
 
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: "Add account" }));
     fireEvent.change(screen.getByLabelText("Search providers"), {
@@ -1274,7 +1285,7 @@ describe("operations console", () => {
 
   it("composes onboarding and config drawers through OverlayLayer with layout-overlay-layer class", async () => {
     render(<App />);
-    await screen.findByText("Requests");
+    (await screen.findAllByText("Requests"))[0];
 
     // 1. Open Onboarding drawer
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);

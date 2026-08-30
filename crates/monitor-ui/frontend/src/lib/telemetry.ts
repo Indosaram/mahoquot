@@ -37,8 +37,6 @@ const rangeDurationMs: Readonly<Record<TelemetryRange, number>> = {
   "30d": 30 * 24 * 60 * 60_000,
 };
 
-export const rangeSeconds = (range: TelemetryRange): number => rangeDurationMs[range] / 1000;
-
 export const providerTotals = (stats: AdminStats): readonly ProviderTotal[] => {
   const totals = new Map<string, { successes: number; failures: number }>();
   for (const account of stats.accounts) {
@@ -223,32 +221,3 @@ export const telemetrySeries = (
 
   return series;
 };
-
-/**
- * kiro-lb-style small multiple: the same dense bucketing as
- * {@link telemetrySeries}, scoped to one account. Idle windows stay explicit
- * zeros so an account that served nothing reads differently from one that is
- * missing from the window.
- */
-export const accountRateSeries = (
-  samples: readonly TelemetrySample[],
-  accountId: string,
-  range: TelemetryRange,
-  now: number = Date.now(),
-  points = 240,
-): readonly TelemetryPoint[] =>
-  telemetrySeries(
-    samples.flatMap((sample) =>
-      sample.accounts
-        .filter((account) => account.id === accountId)
-        .map((account) => ({
-          timestamp: sample.timestamp,
-          requests: account.requests,
-          successes: account.successes,
-          failures: account.failures,
-        })),
-    ),
-    range,
-    now,
-    points,
-  );
