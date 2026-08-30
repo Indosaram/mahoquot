@@ -26,9 +26,9 @@ export function Console() {
               title="Every number on this page came from a real run."
               lead={
                 <>
-                  Three pooled Codex accounts, {LIVE_RUN.requests} requests at
-                  concurrency {LIVE_RUN.concurrency} driven through the release
-                  build by{" "}
+                  Three pooled Codex accounts, {LIVE_RUN.requests} requests across
+                  26 minutes of burst traffic at concurrency{" "}
+                  {LIVE_RUN.concurrency}, driven through the release build by{" "}
                   <code className="font-mono text-[15px]">tools/bench</code>,
                   read back from{" "}
                   <code className="font-mono text-[15px]">/admin/usage</code>{" "}

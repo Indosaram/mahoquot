@@ -116,16 +116,16 @@ export const FEATURES: readonly Feature[] = [
 ] as const;
 
 export const LIVE_RUN = {
-  requests: "4,001",
+  requests: "16,950",
   success: "100%",
   failedOver: "0",
   accounts: "3",
-  p50: "43.01",
-  p90: "43.80",
-  p99: "44.27",
-  rps: "902",
-  concurrency: "40",
-  samples: "1,024",
+  p50: "41.8",
+  p90: "42.6",
+  p99: "42.9",
+  rps: "1,127",
+  concurrency: "20-50",
+  samples: "400",
 } as const;
 
 type BenchRow = {

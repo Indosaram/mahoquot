@@ -67,7 +67,7 @@ export function Hero() {
         <div className="relative flex items-center overflow-hidden border-line px-6 pb-20 lg:border-l lg:py-28 lg:pl-14 lg:pr-0">
           <img
             src="shots/console-overview.png"
-            alt="Mahoquot operations console showing 4,001 relayed requests at 100% success across a three-account Codex pool"
+            alt="Mahoquot operations console showing 16,950 relayed requests at 100% success across a three-account Codex pool"
             width={1280}
             height={656}
             loading="eager"
