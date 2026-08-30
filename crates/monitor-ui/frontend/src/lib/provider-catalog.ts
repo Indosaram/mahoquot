@@ -1115,6 +1115,36 @@ export const DEDICATED_ONBOARDING_PROVIDER_IDS = new Set([
   "zai",
 ]);
 
+/** Providers the account picker draws from its own onboarding list instead of the catalog. */
+export const ONBOARDING_PROVIDER_GLYPHS: readonly string[] = Object.freeze([
+  "claude",
+  "codex",
+  "antigravity",
+  "gemini-cli",
+  "cursor",
+  "kiro",
+  "kimi",
+  "qwen",
+  "github-copilot",
+  "command-code",
+  "vertex",
+  "iflow",
+  "trae",
+  "nous",
+  "xai",
+  "zcode",
+]);
+
+export const GENERIC_PROVIDER_OPTIONS = PROVIDER_CATALOG.filter(
+  (provider) =>
+    !ONBOARDING_PROVIDER_GLYPHS.includes(provider.id) &&
+    !DEDICATED_ONBOARDING_PROVIDER_IDS.has(provider.id) &&
+    provider.authKind !== "oauth",
+);
+
+export const PROVIDER_PICKER_TILE_COUNT =
+  ONBOARDING_PROVIDER_GLYPHS.length + GENERIC_PROVIDER_OPTIONS.length;
+
 export const PROVIDER_PRESETS_BY_ID = PROVIDER_CATALOG_BY_ID;
 
 export const PROVIDER_IDS: readonly string[] = Object.freeze(

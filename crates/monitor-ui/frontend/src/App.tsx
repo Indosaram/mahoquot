@@ -42,11 +42,7 @@ import {
   stopManagedGateway,
 } from "./lib/native";
 import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/notch";
-import {
-  DEDICATED_ONBOARDING_PROVIDER_IDS,
-  PROVIDER_CATALOG,
-  type ProviderCatalogEntry,
-} from "./lib/provider-catalog";
+import { GENERIC_PROVIDER_OPTIONS, type ProviderCatalogEntry } from "./lib/provider-catalog";
 import type { LogRecord } from "./lib/schemas";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import {
@@ -257,14 +253,6 @@ const ONBOARDING_PROVIDERS: readonly {
     ],
   },
 ];
-
-const dedicatedProviderIds = new Set(ONBOARDING_PROVIDERS.map((provider) => provider.glyph));
-const GENERIC_PROVIDER_OPTIONS = PROVIDER_CATALOG.filter(
-  (provider) =>
-    !dedicatedProviderIds.has(provider.id) &&
-    !DEDICATED_ONBOARDING_PROVIDER_IDS.has(provider.id) &&
-    provider.authKind !== "oauth",
-);
 
 const errorMessage = (reason: unknown): string =>
   reason instanceof Error ? reason.message : "unknown error";
@@ -1329,6 +1317,8 @@ export default function App() {
             proxyUrl={proxyUrl}
             loggingToFile={loggingToFile}
             theme={theme}
+            showRemaining={showRemaining}
+            onShowRemainingChange={setShowRemaining}
             onToggleGateway={toggleGateway}
             onBaseUrlChange={(val) => {
               setBaseUrlState(val);

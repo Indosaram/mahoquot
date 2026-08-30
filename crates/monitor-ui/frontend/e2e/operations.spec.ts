@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
+import { PROVIDER_PICKER_TILE_COUNT } from "../src/lib/provider-catalog";
 
 const evidenceDir = "/tmp/mahoquot-operations-qa-round2";
 
@@ -248,7 +249,7 @@ test("every provider catalog tile renders a decoded bundled icon", async ({ page
   await expect(page.getByLabel("Search providers")).toBeVisible();
 
   const icons = page.locator(".provider-options .provider-logo");
-  await expect(icons).toHaveCount(90);
+  await expect(icons).toHaveCount(PROVIDER_PICKER_TILE_COUNT);
 
   const broken = await icons.evaluateAll((nodes) =>
     nodes.flatMap((node, index) => {
