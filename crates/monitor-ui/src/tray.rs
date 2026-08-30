@@ -205,6 +205,67 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
 
 /// The incumbent app's credential store wins when it exists, so accounts the
 /// user already had are visible with no migration step.
+/// A pending first-run migration: the incumbent CLIProxyAPI store exists and
+/// the app has not taken ownership of its own directory yet.
+#[derive(Debug, Clone)]
+pub struct LegacyMigration {
+    pub legacy_dir: std::path::PathBuf,
+    pub app_dir: std::path::PathBuf,
+    pub importable_count: usize,
+}
+
+fn migration_decline_marker(home: &std::path::Path) -> std::path::PathBuf {
+    home.join(".mahoquot/import-declined")
+}
+
+fn importable_legacy_entry(name: &str, entry: &std::fs::DirEntry) -> bool {
+    if entry.path().is_dir() {
+        return false;
+    }
+    (name.ends_with(".json") && name != "telemetry.json")
+        || name == "kimi-device-id"
+        || name == "config.yaml"
+}
+
+/// The decision the user owes the app before it may pick an auth directory.
+/// `None` means no legacy store is involved (or the user already declined).
+pub fn detect_legacy_migration(home: &str) -> Option<LegacyMigration> {
+    let home_path = std::path::Path::new(home);
+    let app_dir = home_path.join(".mahoquot/auth");
+    let legacy = home_path.join(".cli-proxy-api");
+    if app_dir.is_dir() || !legacy.is_dir() || migration_decline_marker(home_path).exists() {
+        return None;
+    }
+    let count = std::fs::read_dir(&legacy)
+        .ok()?
+        .flatten()
+        .filter(|entry| importable_legacy_entry(&entry.file_name().to_string_lossy(), entry))
+        .count();
+    Some(LegacyMigration {
+        legacy_dir: legacy,
+        app_dir: app_dir.clone(),
+        importable_count: count,
+    })
+}
+
+/// Resolve the auth directory for this launch, honouring the user's choice.
+/// Importing takes ownership (one-time copy into the app store); declining
+/// keeps the legacy directory in use and records the choice so the prompt
+/// does not return on every launch.
+pub fn resolve_auth_dir(home: &str, import: bool) -> std::path::PathBuf {
+    let home_path = std::path::Path::new(home);
+    if !import && detect_legacy_migration(home).is_some() {
+        let _ = std::fs::create_dir_all(
+            migration_decline_marker(home_path)
+                .parent()
+                .unwrap_or(home_path),
+        );
+        let _ = std::fs::write(migration_decline_marker(home_path), "");
+        return home_path.join(".cli-proxy-api");
+    }
+    default_auth_dir(home)
+}
+
 /// The app owns its credential store at `~/.mahoquot/auth`. A home carrying the
 /// incumbent CLIProxyAPI store gets a one-time import: credential files are
 /// copied into the app-owned directory and the app never reads or writes the
@@ -217,6 +278,9 @@ pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
         return app_dir;
     }
     let legacy = home_path.join(".cli-proxy-api");
+    if legacy.is_dir() && migration_decline_marker(home_path).exists() {
+        return legacy;
+    }
     if legacy.is_dir() && std::fs::create_dir_all(&app_dir).is_ok() {
         import_legacy_store(&legacy, &app_dir);
     }
@@ -228,17 +292,8 @@ fn import_legacy_store(legacy: &std::path::Path, app_dir: &std::path::Path) {
         return;
     };
     for entry in entries.flatten() {
-        if entry.path().is_dir() {
-            continue;
-        }
         let name = entry.file_name().to_string_lossy().to_string();
-        // Credentials, the gateway config, and the provider device identity
-        // are the state the app needs; telemetry is a runtime cache the app
-        // regenerates itself.
-        let importable = (name.ends_with(".json") && name != "telemetry.json")
-            || name == "kimi-device-id"
-            || name == "config.yaml";
-        if !importable {
+        if !importable_legacy_entry(&name, &entry) {
             continue;
         }
         let _ = std::fs::copy(entry.path(), app_dir.join(&name));

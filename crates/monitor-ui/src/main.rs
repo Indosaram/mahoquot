@@ -173,6 +173,36 @@ fn gateway_status() -> GatewayLifecycleStatus {
     }
 }
 
+#[derive(serde::Serialize)]
+struct LegacyMigrationStatus {
+    importable_count: usize,
+    legacy_dir: String,
+    app_dir: String,
+}
+
+#[tauri::command]
+fn legacy_migration_status() -> Option<LegacyMigrationStatus> {
+    tray::detect_legacy_migration(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).map(
+        |migration| LegacyMigrationStatus {
+            importable_count: migration.importable_count,
+            legacy_dir: migration.legacy_dir.display().to_string(),
+            app_dir: migration.app_dir.display().to_string(),
+        },
+    )
+}
+
+#[tauri::command]
+fn resolve_legacy_migration(
+    import: bool,
+    process: tauri::State<'_, GatewayProcess>,
+) -> Result<GatewayLifecycleStatus, String> {
+    tray::resolve_auth_dir(
+        &std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+        import,
+    );
+    start_gateway(process)
+}
+
 #[tauri::command]
 fn start_gateway(
     process: tauri::State<'_, GatewayProcess>,
@@ -246,14 +276,25 @@ fn position_notch_window<R: Runtime>(
     )
 }
 
-/// Placement must be derived from the size the window is *becoming*: querying
-/// `outer_size()` right after `set_size()` still reports the previous frame, so
-/// the notch would be anchored for the old size and then grow off-screen.
-fn position_notch_window_sized<R: Runtime>(
+#[cfg(target_os = "macos")]
+fn set_notch_window_frame<R: Runtime>(
     app: &AppHandle<R>,
     window: &WebviewWindow<R>,
     logical: tray::WindowDimensions,
 ) -> tauri::Result<()> {
+    use objc::{class, msg_send, sel, sel_impl};
+    let is_main: bool = unsafe { msg_send![class!(NSThread), isMainThread] };
+    if !is_main {
+        let app_handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(win) = app_handle.get_webview_window(NOTCH_WINDOW_LABEL) else {
+                return;
+            };
+            let _ = set_notch_window_frame(&app_handle, &win, logical);
+        });
+        return Ok(());
+    }
+
     let Some(monitor) = notched_monitor(app)? else {
         return Ok(());
     };
@@ -266,6 +307,39 @@ fn position_notch_window_sized<R: Runtime>(
         width: f64::from(monitor_size.width) / scale_factor,
         height: f64::from(monitor_size.height) / scale_factor,
     };
+    let logical_pos = tray::calculate_notch_window_position(
+        &display,
+        &logical,
+        &tray::NotchInsets {
+            vertical_offset: NOTCH_VERTICAL_OFFSET,
+        },
+    );
+
+    if let Ok(ns_window) = window.ns_window() {
+        let ns_window = ns_window as *mut objc::runtime::Object;
+        unsafe {
+            let screens: *mut objc::runtime::Object = msg_send![class!(NSScreen), screens];
+            let count: usize = msg_send![screens, count];
+            if count > 0 {
+                let primary: *mut objc::runtime::Object = msg_send![screens, objectAtIndex: 0];
+                let primary_frame: CgRect = msg_send![primary, frame];
+                let cocoa_y = primary_frame.size.height - (logical_pos.y + logical.height);
+                let frame = CgRect {
+                    origin: CgPoint {
+                        x: logical_pos.x,
+                        y: cocoa_y,
+                    },
+                    size: CgSize {
+                        width: logical.width,
+                        height: logical.height,
+                    },
+                };
+                let _: () = msg_send![ns_window, setFrame: frame display: true animate: false];
+                return Ok(());
+            }
+        }
+    }
+
     let position = tray::calculate_notch_window_physical_position(
         &display,
         &logical,
@@ -274,11 +348,54 @@ fn position_notch_window_sized<R: Runtime>(
         },
         scale_factor,
     );
-
+    let _ = window.set_size(LogicalSize::new(logical.width, logical.height));
     window.set_position(PhysicalPosition::new(
         position.x.round() as i32,
         position.y.round() as i32,
     ))
+}
+
+/// Placement must be derived from the size the window is *becoming*: querying
+/// `outer_size()` right after `set_size()` still reports the previous frame, so
+/// the notch would be anchored for the old size and then grow off-screen.
+fn position_notch_window_sized<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &WebviewWindow<R>,
+    logical: tray::WindowDimensions,
+) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        set_notch_window_frame(app, window, logical)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Some(monitor) = notched_monitor(app)? else {
+            return Ok(());
+        };
+        let scale_factor = monitor.scale_factor();
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let display = tray::DisplayBounds {
+            origin_x: f64::from(monitor_position.x) / scale_factor,
+            origin_y: f64::from(monitor_position.y) / scale_factor,
+            width: f64::from(monitor_size.width) / scale_factor,
+            height: f64::from(monitor_size.height) / scale_factor,
+        };
+        let position = tray::calculate_notch_window_physical_position(
+            &display,
+            &logical,
+            &tray::NotchInsets {
+                vertical_offset: NOTCH_VERTICAL_OFFSET,
+            },
+            scale_factor,
+        );
+
+        let _ = window.set_size(LogicalSize::new(logical.width, logical.height));
+        window.set_position(PhysicalPosition::new(
+            position.x.round() as i32,
+            position.y.round() as i32,
+        ))
+    }
 }
 
 fn toggle_operations_console<R: Runtime>(app: &AppHandle<R>) {
@@ -621,14 +738,8 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
         }
     }
     let target = tray::WindowDimensions { width, height };
-    // Anchor first, then resize: the window grows from an already-correct
-    // top-left instead of spilling past the right screen edge for a frame.
     if let Err(error) = position_notch_window_sized(app, &window, target) {
-        eprintln!("failed to anchor notch before resize: {error}");
-    }
-    let _ = window.set_size(LogicalSize::new(width, height));
-    if let Err(error) = position_notch_window_sized(app, &window, target) {
-        eprintln!("failed to reposition resized notch: {error}");
+        eprintln!("failed to resize notch window: {error}");
     }
     println!("notch resized width={width} height={height} scale={scale}");
 }
@@ -912,7 +1023,16 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 }
 
 fn main() {
-    let gateway = GatewayProcess(std::sync::Mutex::new(spawn_gateway()));
+    // A pending first-run migration holds the gateway back until the user
+    // chooses: the dialog in the webview resolves it through the commands
+    // below, because spawning first would lock the answer in.
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let pending_migration = tray::detect_legacy_migration(&home);
+    let gateway = if pending_migration.is_some() {
+        GatewayProcess(std::sync::Mutex::new(None))
+    } else {
+        GatewayProcess(std::sync::Mutex::new(spawn_gateway()))
+    };
     let base_url =
         std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();
@@ -945,6 +1065,8 @@ fn main() {
             warm_account,
             warm_all,
             refresh_usage,
+            legacy_migration_status,
+            resolve_legacy_migration,
             expand_notch,
             collapse_notch
         ])

@@ -19,6 +19,7 @@ import {
   quotaRows,
 } from "./components/AccountsSurface";
 import { ContextMenu, useContextMenu } from "./components/ContextMenu";
+import { LegacyMigrationPrompt } from "./components/LegacyMigrationPrompt";
 import { LogsSurface } from "./components/LogsSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel, providerLogos } from "./components/ProviderGlyph";
@@ -528,6 +529,14 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [refresh, refreshUsage]);
+
+  useEffect(() => {
+    // the migration prompt holds the gateway until the user chooses; this is
+    // the signal that the choice landed and accounts can load immediately
+    const onGatewayReady = () => void refreshUsage().finally(() => void refresh());
+    window.addEventListener("mahoquot:gateway-ready", onGatewayReady);
+    return () => window.removeEventListener("mahoquot:gateway-ready", onGatewayReady);
   }, [refresh, refreshUsage]);
 
   useEffect(() => {
@@ -1333,6 +1342,7 @@ export default function App() {
 
   return (
     <AppShell className="app" data-mahoquot-app="operations-console">
+      <LegacyMigrationPrompt />
       <aside className="sidebar">
         <div className="titlebar-drag" data-tauri-drag-region />
         <div className="brand" data-tauri-drag-region>

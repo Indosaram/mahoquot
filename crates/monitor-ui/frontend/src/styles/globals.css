@@ -2684,3 +2684,9 @@ h2 {
     transform: rotate(360deg);
   }
 }
+
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
