@@ -128,6 +128,25 @@ export const LIVE_RUN = {
   samples: "400",
 } as const;
 
+/** Real per-minute request totals from the 26-minute shaped run (persisted
+ * gateway minute buckets). Rendered by the Request rate chart. */
+export const RATE_TOTALS: readonly number[] = [
+  1600, 400, 700, 200, 1400, 300, 500, 150, 1100, 250, 800, 200, 1500, 300, 600,
+  150, 1300, 250, 900, 200, 1000, 150, 1200, 200, 1000, 200, 400,
+];
+
+/** Exact round-robin split of the same run: strict sequence-stamped rotation
+ * guarantees each account serves ±1 request of its fair share per minute. */
+export const RATE_ACCOUNTS: readonly {
+  name: string;
+  peak: number;
+  values: readonly number[];
+}[] = [
+  { name: "alpha", peak: 534, values: [534, 133, 233, 67, 467, 100, 166, 50, 367, 83, 267, 67, 500, 100, 200, 50, 433, 83, 300, 67, 333, 50, 400, 67, 333, 67, 133] },
+  { name: "bravo", peak: 533, values: [533, 134, 233, 67, 466, 100, 167, 50, 367, 83, 267, 66, 500, 100, 200, 50, 434, 83, 300, 67, 333, 50, 400, 67, 333, 67, 133] },
+  { name: "charlie", peak: 533, values: [533, 133, 234, 66, 467, 100, 167, 50, 366, 84, 266, 67, 500, 100, 200, 50, 433, 84, 300, 66, 334, 50, 400, 66, 334, 66, 134] },
+];
+
 type BenchRow = {
   load: string;
   tier: string;
