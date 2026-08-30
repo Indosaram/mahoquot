@@ -156,7 +156,9 @@ async fn cors(method: Method, req: axum::extract::Request, next: Next) -> Respon
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("*"),
+        // WebKit does not honor a wildcard for Authorization, so the desktop
+        // webview console needs it named explicitly.
+        HeaderValue::from_static("Authorization, Content-Type"),
     );
     response
 }

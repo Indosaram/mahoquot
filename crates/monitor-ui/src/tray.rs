@@ -56,9 +56,11 @@ pub struct CursorPoint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HoverTransition {
+pub enum HoverIntent {
     Expand,
-    Collapse,
+    ScheduleCollapse,
+    CancelCollapse,
+    None,
 }
 
 /// True when `rect` overlaps any of the given display bounds. Used to detect
@@ -120,14 +122,25 @@ pub fn cursor_within(rect: &ScreenRect, cursor: &CursorPoint) -> bool {
         && cursor.y <= rect.y + rect.height
 }
 
-/// Global pointer samples arrive continuously; only a genuine edge crossing may
-/// drive the window, otherwise every mouse move would re-resize the notch.
-pub fn notch_hover_transition(expanded: bool, cursor_inside: bool) -> Option<HoverTransition> {
-    match (expanded, cursor_inside) {
-        (false, true) => Some(HoverTransition::Expand),
-        (true, false) => Some(HoverTransition::Collapse),
-        _ => None,
+pub fn brink_hover_intent(
+    expanded: bool,
+    collapse_pending: bool,
+    cursor_inside: bool,
+) -> HoverIntent {
+    match (expanded, collapse_pending, cursor_inside) {
+        (false, _, true) => HoverIntent::Expand,
+        (true, false, false) => HoverIntent::ScheduleCollapse,
+        (true, true, true) => HoverIntent::CancelCollapse,
+        _ => HoverIntent::None,
     }
+}
+
+pub fn should_apply_delayed_collapse(
+    scheduled_generation: u64,
+    current_generation: u64,
+    expanded: bool,
+) -> bool {
+    scheduled_generation == current_generation && !expanded
 }
 
 pub fn resolve_tray_menu_action(id: &str) -> Option<TrayMenuAction> {

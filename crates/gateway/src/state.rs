@@ -40,7 +40,8 @@ impl AppState {
     pub fn new(config: &GatewayConfig) -> anyhow::Result<Self> {
         let members = load_account_members(&config.auth_dir)?;
         let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
-        let models = model_entries(&provider_kinds, config.models_env.as_deref());
+        let mut models = model_entries(&provider_kinds, config.models_env.as_deref());
+        models.extend(crate::models_route::generic_model_entries(&members));
 
         let http_client = reqwest::Client::builder()
             .tcp_nodelay(true)
@@ -94,7 +95,8 @@ impl AppState {
         let auth_dir = self.settings.current().auth_dir.clone();
         let members = load_account_members(std::path::Path::new(&auth_dir))?;
         let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
-        let models = model_entries(&provider_kinds, self.models_env.as_deref());
+        let mut models = model_entries(&provider_kinds, self.models_env.as_deref());
+        models.extend(crate::models_route::generic_model_entries(&members));
         let count = members.len();
         self.pool
             .store(Arc::new(PoolSnapshot { members, models }));
@@ -140,7 +142,7 @@ impl AppState {
                 };
                 crate::metrics::AccountStats {
                     id: m.id.clone(),
-                    provider: m.kind().as_str().to_string(),
+                    provider: m.provider_name(),
                     health: health.into(),
                     ok: m.ok_count.load(Ordering::Relaxed),
                     fails: m.fail_count.load(Ordering::Relaxed),

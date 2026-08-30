@@ -18,6 +18,7 @@ pub enum ProviderKind {
     Cursor,
     Kiro,
     Zcode,
+    Generic,
 }
 
 pub enum ProviderAccount {
@@ -27,6 +28,28 @@ pub enum ProviderAccount {
     Cursor(CursorAccount),
     Kiro(KiroAccount),
     Zcode(ZcodeAccount),
+    Generic(GenericAccount),
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct GenericAccount {
+    #[serde(default)]
+    pub identity_slug: String,
+    pub provider: String,
+    #[serde(default)]
+    pub label: String,
+    pub adapter: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub auth_mode: String,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 impl ProviderKind {
@@ -58,6 +81,7 @@ impl ProviderKind {
                         .is_some_and(mahoquot_providers::is_kiro_model)
             }
             ProviderKind::Zcode => mahoquot_providers::is_zcode_model(model),
+            ProviderKind::Generic => true,
         }
     }
 
@@ -69,6 +93,7 @@ impl ProviderKind {
             ProviderKind::Cursor => "cursor",
             ProviderKind::Kiro => "kiro",
             ProviderKind::Zcode => "zcode",
+            ProviderKind::Generic => "generic",
         }
     }
 
@@ -80,6 +105,7 @@ impl ProviderKind {
             "cursor" => Some(Self::Cursor),
             "kiro" => Some(Self::Kiro),
             "zcode" => Some(Self::Zcode),
+            "generic" => Some(Self::Generic),
             _ => None,
         }
     }
@@ -118,6 +144,7 @@ impl ProviderAccount {
             Self::Cursor(_) => ProviderKind::Cursor,
             Self::Kiro(_) => ProviderKind::Kiro,
             Self::Zcode(_) => ProviderKind::Zcode,
+            Self::Generic(_) => ProviderKind::Generic,
         }
     }
 
@@ -129,6 +156,7 @@ impl ProviderAccount {
             Self::Cursor(a) => a.access_token.clone(),
             Self::Kiro(a) => a.access_token.clone(),
             Self::Zcode(a) => a.access_token.clone(),
+            Self::Generic(a) => a.api_key.clone(),
         }
     }
 
@@ -140,6 +168,7 @@ impl ProviderAccount {
             Self::Cursor(a) => a.refresh_token.clone(),
             Self::Kiro(a) => a.refresh_token.clone(),
             Self::Zcode(a) => a.refresh_token.clone(),
+            Self::Generic(_) => String::new(),
         }
     }
 
@@ -157,6 +186,7 @@ impl ProviderAccount {
                 !mahoquot_providers::zcode::is_provisioned_api_key(&a.access_token)
                     && expired_at_is_past(&a.expired, now_unix)
             }
+            Self::Generic(_) => false,
         }
     }
 
@@ -234,12 +264,26 @@ impl ProviderAccount {
                     .to_string(),
                 ),
             ],
+            Self::Generic(a) => {
+                let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
+                if !a.api_key.is_empty() {
+                    if a.adapter == "azure-openai" {
+                        headers.push(("api-key".to_string(), a.api_key.clone()));
+                    } else if a.adapter == "google" && a.auth_mode != "oauth" {
+                        headers.push(("x-goog-api-key".to_string(), a.api_key.clone()));
+                    } else {
+                        headers.push(("authorization".to_string(), format!("Bearer {}", a.api_key)));
+                    }
+                }
+                headers
+            }
         }
     }
 
     fn project_id(&self) -> Option<String> {
         match self {
             Self::Antigravity(a) => Some(a.project_id.clone()),
+            Self::Generic(a) if !a.project_id.is_empty() => Some(a.project_id.clone()),
             _ => None,
         }
     }
@@ -267,6 +311,7 @@ impl ProviderAccount {
                     )
                 }
             },
+            Self::Generic(_) => mahoquot_providers::build_refresh_request(""),
             other => mahoquot_providers::build_refresh_request(&other.refresh_token()),
         }
     }
@@ -354,6 +399,52 @@ impl AccountMember {
             .kind()
     }
 
+    pub fn provider_name(&self) -> String {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Generic(account) => account.provider.clone(),
+            account => account.kind().as_str().to_string(),
+        }
+    }
+
+    pub fn generic_base_url(&self) -> Option<String> {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Generic(account) => Some(account.base_url.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn generic_models(&self) -> Option<(String, Vec<String>)> {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Generic(account) => {
+                Some((account.provider.clone(), account.models.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn generic_adapter(&self) -> Option<String> {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Generic(account) => Some(account.adapter.clone()),
+            _ => None,
+        }
+    }
+
     pub fn project_id(&self) -> Option<String> {
         self.inner
             .read()
@@ -386,7 +477,19 @@ impl AccountMember {
     }
 
     pub fn supports_model(&self, model: &str) -> bool {
-        if !self.kind().serves_model(model) {
+        let declared = {
+            let guard = self
+                .inner
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match &*guard {
+                ProviderAccount::Generic(account) => {
+                    account.models.is_empty() || account.models.iter().any(|candidate| candidate == model)
+                }
+                account => account.kind().serves_model(model),
+            }
+        };
+        if !declared {
             return false;
         }
         let guard = self
@@ -562,6 +665,7 @@ fn provider_account_from_value(
         ProviderKind::Cursor => ProviderAccount::Cursor(serde_json::from_value(value)?),
         ProviderKind::Kiro => ProviderAccount::Kiro(serde_json::from_value(value)?),
         ProviderKind::Zcode => ProviderAccount::Zcode(serde_json::from_value(value)?),
+        ProviderKind::Generic => ProviderAccount::Generic(serde_json::from_value(value)?),
     })
 }
 
@@ -573,6 +677,7 @@ fn set_identity_slug(account: &mut ProviderAccount, slug: String) {
         ProviderAccount::Cursor(a) => a.identity_slug = slug,
         ProviderAccount::Kiro(a) => a.identity_slug = slug,
         ProviderAccount::Zcode(a) => a.identity_slug = slug,
+        ProviderAccount::Generic(a) => a.identity_slug = slug,
     }
 }
 
@@ -584,6 +689,7 @@ fn identity_slug_of(account: &ProviderAccount) -> &str {
         ProviderAccount::Cursor(a) => &a.identity_slug,
         ProviderAccount::Kiro(a) => &a.identity_slug,
         ProviderAccount::Zcode(a) => &a.identity_slug,
+        ProviderAccount::Generic(a) => &a.identity_slug,
     }
 }
 
@@ -687,6 +793,7 @@ fn classify_credential(file_path: &Path, declared_type: &str) -> Option<Provider
         ProviderKind::Cursor,
         ProviderKind::Kiro,
         ProviderKind::Zcode,
+        ProviderKind::Generic,
     ] {
         if name.starts_with(&format!("{}-", kind.as_str())) {
             return Some(kind);
@@ -739,6 +846,13 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
         };
 
         let declared_type = value.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+        if value
+            .get("disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let Some(kind) = classify_credential(&file_path, declared_type) else {
             tracing::warn!(
                 path = ?file_path,
@@ -751,7 +865,14 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
         let upstream_override = value
             .get("upstream_override")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .or_else(|| {
+                if kind == ProviderKind::Generic {
+                    value.get("base_url").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
+            .map(str::to_string);
 
         let mut inner = match provider_account_from_value(kind, value) {
             Ok(inner) => inner,

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 
@@ -39,6 +39,7 @@ describe("operations console", () => {
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
     localStorage.removeItem("mahoquot.theme");
+    sessionStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     vi.stubGlobal(
       "fetch",
@@ -90,7 +91,12 @@ describe("operations console", () => {
     expect(nav).toHaveTextContent("Settings");
     expect(nav).not.toHaveTextContent("Credentials");
     expect(screen.getByRole("img", { name: "Request activity over time" })).toBeInTheDocument();
+    expect(screen.getByText("Requests")).toBeInTheDocument();
     expect(screen.getByText("Success")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("In flight")).toBeInTheDocument();
+    expect(screen.getByText("p50")).toBeInTheDocument();
+    expect(screen.getByText("p90")).toBeInTheDocument();
     expect(screen.getByText("Provider mix")).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: "Telemetry range" })).toBeInTheDocument();
     for (const range of ["30m", "1h", "1d", "7d", "30d"]) {
@@ -165,6 +171,7 @@ describe("operations console", () => {
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenAI" }));
     expect(await screen.findByText(/Waiting for provider approval/i)).toBeInTheDocument();
 
     // No click on "Check authorization status" — the session polls itself.
@@ -268,6 +275,7 @@ describe("operations console", () => {
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
     fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
+    fireEvent.click(screen.getByRole("button", { name: "Paste a provisioned API key" }));
 
     fireEvent.change(screen.getByLabelText("Z.ai account email"), {
       target: { value: "me@example.com" },
@@ -557,11 +565,64 @@ describe("operations console", () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
     try {
       render(<App />);
-      expect(await screen.findByLabelText("Show provider quotas")).toBeInTheDocument();
+      const triggerStrip = await screen.findByTestId("notch-trigger-strip");
+      expect(triggerStrip).not.toHaveAttribute("aria-label");
       expect(screen.queryByText("Quotio")).not.toBeInTheDocument();
+      expect(screen.getByTestId("notch-ring-codex")).toBeInTheDocument();
+      expect(document.querySelector(".notch-surface")).not.toHaveClass("expanded");
       expect(
         screen.queryByRole("navigation", { name: "Primary navigation" }),
       ).not.toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("opens the notch immediately from a native hover event without an animation frame", async () => {
+    window.history.pushState({}, "", "/management.html?surface=notch");
+    let hover: ((payload: boolean) => void) | undefined;
+    const invoke = vi.fn();
+    Object.assign(window, {
+      __TAURI__: {
+        core: { invoke },
+        event: {
+          listen: vi.fn(async (event: string, handler: (message: { payload: unknown }) => void) => {
+            if (event === "notch-hover") {
+              hover = (payload) => handler({ payload });
+            }
+            return () => undefined;
+          }),
+        },
+      },
+    });
+    const animationFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+
+    try {
+      const { container } = render(<App />);
+      await waitFor(() => expect(hover).toBeTypeOf("function"));
+      act(() => hover?.(true));
+
+      expect(container.querySelector(".notch-shell")).toHaveClass("expanded", "open");
+      expect(container.querySelector(".notch-surface")).toHaveClass("expanded");
+      expect(invoke).not.toHaveBeenCalledWith("expand_notch");
+    } finally {
+      animationFrame.mockRestore();
+      Reflect.deleteProperty(window, "__TAURI__");
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("opens the notch from the synchronous native DOM bridge", async () => {
+    window.history.pushState({}, "", "/management.html?surface=notch");
+    try {
+      const { container } = render(<App />);
+      await act(async () => {
+        await Promise.resolve();
+        window.dispatchEvent(new CustomEvent("mahoquot:notch-hover", { detail: true }));
+      });
+
+      expect(container.querySelector(".notch-shell")).toHaveClass("expanded", "open");
+      expect(container.querySelector(".notch-surface")).toHaveClass("expanded");
     } finally {
       window.history.pushState({}, "", "/");
     }
@@ -621,6 +682,61 @@ describe("operations console", () => {
     expect(screen.queryByText(/restart/i)).not.toBeInTheDocument();
   });
 
+  it("dismisses both account and YAML drawers with Escape", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    expect(screen.getByRole("complementary", { name: "Provider onboarding" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Open YAML editor" }));
+    expect(
+      await screen.findByRole("complementary", { name: "Advanced configuration editor" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(
+      screen.queryByRole("complementary", { name: "Advanced configuration editor" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a provider detail before starting another account authorization", async () => {
+    const authCalls: string[] = [];
+    vi.spyOn(window, "open").mockReturnValue(null);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("codex-auth-url")) authCalls.push(url);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("codex-auth-url")) {
+          return new Response(JSON.stringify({ url: "https://example.com/auth", state: "s" }));
+        }
+        return new Response(JSON.stringify({ status: "ok" }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
+
+    expect(authCalls).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: "Add Codex account" })).toBeInTheDocument();
+    const drawer = screen.getByRole("complementary", { name: "Provider onboarding" });
+    expect(within(drawer).queryByText("runtime-id@example.com")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in with OpenAI" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenAI" }));
+    await waitFor(() => expect(authCalls).toHaveLength(1));
+  });
+
   it("renders bundled official logos for every onboarding provider", async () => {
     render(<App />);
     const accounts = screen.getAllByText("Accounts").at(0);
@@ -631,6 +747,52 @@ describe("operations console", () => {
     for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
       expect(screen.getAllByTestId(`provider-logo-${provider}`).length).toBeGreaterThan(0);
     }
+  });
+
+  it("offers Kiro and account enable disable lifecycle", async () => {
+    const writes: Array<{ readonly url: string; readonly method: string; readonly body: string }> =
+      [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files") && !init?.method) {
+          return new Response(
+            JSON.stringify({
+              files: [
+                {
+                  name: "codex-runtime.json",
+                  path: "/auth/codex-runtime.json",
+                  type: "codex",
+                  email: "runtime-id@example.com",
+                  disabled: false,
+                },
+              ],
+            }),
+          );
+        }
+        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (init?.method === "PATCH") {
+          writes.push({ url, method: init.method, body: String(init.body) });
+          return new Response(JSON.stringify({ status: "ok" }));
+        }
+        return new Response(JSON.stringify({ status: "ok" }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    expect(await screen.findByRole("button", { name: "Kiro" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close onboarding" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Disable runtime-id@example.com" }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      url: "http://127.0.0.1:18801/v0/management/auth-files/status",
+      method: "PATCH",
+      body: JSON.stringify({ name: "codex-runtime.json", disabled: true }),
+    });
   });
 
   it("formats tiny quota percentages without floating point noise", async () => {
@@ -772,7 +934,8 @@ describe("operations console", () => {
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
-    expect(await screen.findByText(/Authorization pending/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenAI" }));
+    expect(await screen.findByText(/Waiting for provider approval/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Check authorization status/i }));
 
     expect(await screen.findByText(/Codex authorization completed/i)).toBeInTheDocument();
@@ -861,5 +1024,46 @@ describe("operations console", () => {
     expect(
       screen.getByText("Raw server output, not a reconstructed request history."),
     ).toBeInTheDocument();
+  });
+
+  it("composes onboarding and config drawers through OverlayLayer with layout-overlay-layer class", async () => {
+    render(<App />);
+    await screen.findByText("Requests");
+
+    // 1. Open Onboarding drawer
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+
+    const onboardingAside = await screen.findByRole("complementary", {
+      name: "Provider onboarding",
+    });
+    const onboardingBackdrop = onboardingAside.parentElement;
+    expect(onboardingBackdrop).not.toBeNull();
+    expect(onboardingBackdrop).toHaveClass("layout-overlay-layer");
+    expect(onboardingBackdrop).toHaveClass("drawer-backdrop");
+
+    // Close onboarding
+    fireEvent.click(screen.getByRole("button", { name: "Close onboarding" }));
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
+
+    // 2. Open Configuration drawer from Settings
+    fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Open YAML editor" }));
+
+    const configAside = await screen.findByRole("complementary", {
+      name: "Advanced configuration editor",
+    });
+    const configBackdrop = configAside.parentElement;
+    expect(configBackdrop).not.toBeNull();
+    expect(configBackdrop).toHaveClass("layout-overlay-layer");
+    expect(configBackdrop).toHaveClass("drawer-backdrop");
+
+    // Close config drawer
+    fireEvent.click(screen.getByRole("button", { name: "Close configuration editor" }));
+    expect(
+      screen.queryByRole("complementary", { name: "Advanced configuration editor" }),
+    ).not.toBeInTheDocument();
   });
 });

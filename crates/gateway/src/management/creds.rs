@@ -69,10 +69,12 @@ fn describe(dir: &std::path::Path, name: &str) -> Option<Value> {
             let email = parsed.get("email").and_then(Value::as_str).unwrap_or_default();
             entry["type"] = json!(kind);
             entry["email"] = json!(email);
-            entry["provider"] = json!(kind);
+            entry["provider"] = parsed.get("provider").cloned().unwrap_or_else(|| json!(kind));
             entry["account"] = json!(email);
             entry["account_type"] = json!("oauth");
-            entry["status"] = json!("active");
+            let disabled = parsed.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+            entry["disabled"] = json!(disabled);
+            entry["status"] = json!(if disabled { "disabled" } else { "active" });
             if let Some(project) = parsed.get("project_id").and_then(Value::as_str) {
                 if !project.trim().is_empty() {
                     entry["project_id"] = json!(project);
@@ -330,6 +332,15 @@ fn validate_provider_credential(content: &Value) -> Result<(), String> {
             // so demanding those two fields would reject the only credential
             // shape an operator can actually paste.
         }
+        "generic" => {
+            for field in ["provider", "adapter", "base_url"] {
+                required_string(content, field)?;
+            }
+        }
+        "monitor" => {
+            required_string(content, "provider")?;
+            required_string(content, "label")?;
+        }
         "codex" | "antigravity" => {}
         _ => return Err(format!("unsupported credential type {kind}")),
     }
@@ -453,6 +464,48 @@ async fn download_auth_file(
     }
 }
 
+async fn patch_auth_file_status(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(name) = body.get("name").and_then(Value::as_str) else {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "name is required" }));
+    };
+    let Some(disabled) = body.get("disabled").and_then(Value::as_bool) else {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "disabled is required" }));
+    };
+    if name.is_empty() || name.contains('/') || name.contains("..") {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "invalid name" }));
+    }
+    let dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let path = dir.join(name);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return json_status(StatusCode::NOT_FOUND, json!({ "error": "auth not found" }))
+        }
+        Err(error) => {
+            return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() }))
+        }
+    };
+    let mut value: Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(error) => return json_status(StatusCode::BAD_REQUEST, json!({ "error": error.to_string() })),
+    };
+    value["disabled"] = json!(disabled);
+    let rendered = match serde_json::to_string_pretty(&value) {
+        Ok(rendered) => rendered,
+        Err(error) => return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() })),
+    };
+    if let Err(error) = write_atomically(&path, &rendered) {
+        return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() }));
+    }
+    if let Err(error) = state.rescan_pool() {
+        return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() }));
+    }
+    json_status(StatusCode::OK, json!({ "status": "ok", "name": name, "disabled": disabled }))
+}
+
 async fn patch_unsupported() -> Response {
     json_status(
         StatusCode::BAD_REQUEST,
@@ -460,19 +513,120 @@ async fn patch_unsupported() -> Response {
     )
 }
 
-async fn vertex_import(raw: bytes::Bytes) -> Response {
+#[derive(serde::Serialize)]
+struct VertexClaims<'a> {
+    iss: &'a str,
+    scope: &'a str,
+    aud: &'a str,
+    iat: u64,
+    exp: u64,
+}
+
+async fn vertex_import(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> Response {
     let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
-    let has_file = parsed
-        .get("file")
-        .and_then(Value::as_str)
-        .is_some_and(|f| !f.trim().is_empty());
-    if !has_file {
+    let Some(file) = parsed.get("file").and_then(Value::as_str).filter(|file| !file.trim().is_empty()) else {
         return json_status(StatusCode::BAD_REQUEST, json!({ "error": "file required" }));
+    };
+    let service: Value = match serde_json::from_str(file) {
+        Ok(value) => value,
+        Err(error) => return json_status(StatusCode::BAD_REQUEST, json!({ "error": error.to_string() })),
+    };
+    let required = |field: &str| service.get(field).and_then(Value::as_str).filter(|value| !value.is_empty());
+    let (Some(project_id), Some(private_key), Some(client_email)) = (
+        required("project_id"), required("private_key"), required("client_email"),
+    ) else {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "service account missing project_id, private_key, or client_email" }));
+    };
+    let token_uri = required("token_uri").unwrap_or("https://oauth2.googleapis.com/token");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0);
+    let key = match jsonwebtoken::EncodingKey::from_rsa_pem(private_key.as_bytes()) {
+        Ok(key) => key,
+        Err(error) => return json_status(StatusCode::BAD_REQUEST, json!({ "error": error.to_string() })),
+    };
+    let assertion = match jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
+        &VertexClaims { iss: client_email, scope: "https://www.googleapis.com/auth/cloud-platform", aud: token_uri, iat: now, exp: now + 3600 },
+        &key,
+    ) {
+        Ok(assertion) => assertion,
+        Err(error) => return json_status(StatusCode::BAD_REQUEST, json!({ "error": error.to_string() })),
+    };
+    let response = match state.http_client.post(token_uri).form(&[
+        ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+        ("assertion", assertion.as_str()),
+    ]).send().await {
+        Ok(response) => response,
+        Err(error) => return json_status(StatusCode::BAD_GATEWAY, json!({ "error": error.to_string() })),
+    };
+    let status = response.status();
+    let body: Value = match response.json().await {
+        Ok(body) => body,
+        Err(error) => return json_status(StatusCode::BAD_GATEWAY, json!({ "error": error.to_string() })),
+    };
+    if !status.is_success() {
+        return json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("token exchange failed ({status}): {body}") }));
     }
-    json_status(
-        StatusCode::SERVICE_UNAVAILABLE,
-        json!({ "error": "core auth manager unavailable" }),
-    )
+    let Some(access_token) = body.get("access_token").and_then(Value::as_str) else {
+        return json_status(StatusCode::BAD_GATEWAY, json!({ "error": "token response missing access_token" }));
+    };
+    let credential = json!({
+        "type":"generic", "provider":"google-vertex", "label":client_email, "adapter":"google",
+        "auth_mode":"oauth", "project_id":project_id, "base_url":"https://aiplatform.googleapis.com",
+        "api_key":access_token, "models":[], "disabled":false,
+        "service_account":service,
+    });
+    let dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let project_slug = project_id
+        .chars()
+        .map(|character| if character.is_ascii_alphanumeric() || character == '-' || character == '_' { character } else { '_' })
+        .collect::<String>();
+    let path = dir.join(format!("generic-google-vertex-{project_slug}.json"));
+    let rendered = match serde_json::to_string_pretty(&credential) {
+        Ok(rendered) => rendered,
+        Err(error) => return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() })),
+    };
+    if let Err(error) = write_atomically(&path, &rendered) {
+        return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() }));
+    }
+    if let Err(error) = state.rescan_pool() {
+        return json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": error.to_string() }));
+    }
+    json_status(StatusCode::OK, json!({ "status":"ok", "name":path.file_name().and_then(|name|name.to_str()) }))
+}
+
+async fn command_code_import(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
+    let Some(api_key)=body.get("api_key").or_else(||body.get("apiKey")).and_then(Value::as_str).filter(|value|!value.is_empty()) else {
+        return json_status(StatusCode::BAD_REQUEST,json!({"error":"api_key required"}));
+    };
+    let label=body.get("label").or_else(||body.get("userName")).and_then(Value::as_str).unwrap_or("Command Code");
+    let credential=json!({"type":"generic","provider":"command-code","label":label,"adapter":"openai-chat",
+        "base_url":"https://api.commandcode.ai/provider/v1","api_key":api_key,
+        "models":["deepseek/deepseek-v4-flash"],"disabled":false});
+    let dir=std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let path=dir.join(format!("generic-command-code-{}.json",std::process::id()));
+    let rendered=match serde_json::to_string_pretty(&credential){Ok(value)=>value,Err(error)=>return json_status(StatusCode::INTERNAL_SERVER_ERROR,json!({"error":error.to_string()}))};
+    if let Err(error)=write_atomically(&path,&rendered){return json_status(StatusCode::INTERNAL_SERVER_ERROR,json!({"error":error.to_string()}));}
+    if let Err(error)=state.rescan_pool(){return json_status(StatusCode::INTERNAL_SERVER_ERROR,json!({"error":error.to_string()}));}
+    json_status(StatusCode::OK,json!({"status":"ok","name":path.file_name().and_then(|name|name.to_str())}))
+}
+
+async fn trae_import(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
+    let path = body.get("path").and_then(Value::as_str).map(std::path::PathBuf::from).unwrap_or_else(|| {
+        std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default()
+            .join("Library/Application Support/Trae/User/globalStorage/storage.json")
+    });
+    let raw=match std::fs::read_to_string(&path){Ok(value)=>value,Err(error)=>return json_status(StatusCode::NOT_FOUND,json!({"error":error.to_string()}))};
+    let storage:Value=match serde_json::from_str(&raw){Ok(value)=>value,Err(error)=>return json_status(StatusCode::BAD_REQUEST,json!({"error":error.to_string()}))};
+    let auth=storage.get("iCubeAuthInfo://icube.cloudide").and_then(|value|if value.is_string(){value.as_str().and_then(|raw|serde_json::from_str::<Value>(raw).ok())}else{Some(value.clone())});
+    let Some(auth)=auth else{return json_status(StatusCode::BAD_REQUEST,json!({"error":"Trae auth record not found"}))};
+    let Some(token)=auth.get("token").and_then(Value::as_str).filter(|value|!value.is_empty()) else{return json_status(StatusCode::BAD_REQUEST,json!({"error":"Trae token missing"}))};
+    let label=auth.get("account").and_then(|v|v.get("email")).and_then(Value::as_str).unwrap_or("Trae");
+    let credential=json!({"type":"monitor","provider":"trae","label":label,"token":token,
+        "base_url":auth.get("host").and_then(Value::as_str).unwrap_or("https://api-sg-central.trae.ai"),"disabled":false});
+    let dir=std::path::PathBuf::from(state.settings.current().auth_dir.clone()); let target=dir.join("monitor-trae.json");
+    let rendered=serde_json::to_string_pretty(&credential).unwrap_or_default();
+    if let Err(error)=write_atomically(&target,&rendered){return json_status(StatusCode::INTERNAL_SERVER_ERROR,json!({"error":error.to_string()}));}
+    json_status(StatusCode::OK,json!({"status":"ok","name":"monitor-trae.json"}))
 }
 
 pub fn creds_routes() -> Router<Arc<AppState>> {
@@ -487,10 +641,12 @@ pub fn creds_routes() -> Router<Arc<AppState>> {
         .route("/claude/import-local", post(import_local_claude))
         .route("/auth-files/models", get(auth_file_models))
         .route("/auth-files/download", get(download_auth_file))
-        .route("/auth-files/status", axum::routing::patch(patch_unsupported))
+        .route("/auth-files/status", axum::routing::patch(patch_auth_file_status))
         .route("/auth-files/fields", axum::routing::patch(patch_unsupported))
         .route("/model-definitions/{channel}", get(model_definitions))
         .route("/vertex/import", post(vertex_import))
+        .route("/command-code/import", post(command_code_import))
+        .route("/trae/import-local", post(trae_import))
         .merge(super::oauth::oauth_routes())
         .route("/oauth-session", delete(super::oauth::cancel_session))
 }

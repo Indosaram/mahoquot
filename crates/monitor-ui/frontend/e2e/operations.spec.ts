@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 
 const evidenceDir = "/tmp/mahoquot-operations-qa-round2";
@@ -197,7 +198,7 @@ test("keeps the add-account action in the top bar", async ({ page }) => {
 });
 
 test("provider onboarding uses bundled official brand logos", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.setViewportSize({ width: 1200, height: 800 });
   await installMocks(page);
   await page.goto("/management.html");
   await page
@@ -210,11 +211,192 @@ test("provider onboarding uses bundled official brand logos", async ({ page }) =
     await expect(page.getByTestId(`provider-logo-${provider}`).last()).toBeVisible();
   }
   await page.getByRole("button", { name: "Codex", exact: true }).click();
-  await expect(page.getByText(/Authorization pending/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add Codex account" })).toBeVisible();
+  await expect(page.getByText("Primary Codex")).toHaveCount(0);
+  await page.screenshot({ path: `${evidenceDir}/account-add-only-drawer.png`, fullPage: true });
+  await page.getByRole("button", { name: "Sign in with OpenAI" }).click();
+  await expect(page.getByText(/Waiting for provider approval/)).toBeVisible();
   await page.getByRole("button", { name: "Check authorization status" }).click();
   await expect(page.getByText(/Codex authorization completed/)).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/desktop-dark-provider-icons.png`, fullPage: true });
 });
+
+test("every provider catalog tile renders a decoded bundled icon", async ({ page }) => {
+  await page.route("**/management/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith("/management/stats")) {
+      await route.fulfill({ json: stats });
+      return;
+    }
+    if (pathname.endsWith("/management/logs")) {
+      await route.fulfill({ json: { total: 0, lines: [] } });
+      return;
+    }
+    if (pathname.endsWith("/management/auth-files")) {
+      await route.fulfill({ json: { files: [] } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: {} });
+  });
+
+  await page.goto("/management.html");
+  await page
+    .getByRole("button", { name: /Accounts/ })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Add account" }).click();
+  await expect(page.getByLabel("Search providers")).toBeVisible();
+
+  const icons = page.locator(".provider-options .provider-logo");
+  await expect(icons).toHaveCount(90);
+
+  const broken = await icons.evaluateAll((nodes) =>
+    nodes.flatMap((node, index) => {
+      const images = node instanceof HTMLImageElement ? [node] : [...node.querySelectorAll("img")];
+      const visibleImages = images.filter(
+        (image) => window.getComputedStyle(image).display !== "none",
+      );
+      const invalid = visibleImages.some(
+        (image) => !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0,
+      );
+      const rect = node.getBoundingClientRect();
+      return invalid || rect.width === 0 || rect.height === 0 ? [index] : [];
+    }),
+  );
+  expect(broken).toEqual([]);
+  await expect(page.locator(".provider-options svg.lucide-terminal-square")).toHaveCount(0);
+
+  await mkdir(evidenceDir, { recursive: true });
+  const providerPanel = page.getByLabel("Provider onboarding");
+  for (const [name, position] of [
+    ["top", 0],
+    ["middle", 0.5],
+    ["bottom", 1],
+  ] as const) {
+    await providerPanel.evaluate((panel, ratio) => {
+      panel.scrollTop = (panel.scrollHeight - panel.clientHeight) * ratio;
+    }, position);
+    await page.screenshot({
+      path: resolve(evidenceDir, `all-provider-icons-${name}.png`),
+    });
+  }
+});
+
+test("adds from the plus drawer and deletes from the normal account list", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  let files = structuredClone(credentials.files);
+  const writes: string[] = [];
+  const deletes: string[] = [];
+  await installMocks(page);
+  await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      const body = request.postDataJSON() as { name: string; content: Record<string, unknown> };
+      writes.push(body.name);
+      files = [
+        ...files,
+        {
+          name: body.name,
+          auth_index: body.name,
+          path: `/auth/${body.name}`,
+          size: 1,
+          label: String(body.content.label),
+          type: String(body.content.provider),
+          email: "",
+          disabled: false,
+          unavailable: false,
+          runtime_only: false,
+        },
+      ];
+      return route.fulfill({ json: { status: "ok" } });
+    }
+    if (request.method() === "DELETE") {
+      const name = new URL(request.url()).searchParams.get("name") ?? "";
+      deletes.push(name);
+      files = files.filter((file) => file.name !== name);
+      return route.fulfill({ json: { status: "ok" } });
+    }
+    return route.fulfill({ json: { files } });
+  });
+  await page.goto("/management.html");
+  await page.getByRole("button", { name: /Accounts/ }).first().click();
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByRole("textbox", { name: "Search providers" }).fill("DeepSeek");
+  await page.getByRole("button", { name: "DeepSeek", exact: true }).click();
+  await page.getByRole("button", { name: "Add API key" }).click();
+  await page.getByLabel("Provider account label").fill("New DeepSeek");
+  await page.getByLabel("Provider API key").fill("test-key");
+  await page.getByRole("button", { name: "Save account" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  await expect(page.getByText("New DeepSeek", { exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Provider onboarding" })).toHaveCount(0);
+  await page.screenshot({ path: `${evidenceDir}/account-list-after-add.png`, fullPage: true });
+
+  await page.getByRole("button", { name: "Remove New DeepSeek" }).click();
+  await page.screenshot({ path: `${evidenceDir}/account-list-delete-confirm.png`, fullPage: true });
+  await page.getByRole("button", { name: "Confirm removing New DeepSeek" }).click();
+  await expect.poll(() => deletes).toEqual([writes[0]]);
+  await expect(page.getByText("New DeepSeek", { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: `${evidenceDir}/account-list-after-delete.png`, fullPage: true });
+});
+
+test("Kiro onboarding and account disable enable lifecycle", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 });
+  const statusWrites: Array<{ name: string; disabled: boolean }> = [];
+  let disabled = false;
+  await installMocks(page);
+  await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, async (route) => {
+    const body = structuredClone(credentials);
+    body.files[0].disabled = disabled;
+    await route.fulfill({ json: body });
+  });
+  await page.route(/\/v0\/management\/auth-files\/status$/, async (route) => {
+    const write = route.request().postDataJSON();
+    statusWrites.push(write);
+    disabled = write.disabled;
+    await route.fulfill({ json: { status: "ok" } });
+  });
+  await page.goto("/management.html");
+  await page.getByRole("button", { name: /Accounts/ }).first().click();
+  await page.getByRole("button", { name: "Add account" }).click();
+  await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
+  await page.getByLabel("Close onboarding").click();
+  await page.getByText("Codex", { exact: true }).click();
+  await page.getByRole("button", { name: /Disable Primary Codex/ }).click();
+  await expect.poll(() => statusWrites).toEqual([
+    { name: "account@example.com.json", disabled: true },
+  ]);
+  await expect(page.getByRole("button", { name: /Enable Primary Codex/ })).toBeVisible();
+  await page.screenshot({ path: `${evidenceDir}/account-disabled-lifecycle.png`, fullPage: true });
+});
+
+for (const viewport of [
+  { name: "desktop", width: 1100, height: 800 },
+  { name: "mobile", width: 390, height: 844 },
+]) {
+  test(`complete provider catalog renders and filters on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await installMocks(page);
+    await page.goto("/management.html");
+    if (viewport.name === "mobile") {
+      await page.getByLabel("Mobile navigation").getByText("accounts").click();
+    } else {
+      await page.getByRole("button", { name: /Accounts/ }).first().click();
+    }
+    await page.getByRole("button", { name: "Add account" }).click();
+    const search = page.getByRole("textbox", { name: "Search providers" });
+    await expect(search).toBeVisible();
+    await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
+    await search.fill("deepseek");
+    await expect(page.getByRole("button", { name: "DeepSeek", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "DeepSeek", exact: true }).click();
+    await page.getByRole("button", { name: "Add API key" }).click();
+    await expect(page.getByLabel("Provider API key")).toBeVisible();
+    await page.locator(".onboarding-drawer").screenshot({
+      path: `${evidenceDir}/provider-catalog-${viewport.name}.png`,
+    });
+  });
+}
 
 test("desktop overview, logs, accounts, actions, and settings truth", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
@@ -319,6 +501,26 @@ test("mobile responsive state without management controls", async ({ page }) => 
   await page.screenshot({ path: `${evidenceDir}/mobile-light-overview.png`, fullPage: true });
 });
 
+test("tray dropdown panel surfaces proxy, provider chips, and quota cards", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 340, height: 640 });
+  await installMocks(page);
+  await page.goto("/management.html?surface=tray");
+
+  await expect(page.getByText("Same-origin gateway")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Codex" })).toBeVisible();
+  await expect(page.getByText("44%")).toBeVisible();
+  await expect(page.getByText("Gemini Pro")).toBeVisible();
+  await expect(page.getByText("Open mahoquot")).toBeVisible();
+  await expect(page.getByText("Quit mahoquot")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Codex" }).click();
+  await expect(page.getByText(/runtime-identifier-for-layout@example.com/)).toBeVisible();
+  await expect(page.getByText("cooling@example.com")).toHaveCount(0);
+  await page.screenshot({ path: `${evidenceDir}/tray-panel.png`, fullPage: true });
+});
+
 test("offline state remains reconnectable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installMocks(page, { offline: true });
@@ -326,4 +528,574 @@ test("offline state remains reconnectable", async ({ page }) => {
   await page.getByLabel("Mobile navigation").getByText("settings").click();
   await expect(page.getByRole("heading", { name: "Connection & access" })).toBeVisible();
   await expect(page.getByLabel("Gateway URL")).toBeEditable();
+});
+
+const unbrokenToken =
+  "tok_unbroken_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+const longStressLabel =
+  "Label-Exceeding-Forty-Characters-Operational-Identity-Validation-Stress-42";
+
+const stressAccountsStats = {
+  uptime_secs: 86_400,
+  in_flight: 42,
+  served: 999_999,
+  failed_over: 128,
+  refreshed: 512,
+  ttft: { p50_ms: 95, p90_ms: 180, p99_ms: 320, samples: 1_000 },
+  accounts: Array.from({ length: 24 }, (_, i) => ({
+    id: `stress-account-${i}-with-a-very-long-runtime-identifier-for-stress-testing-${i}@example.com`,
+    provider: ["codex", "claude", "antigravity", "kiro", "cursor", "zcode"][i % 6] as string,
+    health: {
+      status: (i % 3 === 0 ? "available" : i % 3 === 1 ? "cooldown" : "error") as
+        | "available"
+        | "cooldown"
+        | "error",
+    },
+    ok: 100 + i,
+    fails: i % 4,
+    usage: {
+      primary: { used_percent: (i * 7) % 100, reset_after_seconds: 3600 },
+      groups: [
+        {
+          display_name: `Model Group ${i} - High Volume Quota`,
+          buckets: [{ used_percent: (i * 13) % 100 }],
+        },
+        { display_name: `Secondary Window ${i}`, buckets: [{ used_percent: (i * 19) % 100 }] },
+      ],
+    },
+  })),
+};
+
+const stressCredentialsPayload = {
+  files: Array.from({ length: 24 }, (_, i) => ({
+    name: `stress-cred-${i}-${unbrokenToken.slice(0, 24)}.json`,
+    auth_index: `auth_idx_${i}_${unbrokenToken}`,
+    path: `/auth/stress-cred-${i}.json`,
+    size: 256,
+    label: `${longStressLabel} #${i}`,
+    type: ["codex", "claude", "antigravity", "kiro", "cursor", "zcode"][i % 6] as string,
+    email: `stress-user-${i}-${unbrokenToken.slice(0, 32)}@example.com`,
+    disabled: i % 5 === 0,
+    unavailable: false,
+    runtime_only: false,
+  })),
+};
+
+const installStressMocks = async (
+  page: Page,
+  options?: { empty?: boolean; logCount?: number },
+) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("mahoquot.base", "");
+    localStorage.setItem("mahoquot.key", "relay-test-key");
+    localStorage.setItem("mahoquot.mgmt", "management-test-key");
+    window.open = () => null;
+  });
+
+  const activeStats = options?.empty
+    ? {
+        uptime_secs: 0,
+        in_flight: 0,
+        served: 0,
+        failed_over: 0,
+        refreshed: 0,
+        ttft: null,
+        accounts: [],
+      }
+    : stressAccountsStats;
+
+  const activeCreds = options?.empty ? { files: [] } : stressCredentialsPayload;
+
+  const logLines =
+    options?.logCount !== undefined
+      ? Array.from(
+          { length: options.logCount },
+          (_, i) =>
+            `[${i.toString().padStart(6, "0")}] gateway event ${i} request_id=req_${i} payload=${unbrokenToken.slice(0, 48)}`,
+        )
+      : options?.empty
+        ? []
+        : ["gateway ready", "pool snapshot refreshed"];
+
+  await page.route("**/admin/stats", (route) => route.fulfill({ json: activeStats }));
+  await page.route("**/admin/accounts/**", (route) => route.fulfill({ json: { ok: true } }));
+  await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: activeCreds }),
+  );
+  await page.route(/\/v0\/management\/logs(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: { lines: logLines } }),
+  );
+  await page.route(/\/v0\/management\/config\.yaml$/, (route) =>
+    route.fulfill({
+      body: "port: 18801\nrouting:\n  strategy: strict-round-robin\n",
+      contentType: "application/yaml",
+    }),
+  );
+  await page.route(
+    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file)$/,
+    (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("proxy-url")) return route.fulfill({ json: { "proxy-url": "" } });
+      if (path.endsWith("routing/strategy")) {
+        return route.fulfill({ json: { strategy: "round-robin" } });
+      }
+      if (path.endsWith("request-retry")) {
+        return route.fulfill({ json: { "request-retry": 3 } });
+      }
+      return route.fulfill({ json: { "logging-to-file": false } });
+    },
+  );
+};
+
+test("shell scroll ownership on desktop workspace", async ({ page }) => {
+  await installStressMocks(page);
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.goto("/management.html");
+
+  // 1. Sidebar is fixed/stable at 224px width
+  const sidebar = page.locator(".sidebar");
+  await expect(sidebar).toBeVisible();
+  const sidebarBox = await sidebar.boundingBox();
+  expect(sidebarBox?.x).toBe(0);
+  expect(sidebarBox?.width).toBe(224);
+
+  // 2. Topbar header remains geometrically stable at top of viewport
+  const topbar = page.locator(".topbar");
+  await expect(topbar).toBeVisible();
+  const topbarBox = await topbar.boundingBox();
+  expect(topbarBox?.y).toBe(0);
+
+  // 3. Desktop shell scroll ownership contract:
+  // Root document/body must not scroll vertically; main workspace must be the sole vertical scroll owner.
+  const shellMetrics = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const main = document.querySelector("main");
+    return {
+      docOverflowY: window.getComputedStyle(doc).overflowY,
+      bodyOverflowY: window.getComputedStyle(body).overflowY,
+      docScrollHeight: doc.scrollHeight,
+      docClientHeight: doc.clientHeight,
+      mainOverflowY: main ? window.getComputedStyle(main).overflowY : "",
+    };
+  });
+
+  expect(
+    shellMetrics.mainOverflowY,
+    "Main workspace must own vertical shell scrolling with overflow-y: auto",
+  ).toBe("auto");
+
+  expect(
+    shellMetrics.docScrollHeight,
+    "Root document must not vertically scroll; height must be bounded to viewport",
+  ).toBeLessThanOrEqual(shellMetrics.docClientHeight);
+
+  // 4. Logs destination uses dedicated bounded inner scroll container
+  await page.getByRole("button", { name: "Logs" }).click();
+  const logPre = page.locator(".logs-surface pre");
+  await expect(logPre).toBeVisible();
+
+  const logsScrollContract = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const pre = document.querySelector(".logs-surface pre");
+    return {
+      docScrollHeight: doc.scrollHeight,
+      docClientHeight: doc.clientHeight,
+      preOverflowY: pre ? window.getComputedStyle(pre).overflowY : "",
+    };
+  });
+
+  expect(
+    logsScrollContract.docScrollHeight,
+    "Logs destination must not cause root document vertical scrolling",
+  ).toBeLessThanOrEqual(logsScrollContract.docClientHeight);
+  expect(
+    ["auto", "scroll"].includes(logsScrollContract.preOverflowY),
+    "Logs pre element must manage its own inner scroll region",
+  ).toBe(true);
+});
+
+test("shell scroll ownership across responsive viewports", async ({ page }) => {
+  const targetViewports = [
+    { width: 390, height: 844 },
+    { width: 760, height: 844 },
+    { width: 900, height: 720 },
+    { width: 1100, height: 720 },
+    { width: 1440, height: 900 },
+  ] as const;
+
+  await installStressMocks(page);
+
+  for (const vp of targetViewports) {
+    await page.setViewportSize(vp);
+    await page.goto("/management.html");
+
+    // Primary document horizontal overflow must be zero across all viewports
+    const docGeometry = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(
+      docGeometry.scrollWidth,
+      `Document horizontally overflows viewport at ${vp.width}x${vp.height}`,
+    ).toBe(docGeometry.clientWidth);
+  }
+});
+
+test("content stress under empty data and extreme unbroken tokens", async ({ page }) => {
+  const targetViewports = [
+    { width: 390, height: 844 },
+    { width: 760, height: 844 },
+    { width: 900, height: 720 },
+    { width: 1100, height: 720 },
+    { width: 1440, height: 900 },
+  ] as const;
+
+  // 1. Empty data stress across all four destinations
+  await installStressMocks(page, { empty: true });
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.goto("/management.html");
+
+  const destinations = ["Overview", "Accounts", "Logs", "Settings"];
+  for (const dest of destinations) {
+    if (dest !== "Overview") {
+      await page.getByRole("button", { name: dest }).click();
+    }
+    const heading = page.getByRole("heading", { name: dest, exact: true });
+    await expect(heading).toBeVisible();
+
+    const noHOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    );
+    expect(noHOverflow, `Empty state on ${dest} must have zero document horizontal overflow`).toBe(
+      true,
+    );
+  }
+
+  // 2. High-volume account cards with 40+ char labels and 256-char unbroken tokens
+  await installStressMocks(page);
+  for (const vp of targetViewports) {
+    await page.setViewportSize(vp);
+    await page.goto("/management.html");
+
+    if (vp.width < 760) {
+      await page.getByLabel("Mobile navigation").getByText("accounts").click();
+    } else {
+      await page.getByRole("button", { name: "Accounts" }).click();
+    }
+
+    await expect(page.getByText(longStressLabel).first()).toBeVisible();
+
+    const noHOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    );
+    expect(
+      noHOverflow,
+      `Unbroken 256-char tokens and 40+ char labels must not cause horizontal overflow at ${vp.width}x${vp.height}`,
+    ).toBe(true);
+  }
+});
+
+test("content stress under 10,000 high-volume log lines and logs containment", async ({
+  page,
+}) => {
+  await installStressMocks(page, { logCount: 10_000 });
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.goto("/management.html");
+  await page.getByRole("button", { name: "Logs" }).click();
+
+  const logPre = page.locator(".logs-surface pre");
+  await expect(logPre).toBeVisible();
+  await expect(page.getByText("[009999] gateway event 9999")).toBeVisible();
+
+  const logsStressGeometry = await page.evaluate(() => {
+    const doc = document.documentElement;
+    return {
+      scrollWidth: doc.scrollWidth,
+      clientWidth: doc.clientWidth,
+      docScrollHeight: doc.scrollHeight,
+      docClientHeight: doc.clientHeight,
+    };
+  });
+
+  expect(
+    logsStressGeometry.scrollWidth,
+    "10,000 log lines must not cause document horizontal overflow",
+  ).toBe(logsStressGeometry.clientWidth);
+
+  expect(
+    logsStressGeometry.docScrollHeight,
+    "10,000 log lines must be contained within inner scroll region without expanding document scrollHeight",
+  ).toBeLessThanOrEqual(logsStressGeometry.docClientHeight);
+});
+
+const task4EvidenceDir = resolve(
+  process.cwd(),
+  "../../../.omo/evidence/stylegallery-tauri-adaptation/task-4",
+);
+
+test("overlay containment and focus-order across desktop drawers and context menus", async ({
+  page,
+}) => {
+  await mkdir(task4EvidenceDir, { recursive: true });
+  await installStressMocks(page);
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.goto("/management.html");
+
+  // 1. Scroll main workspace to establish non-zero scroll offset
+  await page.getByRole("button", { name: "Accounts" }).click();
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (main) main.scrollTop = 300;
+  });
+
+  // 2. Onboarding Drawer Containment
+  const addAccountBtn = page.getByRole("button", { name: "Add account" });
+  await expect(addAccountBtn).toBeVisible();
+  await addAccountBtn.click();
+
+  const backdrop = page.locator(".drawer-backdrop");
+  const onboardingDrawer = page.locator(".drawer.onboarding-drawer");
+  await expect(backdrop).toBeVisible();
+  await expect(onboardingDrawer).toBeVisible();
+
+  // Backdrop must strictly cover viewport top and height independent of underlying scroll
+  const backdropBox = await backdrop.boundingBox();
+  expect(backdropBox).not.toBeNull();
+  expect(backdropBox?.x).toBe(0);
+  expect(backdropBox?.y).toBe(0);
+  expect(backdropBox?.width).toBeGreaterThanOrEqual(1000);
+  expect(backdropBox?.width).toBeLessThanOrEqual(1100);
+  expect(backdropBox?.height).toBe(720);
+
+  // Drawer must be anchored to top and right viewport boundaries
+  const drawerBox = await onboardingDrawer.boundingBox();
+  expect(drawerBox).not.toBeNull();
+  expect(drawerBox?.y).toBe(0);
+  expect(drawerBox?.height).toBe(720);
+  expect(drawerBox?.x).toBeGreaterThan(0);
+  expect(Math.round((drawerBox?.x ?? 0) + (drawerBox?.width ?? 0))).toBeLessThanOrEqual(1100);
+
+  // Assert no secondary document scrollbar / zero horizontal overflow during overlay
+  const drawerDocMetrics = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }));
+  expect(drawerDocMetrics.scrollWidth).toBeLessThanOrEqual(drawerDocMetrics.innerWidth);
+
+  // Labelled controls reachable by keyboard/tab
+  const searchInput = page.getByRole("textbox", { name: "Search providers" });
+  await expect(searchInput).toBeVisible();
+  await searchInput.focus();
+  await expect(searchInput).toBeFocused();
+
+  // Existing close action reachable and closes drawer
+  const closeOnboardingBtn = page.getByRole("button", { name: "Close onboarding" });
+  await expect(closeOnboardingBtn).toBeVisible();
+  await closeOnboardingBtn.click();
+  await expect(onboardingDrawer).toHaveCount(0);
+  await expect(backdrop).toHaveCount(0);
+
+  // 3. Advanced Configuration YAML Drawer Containment
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (main) main.scrollTop = 200;
+  });
+
+  const openYamlBtn = page.getByRole("button", { name: "Open YAML editor" });
+  await expect(openYamlBtn).toBeVisible();
+  await openYamlBtn.click();
+
+  const configDrawer = page.locator(".drawer.config-drawer");
+  await expect(configDrawer).toBeVisible();
+  const configBackdropBox = await backdrop.boundingBox();
+  expect(configBackdropBox?.x).toBe(0);
+  expect(configBackdropBox?.y).toBe(0);
+  expect(configBackdropBox?.width).toBeGreaterThanOrEqual(1000);
+  expect(configBackdropBox?.width).toBeLessThanOrEqual(1100);
+  expect(configBackdropBox?.height).toBe(720);
+
+  const configDrawerBox = await configDrawer.boundingBox();
+  expect(configDrawerBox?.y).toBe(0);
+  expect(configDrawerBox?.height).toBe(720);
+  expect(configDrawerBox?.x).toBeGreaterThan(0);
+  expect(Math.round((configDrawerBox?.x ?? 0) + (configDrawerBox?.width ?? 0))).toBeLessThanOrEqual(
+    1100,
+  );
+
+  // Controls reachable by keyboard/tab
+  const yamlTextarea = page.getByRole("textbox", { name: "Raw configuration YAML" });
+  await expect(yamlTextarea).toBeVisible();
+  await yamlTextarea.focus();
+  await expect(yamlTextarea).toBeFocused();
+
+  // Close action reachable and dismisses drawer
+  const cancelConfigBtn = page.getByRole("button", { name: "Cancel" });
+  await expect(cancelConfigBtn).toBeVisible();
+  await cancelConfigBtn.click();
+  await expect(configDrawer).toHaveCount(0);
+  await expect(backdrop).toHaveCount(0);
+
+  // 4. Account Custom Context Menu Containment & Dismissal
+  await page.getByRole("button", { name: "Accounts" }).click();
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (main) main.scrollTop = 350;
+  });
+
+  const targetAccountCard = page.locator(".account-card").first();
+  await expect(targetAccountCard).toBeVisible();
+  await targetAccountCard.click({ button: "right", position: { x: 80, y: 30 } });
+
+  const contextMenu = page.locator(".context-menu");
+  await expect(contextMenu).toBeVisible();
+
+  const menuBox = await contextMenu.boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(menuBox?.x).toBeGreaterThanOrEqual(0);
+  expect(menuBox?.y).toBeGreaterThanOrEqual(0);
+  expect((menuBox?.x ?? 0) + (menuBox?.width ?? 0)).toBeLessThanOrEqual(1100);
+  expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(720);
+
+  // Menu items are valid menuitem buttons
+  const copyNameItem = page.getByRole("menuitem", { name: "Copy account name" });
+  await expect(copyNameItem).toBeVisible();
+
+  await page.screenshot({
+    path: `${task4EvidenceDir}/desktop-overlay-containment.png`,
+    fullPage: false,
+  });
+
+  // Escape key dismisses context menu
+  await page.keyboard.press("Escape");
+  await expect(contextMenu).toHaveCount(0);
+});
+
+test("overlay containment under responsive 390x844 viewport and long content stress", async ({
+  page,
+}) => {
+  await mkdir(task4EvidenceDir, { recursive: true });
+
+  const longYamlPayload = Array.from(
+    { length: 150 },
+    (_, i) =>
+      `stress_config_section_${i}:\n  account_token: "tok_unbroken_${unbrokenToken.slice(0, 180)}_${i}"\n  routing_metadata:\n    endpoint_url: "https://extreme-scale-cluster-gateway-node-${i}.${unbrokenToken.slice(0, 80)}.internal.net/v1/stream"\n    retry_limit: 10\n`,
+  ).join("\n");
+
+  await page.addInitScript(() => {
+    localStorage.setItem("mahoquot.base", "");
+    localStorage.setItem("mahoquot.key", "relay-test-key");
+    localStorage.setItem("mahoquot.mgmt", "management-test-key");
+    window.open = () => null;
+  });
+
+  await page.route("**/admin/stats", (route) => route.fulfill({ json: stressAccountsStats }));
+  await page.route("**/admin/accounts/**", (route) => route.fulfill({ json: { ok: true } }));
+  await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: stressCredentialsPayload }),
+  );
+  await page.route(/\/v0\/management\/logs(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: { lines: ["gateway ready"] } }),
+  );
+  await page.route(/\/v0\/management\/config\.yaml$/, (route) => {
+    if (route.request().method() === "PUT") return route.fulfill({ json: { ok: true } });
+    return route.fulfill({
+      body: longYamlPayload,
+      contentType: "application/yaml",
+    });
+  });
+  await page.route(
+    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file)$/,
+    (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("proxy-url")) return route.fulfill({ json: { "proxy-url": "" } });
+      if (path.endsWith("routing/strategy")) {
+        return route.fulfill({ json: { strategy: "round-robin" } });
+      }
+      if (path.endsWith("request-retry")) {
+        return route.fulfill({ json: { "request-retry": 3 } });
+      }
+      return route.fulfill({ json: { "logging-to-file": false } });
+    },
+  );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/management.html");
+
+  // 1. Onboarding drawer stress on 390x844
+  await page.getByLabel("Mobile navigation").getByText("accounts").click();
+  const mobileAddBtn = page.getByRole("button", { name: "Add account" });
+  await expect(mobileAddBtn).toBeVisible();
+  await mobileAddBtn.click();
+
+  const onboardingDrawer = page.locator(".drawer.onboarding-drawer");
+  await expect(onboardingDrawer).toBeVisible();
+
+  // Drawer has internal scroll capability
+  const onboardingMetrics = await onboardingDrawer.evaluate((el) => ({
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    overflowY: window.getComputedStyle(el).overflowY,
+  }));
+  expect(onboardingMetrics.scrollHeight).toBeGreaterThan(onboardingMetrics.clientHeight);
+  expect(["auto", "scroll"].includes(onboardingMetrics.overflowY)).toBe(true);
+
+  // Close action reachable on mobile
+  const closeOnboarding = page.getByRole("button", { name: "Close onboarding" });
+  await expect(closeOnboarding).toBeVisible();
+
+  // Zero document horizontal overflow on mobile when drawer is active
+  const onboardingDocOverflow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }));
+  expect(onboardingDocOverflow.scrollWidth).toBeLessThanOrEqual(onboardingDocOverflow.innerWidth);
+
+  await closeOnboarding.click();
+  await expect(onboardingDrawer).toHaveCount(0);
+
+  // 2. Advanced YAML Drawer stress with long unbroken YAML on 390x844
+  await page.getByLabel("Mobile navigation").getByText("settings").click();
+  const openYamlBtn = page.getByRole("button", { name: "Open YAML editor" });
+  await expect(openYamlBtn).toBeVisible();
+  await openYamlBtn.click();
+
+  const configDrawer = page.locator(".drawer.config-drawer");
+  await expect(configDrawer).toBeVisible();
+
+  // Verify internal scrolling of drawer and textarea
+  const yamlField = page.getByRole("textbox", { name: "Raw configuration YAML" });
+  await expect(yamlField).toBeVisible();
+
+  const configMetrics = await configDrawer.evaluate((el) => ({
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    overflowY: window.getComputedStyle(el).overflowY,
+  }));
+  expect(configMetrics.scrollHeight).toBeGreaterThanOrEqual(configMetrics.clientHeight);
+  expect(["auto", "scroll"].includes(configMetrics.overflowY)).toBe(true);
+
+  // Close action reachable
+  const closeConfigBtn = page.getByRole("button", { name: "Close configuration editor" });
+  await expect(closeConfigBtn).toBeVisible();
+
+  // Strict check: zero document horizontal overflow under long unbroken tokens
+  const configDocOverflow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }));
+  expect(
+    configDocOverflow.scrollWidth,
+    "Long unbroken YAML in 390x844 drawer must not cause root document horizontal overflow",
+  ).toBeLessThanOrEqual(configDocOverflow.innerWidth);
+
+  await page.screenshot({
+    path: `${task4EvidenceDir}/mobile-390x844-long-content-stress.png`,
+    fullPage: false,
+  });
+
+  await closeConfigBtn.click();
+  await expect(configDrawer).toHaveCount(0);
 });

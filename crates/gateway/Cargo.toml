@@ -33,6 +33,7 @@ tracing-subscriber.workspace = true
 futures.workspace = true
 rand.workspace = true
 base64.workspace = true
+jsonwebtoken.workspace = true
 prost.workspace = true
 prost-types.workspace = true
 

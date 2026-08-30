@@ -64,7 +64,8 @@ fn warmup_request(member: &AccountMember) -> Option<WarmupRequest> {
         ProviderAccount::Claude(_)
         | ProviderAccount::Cursor(_)
         | ProviderAccount::Kiro(_)
-        | ProviderAccount::Zcode(_) => None,
+        | ProviderAccount::Zcode(_)
+        | ProviderAccount::Generic(_) => None,
     }
 }
 

@@ -34,6 +34,20 @@
         "skipTaskbar": true,
         "shadow": false,
         "visible": false
+      },
+      {
+        "label": "traypanel",
+        "title": "mahoquot",
+        "url": "index.html?surface=tray&v=2",
+        "width": 340,
+        "height": 640,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "visible": false
       }
     ],
     "security": {

@@ -147,6 +147,50 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
     }
 
     if member.kind() != crate::account::ProviderKind::Antigravity {
+        if member.kind() == crate::account::ProviderKind::Generic {
+            let adapter = member.generic_adapter().unwrap_or_else(|| "openai-chat".to_string());
+            let openai_body = plan
+                .openai_body
+                .as_ref()
+                .ok_or_else(|| "generic adapter requires OpenAI-compatible input".to_string())?;
+            if adapter == "google" {
+                let project = member.project_id().unwrap_or_default();
+                let translated = compat::openai_to_antigravity(openai_body, &project)?;
+                return Ok(UpstreamTarget {
+                    url: crate::url::build_antigravity_url(member.upstream_override.as_deref()),
+                    body: Bytes::from(translated.to_string()),
+                    protocol: compat::Protocol::Antigravity,
+                });
+            }
+            if adapter == "anthropic" {
+                return Ok(UpstreamTarget {
+                    url: crate::url::build_provider_url(
+                        member.kind(), member.upstream_override.as_deref(), "/v1/messages",
+                    ),
+                    body: Bytes::from(serde_json::to_vec(&compat::claude::openai_to_anthropic(openai_body)?)
+                        .map_err(|error| error.to_string())?),
+                    protocol: compat::Protocol::Anthropic,
+                });
+            }
+            if adapter == "openai-responses" {
+                return Ok(UpstreamTarget {
+                    url: crate::url::build_provider_url(
+                        member.kind(), member.upstream_override.as_deref(), "/v1/responses",
+                    ),
+                    body: plan.body.clone(),
+                    protocol: compat::Protocol::Codex,
+                });
+            }
+            return Ok(UpstreamTarget {
+                url: crate::url::build_provider_url(
+                    member.kind(),
+                    member.upstream_override.as_deref(),
+                    "/v1/chat/completions",
+                ),
+                body: plan.original_body.clone(),
+                protocol: compat::Protocol::Codex,
+            });
+        }
         if member.kind() == crate::account::ProviderKind::Cursor {
             let openai = plan
                 .openai_body
@@ -621,6 +665,19 @@ async fn finish_success(
     let protocol = session.protocol;
     let content_type = content_type_of(&resp);
     capture_usage(member, resp.headers());
+
+    if member.kind() == crate::account::ProviderKind::Generic {
+        if content_type
+            .as_deref()
+            .is_some_and(|ct| ct.trim_start().starts_with("text/html"))
+        {
+            return Err("upstream returned html instead of an api response".to_string());
+        }
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
+        return Ok(stream_response(resp, status_code));
+    }
 
     if plan.mode == RelayMode::Native || plan.mode == RelayMode::GeminiCountTokens {
         if content_type

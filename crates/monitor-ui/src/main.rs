@@ -21,6 +21,8 @@ use tauri::{
 const MAIN_WINDOW_LABEL: &str = "main";
 const NOTCH_WINDOW_LABEL: &str = "notch";
 const TRAY_ID: &str = "mahoquot";
+const TRAY_PANEL_LABEL: &str = "traypanel";
+const PANEL_WIDTH_LOGICAL: f64 = 340.0;
 const NOTCH_EXPANDED_WIDTH: f64 = 420.0;
 const NOTCH_EXPANDED_HEIGHT: f64 = 480.0;
 const NOTCH_COMPACT_WIDTH: f64 = 8.0;
@@ -76,7 +78,11 @@ fn install_gateway_signal_guard() {
 /// Shared source of truth for the notch's expanded state: the native hover
 /// watcher and the `expand_notch`/`collapse_notch` commands both read and
 /// write it, so neither can disagree with the other about the window's size.
-struct NotchHoverState(std::sync::Arc<std::sync::atomic::AtomicBool>);
+struct NotchHoverState {
+    expanded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    collapse_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
 
 /// Tokens returned by `addGlobal/LocalMonitorForEventsMatchingMask:`, kept so
 /// the monitors can be removed (and their blocks released) at exit instead of
@@ -363,9 +369,13 @@ fn cursor_location() -> tray::CursorPoint {
 }
 
 #[cfg(target_os = "macos")]
-fn sync_notch_hover(app: &AppHandle, expanded: &std::sync::atomic::AtomicBool) {
+fn sync_notch_hover(
+    app: &AppHandle,
+    expanded: &std::sync::atomic::AtomicBool,
+    collapse_pending: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    generation: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+) {
     use std::sync::atomic::Ordering;
-    use tauri::Emitter;
 
     let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) else {
         return;
@@ -387,6 +397,7 @@ fn sync_notch_hover(app: &AppHandle, expanded: &std::sync::atomic::AtomicBool) {
         return;
     }
     let was_open = expanded.load(Ordering::Relaxed);
+    let was_pending = collapse_pending.load(Ordering::Relaxed);
     // Opening needs a deliberate touch of the strip, but staying open only needs
     // the pointer to remain in the edge corridor, so travelling out to the
     // detail card never folds the panel away mid-reach.
@@ -399,31 +410,71 @@ fn sync_notch_hover(app: &AppHandle, expanded: &std::sync::atomic::AtomicBool) {
         // wry's WKWebView builds its own tracking areas, which stay silent while
         // another app is frontmost, so the webview can never hit-test the icons
         // itself. Forward the pointer the global monitor can still see.
-        let _ = app.emit_to(
-            tauri::EventTarget::webview_window(NOTCH_WINDOW_LABEL),
-            "notch-cursor",
-            tray::cursor_to_window_local(&rect, &cursor),
-        );
+        if let Some(point) = tray::cursor_to_window_local(&rect, &cursor) {
+            let _ = window.eval(format!(
+                "(()=>{{const p={{x:{},y:{}}};document.querySelectorAll('.notch-tooltip-anchor.native-visible').forEach(e=>e.classList.remove('native-visible'));const h=document.elementFromPoint(p.x,p.y)?.closest('[data-hover-provider]');h?.querySelector('.notch-tooltip-anchor')?.classList.add('native-visible');}})();",
+                point.x, point.y
+            ));
+        } else {
+            let _ = window.eval(
+                "window.dispatchEvent(new CustomEvent('mahoquot:notch-cursor',{detail:null}));",
+            );
+        }
     }
-    let Some(transition) = tray::notch_hover_transition(was_open, inside) else {
-        return;
-    };
-    let open = transition == tray::HoverTransition::Expand;
-    expanded.store(open, Ordering::Relaxed);
-    if open {
-        resize_notch(app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
-    } else {
-        resize_notch(app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
+    match tray::brink_hover_intent(was_open, was_pending, inside) {
+        tray::HoverIntent::Expand => {
+            collapse_pending.store(false, Ordering::Relaxed);
+            generation.fetch_add(1, Ordering::Relaxed);
+            expanded.store(true, Ordering::Relaxed);
+            resize_notch(app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
+            let _ = window.eval(
+                "(()=>{document.querySelector('.notch-shell')?.classList.add('expanded','open');document.querySelector('.notch-surface')?.classList.add('expanded');window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));})();",
+            );
+            println!(
+                "notch hover open=true rect=({},{},{},{}) cursor=({},{})",
+                rect.x, rect.y, rect.width, rect.height, cursor.x, cursor.y
+            );
+        }
+        tray::HoverIntent::ScheduleCollapse => {
+            collapse_pending.store(true, Ordering::Relaxed);
+            let scheduled_generation = generation.fetch_add(1, Ordering::Relaxed) + 1;
+            let app = app.clone();
+            let state = app.state::<NotchHoverState>();
+            let expanded = state.expanded.clone();
+            let collapse_pending = state.collapse_pending.clone();
+            let generation = state.generation.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if generation.load(Ordering::Relaxed) != scheduled_generation
+                    || !collapse_pending.load(Ordering::Relaxed)
+                {
+                    return;
+                }
+                collapse_pending.store(false, Ordering::Relaxed);
+                expanded.store(false, Ordering::Relaxed);
+                if let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) {
+                    let _ = window.eval(
+                        "(()=>{document.querySelector('.notch-shell')?.classList.remove('expanded','open');document.querySelector('.notch-surface')?.classList.remove('expanded');document.querySelectorAll('.notch-tooltip-anchor.native-visible').forEach(e=>e.classList.remove('native-visible'));window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:false}));})();",
+                    );
+                }
+                println!("notch hover open=false delayed=true");
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                let current = generation.load(Ordering::Relaxed);
+                if tray::should_apply_delayed_collapse(
+                    scheduled_generation,
+                    current,
+                    expanded.load(Ordering::Relaxed),
+                ) {
+                    resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
+                }
+            });
+        }
+        tray::HoverIntent::CancelCollapse => {
+            collapse_pending.store(false, Ordering::Relaxed);
+            generation.fetch_add(1, Ordering::Relaxed);
+        }
+        tray::HoverIntent::None => {}
     }
-    let _ = app.emit_to(
-        tauri::EventTarget::webview_window(NOTCH_WINDOW_LABEL),
-        "notch-hover",
-        open,
-    );
-    println!(
-        "notch hover open={open} rect=({},{},{},{}) cursor=({},{})",
-        rect.x, rect.y, rect.width, rect.height, cursor.x, cursor.y
-    );
 }
 
 /// Logical bounds of every connected display in AppKit screen space (origin
@@ -455,25 +506,39 @@ fn display_logical_bounds(app: &AppHandle) -> Vec<tray::ScreenRect> {
 #[cfg(target_os = "macos")]
 fn start_notch_hover_watch(
     app: &AppHandle,
-    expanded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    state: &NotchHoverState,
 ) {
     use block::ConcreteBlock;
     use objc::{class, msg_send, sel, sel_impl};
 
     let global_handle = app.clone();
-    let global_state = expanded.clone();
+    let global_state = state.expanded.clone();
+    let global_pending = state.collapse_pending.clone();
+    let global_generation = state.generation.clone();
     let global_handler = ConcreteBlock::new(move |_event: *mut objc::runtime::Object| {
-        sync_notch_hover(&global_handle, &global_state);
+        sync_notch_hover(
+            &global_handle,
+            &global_state,
+            &global_pending,
+            &global_generation,
+        );
     })
     .copy();
 
     // A global monitor is silent while Mahoquot itself is frontmost, so the
     // active-app case needs a local monitor, which must hand the event back.
     let local_handle = app.clone();
-    let local_state = expanded;
+    let local_state = state.expanded.clone();
+    let local_pending = state.collapse_pending.clone();
+    let local_generation = state.generation.clone();
     let local_handler = ConcreteBlock::new(
         move |event: *mut objc::runtime::Object| -> *mut objc::runtime::Object {
-            sync_notch_hover(&local_handle, &local_state);
+            sync_notch_hover(
+                &local_handle,
+                &local_state,
+                &local_pending,
+                &local_generation,
+            );
             event
         },
     )
@@ -573,17 +638,17 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
 
 #[tauri::command]
 fn expand_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>) {
-    state
-        .0
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    state.collapse_pending.store(false, std::sync::atomic::Ordering::Relaxed);
+    state.expanded.store(true, std::sync::atomic::Ordering::Relaxed);
+    state.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     resize_notch(&app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
 }
 
 #[tauri::command]
 fn collapse_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>) {
-    state
-        .0
-        .store(false, std::sync::atomic::Ordering::Relaxed);
+    state.collapse_pending.store(false, std::sync::atomic::Ordering::Relaxed);
+    state.expanded.store(false, std::sync::atomic::Ordering::Relaxed);
+    state.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
 }
 
@@ -600,71 +665,42 @@ fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
 fn handle_tray_action<R: Runtime>(app: &AppHandle<R>, action: tray::TrayMenuAction) {
     match action {
         tray::TrayMenuAction::ToggleNotch => toggle_notch_window(app),
-        tray::TrayMenuAction::RefreshUsage => {
-            refresh_windows(app);
-            let handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = refresh_tray_quota(&handle).await {
-                    eprintln!("tray quota refresh failed: {error}");
-                }
-            });
-        }
+        tray::TrayMenuAction::RefreshUsage => refresh_windows(app),
         tray::TrayMenuAction::ToggleConsole => toggle_operations_console(app),
         tray::TrayMenuAction::Quit => app.exit(0),
     }
 }
 
-/// Rebuilds the tray menu with one live quota line per reporting account.
-async fn refresh_tray_quota<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let (client, base_url, api_key) = {
-        let config = app.state::<Config>();
-        (config.client.clone(), config.base_url.clone(), config.api_key.clone())
+fn toggle_tray_panel<R: Runtime>(
+    app: &AppHandle<R>,
+    icon_x: f64,
+    icon_y: f64,
+    icon_width: f64,
+    icon_height: f64,
+) {
+    let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) else {
+        return;
     };
-    let stats = fetch_stats(&client, &base_url, &api_key).await?;
-    let rows = stats::quota_menu_lines(&stats);
-
-    let toggle = MenuItem::with_id(app, tray::MENU_ID_TOGGLE, "Show / Hide Mahoquot Notch", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    let refresh = MenuItem::with_id(app, tray::MENU_ID_REFRESH, "Refresh Usage", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    let gateway = MenuItem::with_id(app, tray::MENU_ID_GATEWAY, "Show / Hide Operations Console", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    let separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
-    let quit = MenuItem::with_id(app, tray::MENU_ID_QUIT, "Quit mahoquot", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    let quota_header = MenuItem::with_id(app, "quota-header", "Quota (live)", false, None::<&str>)
-        .map_err(|e| e.to_string())?;
-
-    let mut quota_refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
-    quota_refs.push(&separator);
-    quota_refs.push(&quota_header);
-    let row_items: Vec<MenuItem<R>> = rows
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
-            MenuItem::with_id(app, format!("quota-row-{index}"), row, false, None::<&str>)
-                .map_err(|e| e.to_string())
-        })
-        .collect::<Result<_, _>>()?;
-    let empty_item = MenuItem::with_id(app, "quota-empty", "No usage reported", false, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    if row_items.is_empty() {
-        quota_refs.push(&empty_item);
-    } else {
-        for item in &row_items {
-            quota_refs.push(item);
-        }
+    if panel.is_visible().unwrap_or(false) {
+        let _ = panel.hide();
+        return;
     }
 
-    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<R>> =
-        vec![&toggle, &refresh, &gateway];
-    refs.extend(quota_refs);
-    refs.push(&quit);
-    let menu = Menu::with_items(app, &refs).map_err(|e| e.to_string())?;
-    let tray = app.tray_by_id(TRAY_ID).ok_or("tray unavailable")?;
-    tray.set_menu(Some(menu)).map_err(|e| e.to_string())
+    let scale = panel.scale_factor().unwrap_or(1.0);
+    let panel_width = (PANEL_WIDTH_LOGICAL * scale).round();
+    let icon_right = icon_x + icon_width;
+    let below_icon = icon_y + icon_height + 6.0;
+    let x = (icon_right - panel_width).max(icon_x);
+    let y = below_icon;
+    panel
+        .set_position(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32))
+        .map_err(|error| eprintln!("failed to position tray panel: {error}"))
+        .ok();
+    let _ = panel.show();
+    let _ = panel.set_focus();
 }
 
+/// Rebuilds the tray menu with one live quota line per reporting account.
 fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItem::with_id(
         app,
@@ -700,10 +736,29 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     let mut tray_icon = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .tooltip("mahoquot")
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
             if let Some(action) = tray::resolve_tray_menu_action(event.id().as_ref()) {
                 handle_tray_action(app, action);
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                rect,
+                ..
+            } = event
+            {
+                let (icon_x, icon_y) = match rect.position {
+                    tauri::Position::Physical(point) => (point.x as f64, point.y as f64),
+                    tauri::Position::Logical(point) => (point.x, point.y),
+                };
+                let (icon_width, icon_height) = match rect.size {
+                    tauri::Size::Physical(size) => (size.width as f64, size.height as f64),
+                    tauri::Size::Logical(size) => (size.width, size.height),
+                };
+                toggle_tray_panel(tray.app_handle(), icon_x, icon_y, icon_width, icon_height);
             }
         });
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -711,24 +766,6 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     }
     tray_icon.build(app)?;
 
-    {
-        let handle = app.handle().clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                match refresh_tray_quota(&handle).await {
-                    Ok(()) => {
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                    }
-                    Err(error) => {
-                        // the embedded gateway may still be binding at startup;
-                        // retry quickly before settling into the steady cadence
-                        eprintln!("tray quota refresh failed: {error}");
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    }
-                }
-            }
-        });
-    }
 
     #[cfg(target_os = "macos")]
     apply_dock_icon();
@@ -765,7 +802,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     });
 
     #[cfg(target_os = "macos")]
-    start_notch_hover_watch(app.handle(), app.state::<NotchHoverState>().0.clone());
+    start_notch_hover_watch(app.handle(), &app.state::<NotchHoverState>());
 
     println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
     Ok(())
@@ -790,6 +827,33 @@ async fn load_stats(state: tauri::State<'_, Config>) -> Result<MonitorView, Stri
 #[tauri::command]
 fn gateway_url(state: tauri::State<'_, Config>) -> String {
     state.base_url.clone()
+}
+
+#[tauri::command]
+fn open_console(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|error| format!("invalid external URL: {error}"))?;
+    if parsed.scheme() != "https" {
+        return Err("only https external URLs are allowed".to_string());
+    }
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map_err(|error| format!("failed to open browser: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 async fn post_admin(cfg: &Config, path: &str) -> Result<serde_json::Value, String> {
@@ -851,9 +915,11 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(gateway)
-        .manage(NotchHoverState(std::sync::Arc::new(
-            std::sync::atomic::AtomicBool::new(false),
-        )))
+        .manage(NotchHoverState {
+            expanded: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            collapse_pending: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        })
         .manage(Config {
             base_url,
             api_key,
@@ -863,6 +929,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_stats,
             gateway_url,
+            open_console,
+            open_external_url,
+            quit_app,
             gateway_status,
             start_gateway,
             stop_gateway,
@@ -875,6 +944,11 @@ fn main() {
         ])
         .setup(initialize_native_ui)
         .on_window_event(|window, event| {
+            if window.label() == TRAY_PANEL_LABEL {
+                if let tauri::WindowEvent::Focused(false) = event {
+                    let _ = window.hide();
+                }
+            }
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();

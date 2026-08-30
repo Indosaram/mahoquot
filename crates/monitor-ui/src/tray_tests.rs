@@ -1,7 +1,7 @@
 use crate::tray::{
-    calculate_notch_window_position, calculate_notch_window_physical_position, cursor_within, cursor_within_edge_corridor, default_auth_dir, notch_hover_transition, resolve_gateway_binary,
+    calculate_notch_window_position, calculate_notch_window_physical_position, cursor_within, cursor_within_edge_corridor, default_auth_dir, resolve_gateway_binary,
     cursor_to_window_local, gateway_startup_action, screen_rect_touches_display, CursorPoint,
-    DisplayBounds, GatewayStartup, HoverTransition, LocalPoint,
+    DisplayBounds, GatewayStartup, LocalPoint,
     NotchInsets, ScreenRect, WindowDimensions, MonitorSummary, WindowPosition,
     MENU_ID_GATEWAY, MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE, pick_notched_monitor_index,
 };
@@ -116,18 +116,26 @@ fn screen_overlap_detects_stranded_window_after_display_change() {
 }
 
 #[test]
-fn notch_hover_transition_fires_only_when_the_state_actually_flips() {
+fn delayed_collapse_applies_only_to_the_latest_closed_generation() {
+    assert!(super::tray::should_apply_delayed_collapse(7, 7, false));
+    assert!(!super::tray::should_apply_delayed_collapse(7, 8, false));
+    assert!(!super::tray::should_apply_delayed_collapse(7, 7, true));
+}
+
+#[test]
+fn brink_hover_intent_delays_collapse_and_cancels_it_on_reentry() {
+    use super::tray::HoverIntent;
+
+    assert_eq!(super::tray::brink_hover_intent(false, false, true), HoverIntent::Expand);
     assert_eq!(
-        notch_hover_transition(false, true),
-        Some(HoverTransition::Expand)
+        super::tray::brink_hover_intent(true, false, false),
+        HoverIntent::ScheduleCollapse
     );
     assert_eq!(
-        notch_hover_transition(true, false),
-        Some(HoverTransition::Collapse)
+        super::tray::brink_hover_intent(true, true, true),
+        HoverIntent::CancelCollapse
     );
-    // Repeated pointer samples inside or outside must not re-drive the window.
-    assert_eq!(notch_hover_transition(true, true), None);
-    assert_eq!(notch_hover_transition(false, false), None);
+    assert_eq!(super::tray::brink_hover_intent(true, true, false), HoverIntent::None);
 }
 
 #[test]

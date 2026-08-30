@@ -4,7 +4,7 @@ use mahoquot_providers::{
     ANTIGRAVITY_MODELS, CLAUDE_MODELS, KIRO_MODELS, ZCODE_MODELS,
 };
 
-use crate::account::ProviderKind;
+use crate::account::{AccountMember, ProviderKind};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ModelEntry {
@@ -91,6 +91,24 @@ pub fn model_entries(
         }
     }
 
+    entries
+}
+
+pub fn generic_model_entries(members: &[std::sync::Arc<AccountMember>]) -> Vec<ModelEntry> {
+    let mut entries = Vec::new();
+    for member in members {
+        let Some((provider, models)) = member.generic_models() else {
+            continue;
+        };
+        for id in models {
+            if !entries.iter().any(|entry: &ModelEntry| entry.id == id) {
+                entries.push(ModelEntry {
+                    id,
+                    owned_by: provider.clone(),
+                });
+            }
+        }
+    }
     entries
 }
 

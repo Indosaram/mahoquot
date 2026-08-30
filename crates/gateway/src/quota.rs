@@ -3,7 +3,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::account::{AccountMember, ProviderKind};
 use crate::state::AppState;
-use crate::usage::WhamUsage;
+use crate::usage::{
+    parse_cursor_usage_summary, parse_kiro_usage_summary, parse_zcode_usage_summary, WhamUsage,
+};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_RESET_URL: &str =
@@ -13,6 +15,9 @@ const CODEX_RESET_URL: &str =
 const CODEX_USER_AGENT: &str = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal";
 const CLAUDE_API_BASE: &str = "https://api.anthropic.com";
 const CLAUDE_USAGE_PATH: &str = "/api/oauth/usage";
+const CURSOR_USAGE_URL: &str = "https://api2.cursor.sh/auth/usage-summary";
+const KIRO_USAGE_URL: &str = "https://q.us-east-1.amazonaws.com/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST";
+const ZCODE_USAGE_URL: &str = "https://bigmodel.cn/api/monitor/usage/quota/limit";
 /// Undocumented and version-dated: the endpoint is gated on this exact beta
 /// header, and a new date means the payload can change without notice.
 const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -62,10 +67,48 @@ pub async fn refresh_account_usage(
         ProviderKind::Codex => refresh_codex_usage(state, member).await,
         ProviderKind::Antigravity => refresh_antigravity_usage(state, member).await,
         ProviderKind::Claude => refresh_claude_usage(state, member).await,
-        ProviderKind::Cursor | ProviderKind::Kiro | ProviderKind::Zcode => {
-            Err(QuotaError::Unsupported)
+        ProviderKind::Cursor => {
+            let url = member.upstream_override.as_deref().map(|base| format!("{}/auth/usage-summary", base.trim_end_matches('/'))).unwrap_or_else(|| CURSOR_USAGE_URL.to_string());
+            refresh_json_usage(member, &state.http_client, &url, parse_cursor_usage_summary).await
         }
+        ProviderKind::Kiro => {
+            let url = member.upstream_override.as_deref().map(|base| format!("{}/getUsageLimits", base.trim_end_matches('/'))).unwrap_or_else(|| KIRO_USAGE_URL.to_string());
+            refresh_json_usage(member, &state.http_client, &url, parse_kiro_usage_summary).await
+        }
+        ProviderKind::Zcode => {
+            let url = member.upstream_override.as_deref().map(|base| format!("{}/api/monitor/usage/quota/limit", base.trim_end_matches('/'))).unwrap_or_else(|| ZCODE_USAGE_URL.to_string());
+            refresh_json_usage(member, &state.http_client, &url, parse_zcode_usage_summary).await
+        }
+        ProviderKind::Generic => Err(QuotaError::Unsupported),
     }
+}
+
+async fn refresh_json_usage(
+    member: &Arc<AccountMember>,
+    client: &reqwest::Client,
+    url: &str,
+    parser: fn(&serde_json::Value, i64) -> crate::usage::AccountUsage,
+) -> Result<(), QuotaError> {
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    let mut request = client.get(url);
+    for (name, value) in member.build_upstream_headers() {
+        request = request.header(name, value);
+    }
+    let response = request.send().await.map_err(|error| QuotaError::Upstream(error.to_string()))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(QuotaError::Unauthorized);
+    }
+    if !status.is_success() {
+        return Err(QuotaError::Upstream(format!("quota endpoint returned {status}")));
+    }
+    let body = response.json::<serde_json::Value>().await.map_err(|error| QuotaError::Upstream(error.to_string()))?;
+    let usage = parser(&body, now_unix);
+    member.set_usage(usage.clone());
+    Ok(())
 }
 
 /// Claude subscription quota, polled rather than scraped off relayed responses.

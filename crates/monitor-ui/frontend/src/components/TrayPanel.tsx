@@ -1,0 +1,231 @@
+import { useMemo, useState } from "react";
+import type { NormalizedAccount } from "../lib/accounts";
+import type { QuotaWindow } from "../lib/schemas";
+
+interface TrayTile {
+  readonly label: string;
+  readonly usedPercent: number;
+  readonly resetIn: string | null;
+}
+
+interface TrayCard {
+  readonly account: NormalizedAccount;
+  readonly tiles: readonly TrayTile[];
+}
+
+const planBadge = (plan: string | null | undefined): string | null => {
+  const normalized = plan?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "prolite") return "Pro 5x";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const windowName = (window: QuotaWindow): string => {
+  if (window.limit_name) return window.limit_name;
+  const minutes = window.window_minutes ?? null;
+  if (minutes === 300) return "Session";
+  if (minutes === 10080) return "Weekly";
+  if (minutes) return `${minutes}m`;
+  return "Quota";
+};
+
+const formatCountdown = (seconds: number): string => {
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.max(0, Math.floor((seconds % 3_600) / 60));
+  if (days > 0) return `${days}d${hours}h`;
+  if (hours > 0) return `${hours}h${minutes}m`;
+  return `${minutes}m`;
+};
+
+const secondsUntilReset = (window: QuotaWindow, nowUnixSecs: number): number | null => {
+  if (typeof window.reset_after_seconds === "number") return window.reset_after_seconds;
+  if (typeof window.reset_at_unix === "number") {
+    const delta = window.reset_at_unix - nowUnixSecs;
+    return delta > 0 ? delta : null;
+  }
+  return null;
+};
+
+const tileOf = (window: QuotaWindow | null | undefined, nowUnixSecs: number): TrayTile | null => {
+  if (!window) return null;
+  const used = window.used_percent;
+  if (typeof used !== "number") return null;
+  const remaining = secondsUntilReset(window, nowUnixSecs);
+  return {
+    label: windowName(window),
+    usedPercent: used,
+    resetIn: remaining !== null ? formatCountdown(remaining) : null,
+  };
+};
+
+const tilesOf = (account: NormalizedAccount): readonly TrayTile[] => {
+  const usage = account.usage;
+  if (!usage) return [];
+  const nowUnixSecs = Math.floor(Date.now() / 1000);
+  const core = [usage.primary, usage.secondary]
+    .map((window) => tileOf(window, nowUnixSecs))
+    .filter((tile): tile is TrayTile => tile !== null);
+  const grouped = (usage.groups ?? []).flatMap((group) =>
+    group.buckets
+      .map((bucket) =>
+        tileOf(
+          {
+            limit_name: bucket.display_name || group.display_name || null,
+            used_percent: bucket.used_percent ?? null,
+            reset_after_seconds: bucket.reset_after_seconds ?? null,
+            reset_at_unix: bucket.reset_at_unix ?? null,
+            window_minutes: null,
+          },
+          nowUnixSecs,
+        ),
+      )
+      .filter((tile): tile is TrayTile => tile !== null),
+  );
+  return [...core, ...grouped];
+};
+
+const tileTone = (usedPercent: number): string => {
+  if (usedPercent >= 100) return "tray-bar full";
+  if (usedPercent >= 80) return "tray-bar amber";
+  return "tray-bar";
+};
+
+const providerChipLabel = (provider: string): string =>
+  provider.charAt(0).toUpperCase() + provider.slice(1);
+
+interface TrayPanelProps {
+  readonly accounts: readonly NormalizedAccount[];
+  readonly proxyUrl: string;
+  readonly online: boolean;
+  readonly fetchedAgoSecs: number | null;
+  readonly onRefresh: () => void;
+  readonly onOpenConsole: () => void;
+  readonly onQuit: () => void;
+}
+
+export const TrayPanel = ({
+  accounts,
+  proxyUrl,
+  online,
+  fetchedAgoSecs,
+  onRefresh,
+  onOpenConsole,
+  onQuit,
+}: TrayPanelProps) => {
+  const [filter, setFilter] = useState<string>("all");
+
+  const providers = useMemo(
+    () => [...new Set(accounts.map((account) => account.provider))],
+    [accounts],
+  );
+
+  const visible = useMemo(
+    () => (filter === "all" ? accounts : accounts.filter((account) => account.provider === filter)),
+    [accounts, filter],
+  );
+
+  const cards: readonly TrayCard[] = visible.map((account) => ({
+    account,
+    tiles: tilesOf(account),
+  }));
+
+  return (
+    <div className="tray-shell" data-mahoquot-surface="tray">
+      <header className="tray-header">
+        <strong>mahoquot</strong>
+      </header>
+
+      <div className={`tray-proxy ${online ? "online" : "offline"}`}>
+        <span className="tray-proxy-dot" aria-hidden />
+        <span className="tray-proxy-label">Proxy</span>
+        <span className="tray-proxy-url">{proxyUrl}</span>
+        <button
+          type="button"
+          className="tray-copy"
+          aria-label="Copy proxy URL"
+          onClick={() => void navigator.clipboard?.writeText(proxyUrl)}
+        >
+          ⧉
+        </button>
+      </div>
+
+      <div className="tray-chips" role="tablist" aria-label="Provider filter">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter === "all"}
+          className={`tray-chip${filter === "all" ? " active" : ""}`}
+          onClick={() => setFilter("all")}
+        >
+          All
+        </button>
+        {providers.map((provider) => (
+          <button
+            key={provider}
+            type="button"
+            role="tab"
+            aria-selected={filter === provider}
+            className={`tray-chip${filter === provider ? " active" : ""}`}
+            data-provider={provider}
+            onClick={() => setFilter(provider)}
+          >
+            {providerChipLabel(provider)}
+          </button>
+        ))}
+      </div>
+
+      <div className="tray-cards">
+        {cards.map(({ account, tiles }) => (
+          <article className="tray-card" key={account.id} data-provider={account.provider}>
+            <div className="tray-card-head">
+              <span className={`tray-glyph ${account.provider}`} aria-hidden />
+              <strong className="tray-card-name">{account.email || account.label}</strong>
+              {planBadge(account.usage?.plan_type) && (
+                <span className="tray-plan">{planBadge(account.usage?.plan_type)}</span>
+              )}
+            </div>
+            <div className="tray-tiles">
+              {tiles.map((tile) => (
+                <div className="tray-tile" key={tile.label}>
+                  <div className="tray-tile-row">
+                    <span className="tray-tile-name">{tile.label}</span>
+                    {tile.resetIn && <span className="tray-tile-reset">{tile.resetIn}</span>}
+                    <span className={`tray-tile-percent${tile.usedPercent >= 100 ? " full" : ""}`}>
+                      {Math.round(tile.usedPercent)}%
+                    </span>
+                  </div>
+                  <div className={tileTone(tile.usedPercent)}>
+                    <i style={{ width: `${Math.min(100, Math.max(0, tile.usedPercent))}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="tray-card-foot">
+              {fetchedAgoSecs === null ? "" : `${fetchedAgoSecs} seconds ago`}
+            </div>
+          </article>
+        ))}
+        {!cards.length && (
+          <div className="tray-empty" data-testid="tray-empty">
+            {accounts.length
+              ? "No accounts match this filter."
+              : "No accounts or credentials found."}
+          </div>
+        )}
+      </div>
+
+      <footer className="tray-footer">
+        <button type="button" onClick={onRefresh}>
+          ⟳ Refresh
+        </button>
+        <button type="button" onClick={onOpenConsole}>
+          ▢ Open mahoquot
+        </button>
+        <button type="button" onClick={onQuit}>
+          ⊘ Quit mahoquot
+        </button>
+      </footer>
+    </div>
+  );
+};

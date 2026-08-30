@@ -32,9 +32,24 @@ pub fn build_provider_url(
         // accounts that did not record one.
         ProviderKind::Kiro => mahoquot_providers::KIRO_API_HOST_TEMPLATE
             .replace("{region}", mahoquot_providers::KIRO_DEFAULT_REGION),
+        ProviderKind::Generic => upstream_override.unwrap_or_default().to_string(),
     };
 
-    let base = upstream_override.unwrap_or(&base).trim_end_matches('/');
+    join_provider_path(upstream_override.unwrap_or(&base), req_path)
+}
+
+pub fn join_provider_path(base: &str, req_path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base.ends_with("/chat/completions")
+        || base.ends_with("/responses")
+        || base.ends_with("/messages")
+        || base.ends_with("/openai/chat")
+    {
+        return base.to_string();
+    }
+    if base.ends_with("/v1") && req_path.starts_with("/v1/") {
+        return format!("{base}{}", &req_path[3..]);
+    }
     format!("{base}{req_path}")
 }
 
@@ -65,6 +80,18 @@ pub fn build_target_url(upstream_override: Option<&str>, req_path: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_provider_paths_dedupe_v1_and_preserve_full_endpoints() {
+        assert_eq!(
+            join_provider_path("https://api.deepseek.com/v1", "/v1/chat/completions"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+        assert_eq!(
+            join_provider_path("https://example.test/openai/chat", "/v1/chat/completions"),
+            "https://example.test/openai/chat"
+        );
+    }
     use crate::account::ProviderKind;
 
     #[test]

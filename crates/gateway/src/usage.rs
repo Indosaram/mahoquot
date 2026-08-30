@@ -406,6 +406,101 @@ pub fn parse_claude_usage_summary(body: &serde_json::Value, now_unix: i64) -> Ac
     }
 }
 
+fn usage_bucket(
+    limit_name: &str,
+    used_percent: f64,
+    reset_at_unix: Option<i64>,
+    _now_unix: i64,
+) -> QuotaBucket {
+    QuotaBucket {
+        bucket_id: None,
+        display_name: Some(limit_name.to_string()),
+        window: None,
+        used_percent: Some((used_percent.clamp(0.0, 100.0) * 100.0).round() / 100.0),
+        reset_at_unix,
+    }
+}
+
+pub fn parse_cursor_usage_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
+    let mut buckets = Vec::new();
+    let usage = body.get("individualUsage").or_else(|| body.get("individual_usage"));
+    for (key, label) in [("plan", "Plan"), ("onDemand", "On-Demand")] {
+        let value = usage.and_then(|usage| usage.get(key));
+        if !value.and_then(|value| value.get("enabled")).and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let limit = value.and_then(|value| value.get("limit")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let remaining = value.and_then(|value| value.get("remaining")).and_then(|v| v.as_f64()).unwrap_or(limit);
+        let used = if limit > 0.0 { (1.0 - remaining / limit) * 100.0 } else { 0.0 };
+        buckets.push(usage_bucket(label, used, None, now_unix));
+    }
+    AccountUsage {
+        plan_type: body
+            .get("membershipType")
+            .or_else(|| body.get("membership_type"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        groups: if buckets.is_empty() {
+            Vec::new()
+        } else {
+            vec![QuotaGroup { display_name: Some("Cursor".to_string()), buckets, models: None }]
+        },
+        ..AccountUsage::default()
+    }
+}
+
+pub fn parse_kiro_usage_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
+    let buckets = body
+        .get("usageBreakdownList")
+        .or_else(|| body.get("usage_breakdown_list"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let limit = item.get("usageLimit").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let used = item.get("currentUsage").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let percent = if limit > 0.0 { used / limit * 100.0 } else { 0.0 };
+            usage_bucket(
+                item.get("displayName").and_then(|v| v.as_str()).unwrap_or("Usage"),
+                percent,
+                item.get("nextDateReset").and_then(|v| v.as_i64()),
+                now_unix,
+            )
+        })
+        .collect::<Vec<_>>();
+    AccountUsage {
+        groups: if buckets.is_empty() { Vec::new() } else { vec![QuotaGroup { display_name: Some("Kiro".to_string()), buckets, models: None }] },
+        ..AccountUsage::default()
+    }
+}
+
+pub fn parse_zcode_usage_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
+    let mut groups = Vec::new();
+    for limit in body
+        .get("data")
+        .and_then(|v| v.get("limits"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let Some(label) = limit.get("type").and_then(|v| v.as_str()).and_then(|kind| match kind {
+            "TOKENS_LIMIT" => Some("Tokens"),
+            "TIME_LIMIT" => Some("MCP Usage"),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let bucket = usage_bucket(
+            label,
+            limit.get("percentage").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            limit.get("nextResetTime").and_then(|v| v.as_i64()),
+            now_unix,
+        );
+        groups.push(QuotaGroup { display_name: Some(label.to_string()), buckets: vec![bucket], models: None });
+    }
+    AccountUsage { groups, ..AccountUsage::default() }
+}
+
 /// Seconds until the window resets, preferring the absolute timestamp because
 /// the relative value ages as the snapshot sits in memory.
 pub fn seconds_until_reset(window: &QuotaWindow, observed_at: Option<i64>, now: i64) -> Option<i64> {

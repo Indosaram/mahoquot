@@ -118,6 +118,76 @@ async fn start_gateway(
     (format!("http://{addr}"), auth_dir, task)
 }
 
+async fn start_generic_gateway(
+    upstream: &str,
+) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    let auth_dir = common::unique_temp_dir("t12-generic");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::write(
+        auth_dir.join("generic-deepseek-primary.json"),
+        serde_json::json!({
+            "type": "generic",
+            "provider": "deepseek",
+            "label": "DeepSeek primary",
+            "adapter": "openai-chat",
+            "base_url": upstream,
+            "api_key": "deepseek-secret",
+            "models": ["deepseek-chat"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let loaded = mahoquot_gateway::account::load_account_members(&auth_dir).expect("load generic");
+    assert_eq!(loaded.len(), 1, "generic credential must load");
+    assert!(loaded[0].supports_model("deepseek-chat"));
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        auth_refresh_enabled: false,
+        max_failover: 6,
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).unwrap());
+    assert_eq!(state.pool.load().members.len(), 1, "state pool must retain generic account");
+    assert!(state.pool.load().members[0].supports_model("deepseek-chat"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = create_app(state);
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), auth_dir, task)
+}
+
+#[tokio::test]
+async fn generic_openai_chat_provider_relays_json_without_codex_translation() {
+    let response = r#"{"id":"chatcmpl-generic","object":"chat.completion","created":1,"model":"deepseek-chat","choices":[{"index":0,"message":{"role":"assistant","content":"generic-ok"},"finish_reason":"stop"}]}"#;
+    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
+    let (gateway, auth_dir, gateway_task) = start_generic_gateway(&upstream).await;
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let body = reply.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert!(body.contains("generic-ok"), "client response: {body}");
+    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    assert_eq!(request.path, "/v1/chat/completions");
+    assert_eq!(request.headers.get("authorization").unwrap(), "Bearer deepseek-secret");
+    assert_eq!(request.body["model"], "deepseek-chat");
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
 const ANTHROPIC_STREAM: &str = concat!(
     "event: message_start\n",
     "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_up\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"model\",\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n",

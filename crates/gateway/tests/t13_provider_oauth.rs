@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
@@ -17,8 +18,15 @@ use mahoquot_gateway::state::AppState;
 use mahoquot_providers::claude::ClaudeAccount;
 use mahoquot_providers::cursor::CursorAccount;
 use serde_json::{json, Value};
+use tower::ServiceExt;
 
 const API_KEY: &str = "test-api-key-42";
+
+async fn body_json(response: axum::response::Response) -> Value {
+    use http_body_util::BodyExt;
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&bytes).expect("json body")
+}
 
 fn url_encode(input: &str) -> String {
     let mut encoded = String::with_capacity(input.len());
@@ -50,6 +58,121 @@ fn make_fake_jwt(sub: &str, email: &str) -> String {
         sub, email
     ));
     format!("{header}.{payload}.fake_sig")
+}
+
+fn make_codex_jwt(email: &str, account_id: &str, plan: &str) -> String {
+    let header = BASE64_URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
+    let payload = BASE64_URL_SAFE_NO_PAD.encode(
+        json!({
+            "email": email,
+            "https://api.openai.com/profile": { "email": email },
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": account_id,
+                "chatgpt_plan_type": plan
+            },
+            "exp": 1893456000_i64
+        })
+        .to_string(),
+    );
+    format!("{header}.{payload}.fake_sig")
+}
+
+#[tokio::test]
+async fn test_codex_oauth_flow_persists_a_routable_account() {
+    let auth_dir = unique_temp_dir("qg-t13-codex");
+    let hits = Arc::new(AtomicUsize::new(0));
+    let last_body = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let token = make_codex_jwt("codex.user@example.com", "acct-codex-123", "plus");
+    let mock_app = Router::new().route(
+        "/oauth/token",
+        post({
+            let hits = hits.clone();
+            let last_body = last_body.clone();
+            move |body: String| {
+                let hits = hits.clone();
+                let last_body = last_body.clone();
+                let token = token.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    *last_body.lock().await = body;
+                    axum::Json(json!({
+                        "access_token": token,
+                        "refresh_token": "codex-refresh-token",
+                        "id_token": token,
+                        "expires_in": 3600
+                    }))
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_url = format!("http://{}/oauth/token", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/codex-auth-url?token_url={}&redirect_uri={}",
+                    url_encode(&token_url),
+                    url_encode("http://localhost:1455/auth/callback")
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let started = body_json(start).await;
+    let auth_url = started["url"].as_str().unwrap();
+    assert!(auth_url.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
+    assert!(auth_url.contains("code_challenge_method=S256"));
+    assert!(auth_url.contains("originator=codex_vscode"));
+    let state = started["state"].as_str().unwrap();
+
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/oauth-callback?code=codex-test-code&state={state}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let form = last_body.lock().await.clone();
+    assert!(form.contains("grant_type=authorization_code"));
+    assert!(form.contains("code=codex-test-code"));
+    assert!(form.contains("code_verifier="));
+
+    let credential = auth_dir.join("codex-codex.user_example.com-plus.json");
+    let account = mahoquot_providers::load_codex_account(&credential).unwrap();
+    assert_eq!(account.account_id(), "acct-codex-123");
+    assert_eq!(account.email(), "codex.user@example.com");
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_json(status).await["status"], "ok");
 }
 
 #[tokio::test]
@@ -384,4 +507,205 @@ async fn test_oauth_session_cancellation() {
     assert_eq!(cancel_json["status"], "ok");
 
     std::fs::remove_dir_all(&auth_dir).ok();
+}
+
+#[derive(Clone)]
+struct DeviceOAuthMock {
+    starts: Arc<std::sync::Mutex<Vec<String>>>,
+    polls: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+async fn start_device_mock() -> (String, DeviceOAuthMock, tokio::task::JoinHandle<()>) {
+    let state = DeviceOAuthMock {
+        starts: Arc::new(std::sync::Mutex::new(Vec::new())),
+        polls: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let app = axum::Router::new()
+        .route(
+            "/device/start",
+            axum::routing::post(
+                |axum::extract::State(state): axum::extract::State<DeviceOAuthMock>, body: String| async move {
+                    state.starts.lock().unwrap().push(body);
+                    axum::Json(serde_json::json!({
+                        "device_code": "device-1",
+                        "user_code": "ABCD-EFGH",
+                        "verification_uri": "https://example.test/device",
+                        "verification_uri_complete": "https://example.test/device?user_code=ABCD-EFGH",
+                        "expires_in": 900,
+                        "interval": 0
+                    }))
+                },
+            ),
+        )
+        .route(
+            "/device/poll",
+            axum::routing::post(
+                |axum::extract::State(state): axum::extract::State<DeviceOAuthMock>, body: String| async move {
+                    state.polls.lock().unwrap().push(body);
+                    axum::Json(serde_json::json!({
+                        "access_token": "device-access",
+                        "refresh_token": "device-refresh",
+                        "expires_in": 3600,
+                        "email": "device@example.test"
+                    }))
+                },
+            ),
+        )
+        .route(
+            "/copilot/exchange",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "token device-access");
+                axum::Json(serde_json::json!({
+                    "token":"copilot-api-token",
+                    "endpoints":{"api":"https://api.githubcopilot.example.test"}
+                }))
+            }),
+        )
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (base, state, task)
+}
+
+#[tokio::test]
+async fn device_oauth_starts_polls_and_writes_generic_provider_credentials() {
+    let (mock_base, mock, mock_task) = start_device_mock().await;
+    let auth_dir = unique_temp_dir("qg-t13-device-oauth");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+
+    for provider in ["kimi", "qwen", "nous", "github-copilot"] {
+        let exchange = if provider == "github-copilot" {
+            format!("&exchange_url={}%2Fcopilot%2Fexchange", mock_base)
+        } else {
+            String::new()
+        };
+        let start = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v0/management/{provider}-auth-url?device_url={}%2Fdevice%2Fstart&token_url={}%2Fdevice%2Fpoll&interval=0{exchange}",
+                        mock_base, mock_base
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.status(), StatusCode::OK);
+        let start_json = body_json(start).await;
+        assert_eq!(start_json["flow"], "device");
+        assert_eq!(start_json["user_code"], "ABCD-EFGH");
+        let state = start_json["state"].as_str().unwrap();
+        let poll = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v0/management/get-auth-status?state={state}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = poll.status();
+        let poll_json = body_json(poll).await;
+        assert_eq!(status, StatusCode::OK, "poll response: {poll_json}");
+        assert_eq!(poll_json["status"], "ok");
+    }
+    let files = std::fs::read_dir(&auth_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("generic-"))
+        .count();
+    assert_eq!(files, 4);
+    let starts = mock.starts.lock().unwrap().join("\n");
+    assert!(starts.contains("client_id="));
+    assert!(starts.contains("scope=inference%3Ainvoke"));
+    let polls = mock.polls.lock().unwrap().join("\n");
+    assert!(polls.contains("device_code=device-1"));
+    assert!(polls.contains("deviceCode=device-1"), "Qwen must use camelCase: {polls}");
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn xai_pkce_callback_writes_a_live_generic_account() {
+    let token_app = axum::Router::new().route(
+        "/oauth/token",
+        axum::routing::post(|body: String| async move {
+            assert!(body.contains("grant_type=authorization_code"));
+            assert!(body.contains("code_verifier="));
+            axum::Json(json!({
+                "access_token":"xai-access", "refresh_token":"xai-refresh", "email":"grok@example.test"
+            }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_url = format!("http://{}/oauth/token", listener.local_addr().unwrap());
+    let token_task = tokio::spawn(async move { axum::serve(listener, token_app).await.unwrap() });
+    let auth_dir = unique_temp_dir("qg-t13-xai");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(), api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"), ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+    let start = app.clone().oneshot(Request::builder()
+        .uri(format!("/v0/management/xai-auth-url?auth_url=https%3A%2F%2Fauth.example.test%2Fauthorize&token_url={}", url_encode(&token_url)))
+        .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    assert!(start_json["url"].as_str().unwrap().contains("code_challenge="));
+    let state = start_json["state"].as_str().unwrap();
+    let callback = app.clone().oneshot(Request::builder()
+        .uri(format!("/v0/management/oauth-callback?code=xai-code&state={state}"))
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+    let status = app.oneshot(Request::builder()
+        .uri(format!("/v0/management/get-auth-status?state={state}"))
+        .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(body_json(status).await["status"], "ok");
+    assert!(auth_dir.join("generic-xai-grok_example.test.json").exists());
+    token_task.abort(); std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn gemini_pkce_callback_writes_google_adapter_account() {
+    let token_app = axum::Router::new().route(
+        "/token",
+        axum::routing::post(|body: String| async move {
+            assert!(body.contains("client_id=gemini-client"));
+            assert!(body.contains("code_verifier="));
+            axum::Json(json!({"access_token":"google-access","refresh_token":"google-refresh","email":"gemini@example.test","project_id":"project-1"}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+    let token_task = tokio::spawn(async move { axum::serve(listener, token_app).await.unwrap() });
+    let auth_dir = unique_temp_dir("qg-t13-gemini");
+    std::fs::remove_dir_all(&auth_dir).ok(); std::fs::create_dir_all(&auth_dir).unwrap();
+    let config=GatewayConfig{auth_dir:auth_dir.clone(),api_keys:mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),config_path:auth_dir.join("config.yaml"),..GatewayConfig::default()};
+    let app=create_app(Arc::new(AppState::new(&config).unwrap()));
+    let start=app.clone().oneshot(Request::builder().uri(format!("/v0/management/gemini-cli-auth-url?client_id=gemini-client&client_secret=gemini-secret&auth_url=https%3A%2F%2Faccounts.example.test%2Fauth&token_url={}",url_encode(&token_url))).header(header::AUTHORIZATION,format!("Bearer {API_KEY}")).body(Body::empty()).unwrap()).await.unwrap();
+    let start_json=body_json(start).await; let state=start_json["state"].as_str().unwrap();
+    assert!(start_json["url"].as_str().unwrap().contains("access_type=offline"));
+    let callback=app.oneshot(Request::builder().uri(format!("/v0/management/oauth-callback?code=google-code&state={state}")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(callback.status(),StatusCode::OK);
+    let saved:Value=serde_json::from_str(&std::fs::read_to_string(auth_dir.join("generic-gemini-cli-gemini_example.test.json")).unwrap()).unwrap();
+    assert_eq!(saved["adapter"],"google"); assert_eq!(saved["project_id"],"project-1"); assert_eq!(saved["auth_mode"],"oauth");
+    token_task.abort(); std::fs::remove_dir_all(auth_dir).ok();
 }

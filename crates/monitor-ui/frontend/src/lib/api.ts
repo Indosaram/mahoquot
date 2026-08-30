@@ -43,7 +43,20 @@ export interface GatewayClients {
     configYaml(): Promise<string>;
     saveConfigYaml(yaml: string): Promise<void>;
     removeCredential(name: string): Promise<void>;
+    setCredentialDisabled(name: string, disabled: boolean): Promise<void>;
     createZcodeCredential(email: string, apiKey: string): Promise<void>;
+    createGenericCredential(input: {
+      readonly provider: string;
+      readonly label: string;
+      readonly adapter: string;
+      readonly baseUrl: string;
+      readonly apiKey: string;
+      readonly models: readonly string[];
+    }): Promise<void>;
+    importCommandCode(apiKey: string, label: string): Promise<void>;
+    importLocalTrae(): Promise<void>;
+    importCredential(name: string, content: Record<string, unknown>): Promise<void>;
+    importVertexServiceAccount(document: string): Promise<void>;
     saveCredentialOrder(names: readonly string[]): Promise<void>;
     importLocalClaude(): Promise<void>;
     beginProviderAuth(provider: string): Promise<{ readonly url: string; readonly state: string }>;
@@ -111,12 +124,65 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           }),
         });
       },
+      createGenericCredential: async (input) => {
+        const slug = input.provider.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+        await requestJson(`${base}/v0/management/auth-files`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: `generic-${slug}-${Date.now()}.json`,
+            content: {
+              type: "generic",
+              provider: input.provider,
+              label: input.label,
+              adapter: input.adapter,
+              base_url: input.baseUrl,
+              api_key: input.apiKey,
+              models: input.models,
+              disabled: false,
+            },
+          }),
+        });
+      },
+      importCommandCode: async (apiKey, label) => {
+        await requestJson(`${base}/v0/management/command-code/import`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: apiKey, label }),
+        });
+      },
+      importLocalTrae: async () => {
+        await requestJson(`${base}/v0/management/trae/import-local`, authHeaders, {
+          method: "POST",
+        });
+      },
+      importCredential: async (name, content) => {
+        await requestJson(`${base}/v0/management/auth-files`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, content }),
+        });
+      },
+      importVertexServiceAccount: async (document) => {
+        await requestJson(`${base}/v0/management/vertex/import`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: document }),
+        });
+      },
       removeCredential: async (name) => {
         await requestJson(
           `${base}/v0/management/auth-files?name=${encodeURIComponent(name)}`,
           authHeaders,
           { method: "DELETE" },
         );
+      },
+      setCredentialDisabled: async (name, disabled) => {
+        await requestJson(`${base}/v0/management/auth-files/status`, authHeaders, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, disabled }),
+        });
       },
       saveCredentialOrder: async (names) => {
         await requestJson(`${base}/v0/management/auth-files/order`, authHeaders, {
@@ -137,6 +203,10 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           claude: "anthropic-auth-url",
           cursor: "cursor-auth-url",
           kimi: "kimi-auth-url",
+          qwen: "qwen-auth-url",
+          nous: "nous-auth-url",
+          "gemini-cli": "gemini-cli-auth-url",
+          "github-copilot": "github-copilot-auth-url",
           xai: "xai-auth-url",
         };
         const route = endpoint[provider];

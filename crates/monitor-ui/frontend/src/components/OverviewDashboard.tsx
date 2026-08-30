@@ -9,6 +9,7 @@ import {
   summarizeTelemetry,
   telemetrySeries,
 } from "../lib/telemetry";
+import { Cluster, IntrinsicGrid, Stack } from "./layout";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
@@ -50,8 +51,8 @@ export const OverviewDashboard = ({
   );
 
   return (
-    <div className="content overview operations-dashboard minimal-dashboard">
-      <div className="range-selector" role="radiogroup" aria-label="Telemetry range">
+    <Stack className="content overview operations-dashboard minimal-dashboard">
+      <Cluster className="range-selector" role="radiogroup" aria-label="Telemetry range">
         {(["30m", "1h", "1d", "7d", "30d"] as const).map((item) => (
           <label key={item}>
             <input
@@ -67,8 +68,8 @@ export const OverviewDashboard = ({
             <span>{item}</span>
           </label>
         ))}
-      </div>
-      <div className="minimal-kpis">
+      </Cluster>
+      <IntrinsicGrid className="minimal-kpis">
         <div>
           <span>Requests</span>
           <strong>{compact.format(summary.requests)}</strong>
@@ -93,7 +94,7 @@ export const OverviewDashboard = ({
           <span>p90</span>
           <strong>{latency(stats, "p90_ms")}</strong>
         </div>
-      </div>
+      </IntrinsicGrid>
 
       <section className="minimal-chart-section">
         <header>
@@ -136,7 +137,7 @@ export const OverviewDashboard = ({
             />
           ))}
         </div>
-        <div className="provider-mix-labels">
+        <Cluster className="provider-mix-labels">
           {summary.providers.length ? (
             summary.providers.map((provider) => (
               <span key={provider.provider}>
@@ -147,8 +148,8 @@ export const OverviewDashboard = ({
           ) : (
             <span>No provider traffic</span>
           )}
-        </div>
+        </Cluster>
       </section>
-    </div>
+    </Stack>
   );
 };

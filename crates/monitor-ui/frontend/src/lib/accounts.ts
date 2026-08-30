@@ -7,6 +7,7 @@ export interface NormalizedAccount {
   readonly id: string; // Unique key for lists
   readonly runtimeId: string | null;
   readonly credentialName: string | null;
+  readonly disabled: boolean;
   readonly authIndex: string | null;
   readonly provider: string;
   readonly email: string;
@@ -221,6 +222,7 @@ export const mergeAccountsAndCredentials = (
       id: r.id,
       runtimeId: r.id,
       credentialName: cred ? cred.name : null,
+      disabled: cred?.disabled ?? false,
       authIndex: cred ? cred.auth_index : null,
       provider: r.provider || "unknown",
       email: rEmail,
@@ -259,6 +261,7 @@ export const mergeAccountsAndCredentials = (
       id: `cred-${c.name}`,
       runtimeId: null,
       credentialName: c.name,
+      disabled: c.disabled,
       authIndex: c.auth_index,
       provider: c.type || c.provider || "unknown",
       email: cEmail,
