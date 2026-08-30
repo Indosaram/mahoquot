@@ -11,7 +11,7 @@ const stats = {
   ttft: { p50_ms: 100, p90_ms: 220, p99_ms: 500, samples: 40 },
   history: [
     {
-      minute_unix: 1700000000,
+      minute_unix: Math.floor((Date.now() - 5 * 60_000) / 60_000) * 60,
       accounts: [
         {
           account: "long-runtime-id@example.com",
@@ -107,8 +107,7 @@ describe("operations console", () => {
     expect(nav).toHaveTextContent("Logs");
     expect(nav).toHaveTextContent("Settings");
     expect(nav).not.toHaveTextContent("Credentials");
-    expect(screen.getByText("Total request rate")).toBeInTheDocument();
-    expect(screen.getByText("Per-account request rate")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Request activity over time" })).toBeInTheDocument();
     expect(screen.getAllByText("Requests")[0]).toBeInTheDocument();
     expect(screen.getAllByText("Success")[0]).toBeInTheDocument();
     expect(screen.getAllByText("Failed")[0]).toBeInTheDocument();

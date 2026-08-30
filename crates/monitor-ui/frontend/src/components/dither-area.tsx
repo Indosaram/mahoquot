@@ -1,10 +1,5 @@
+import { type DitherSeed, backingSize, paintColumn, resample } from "@/lib/dither";
 import { useEffect, useRef, useState } from "react";
-import {
-  backingSize,
-  paintColumn,
-  resample,
-  type DitherSeed,
-} from "@/lib/dither";
 
 interface DitherAreaProps {
   readonly values: readonly number[];
@@ -70,7 +65,7 @@ export function DitherArea({
       sink.clearRect(0, 0, cols, rows);
       bloomSink.clearRect(0, 0, cols, rows);
       for (let col = 0; col < cols; col += 1) {
-        const depth = Math.round(columns[col]! * (floor - 1));
+        const depth = Math.round(columns[col] * (floor - 1));
         paintColumn(sink, col, floor - depth, floor, seed, { intensity });
         paintColumn(bloomSink, col, floor - depth, floor, seed, {
           intensity: Math.min(1, intensity + 0.3),

@@ -1,3 +1,4 @@
+import { DitherArea } from "@/components/dither-area";
 import { useMemo, useState } from "react";
 import type { AdminStats } from "../lib/schemas";
 import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
@@ -8,7 +9,6 @@ import {
   summarizeTelemetry,
   telemetrySeries,
 } from "../lib/telemetry";
-import { DitherArea } from "@/components/dither-area";
 import { Cluster, IntrinsicGrid, Stack } from "./layout";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });

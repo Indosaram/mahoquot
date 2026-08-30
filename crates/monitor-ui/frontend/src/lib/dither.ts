@@ -25,8 +25,7 @@ const BAYER: readonly number[][] = (
   ] as const
 ).map((row) => row.map((value) => value / 16));
 
-export const bayerThreshold = (col: number, row: number): number =>
-  BAYER[row & 3]![col & 3]!;
+export const bayerThreshold = (col: number, row: number): number => BAYER[row & 3][col & 3];
 
 export interface Rgb {
   readonly r: number;
@@ -65,27 +64,19 @@ export function backingSize(cssWidth: number, cssHeight: number) {
   };
 }
 
-export function resample(
-  source: readonly number[],
-  cols: number,
-): readonly number[] {
+export function resample(source: readonly number[], cols: number): readonly number[] {
   if (source.length === cols) return source.slice();
   const out: number[] = [];
   for (let col = 0; col < cols; col += 1) {
     const at = (source.length - 1) * (cols === 1 ? 0 : col / (cols - 1));
     const low = Math.floor(at);
     const high = Math.min(source.length - 1, low + 1);
-    out.push(source[low]! + (source[high]! - source[low]!) * (at - low));
+    out.push(source[low] + (source[high] - source[low]) * (at - low));
   }
   return out;
 }
 
-export function cellAlpha(
-  density: number,
-  lit: boolean,
-  intensity: number,
-  dim: number,
-): number {
+export function cellAlpha(density: number, lit: boolean, intensity: number, dim: number): number {
   const base = 0.3 + density * 0.7;
   const alpha = base * (1 + 0.22 * intensity);
   return (lit ? alpha : alpha * OFF_TIER) * dim;
