@@ -198,7 +198,10 @@ type MaybeUpgrade = Result<WebSocketUpgrade, WebSocketUpgradeRejection>;
 
 pub async fn realtime_call_get(ws: MaybeUpgrade) -> Response {
     match ws {
-        Ok(upgrade) => upgrade.on_upgrade(|_socket| async {}).into_response(),
+        Ok(_) => json_status(
+            StatusCode::UPGRADE_REQUIRED,
+            realtime::upgrade_required_nested(),
+        ),
         Err(_) => json_status(
             StatusCode::UPGRADE_REQUIRED,
             realtime::upgrade_required_nested(),
@@ -208,7 +211,10 @@ pub async fn realtime_call_get(ws: MaybeUpgrade) -> Response {
 
 pub async fn live_sideband(ws: MaybeUpgrade) -> Response {
     match ws {
-        Ok(upgrade) => upgrade.on_upgrade(|_socket| async {}).into_response(),
+        Ok(_) => json_status(
+            StatusCode::UPGRADE_REQUIRED,
+            realtime::upgrade_required_flat(),
+        ),
         Err(_) => json_status(
             StatusCode::UPGRADE_REQUIRED,
             realtime::upgrade_required_flat(),
@@ -220,7 +226,10 @@ pub async fn live_sideband(ws: MaybeUpgrade) -> Response {
 /// then close, because no upstream duplex session is established.
 pub async fn ws_upgrade(ws: MaybeUpgrade) -> Response {
     match ws {
-        Ok(upgrade) => upgrade.on_upgrade(|_socket| async {}).into_response(),
+        Ok(_) => json_status(
+            StatusCode::UPGRADE_REQUIRED,
+            realtime::upgrade_required_nested(),
+        ),
         Err(_) => json_status(
             StatusCode::UPGRADE_REQUIRED,
             realtime::upgrade_required_nested(),

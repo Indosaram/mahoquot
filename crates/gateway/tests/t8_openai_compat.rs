@@ -151,6 +151,26 @@ async fn test_t8_responses_compact_relays_to_codex_upstream() {
     std::fs::remove_dir_all(&temp_dir).ok();
 }
 
+#[tokio::test]
+async fn test_t8_unsupported_websocket_transport_fails_before_upgrade() {
+    let temp_dir = unique_temp_dir("qgw-test-t8-ws-disabled");
+    let (_state, gw) = spawn_gateway(&temp_dir).await;
+    let response = reqwest::Client::new()
+        .get(format!("{gw}/v1/responses"))
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::UPGRADE_REQUIRED);
+    let payload: Value = response.json().await.unwrap();
+    assert_eq!(payload["error"]["code"], "realtime_request_failed");
+    std::fs::remove_dir_all(temp_dir).ok();
+}
+
 async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
     let config = GatewayConfig {
             usage_poll_secs: 120,
