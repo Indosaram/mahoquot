@@ -364,6 +364,9 @@ export default function App() {
   const [loggingToFile, setLoggingToFile] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [telemetry, setTelemetry] = useState<readonly TelemetrySample[]>([]);
+  // Live-only buffer for the per-account panels: gateway history buckets carry
+  // no per-account breakdown, so these samples are never replaced by hydration.
+  const [accountSamples, setAccountSamples] = useState<readonly TelemetrySample[]>([]);
   const firstLoad = useRef(true);
 
   useEffect(() => {
@@ -415,6 +418,7 @@ export default function App() {
         const persisted = persistedTelemetrySamples(nextStats.history ?? []);
         return persisted.length ? persisted : appendTelemetrySample(samples, nextStats, now);
       });
+      setAccountSamples((samples) => appendTelemetrySample(samples, nextStats, now));
       setLoadState("online");
       setFetchedAt(Date.now());
       setGatewayLifecycle("running");
@@ -1237,7 +1241,9 @@ export default function App() {
           </div>
         ) : null}
 
-        {surface === "overview" ? <OverviewDashboard stats={stats} samples={telemetry} /> : null}
+        {surface === "overview" ? (
+          <OverviewDashboard stats={stats} samples={telemetry} accountSamples={accountSamples} />
+        ) : null}
 
         {surface === "accounts" ? (
           <AccountsSurface

@@ -7,6 +7,13 @@ export interface ProviderTotal {
   readonly failures: number;
 }
 
+export interface AccountTotal {
+  readonly id: string;
+  readonly requests: number;
+  readonly successes: number;
+  readonly failures: number;
+}
+
 export interface TelemetrySample {
   readonly timestamp: number;
   readonly served: number;
@@ -17,6 +24,7 @@ export interface TelemetrySample {
   readonly p50Ms: number;
   readonly p90Ms: number;
   readonly providers: readonly ProviderTotal[];
+  readonly accounts: readonly AccountTotal[];
 }
 
 export type TelemetryRange = "30m" | "1h" | "1d" | "7d" | "30d";
@@ -28,6 +36,8 @@ const rangeDurationMs: Readonly<Record<TelemetryRange, number>> = {
   "7d": 7 * 24 * 60 * 60_000,
   "30d": 30 * 24 * 60 * 60_000,
 };
+
+export const rangeSeconds = (range: TelemetryRange): number => rangeDurationMs[range] / 1000;
 
 export const providerTotals = (stats: AdminStats): readonly ProviderTotal[] => {
   const totals = new Map<string, { successes: number; failures: number }>();
@@ -71,6 +81,14 @@ export const appendTelemetrySample = (
     const failures = counterDelta(provider.failures, prior?.failures);
     return { provider: provider.provider, requests: successes + failures, successes, failures };
   });
+  const previousAccounts = new Map(
+    previous?.accounts.map((account) => [account.id, account]) ?? [],
+  );
+  const accounts = stats.accounts.map((account) => {
+    const successes = counterDelta(account.ok, previousAccounts.get(account.id)?.successes);
+    const failures = counterDelta(account.fails, previousAccounts.get(account.id)?.failures);
+    return { id: account.id, requests: successes + failures, successes, failures };
+  });
   const successes = providerDeltas.reduce((sum, provider) => sum + provider.successes, 0);
   const failures = providerDeltas.reduce((sum, provider) => sum + provider.failures, 0);
   const currentLatency = latency(stats);
@@ -84,6 +102,7 @@ export const appendTelemetrySample = (
     p50Ms: currentLatency.p50Ms,
     p90Ms: currentLatency.p90Ms,
     providers,
+    accounts,
   };
   return [...samples, next].slice(-43_200);
 };
@@ -101,6 +120,7 @@ export const persistedTelemetrySamples = (
     p50Ms: 0,
     p90Ms: 0,
     providers: bucket.providers,
+    accounts: [],
   }));
 
 export const filterTelemetryRange = <T extends { readonly timestamp: number }>(
@@ -198,3 +218,32 @@ export const telemetrySeries = (
 
   return series;
 };
+
+/**
+ * kiro-lb-style small multiple: the same dense bucketing as
+ * {@link telemetrySeries}, scoped to one account. Idle windows stay explicit
+ * zeros so an account that served nothing reads differently from one that is
+ * missing from the window.
+ */
+export const accountRateSeries = (
+  samples: readonly TelemetrySample[],
+  accountId: string,
+  range: TelemetryRange,
+  now: number = Date.now(),
+  points = 240,
+): readonly TelemetryPoint[] =>
+  telemetrySeries(
+    samples.flatMap((sample) =>
+      sample.accounts
+        .filter((account) => account.id === accountId)
+        .map((account) => ({
+          timestamp: sample.timestamp,
+          requests: account.requests,
+          successes: account.successes,
+          failures: account.failures,
+        })),
+    ),
+    range,
+    now,
+    points,
+  );

@@ -1661,7 +1661,9 @@ h2 {
 
 .notch-surface {
   width: 8px;
-  height: 180px;
+  height: auto;
+  min-height: 180px;
+  max-height: 180px;
   background: #000000;
   color: var(--fg);
   border-radius: 4px 0 0 4px;
@@ -1674,7 +1676,7 @@ h2 {
   padding: 0;
   overflow: hidden;
   user-select: none;
-  transition: width 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), height 0.38s
+  transition: width 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), max-height 0.38s
     cubic-bezier(0.32, 0.9, 0.35, 1), border-radius 0.38s cubic-bezier(0.32, 0.9, 0.35, 1);
 }
 
@@ -2462,4 +2464,66 @@ h2 {
   z-index: 50;
   min-inline-size: 0;
   min-block-size: 0;
+}
+
+/* Per-account small multiples (kiro-lb style): one gradient-area panel per
+   pooled account. Idle accounts keep a dashed placeholder so the grid shape
+   never changes with traffic. */
+.minimal-account-panels {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 720px) {
+  .minimal-account-panels {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.minimal-account-panel {
+  min-width: 0;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.minimal-account-panel > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.minimal-account-panel .name {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+}
+.minimal-account-panel .peak {
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.minimal-account-chart {
+  position: relative;
+  height: 96px;
+}
+.minimal-account-chart svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.minimal-account-chart > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.minimal-account-empty {
+  display: grid;
+  place-items: center;
+  height: 96px;
+  border: 1px dashed var(--line-soft);
+  border-radius: 6px;
+  color: var(--fg-faint);
+  font-size: 11px;
 }

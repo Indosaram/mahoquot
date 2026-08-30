@@ -5,7 +5,9 @@ import {
   type TelemetryPoint,
   type TelemetryRange,
   type TelemetrySample,
+  accountRateSeries,
   filterTelemetryRange,
+  rangeSeconds,
   summarizeTelemetry,
   telemetrySeries,
 } from "../lib/telemetry";
@@ -35,13 +37,19 @@ const providerName = (provider: string): string =>
 export const OverviewDashboard = ({
   stats,
   samples,
+  accountSamples,
 }: {
   readonly stats: AdminStats;
   readonly samples: readonly TelemetrySample[];
+  readonly accountSamples: readonly TelemetrySample[];
 }) => {
   const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
   const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
   const series = useMemo(() => telemetrySeries(filtered, range), [filtered, range]);
+  const accountFiltered = useMemo(
+    () => filterTelemetryRange(accountSamples, range),
+    [accountSamples, range],
+  );
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
   const outcomes = summary.successes + summary.failures;
   const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
@@ -118,6 +126,62 @@ export const OverviewDashboard = ({
             <polyline points={chartPoints(series)} className="minimal-request-line" />
           </svg>
           {!series.some((point) => point.requests > 0) ? <span>No requests yet</span> : null}
+        </div>
+      </section>
+
+      <section className="minimal-chart-section" aria-label="Per-account request rate">
+        <header>
+          <h2>Per-account request rate</h2>
+          <span>{range}</span>
+        </header>
+        <div className="minimal-account-panels">
+          {stats.accounts.map((account, index) => {
+            const label = `Account ${index + 1}`;
+            const series = accountRateSeries(accountFiltered, account.id, range);
+            const total = series.reduce((sum, point) => sum + point.requests, 0);
+            const bucketSecs = rangeSeconds(range) / series.length;
+            const peakPerMin =
+              (Math.max(0, ...series.map((point) => point.requests)) * 60) / bucketSecs;
+            return (
+              <article key={account.id} className="minimal-account-panel">
+                <header>
+                  <span className="name">{label}</span>
+                  <span className="peak tnum">{Math.round(peakPerMin)}/min peak</span>
+                </header>
+                {total === 0 ? (
+                  <div className="minimal-account-empty">No traffic in this window</div>
+                ) : (
+                  <div
+                    className="minimal-account-chart"
+                    role="img"
+                    aria-label={`${label}: peak ${Math.round(peakPerMin)} requests per minute`}
+                  >
+                    <svg viewBox="0 0 100 36" preserveAspectRatio="none">
+                      <title>{`${label} peak request rate`}</title>
+                      <defs>
+                        <linearGradient
+                          id={`minimal-account-area-${account.id}`}
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.24" />
+                          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path d="M0 34H100 M0 18H100" className="minimal-chart-grid" />
+                      <polygon
+                        points={`0,34 ${chartPoints(series)} 100,34`}
+                        fill={`url(#minimal-account-area-${account.id})`}
+                      />
+                      <polyline points={chartPoints(series)} className="minimal-request-line" />
+                    </svg>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </section>
 
