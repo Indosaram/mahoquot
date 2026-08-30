@@ -12,9 +12,13 @@ const stats = {
   history: [
     {
       minute_unix: Math.floor((Date.now() - 5 * 60_000) / 60_000) * 60,
+      requests: 8,
+      successes: 8,
+      failures: 0,
       accounts: [
         {
           account: "long-runtime-id@example.com",
+          requests: 8,
           successes: 8,
           failures: 0,
         },
@@ -107,7 +111,7 @@ describe("operations console", () => {
     expect(nav).toHaveTextContent("Logs");
     expect(nav).toHaveTextContent("Settings");
     expect(nav).not.toHaveTextContent("Credentials");
-    expect(screen.getByRole("img", { name: "Request activity over time" })).toBeInTheDocument();
+    expect(screen.getByText("Request activity")).toBeInTheDocument();
     expect(screen.getAllByText("Requests")[0]).toBeInTheDocument();
     expect(screen.getAllByText("Success")[0]).toBeInTheDocument();
     expect(screen.getAllByText("Failed")[0]).toBeInTheDocument();

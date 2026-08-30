@@ -37,8 +37,7 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     unobserve() {}
     disconnect() {}
   }
-  globalThis.ResizeObserver =
-    ResizeObserverStub as unknown as typeof globalThis.ResizeObserver;
+  globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof globalThis.ResizeObserver;
 }
 
 // Mock localStorage if missing or incomplete
