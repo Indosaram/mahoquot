@@ -72,6 +72,7 @@ describe("request telemetry sampling", () => {
         successes: 3,
         failures: 1,
         providers: [{ provider: "codex", requests: 4, successes: 3, failures: 1 }],
+        accounts: [{ account: "alpha", requests: 4, successes: 3, failures: 1 }],
       },
     ]);
     expect(samples[0]).toMatchObject({
@@ -79,6 +80,7 @@ describe("request telemetry sampling", () => {
       requests: 4,
       successes: 3,
       failures: 1,
+      accounts: [{ id: "alpha", requests: 4, successes: 3, failures: 1 }],
     });
   });
 
@@ -203,6 +205,7 @@ describe("request telemetry sampling", () => {
         successes: 3,
         failures: 1,
         providers: [{ provider: "codex", requests: 4, successes: 3, failures: 1 }],
+        accounts: [{ account: "codex", requests: 4, successes: 3, failures: 1 }],
       },
       {
         minute_unix: 1_860,
@@ -210,6 +213,7 @@ describe("request telemetry sampling", () => {
         successes: 2,
         failures: 0,
         providers: [{ provider: "claude", requests: 2, successes: 2, failures: 0 }],
+        accounts: [{ account: "claude", requests: 2, successes: 2, failures: 0 }],
       },
     ]);
     expect(summarizeTelemetry(samples)).toEqual({

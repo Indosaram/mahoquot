@@ -120,7 +120,12 @@ export const persistedTelemetrySamples = (
     p50Ms: 0,
     p90Ms: 0,
     providers: bucket.providers,
-    accounts: [],
+    accounts: bucket.accounts.map((account) => ({
+      id: account.account,
+      requests: account.requests,
+      successes: account.successes,
+      failures: account.failures,
+    })),
   }));
 
 export const filterTelemetryRange = <T extends { readonly timestamp: number }>(

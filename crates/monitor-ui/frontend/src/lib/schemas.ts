@@ -74,12 +74,20 @@ export const ProviderTelemetrySchema = z.object({
   failures: z.number().default(0),
 });
 
+export const AccountTelemetrySchema = z.object({
+  account: z.string(),
+  requests: z.number().default(0),
+  successes: z.number().default(0),
+  failures: z.number().default(0),
+});
+
 export const TelemetryBucketSchema = z.object({
   minute_unix: z.number(),
   requests: z.number().default(0),
   successes: z.number().default(0),
   failures: z.number().default(0),
   providers: z.array(ProviderTelemetrySchema).default([]),
+  accounts: z.array(AccountTelemetrySchema).default([]),
 });
 export type TelemetryBucket = z.infer<typeof TelemetryBucketSchema>;
 
