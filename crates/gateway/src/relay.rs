@@ -499,10 +499,14 @@ async fn send_upstream(
     headers: &HeaderMap,
     body_bytes: &Bytes,
     protocol: compat::Protocol,
+    accept: Option<&str>,
 ) -> Result<UpstreamExchange, reqwest::Error> {
     let mut req_builder = state.http_client.post(target_url);
     for (name, val) in member.build_upstream_headers() {
         req_builder = req_builder.header(name, val);
+    }
+    if let Some(accept) = accept {
+        req_builder = req_builder.header(header::ACCEPT, accept);
     }
     if let Some(ct) = headers
         .get(header::CONTENT_TYPE)
@@ -1134,6 +1138,15 @@ pub async fn handle_relay(
             Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
         };
         let target_url = target.url;
+        // The MiMo anti-abuse gate inspects Accept the way it inspects the
+        // User-Agent, so mirror what its own CLI client sends.
+        let accept = (member.kind() == crate::account::ProviderKind::Generic
+            && member.generic_adapter().as_deref() == Some("mimo-free"))
+        .then_some(if plan.client_stream {
+            "text/event-stream"
+        } else {
+            "application/json"
+        });
         let exchange = match send_upstream(
             &state,
             &target_url,
@@ -1141,6 +1154,7 @@ pub async fn handle_relay(
             headers,
             &target.body,
             target.protocol,
+            accept,
         )
         .await
         {
@@ -1172,6 +1186,7 @@ pub async fn handle_relay(
                         headers,
                         &target.body,
                         target.protocol,
+                        accept,
                     )
                     .await
                     {

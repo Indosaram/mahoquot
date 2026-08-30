@@ -388,6 +388,7 @@ async fn mimo_capture(
 ) -> Response {
     let value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
     let path = uri.path().to_string();
+    let is_stream = value.get("stream") == Some(&serde_json::Value::Bool(true));
     state.seen.lock().unwrap().push(SeenRequest {
         path: path.clone(),
         headers,
@@ -410,6 +411,14 @@ async fn mimo_capture(
             StatusCode::UNAUTHORIZED,
             [("content-type", "application/json")],
             r#"{"error":"expired"}"#,
+        )
+            .into_response();
+    }
+    if is_stream {
+        return (
+            StatusCode::OK,
+            [("content-type", "text/event-stream")],
+            "data: {\"id\":\"chatcmpl-mimo\",\"choices\":[{\"delta\":{\"content\":\"mimo-\"}}]}\n\ndata: {\"id\":\"chatcmpl-mimo\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
         )
             .into_response();
     }
@@ -542,6 +551,7 @@ async fn mimo_free_account_bootstraps_a_jwt_and_marks_the_request() {
         chat.headers.get("x-mimo-source").unwrap(),
         mahoquot_providers::MIMO_SOURCE
     );
+    assert_eq!(chat.headers.get("accept").unwrap(), "application/json");
     assert!(chat
         .headers
         .get("x-session-affinity")
@@ -577,6 +587,97 @@ async fn mimo_free_account_bootstraps_a_jwt_and_marks_the_request() {
     for task in tasks {
         task.abort();
     }
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn mimo_free_streaming_declares_event_stream_and_relays_sse_verbatim() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .fallback(post(mimo_capture))
+        .with_state(MimoMock {
+            seen: seen.clone(),
+            chat_calls: Arc::new(AtomicU64::new(0)),
+            reject_first_chat: false,
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let upstream = format!("http://{addr}");
+
+    let auth_dir = common::unique_temp_dir("t12-mimo-stream");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::write(
+        auth_dir.join("generic-mimo-free.json"),
+        serde_json::json!({
+            "type": "generic",
+            "provider": "mimo-free",
+            "label": "MiMo Free",
+            "adapter": "mimo-free",
+            "base_url": format!("{upstream}/api/free-ai/openai/chat"),
+            "token_url": format!("{upstream}/api/free-ai/bootstrap"),
+            "models": ["mimo-auto"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        auth_refresh_enabled: true,
+        max_failover: 3,
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = create_app(state);
+    let gateway_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let gateway = format!("http://{addr}");
+
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "mimo-auto",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let content_type = reply
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let body = reply.text().await.unwrap_or_default();
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert!(
+        content_type.starts_with("text/event-stream"),
+        "client content-type: {content_type}"
+    );
+    assert!(body.contains("mimo-"), "client body: {body}");
+    assert!(body.contains("data: [DONE]"), "client body: {body}");
+
+    let requests = seen.lock().unwrap().clone();
+    let chat = requests
+        .iter()
+        .find(|request| request.path.ends_with("/chat"))
+        .expect("chat call");
+    assert_eq!(chat.body["stream"], true);
+    assert_eq!(chat.headers.get("accept").unwrap(), "text/event-stream");
+    assert_eq!(
+        chat.headers.get("x-mimo-source").unwrap(),
+        mahoquot_providers::MIMO_SOURCE
+    );
+
+    gateway_task.abort();
+    mock_task.abort();
     std::fs::remove_dir_all(auth_dir).ok();
 }
 
