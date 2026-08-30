@@ -331,6 +331,7 @@ export default function App() {
   const [logs, setLogs] = useState<readonly LogRecord[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [gatewayLifecycle, setGatewayLifecycle] = useState<GatewayLifecycleStatus>("running");
   const [provider, setProvider] = useState(
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
@@ -460,6 +461,17 @@ export default function App() {
       setLogsError(errorMessage(logResult.reason));
     }
   }, [clients, gatewayLifecycle]);
+
+  // Only a refresh the user asked for spins the tray icon; the 10s poll must
+  // not make it spin on its own.
+  const refreshNow = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refresh]);
 
   useEffect(() => {
     void getGatewayLifecycle().then(setGatewayLifecycle);
@@ -1041,7 +1053,7 @@ export default function App() {
         gatewayLifecycle={gatewayLifecycle}
         refreshing={refreshing}
         fetchedAgoSecs={fetchedAt === null ? null : Math.round((Date.now() - fetchedAt) / 1000)}
-        onRefresh={() => void refresh()}
+        onRefresh={() => void refreshNow()}
         onOpenConsole={() => void api?.core?.invoke("open_console")}
         onQuit={() => void api?.core?.invoke("quit_app")}
         onStartGateway={() => void api?.core?.invoke("start_gateway")}
