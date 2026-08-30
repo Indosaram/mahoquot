@@ -77,6 +77,8 @@ export function Console() {
               alt="Accounts surface listing three healthy pooled Codex accounts named alpha, bravo and charlie, each with warm up and refresh controls"
               width={1280}
               height={820}
+              loading="lazy"
+              decoding="async"
               className="w-full"
             />
             <figcaption className="mt-auto border-t border-line px-5 py-3.5 text-[13px] text-ink-faint">

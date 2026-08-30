@@ -70,6 +70,9 @@ export function Hero() {
             alt="Mahoquot operations console showing 4,001 relayed requests at 100% success across a three-account Codex pool"
             width={1280}
             height={656}
+            loading="eager"
+            fetchPriority="high"
+            decoding="async"
             className="w-full rounded-l-2xl border border-line shadow-panel lg:min-w-[760px]"
           />
         </div>

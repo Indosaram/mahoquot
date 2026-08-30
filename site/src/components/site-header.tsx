@@ -14,6 +14,8 @@ export function SiteHeader() {
           <img
             src="brand/mahoquot-icon.png"
             alt=""
+            width={28}
+            height={28}
             className="h-7 w-7 rounded-lg"
           />
           <span className="text-[16px] font-medium tracking-[-0.01em] text-ink">

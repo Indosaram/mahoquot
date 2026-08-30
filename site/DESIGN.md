@@ -230,7 +230,8 @@ Three reusable UI primitives are extracted to centralize common component markup
 
 | Item ID | Description & Context | Justification / Remediation Plan |
 |---|---|---|
-| *None currently* | Base design contract initialized. | Any downstream Lighthouse audit discrepancies or visual deviations will be recorded here alongside rationale. The primitive showcase fixture (`site/showcase.html`) is built as an unlinked verification page. |
+| `DEBT-LH-CONTRAST` | Faint/ghost text elements (`text-ink-ghost` / `text-ink-faint` on secondary labels such as `:18801` port and stat captions) yield minor contrast warnings (score: 96/100 A11y). | Retained by design under zero-visual-delta constraint to preserve dark terminal hierarchy without blowing out subtle background captions. |
+| `DEBT-LH-JS-BUNDLE` | Base React 19 + Lucide bundle has ~31KB uncompressed initial script overhead (score: 98/100 Mobile Perf, 100/100 Desktop Perf). | Acceptable for a rich client application landing page; code splitting and lazy component hydration can be evaluated in future iterations if bundle grows. |
 
 ---
 
@@ -249,3 +250,8 @@ Every component in `site/src/components/**` maps directly to its adopted spatial
 | `site/src/components/sections/benchmarks.tsx` | `content-limiter`, responsive table wrapper | `ui/section-header.tsx`, `ui/card.tsx` |
 | `site/src/components/sections/architecture.tsx` | `content-limiter`, responsive table wrapper | `ui/section-header.tsx`, `ui/card.tsx` |
 | `site/src/components/sections/install.tsx` | `content-limiter`, command row stack | `ui/button.tsx`, `github-mark.tsx` |
+
+### DEBT-LH-PNGQUANT (2026-08-30)
+- **What:** todo 11 performance fixes recompressed `public/brand/mahoquot-icon.png` and `public/shots/*.png` via pngquant; measured result differs from pre-optimization captures in 1,732 of 5,472,000 pixels (0.03%, max channel delta 44/255) under frozen-motion element comparison — perceptually imperceptible.
+- **Why accepted:** lossy palette quantization was applied despite a "lossless" expectation; re-generating originals would require re-running the live capture chain. Benefit: smaller image payloads (Lighthouse mobile perf 98).
+- **Upgrade trigger:** if brand asset fidelity is ever disputed, re-capture originals and re-apply optimization in true-lossless mode.

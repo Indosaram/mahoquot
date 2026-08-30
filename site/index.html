@@ -3,8 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mahoquot — Design System Primitive Showcase</title>
+    <title>Mahoquot — LLM Account Router &amp; Inference Proxy in Rust</title>
+    <meta
+      name="description"
+      content="One local endpoint across every LLM subscription you own. Sequence-stamped round-robin routing, pre-first-byte failover, automatic OAuth refresh, and zero-copy streaming — 6.5x lower per-chunk cost than CLIProxyAPI."
+    />
     <link rel="icon" type="image/png" href="brand/mahoquot-icon.png" />
+    <link rel="preload" as="image" href="shots/console-overview.png" fetchpriority="high" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -25,8 +30,8 @@
       />
     </noscript>
   </head>
-  <body class="bg-page text-ink-soft min-h-screen">
+  <body>
     <div id="root"></div>
-    <script type="module" src="/src/showcase/main.tsx"></script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

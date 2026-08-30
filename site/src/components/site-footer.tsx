@@ -6,7 +6,7 @@ export function SiteFooter() {
     <footer className="bg-page">
       <div className="mx-auto flex max-w-[1400px] flex-col gap-8 px-6 py-12 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2.5">
-          <img src="brand/mahoquot-icon.png" alt="" className="h-6 w-6 rounded-md" />
+          <img src="brand/mahoquot-icon.png" alt="" width={24} height={24} className="h-6 w-6 rounded-md" />
           <span className="text-[15px] font-medium text-ink">{PRODUCT.name}</span>
           <span className="text-[13px] text-ink-ghost">{PRODUCT.version}</span>
         </div>
