@@ -7,3 +7,8 @@ crates/gateway/logs/
 crates/monitor-ui/frontend/shots/
 crates/monitor-ui/frontend/test-results/
 crates/monitor-ui/frontend/playwright-report/
+site/node_modules/
+site/dist/
+site/test-results/
+site/playwright-report/
+*.tsbuildinfo
