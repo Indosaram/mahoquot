@@ -1,10 +1,10 @@
 use crate::tray::{
     calculate_notch_window_physical_position, calculate_notch_window_position,
     cursor_to_window_local, cursor_within, cursor_within_edge_corridor, default_auth_dir,
-    gateway_startup_action, pick_notched_monitor_index, resolve_gateway_binary,
-    screen_rect_touches_display, CursorPoint, DisplayBounds, GatewayStartup, LocalPoint,
-    MonitorSummary, NotchInsets, ScreenRect, WindowDimensions, WindowPosition, MENU_ID_GATEWAY,
-    MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE,
+    gateway_startup_action, hover_cursor_inside, pick_notched_monitor_index,
+    resolve_gateway_binary, screen_rect_touches_display, CursorPoint, DisplayBounds,
+    GatewayStartup, LocalPoint, MonitorSummary, NotchInsets, ScreenRect, WindowDimensions,
+    WindowPosition, MENU_ID_GATEWAY, MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE,
 };
 
 #[test]
@@ -448,4 +448,54 @@ fn default_auth_dir_stays_app_local_without_a_legacy_store() {
     // then it stays inside the app's own tree
     assert_eq!(resolved, home.join(".mahoquot/auth"));
     std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn an_open_panel_holds_while_the_pointer_roams_the_corridor_toward_its_card() {
+    let display = ScreenRect {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+    };
+    let panel = ScreenRect {
+        x: 1700.0,
+        y: 900.0,
+        width: 200.0,
+        height: 120.0,
+    };
+    let toward_card = CursorPoint {
+        x: 1500.0,
+        y: 800.0,
+    };
+    let far_left = CursorPoint { x: 400.0, y: 800.0 };
+
+    assert!(hover_cursor_inside(
+        &panel,
+        Some(&display),
+        &CursorPoint {
+            x: 1750.0,
+            y: 950.0
+        },
+        false
+    ));
+    assert!(hover_cursor_inside(
+        &panel,
+        Some(&display),
+        &toward_card,
+        true
+    ));
+    assert!(!hover_cursor_inside(
+        &panel,
+        Some(&display),
+        &toward_card,
+        false
+    ));
+    assert!(!hover_cursor_inside(
+        &panel,
+        Some(&display),
+        &far_left,
+        true
+    ));
+    assert!(!hover_cursor_inside(&panel, None, &toward_card, true));
 }

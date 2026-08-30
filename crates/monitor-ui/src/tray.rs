@@ -65,13 +65,30 @@ pub enum HoverIntent {
 
 /// True when `rect` overlaps any of the given display bounds. Used to detect
 /// a window stranded off every connected display after a monitor change.
+pub fn rects_overlap(rect: &ScreenRect, display: &ScreenRect) -> bool {
+    rect.x < display.x + display.width
+        && rect.x + rect.width > display.x
+        && rect.y < display.y + display.height
+        && rect.y + rect.height > display.y
+}
+
 pub fn screen_rect_touches_display(rect: &ScreenRect, displays: &[ScreenRect]) -> bool {
-    displays.iter().any(|display| {
-        rect.x < display.x + display.width
-            && rect.x + rect.width > display.x
-            && rect.y < display.y + display.height
-            && rect.y + rect.height > display.y
-    })
+    displays.iter().any(|display| rects_overlap(rect, display))
+}
+
+/// Whether the hover sampler should treat the pointer as still on the panel. An
+/// open panel also holds while the pointer roams the screen-edge corridor,
+/// which is where the detail card it draws outside itself lives.
+pub fn hover_cursor_inside(
+    panel: &ScreenRect,
+    panel_display: Option<&ScreenRect>,
+    cursor: &CursorPoint,
+    panel_open: bool,
+) -> bool {
+    if cursor_within(panel, cursor) {
+        return true;
+    }
+    panel_open && panel_display.is_some_and(|display| cursor_within_edge_corridor(display, cursor))
 }
 
 /// How far left of the screen edge the pointer may roam before the panel folds.

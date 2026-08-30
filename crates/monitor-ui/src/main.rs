@@ -387,7 +387,8 @@ fn sync_notch_hover(
         return;
     };
     let cursor = cursor_location();
-    if !tray::screen_rect_touches_display(&rect, &display_logical_bounds(app)) {
+    let displays = display_logical_bounds(app);
+    if !tray::screen_rect_touches_display(&rect, &displays) {
         // The window drifted off every connected display (monitor unplugged,
         // resolution or arrangement changed). Re-anchor it and skip hover for
         // this sample: the frame AppKit reports next will be on-screen again.
@@ -398,7 +399,14 @@ fn sync_notch_hover(
     }
     let was_open = expanded.load(Ordering::Relaxed);
     let was_pending = collapse_pending.load(Ordering::Relaxed);
-    let inside = tray::cursor_within(&rect, &cursor);
+    let inside = tray::hover_cursor_inside(
+        &rect,
+        displays
+            .iter()
+            .find(|display| tray::rects_overlap(&rect, display)),
+        &cursor,
+        was_open,
+    );
     if was_open {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
