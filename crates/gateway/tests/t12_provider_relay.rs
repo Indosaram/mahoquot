@@ -234,7 +234,11 @@ async fn start_static_header_gateway(
         ..GatewayConfig::default()
     };
     let state = Arc::new(AppState::new(&config).unwrap());
-    assert_eq!(state.pool.load().members.len(), 1, "key-optional account loaded");
+    assert_eq!(
+        state.pool.load().members.len(),
+        1,
+        "key-optional account loaded"
+    );
     assert!(
         state.pool.load().members[0].supports_model("free-model"),
         "key-optional account owns its declared model"
@@ -278,7 +282,11 @@ async fn start_adapter_gateway(
         ..GatewayConfig::default()
     };
     let state = Arc::new(AppState::new(&config).unwrap());
-    assert_eq!(state.pool.load().members.len(), 1, "{provider} account loaded");
+    assert_eq!(
+        state.pool.load().members.len(),
+        1,
+        "{provider} account loaded"
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = create_app(state);
@@ -312,7 +320,12 @@ async fn generic_anthropic_adapter_account_relays_native_messages_wire() {
     let body: serde_json::Value = reply.json().await.unwrap();
     assert_eq!(status, StatusCode::OK, "client response: {body}");
     assert_eq!(body["choices"][0]["message"]["content"], "anthropic-key-ok");
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.path, "/v1/messages");
     assert_eq!(request.headers.get("x-api-key").unwrap(), "provider-secret");
     assert_eq!(
@@ -346,7 +359,12 @@ async fn azure_openai_account_sends_api_key_header_without_bearer() {
     let body = reply.text().await.unwrap();
     assert_eq!(status, StatusCode::OK, "client response: {body}");
     assert!(body.contains("azure-ok"), "client response: {body}");
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.headers.get("api-key").unwrap(), "provider-secret");
     assert!(!request.headers.contains_key("authorization"));
     gateway_task.abort();
@@ -410,12 +428,14 @@ async fn generic_provider_forwards_reference_static_headers_without_an_api_key()
     let status = reply.status();
     let response_body = reply.text().await.unwrap();
     assert_eq!(status, StatusCode::OK, "gateway response: {response_body}");
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.headers.get("user-agent").unwrap(), "opencode");
-    assert_eq!(
-        request.headers.get("x-opencode-client").unwrap(),
-        "desktop"
-    );
+    assert_eq!(request.headers.get("x-opencode-client").unwrap(), "desktop");
     assert!(!request.headers.contains_key("authorization"));
     gateway_task.abort();
     mock_task.abort();

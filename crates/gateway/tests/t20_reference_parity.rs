@@ -81,8 +81,8 @@ struct Deviations {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> T {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let raw =
+        std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     serde_json::from_str(&raw).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
@@ -117,7 +117,8 @@ fn require_locator(root: &Path, row: &str, kind: &str, locator: &Locator, symbol
 #[test]
 fn every_reference_backed_flow_maps_to_an_owner_green_test_and_evidence() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let manifest: Manifest = read_json(&root.join("crates/gateway/tests/data/reference-parity.json"));
+    let manifest: Manifest =
+        read_json(&root.join("crates/gateway/tests/data/reference-parity.json"));
     let snapshot: Snapshot =
         read_json(&root.join("docs/reference/opencodex-registry-snapshot.json"));
     let deviations: Deviations =
@@ -126,7 +127,11 @@ fn every_reference_backed_flow_maps_to_an_owner_green_test_and_evidence() {
     let mut unverified_references = Vec::new();
     let mut ids = BTreeSet::new();
     for flow in &manifest.flows {
-        assert!(ids.insert(flow.id.clone()), "duplicate flow row {}", flow.id);
+        assert!(
+            ids.insert(flow.id.clone()),
+            "duplicate flow row {}",
+            flow.id
+        );
         assert!(
             matches!(flow.surface.as_str(), "auth" | "proxy" | "boundary"),
             "{} has invalid surface {}",
@@ -173,7 +178,11 @@ fn every_reference_backed_flow_maps_to_an_owner_green_test_and_evidence() {
         // never read as a complete one.
         if adapter.coverage == "partial" {
             let gap = adapter.gap.as_deref().unwrap_or_default();
-            assert!(!gap.trim().is_empty(), "{} is partial without a gap", adapter.id);
+            assert!(
+                !gap.trim().is_empty(),
+                "{} is partial without a gap",
+                adapter.id
+            );
         }
         require_locator(&root, &adapter.id, "owner", &adapter.owner, false);
         require_locator(&root, &adapter.id, "green test", &adapter.green_test, true);
