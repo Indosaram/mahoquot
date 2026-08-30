@@ -27,14 +27,323 @@ const CODEX_SCOPES: &str = "openid profile email offline_access";
 const CURSOR_DEFAULT_LOGIN_URL: &str = "https://cursor.com/loginDeepControl";
 const CURSOR_DEFAULT_POLL_URL: &str = "https://api2.cursor.sh/auth/poll";
 
-const PROVIDERS: &[(&str, &str, bool)] = &[
-    ("anthropic", CLAUDE_DEFAULT_AUTH_URL, false),
-    (
-        "antigravity",
-        "https://accounts.google.com/o/oauth2/v2/auth",
-        false,
-    ),
-];
+const ANTIGRAVITY_CLIENT_ID: &str =
+    "REDACTED-ANTIGRAVITY-CLIENT-ID";
+const ANTIGRAVITY_CLIENT_SECRET: &str = "REDACTED-ANTIGRAVITY-CLIENT-SECRET";
+const ANTIGRAVITY_DEFAULT_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const ANTIGRAVITY_DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const ANTIGRAVITY_DEFAULT_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+const ANTIGRAVITY_DEFAULT_LOAD_URL: &str =
+    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+const ANTIGRAVITY_DEFAULT_DAILY_URL: &str =
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser";
+const ANTIGRAVITY_DEFAULT_REDIRECT: &str = "http://localhost:51121/oauth-callback";
+const ANTIGRAVITY_SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs";
+
+const PROVIDERS: &[(&str, &str, bool)] = &[("anthropic", CLAUDE_DEFAULT_AUTH_URL, false)];
+
+pub fn create_antigravity_auth_url(
+    params: &HashMap<String, String>,
+) -> (String, String, OAuthSession) {
+    let state = new_state();
+    let (verifier, challenge) = generate_pkce();
+
+    let client_id = params
+        .get("client_id")
+        .cloned()
+        .or_else(|| std::env::var("GOOGLE_ANTIGRAVITY_CLIENT_ID").ok())
+        .unwrap_or_else(|| ANTIGRAVITY_CLIENT_ID.to_string());
+
+    let client_secret = params
+        .get("client_secret")
+        .cloned()
+        .or_else(|| std::env::var("GOOGLE_ANTIGRAVITY_CLIENT_SECRET").ok())
+        .unwrap_or_else(|| ANTIGRAVITY_CLIENT_SECRET.to_string());
+
+    let auth_url = params
+        .get("auth_url")
+        .cloned()
+        .or_else(|| std::env::var("GOOGLE_ANTIGRAVITY_AUTH_URL").ok())
+        .unwrap_or_else(|| ANTIGRAVITY_DEFAULT_AUTH_URL.to_string());
+
+    let token_url = params
+        .get("token_url")
+        .cloned()
+        .or_else(|| std::env::var("GOOGLE_ANTIGRAVITY_TOKEN_URL").ok())
+        .unwrap_or_else(|| ANTIGRAVITY_DEFAULT_TOKEN_URL.to_string());
+
+    let userinfo_url = params
+        .get("userinfo_url")
+        .cloned()
+        .unwrap_or_else(|| ANTIGRAVITY_DEFAULT_USERINFO_URL.to_string());
+
+    let load_url = params
+        .get("load_url")
+        .cloned()
+        .unwrap_or_else(|| ANTIGRAVITY_DEFAULT_LOAD_URL.to_string());
+
+    let redirect_uri = params
+        .get("redirect_uri")
+        .cloned()
+        .unwrap_or_else(|| ANTIGRAVITY_DEFAULT_REDIRECT.to_string());
+
+    let prompt = if params.get("force_account_select").map(String::as_str) == Some("true") {
+        "consent select_account"
+    } else {
+        "consent"
+    };
+
+    let url = format!(
+        "{auth_url}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&access_type=offline&prompt={}&state={}",
+        url_encode(&client_id),
+        url_encode(&redirect_uri),
+        url_encode(ANTIGRAVITY_SCOPES),
+        url_encode(&challenge),
+        url_encode(prompt),
+        url_encode(&state),
+    );
+
+    let extra_meta = json!({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "userinfo_url": userinfo_url,
+        "load_url": load_url,
+    })
+    .to_string();
+
+    let session = OAuthSession {
+        state: state.clone(),
+        provider: "antigravity".to_string(),
+        verifier,
+        challenge,
+        redirect_uri,
+        token_url,
+        poll_url: extra_meta,
+        uuid: String::new(),
+        status: SessionStatus::Pending,
+        created_at: Instant::now(),
+        saved_account_email: None,
+    };
+
+    (url, state, session)
+}
+
+fn extract_antigravity_project_id(data: &Value) -> String {
+    for key in ["cloudaicompanionProject", "projectId", "project"] {
+        if let Some(val) = data.get(key) {
+            if let Some(s) = val.as_str().filter(|s| !s.is_empty()) {
+                return s.to_string();
+            }
+            if let Some(obj) = val.as_object() {
+                if let Some(id) = obj
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    return id.to_string();
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+async fn exchange_antigravity_code(
+    state: &AppState,
+    session: &mut OAuthSession,
+    code: &str,
+) -> Result<(), String> {
+    let extra_meta: Value = serde_json::from_str(&session.poll_url).unwrap_or(json!({}));
+    let client_id = extra_meta
+        .get("client_id")
+        .and_then(Value::as_str)
+        .unwrap_or(ANTIGRAVITY_CLIENT_ID);
+    let client_secret = extra_meta
+        .get("client_secret")
+        .and_then(Value::as_str)
+        .unwrap_or(ANTIGRAVITY_CLIENT_SECRET);
+    let userinfo_url = extra_meta
+        .get("userinfo_url")
+        .and_then(Value::as_str)
+        .unwrap_or(ANTIGRAVITY_DEFAULT_USERINFO_URL);
+    let load_url = extra_meta
+        .get("load_url")
+        .and_then(Value::as_str)
+        .unwrap_or(ANTIGRAVITY_DEFAULT_LOAD_URL);
+
+    let response = state
+        .http_client
+        .post(&session.token_url)
+        .header("accept", "application/json")
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("code", code),
+            ("redirect_uri", session.redirect_uri.as_str()),
+            ("code_verifier", session.verifier.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("Antigravity token request failed: {error}"))?;
+
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Antigravity token response was invalid JSON: {error}"))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "Antigravity token exchange failed ({status}): {body}"
+        ));
+    }
+
+    let access_token = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "Antigravity token response missing access_token".to_string())?;
+
+    let refresh_token = body
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+
+    let expires_in = body
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .unwrap_or(3600);
+
+    let id_token = body.get("id_token").and_then(Value::as_str).unwrap_or("");
+
+    let mut email = String::new();
+    if let Some(claims) = decode_jwt_claims(id_token).or_else(|| decode_jwt_claims(access_token)) {
+        if let Some(em) = claims
+            .get("email")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            email = em.to_string();
+        }
+    }
+    if email.is_empty() {
+        if let Some(em) = body
+            .get("email")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            email = em.to_string();
+        }
+    }
+    if email.is_empty() {
+        let userinfo_resp = state
+            .http_client
+            .get(userinfo_url)
+            .header("authorization", format!("Bearer {access_token}"))
+            .header("accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("Antigravity userinfo request failed: {e}"))?;
+
+        if userinfo_resp.status().is_success() {
+            if let Ok(info) = userinfo_resp.json::<Value>().await {
+                if let Some(em) = info.get("email").and_then(Value::as_str) {
+                    email = em.to_string();
+                }
+            }
+        }
+    }
+    if email.is_empty() {
+        email = "antigravity-account".to_string();
+    }
+
+    let mut project_id = String::new();
+    let load_resp = state
+        .http_client
+        .post(load_url)
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("accept", "*/*")
+        .header("content-type", "application/json")
+        .header("user-agent", mahoquot_providers::ANTIGRAVITY_USER_AGENT)
+        .json(&json!({
+            "metadata": {
+                "ideType": "ANTIGRAVITY"
+            }
+        }))
+        .send()
+        .await;
+
+    if let Ok(resp) = load_resp {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<Value>().await {
+                project_id = extract_antigravity_project_id(&data);
+            }
+        }
+    }
+
+    if project_id.is_empty() {
+        let daily_url = ANTIGRAVITY_DEFAULT_DAILY_URL;
+        let onboard_resp = state
+            .http_client
+            .post(daily_url)
+            .header("authorization", format!("Bearer {access_token}"))
+            .header("accept", "*/*")
+            .header("content-type", "application/json")
+            .header("user-agent", mahoquot_providers::ANTIGRAVITY_USER_AGENT)
+            .json(&json!({
+                "tier_id": "free-tier",
+                "metadata": {
+                    "ide_type": "ANTIGRAVITY",
+                    "ide_name": "antigravity",
+                    "ide_version": "2.5.5"
+                }
+            }))
+            .send()
+            .await;
+
+        if let Ok(resp) = onboard_resp {
+            if resp.status().is_success() {
+                if let Ok(data) = resp.json::<Value>().await {
+                    project_id = extract_antigravity_project_id(&data);
+                    if project_id.is_empty() {
+                        if let Some(resp_obj) = data.get("response") {
+                            project_id = extract_antigravity_project_id(resp_obj);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let now_secs = current_timestamp_secs();
+    let now_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let expired_rfc3339 = format_rfc3339(now_secs + expires_in.max(0) as u64);
+
+    let credential = json!({
+        "type": "antigravity",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "project_id": project_id,
+        "email": email,
+        "expires_in": expires_in,
+        "timestamp": now_millis,
+        "expired": expired_rfc3339,
+        "disabled": false
+    });
+
+    let filename = format!("antigravity-{}.json", sanitize_filename(&email));
+    let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let rendered = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
+    write_atomically(&auth_dir.join(filename), &rendered).map_err(|error| error.to_string())?;
+
+    session.saved_account_email = Some(email);
+    session.status = SessionStatus::Completed;
+    Ok(())
+}
 
 fn create_codex_auth_url(params: &HashMap<String, String>) -> (String, String, OAuthSession) {
     let state = new_state();
@@ -78,9 +387,18 @@ fn create_codex_auth_url(params: &HashMap<String, String>) -> (String, String, O
 fn create_xai_auth_url(params: &HashMap<String, String>) -> (String, String, OAuthSession) {
     let state = new_state();
     let (verifier, challenge) = generate_pkce();
-    let auth_url = params.get("auth_url").cloned().unwrap_or_else(|| "https://auth.x.ai/oauth/authorize".to_string());
-    let token_url = params.get("token_url").cloned().unwrap_or_else(|| "https://auth.x.ai/oauth/token".to_string());
-    let redirect_uri = params.get("redirect_uri").cloned().unwrap_or_else(|| "http://127.0.0.1:56121/callback".to_string());
+    let auth_url = params
+        .get("auth_url")
+        .cloned()
+        .unwrap_or_else(|| "https://auth.x.ai/oauth/authorize".to_string());
+    let token_url = params
+        .get("token_url")
+        .cloned()
+        .unwrap_or_else(|| "https://auth.x.ai/oauth/token".to_string());
+    let redirect_uri = params
+        .get("redirect_uri")
+        .cloned()
+        .unwrap_or_else(|| "http://127.0.0.1:56121/callback".to_string());
     let client_id = "b1a00492-073a-47ea-816f-4c329264a828";
     let scope = "openid profile email offline_access grok-cli:access api:access";
     let url = format!(
@@ -88,62 +406,144 @@ fn create_xai_auth_url(params: &HashMap<String, String>) -> (String, String, OAu
         url_encode(client_id), url_encode(&redirect_uri), url_encode(scope), url_encode(&challenge), state
     );
     let session = OAuthSession {
-        state: state.clone(), provider: "xai".to_string(), verifier, challenge: client_id.to_string(),
-        redirect_uri, token_url, poll_url: String::new(), uuid: "grok-4.6,grok-4.5,grok-4.3".to_string(),
-        status: SessionStatus::Pending, created_at: Instant::now(), saved_account_email: None,
+        state: state.clone(),
+        provider: "xai".to_string(),
+        verifier,
+        challenge: client_id.to_string(),
+        redirect_uri,
+        token_url,
+        poll_url: String::new(),
+        uuid: "grok-4.6,grok-4.5,grok-4.3".to_string(),
+        status: SessionStatus::Pending,
+        created_at: Instant::now(),
+        saved_account_email: None,
     };
     (url, state, session)
 }
 
-fn create_gemini_auth_url(params: &HashMap<String, String>) -> Result<(String, String, OAuthSession), String> {
-    let client_id = params.get("client_id").cloned().or_else(|| std::env::var("QUOTIO_GEMINI_CLIENT_ID").ok())
+fn create_gemini_auth_url(
+    params: &HashMap<String, String>,
+) -> Result<(String, String, OAuthSession), String> {
+    let client_id = params
+        .get("client_id")
+        .cloned()
+        .or_else(|| std::env::var("QUOTIO_GEMINI_CLIENT_ID").ok())
         .ok_or_else(|| "Gemini OAuth requires QUOTIO_GEMINI_CLIENT_ID or client_id".to_string())?;
     let state = new_state();
     let (verifier, challenge) = generate_pkce();
-    let auth_url = params.get("auth_url").cloned().unwrap_or_else(|| "https://accounts.google.com/o/oauth2/v2/auth".to_string());
-    let token_url = params.get("token_url").cloned().unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string());
-    let redirect_uri = params.get("redirect_uri").cloned().unwrap_or_else(|| "http://127.0.0.1:51122/oauth2callback".to_string());
+    let auth_url = params
+        .get("auth_url")
+        .cloned()
+        .unwrap_or_else(|| "https://accounts.google.com/o/oauth2/v2/auth".to_string());
+    let token_url = params
+        .get("token_url")
+        .cloned()
+        .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string());
+    let redirect_uri = params
+        .get("redirect_uri")
+        .cloned()
+        .unwrap_or_else(|| "http://127.0.0.1:51122/oauth2callback".to_string());
     let scope = "openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
     let url = format!("{auth_url}?client_id={}&response_type=code&redirect_uri={}&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256&state={}",
         url_encode(&client_id), url_encode(&redirect_uri), url_encode(scope), url_encode(&challenge), state);
-    let session = OAuthSession { state:state.clone(), provider:"gemini-cli".to_string(), verifier,
-        challenge:client_id, redirect_uri, token_url, poll_url:params.get("client_secret").cloned().unwrap_or_default(),
-        uuid:"gemini-2.5-pro,gemini-2.5-flash,gemini-1.5-pro,gemini-1.5-flash".to_string(),
-        status:SessionStatus::Pending, created_at:Instant::now(), saved_account_email:None };
-    Ok((url,state,session))
+    let session = OAuthSession {
+        state: state.clone(),
+        provider: "gemini-cli".to_string(),
+        verifier,
+        challenge: client_id,
+        redirect_uri,
+        token_url,
+        poll_url: params.get("client_secret").cloned().unwrap_or_default(),
+        uuid: "gemini-2.5-pro,gemini-2.5-flash,gemini-1.5-pro,gemini-1.5-flash".to_string(),
+        status: SessionStatus::Pending,
+        created_at: Instant::now(),
+        saved_account_email: None,
+    };
+    Ok((url, state, session))
 }
 
-async fn exchange_gemini_code(state: &AppState, session: &mut OAuthSession, code: &str) -> Result<(), String> {
-    let response = state.http_client.post(&session.token_url).form(&[
-        ("grant_type","authorization_code"), ("client_id",session.challenge.as_str()),
-        ("client_secret",session.poll_url.as_str()), ("code",code),
-        ("redirect_uri",session.redirect_uri.as_str()), ("code_verifier",session.verifier.as_str()),
-    ]).send().await.map_err(|error| error.to_string())?;
-    let status=response.status(); let body:Value=response.json().await.map_err(|error| error.to_string())?;
-    if !status.is_success(){return Err(format!("Gemini token exchange failed ({status}): {body}"));}
-    let access_token=body.get("access_token").and_then(Value::as_str).ok_or_else(||"Gemini token response missing access_token".to_string())?;
-    let email=body.get("email").and_then(Value::as_str).unwrap_or("gemini-account");
-    let project_id=body.get("project_id").and_then(Value::as_str).unwrap_or("");
-    let credential=json!({"type":"generic","provider":"gemini-cli","label":email,"adapter":"google",
-        "auth_mode":"oauth","project_id":project_id,"base_url":"https://cloudcode-pa.googleapis.com",
-        "api_key":access_token,"refresh_token":body.get("refresh_token"),"models":session.uuid.split(',').collect::<Vec<_>>(),"disabled":false});
-    let auth_dir=std::path::PathBuf::from(state.settings.current().auth_dir.clone());
-    let rendered=serde_json::to_string_pretty(&credential).map_err(|error|error.to_string())?;
-    write_atomically(&auth_dir.join(format!("generic-gemini-cli-{}.json",sanitize_filename(email))),&rendered).map_err(|error|error.to_string())?;
-    session.saved_account_email=Some(email.to_string()); session.status=SessionStatus::Completed; Ok(())
-}
-
-async fn exchange_xai_code(state: &AppState, session: &mut OAuthSession, code: &str) -> Result<(), String> {
-    let response = state.http_client.post(&session.token_url).form(&[
-        ("grant_type", "authorization_code"), ("client_id", session.challenge.as_str()),
-        ("code", code), ("redirect_uri", session.redirect_uri.as_str()),
-        ("code_verifier", session.verifier.as_str()),
-    ]).send().await.map_err(|error| error.to_string())?;
+async fn exchange_gemini_code(
+    state: &AppState,
+    session: &mut OAuthSession,
+    code: &str,
+) -> Result<(), String> {
+    let response = state
+        .http_client
+        .post(&session.token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", session.challenge.as_str()),
+            ("client_secret", session.poll_url.as_str()),
+            ("code", code),
+            ("redirect_uri", session.redirect_uri.as_str()),
+            ("code_verifier", session.verifier.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
     let status = response.status();
     let body: Value = response.json().await.map_err(|error| error.to_string())?;
-    if !status.is_success() { return Err(format!("xAI token exchange failed ({status}): {body}")); }
-    let access_token = body.get("access_token").and_then(Value::as_str).ok_or_else(|| "xAI token response missing access_token".to_string())?;
-    let email = body.get("email").and_then(Value::as_str).unwrap_or("xai-account");
+    if !status.is_success() {
+        return Err(format!("Gemini token exchange failed ({status}): {body}"));
+    }
+    let access_token = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Gemini token response missing access_token".to_string())?;
+    let email = body
+        .get("email")
+        .and_then(Value::as_str)
+        .unwrap_or("gemini-account");
+    let project_id = body.get("project_id").and_then(Value::as_str).unwrap_or("");
+    let credential = json!({"type":"generic","provider":"gemini-cli","label":email,"adapter":"google",
+        "auth_mode":"oauth","project_id":project_id,"base_url":"https://cloudcode-pa.googleapis.com",
+        "api_key":access_token,"refresh_token":body.get("refresh_token"),"models":session.uuid.split(',').collect::<Vec<_>>(),"disabled":false});
+    let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let rendered = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
+    write_atomically(
+        &auth_dir.join(format!(
+            "generic-gemini-cli-{}.json",
+            sanitize_filename(email)
+        )),
+        &rendered,
+    )
+    .map_err(|error| error.to_string())?;
+    session.saved_account_email = Some(email.to_string());
+    session.status = SessionStatus::Completed;
+    Ok(())
+}
+
+async fn exchange_xai_code(
+    state: &AppState,
+    session: &mut OAuthSession,
+    code: &str,
+) -> Result<(), String> {
+    let response = state
+        .http_client
+        .post(&session.token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", session.challenge.as_str()),
+            ("code", code),
+            ("redirect_uri", session.redirect_uri.as_str()),
+            ("code_verifier", session.verifier.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        return Err(format!("xAI token exchange failed ({status}): {body}"));
+    }
+    let access_token = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "xAI token response missing access_token".to_string())?;
+    let email = body
+        .get("email")
+        .and_then(Value::as_str)
+        .unwrap_or("xai-account");
     let credential = json!({
         "type":"generic", "provider":"xai", "label":email, "adapter":"openai-chat",
         "base_url":"https://api.x.ai/v1", "api_key":access_token,
@@ -151,8 +551,13 @@ async fn exchange_xai_code(state: &AppState, session: &mut OAuthSession, code: &
     });
     let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
     let rendered = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
-    write_atomically(&auth_dir.join(format!("generic-xai-{}.json", sanitize_filename(email))), &rendered).map_err(|error| error.to_string())?;
-    session.saved_account_email = Some(email.to_string()); session.status = SessionStatus::Completed;
+    write_atomically(
+        &auth_dir.join(format!("generic-xai-{}.json", sanitize_filename(email))),
+        &rendered,
+    )
+    .map_err(|error| error.to_string())?;
+    session.saved_account_email = Some(email.to_string());
+    session.status = SessionStatus::Completed;
     Ok(())
 }
 
@@ -182,7 +587,12 @@ fn device_provider(provider: &str) -> Option<DeviceProvider> {
             device_url: "https://openapi.qoder.sh/api/v1/deviceToken/register",
             token_url: "https://openapi.qoder.sh/api/v1/deviceToken/poll",
             base_url: "https://openapi.qoder.sh/api/v1",
-            models: &["qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash"],
+            models: &[
+                "qwen3.8-max",
+                "qwen3.7-max",
+                "qwen3.7-plus",
+                "qwen3.6-flash",
+            ],
             camel_case_poll: true,
             scope: None,
         }),
@@ -405,7 +815,13 @@ fn current_timestamp_secs() -> u64 {
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -421,7 +837,9 @@ fn url_encode(input: &str) -> String {
     encoded
 }
 
-pub fn create_anthropic_auth_url(params: &HashMap<String, String>) -> (String, String, OAuthSession) {
+pub fn create_anthropic_auth_url(
+    params: &HashMap<String, String>,
+) -> (String, String, OAuthSession) {
     let state = new_state();
     let (verifier, challenge) = generate_pkce();
 
@@ -521,9 +939,16 @@ async fn start_device_session(
     provider: &str,
     params: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let spec = device_provider(provider).ok_or_else(|| format!("unsupported device provider: {provider}"))?;
-    let device_url = params.get("device_url").map(String::as_str).unwrap_or(spec.device_url);
-    let token_url = params.get("token_url").cloned().unwrap_or_else(|| spec.token_url.to_string());
+    let spec = device_provider(provider)
+        .ok_or_else(|| format!("unsupported device provider: {provider}"))?;
+    let device_url = params
+        .get("device_url")
+        .map(String::as_str)
+        .unwrap_or(spec.device_url);
+    let token_url = params
+        .get("token_url")
+        .cloned()
+        .unwrap_or_else(|| spec.token_url.to_string());
     let mut start_form = vec![("client_id", spec.client_id)];
     if let Some(scope) = spec.scope {
         start_form.push(("scope", scope));
@@ -564,9 +989,17 @@ async fn start_device_session(
         provider: provider.to_string(),
         verifier: device_code.to_string(),
         challenge: spec.client_id.to_string(),
-        redirect_uri: params.get("exchange_url").cloned().unwrap_or_else(|| spec.base_url.to_string()),
+        redirect_uri: params
+            .get("exchange_url")
+            .cloned()
+            .unwrap_or_else(|| spec.base_url.to_string()),
         token_url,
-        poll_url: if spec.camel_case_poll { "camel" } else { "snake" }.to_string(),
+        poll_url: if spec.camel_case_poll {
+            "camel"
+        } else {
+            "snake"
+        }
+        .to_string(),
         uuid: spec.models.join(","),
         status: SessionStatus::Pending,
         created_at: Instant::now(),
@@ -588,18 +1021,32 @@ async fn poll_device_session(
     session: &mut OAuthSession,
 ) -> Result<Option<Value>, String> {
     let response = if session.poll_url == "camel" {
-        state.http_client.post(&session.token_url).form(&[("deviceCode", session.verifier.as_str())]).send().await
+        state
+            .http_client
+            .post(&session.token_url)
+            .form(&[("deviceCode", session.verifier.as_str())])
+            .send()
+            .await
     } else {
-        state.http_client.post(&session.token_url).form(&[
-            ("client_id", session.challenge.as_str()),
-            ("device_code", session.verifier.as_str()),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-        ]).send().await
+        state
+            .http_client
+            .post(&session.token_url)
+            .form(&[
+                ("client_id", session.challenge.as_str()),
+                ("device_code", session.verifier.as_str()),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ])
+            .send()
+            .await
     }
     .map_err(|error| error.to_string())?;
     let status = response.status();
     let body: Value = response.json().await.map_err(|error| error.to_string())?;
-    if body.get("error").and_then(Value::as_str).is_some_and(|error| error == "authorization_pending") {
+    if body
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| error == "authorization_pending")
+    {
         return Ok(None);
     }
     if !status.is_success() {
@@ -613,20 +1060,40 @@ async fn poll_device_session(
         .to_string();
     let mut upstream_base = session.redirect_uri.clone();
     if session.provider == "github-copilot" {
-        let exchange = state.http_client.get(&session.redirect_uri)
+        let exchange = state
+            .http_client
+            .get(&session.redirect_uri)
             .header("authorization", format!("token {access_token}"))
             .header("accept", "application/json")
             .header("editor-version", "opencodex/0.1.0")
             .header("editor-plugin-version", "opencodex/0.1.0")
             .header("copilot-integration-id", "vscode-chat")
-            .send().await.map_err(|error| error.to_string())?;
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
         let exchange_status = exchange.status();
         let exchange_body: Value = exchange.json().await.map_err(|error| error.to_string())?;
-        if !exchange_status.is_success() { return Err(format!("Copilot token exchange failed ({exchange_status}): {exchange_body}")); }
-        access_token = exchange_body.get("token").and_then(Value::as_str).ok_or_else(|| "Copilot exchange missing token".to_string())?.to_string();
-        upstream_base = exchange_body.get("endpoints").and_then(|v| v.get("api")).and_then(Value::as_str).unwrap_or("https://api.githubcopilot.com").to_string();
+        if !exchange_status.is_success() {
+            return Err(format!(
+                "Copilot token exchange failed ({exchange_status}): {exchange_body}"
+            ));
+        }
+        access_token = exchange_body
+            .get("token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Copilot exchange missing token".to_string())?
+            .to_string();
+        upstream_base = exchange_body
+            .get("endpoints")
+            .and_then(|v| v.get("api"))
+            .and_then(Value::as_str)
+            .unwrap_or("https://api.githubcopilot.com")
+            .to_string();
     }
-    let email = body.get("email").and_then(Value::as_str).unwrap_or(&session.provider);
+    let email = body
+        .get("email")
+        .and_then(Value::as_str)
+        .unwrap_or(&session.provider);
     let credential = json!({
         "type": "generic",
         "provider": session.provider,
@@ -640,7 +1107,11 @@ async fn poll_device_session(
     });
     let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
     std::fs::create_dir_all(&auth_dir).map_err(|error| error.to_string())?;
-    let filename = format!("generic-{}-{}.json", session.provider, sanitize_filename(email));
+    let filename = format!(
+        "generic-{}-{}.json",
+        session.provider,
+        sanitize_filename(email)
+    );
     let rendered = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
     write_atomically(&auth_dir.join(filename), &rendered).map_err(|error| error.to_string())?;
     session.saved_account_email = Some(email.to_string());
@@ -792,8 +1263,17 @@ async fn exchange_codex_code(
     let email = body
         .get("email")
         .and_then(Value::as_str)
-        .or_else(|| claims.as_ref().and_then(|value| value.get("email")).and_then(Value::as_str))
-        .or_else(|| profile.and_then(|value| value.get("email")).and_then(Value::as_str))
+        .or_else(|| {
+            claims
+                .as_ref()
+                .and_then(|value| value.get("email"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            profile
+                .and_then(|value| value.get("email"))
+                .and_then(Value::as_str)
+        })
         .unwrap_or("codex-account");
     let account_id = auth
         .and_then(|value| value.get("chatgpt_account_id"))
@@ -883,8 +1363,8 @@ pub async fn poll_cursor_session(
         .text()
         .await
         .map_err(|e| format!("failed reading body: {e}"))?;
-    let parsed: Value = serde_json::from_str(&body_text)
-        .map_err(|e| format!("invalid JSON poll response: {e}"))?;
+    let parsed: Value =
+        serde_json::from_str(&body_text).map_err(|e| format!("invalid JSON poll response: {e}"))?;
 
     let access_token = parsed
         .get("accessToken")
@@ -898,8 +1378,7 @@ pub async fn poll_cursor_session(
         .and_then(Value::as_str)
         .unwrap_or("");
 
-    let claims = decode_jwt_claims(access_token)
-        .or_else(|| decode_jwt_claims(refresh_token));
+    let claims = decode_jwt_claims(access_token).or_else(|| decode_jwt_claims(refresh_token));
 
     let email = claims
         .as_ref()
@@ -950,7 +1429,11 @@ pub async fn poll_cursor_session(
 }
 
 pub async fn cancel_session(Query(params): Query<HashMap<String, String>>) -> Response {
-    let Some(state) = params.get("state").map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+    let Some(state) = params
+        .get("state")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
         return json_status(
             StatusCode::BAD_REQUEST,
             json!({ "error": "missing state", "status": "error" }),
@@ -966,7 +1449,11 @@ async fn auth_status(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(session_state) = params.get("state").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(session_state) = params
+        .get("state")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         let session_opt = {
             let sessions = SESSIONS.read().unwrap();
             sessions.get(session_state).cloned()
@@ -982,7 +1469,10 @@ async fn auth_status(
                         }
                         let mut sessions = SESSIONS.write().unwrap();
                         sessions.insert(session.state.clone(), session);
-                        return json_status(StatusCode::OK, json!({ "status": "ok", "provider": "cursor" }));
+                        return json_status(
+                            StatusCode::OK,
+                            json!({ "status": "ok", "provider": "cursor" }),
+                        );
                     }
                     Ok(None) => {
                         return json_status(StatusCode::OK, json!({ "status": "pending" }));
@@ -991,37 +1481,60 @@ async fn auth_status(
                         session.status = SessionStatus::Failed(err.clone());
                         let mut sessions = SESSIONS.write().unwrap();
                         sessions.insert(session.state.clone(), session);
-                        return json_status(StatusCode::BAD_REQUEST, json!({ "status": "error", "error": err }));
+                        return json_status(
+                            StatusCode::BAD_REQUEST,
+                            json!({ "status": "error", "error": err }),
+                        );
                     }
                 }
             }
-            if device_provider(&session.provider).is_some() && session.status == SessionStatus::Pending {
+            if device_provider(&session.provider).is_some()
+                && session.status == SessionStatus::Pending
+            {
                 match poll_device_session(&state, &mut session).await {
                     Ok(Some(_)) => {
                         if let Err(error) = state.rescan_pool() {
                             eprintln!("pool rescan failed after device onboarding: {error}");
                         }
-                        SESSIONS.write().unwrap().insert(session.state.clone(), session.clone());
-                        return json_status(StatusCode::OK, json!({ "status": "ok", "provider": session.provider }));
+                        SESSIONS
+                            .write()
+                            .unwrap()
+                            .insert(session.state.clone(), session.clone());
+                        return json_status(
+                            StatusCode::OK,
+                            json!({ "status": "ok", "provider": session.provider }),
+                        );
                     }
                     Ok(None) => return json_status(StatusCode::OK, json!({ "status": "pending" })),
                     Err(error) => {
                         session.status = SessionStatus::Failed(error.clone());
-                        SESSIONS.write().unwrap().insert(session.state.clone(), session);
-                        return json_status(StatusCode::BAD_REQUEST, json!({ "status": "error", "error": error }));
+                        SESSIONS
+                            .write()
+                            .unwrap()
+                            .insert(session.state.clone(), session);
+                        return json_status(
+                            StatusCode::BAD_REQUEST,
+                            json!({ "status": "error", "error": error }),
+                        );
                     }
                 }
             }
 
             match session.status {
                 SessionStatus::Completed => {
-                    return json_status(StatusCode::OK, json!({ "status": "ok", "provider": session.provider }));
+                    return json_status(
+                        StatusCode::OK,
+                        json!({ "status": "ok", "provider": session.provider }),
+                    );
                 }
                 SessionStatus::Pending => {
                     return json_status(StatusCode::OK, json!({ "status": "pending" }));
                 }
                 SessionStatus::Failed(msg) => {
-                    return json_status(StatusCode::BAD_REQUEST, json!({ "status": "error", "error": msg }));
+                    return json_status(
+                        StatusCode::BAD_REQUEST,
+                        json!({ "status": "error", "error": msg }),
+                    );
                 }
             }
         }
@@ -1053,7 +1566,10 @@ pub async fn oauth_callback(
                     }
                     Err(error) => session.status = SessionStatus::Failed(error),
                 }
-                SESSIONS.write().unwrap().insert(session.state.clone(), session);
+                SESSIONS
+                    .write()
+                    .unwrap()
+                    .insert(session.state.clone(), session);
             } else if session.provider == "anthropic" && session.status == SessionStatus::Pending {
                 let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
                 let exchange_res = exchange_anthropic_code(
@@ -1078,16 +1594,44 @@ pub async fn oauth_callback(
                 sessions.insert(session.state.clone(), session);
             } else if session.provider == "xai" && session.status == SessionStatus::Pending {
                 match exchange_xai_code(&state, &mut session, code).await {
-                    Ok(()) => { if let Err(error) = state.rescan_pool() { eprintln!("pool rescan failed after xAI onboarding: {error}"); } }
+                    Ok(()) => {
+                        if let Err(error) = state.rescan_pool() {
+                            eprintln!("pool rescan failed after xAI onboarding: {error}");
+                        }
+                    }
                     Err(error) => session.status = SessionStatus::Failed(error),
                 }
-                SESSIONS.write().unwrap().insert(session.state.clone(), session);
+                SESSIONS
+                    .write()
+                    .unwrap()
+                    .insert(session.state.clone(), session);
             } else if session.provider == "gemini-cli" && session.status == SessionStatus::Pending {
                 match exchange_gemini_code(&state, &mut session, code).await {
-                    Ok(()) => { if let Err(error)=state.rescan_pool(){eprintln!("pool rescan failed after Gemini onboarding: {error}");} }
-                    Err(error) => session.status=SessionStatus::Failed(error),
+                    Ok(()) => {
+                        if let Err(error) = state.rescan_pool() {
+                            eprintln!("pool rescan failed after Gemini onboarding: {error}");
+                        }
+                    }
+                    Err(error) => session.status = SessionStatus::Failed(error),
                 }
-                SESSIONS.write().unwrap().insert(session.state.clone(),session);
+                SESSIONS
+                    .write()
+                    .unwrap()
+                    .insert(session.state.clone(), session);
+            } else if session.provider == "antigravity" && session.status == SessionStatus::Pending
+            {
+                match exchange_antigravity_code(&state, &mut session, code).await {
+                    Ok(()) => {
+                        if let Err(error) = state.rescan_pool() {
+                            eprintln!("pool rescan failed after Antigravity onboarding: {error}");
+                        }
+                    }
+                    Err(error) => session.status = SessionStatus::Failed(error),
+                }
+                SESSIONS
+                    .write()
+                    .unwrap()
+                    .insert(session.state.clone(), session);
             }
         }
     }
@@ -1137,6 +1681,20 @@ fn auth_url_for(
         body["user_code"] = json!(state);
     }
     json_status(StatusCode::OK, body)
+}
+
+async fn antigravity_auth_url_handler(Query(params): Query<HashMap<String, String>>) -> Response {
+    let (url, state, session) = create_antigravity_auth_url(&params);
+    register_session(session);
+    json_status(
+        StatusCode::OK,
+        json!({
+            "url": url,
+            "state": state,
+            "provider": "antigravity",
+            "status": "ok",
+        }),
+    )
 }
 
 async fn cursor_auth_url_handler(Query(params): Query<HashMap<String, String>>) -> Response {
@@ -1202,13 +1760,25 @@ async fn codex_auth_url_handler(
 async fn xai_auth_url_handler(Query(params): Query<HashMap<String, String>>) -> Response {
     let (url, state, session) = create_xai_auth_url(&params);
     register_session(session);
-    json_status(StatusCode::OK, json!({ "url":url, "state":state, "provider":"xai", "status":"ok" }))
+    json_status(
+        StatusCode::OK,
+        json!({ "url":url, "state":state, "provider":"xai", "status":"ok" }),
+    )
 }
 
 async fn gemini_auth_url_handler(Query(params): Query<HashMap<String, String>>) -> Response {
     match create_gemini_auth_url(&params) {
-        Ok((url,state,session)) => { register_session(session); json_status(StatusCode::OK,json!({"url":url,"state":state,"provider":"gemini-cli","status":"ok"})) }
-        Err(error) => json_status(StatusCode::BAD_REQUEST,json!({"status":"error","error":error})),
+        Ok((url, state, session)) => {
+            register_session(session);
+            json_status(
+                StatusCode::OK,
+                json!({"url":url,"state":state,"provider":"gemini-cli","status":"ok"}),
+            )
+        }
+        Err(error) => json_status(
+            StatusCode::BAD_REQUEST,
+            json!({"status":"error","error":error}),
+        ),
     }
 }
 
@@ -1219,7 +1789,10 @@ async fn device_auth_url(
 ) -> Response {
     match start_device_session(&state, provider, &params).await {
         Ok(body) => json_status(StatusCode::OK, body),
-        Err(error) => json_status(StatusCode::BAD_REQUEST, json!({ "status": "error", "error": error })),
+        Err(error) => json_status(
+            StatusCode::BAD_REQUEST,
+            json!({ "status": "error", "error": error }),
+        ),
     }
 }
 
@@ -1228,6 +1801,7 @@ pub fn oauth_routes() -> Router<Arc<AppState>> {
         .route("/get-auth-status", get(auth_status))
         .route("/codex-auth-url", get(codex_auth_url_handler))
         .route("/cursor-auth-url", get(cursor_auth_url_handler))
+        .route("/antigravity-auth-url", get(antigravity_auth_url_handler))
         .route("/xai-auth-url", get(xai_auth_url_handler))
         .route("/gemini-cli-auth-url", get(gemini_auth_url_handler))
         .route(
@@ -1250,9 +1824,11 @@ pub fn oauth_routes() -> Router<Arc<AppState>> {
     for (provider, endpoint, device) in PROVIDERS {
         router = router.route(
             Box::leak(format!("/{provider}-auth-url").into_boxed_str()),
-            get(move |Query(params): Query<HashMap<String, String>>| async move {
-                auth_url_for(provider, endpoint, *device, &params)
-            }),
+            get(
+                move |Query(params): Query<HashMap<String, String>>| async move {
+                    auth_url_for(provider, endpoint, *device, &params)
+                },
+            ),
         );
     }
     router
@@ -1280,6 +1856,7 @@ mod tests {
             "cursor",
             "xai",
             "gemini-cli",
+            "antigravity",
             "kimi",
             "qwen",
             "nous",
@@ -1320,10 +1897,9 @@ mod tests {
         assert_eq!(
             sha256(b"abc"),
             [
-                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
-                0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
-                0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
-                0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad,
             ]
         );
     }
@@ -1331,7 +1907,10 @@ mod tests {
     #[test]
     fn anthropic_auth_url_carries_full_pkce_and_scopes() {
         let mut params = HashMap::new();
-        params.insert("redirect_uri".to_string(), "http://localhost:54545/callback".to_string());
+        params.insert(
+            "redirect_uri".to_string(),
+            "http://localhost:54545/callback".to_string(),
+        );
         let (url, state, session) = create_anthropic_auth_url(&params);
 
         assert!(url.starts_with(CLAUDE_DEFAULT_AUTH_URL));
@@ -1340,6 +1919,27 @@ mod tests {
         assert!(url.contains(&format!("state={state}")));
         assert!(url.contains("org%3Acreate_api_key"));
         assert_eq!(session.provider, "anthropic");
+        assert_eq!(session.status, SessionStatus::Pending);
+    }
+
+    #[test]
+    fn antigravity_auth_url_carries_pkce_client_id_and_scopes() {
+        let mut params = HashMap::new();
+        params.insert(
+            "redirect_uri".to_string(),
+            "http://localhost:51121/oauth-callback".to_string(),
+        );
+        let (url, state, session) = create_antigravity_auth_url(&params);
+
+        assert!(url.starts_with(ANTIGRAVITY_DEFAULT_AUTH_URL));
+        assert!(url.contains("client_id="));
+        assert!(url.contains("code_challenge="));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("access_type=offline"));
+        assert!(url.contains("prompt=consent"));
+        assert!(url.contains(&format!("state={state}")));
+        assert!(url.contains("cloud-platform"));
+        assert_eq!(session.provider, "antigravity");
         assert_eq!(session.status, SessionStatus::Pending);
     }
 

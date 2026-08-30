@@ -4,17 +4,21 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use axum::extract::State;
 use axum::body::Body;
+use axum::extract::State;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::Router;
+use axum::{Json, Router};
 use base64::prelude::*;
 use common::unique_temp_dir;
+use mahoquot_gateway::account::ProviderAccount;
 use mahoquot_gateway::config::GatewayConfig;
 use mahoquot_gateway::routes::create_app;
 use mahoquot_gateway::state::AppState;
+use mahoquot_providers::antigravity::{
+    AntigravityAccount, ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET,
+};
 use mahoquot_providers::claude::ClaudeAccount;
 use mahoquot_providers::cursor::CursorAccount;
 use serde_json::{json, Value};
@@ -189,26 +193,28 @@ async fn test_anthropic_oauth_flow_end_to_end() {
     let mock_anthropic_app = Router::new()
         .route(
             "/v1/oauth/token",
-            post(move |State(s): State<MockAnthropicServerState>, body: String| async move {
-                s.hit_count.fetch_add(1, Ordering::SeqCst);
-                let parsed: Value = serde_json::from_str(&body).unwrap();
-                *s.last_body.lock().await = Some(parsed);
+            post(
+                move |State(s): State<MockAnthropicServerState>, body: String| async move {
+                    s.hit_count.fetch_add(1, Ordering::SeqCst);
+                    let parsed: Value = serde_json::from_str(&body).unwrap();
+                    *s.last_body.lock().await = Some(parsed);
 
-                (
-                    StatusCode::OK,
-                    [("content-type", "application/json")],
-                    json!({
-                        "access_token": "mock-claude-access-token-12345",
-                        "refresh_token": "mock-claude-refresh-token-67890",
-                        "expires_in": 3600,
-                        "account": {
-                            "uuid": "claude-uuid-9999",
-                            "email_address": "claude.test.user@anthropic.example.com"
-                        }
-                    })
-                    .to_string(),
-                )
-            }),
+                    (
+                        StatusCode::OK,
+                        [("content-type", "application/json")],
+                        json!({
+                            "access_token": "mock-claude-access-token-12345",
+                            "refresh_token": "mock-claude-refresh-token-67890",
+                            "expires_in": 3600,
+                            "account": {
+                                "uuid": "claude-uuid-9999",
+                                "email_address": "claude.test.user@anthropic.example.com"
+                            }
+                        })
+                        .to_string(),
+                    )
+                },
+            ),
         )
         .with_state(s_clone);
 
@@ -295,10 +301,7 @@ async fn test_anthropic_oauth_flow_end_to_end() {
     assert_eq!(parsed_acct.r#type, "claude");
     assert_eq!(parsed_acct.access_token, "mock-claude-access-token-12345");
     assert_eq!(parsed_acct.refresh_token, "mock-claude-refresh-token-67890");
-    assert_eq!(
-        parsed_acct.email,
-        "claude.test.user@anthropic.example.com"
-    );
+    assert_eq!(parsed_acct.email, "claude.test.user@anthropic.example.com");
     assert_eq!(parsed_acct.account_id, "claude-uuid-9999");
     assert!(!parsed_acct.expired.is_empty());
 
@@ -341,7 +344,11 @@ async fn test_cursor_oauth_flow_end_to_end() {
                     let count = s.poll_count.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
                         // First poll: pending (404)
-                        return (StatusCode::NOT_FOUND, [("content-type", "application/json")], "{}")
+                        return (
+                            StatusCode::NOT_FOUND,
+                            [("content-type", "application/json")],
+                            "{}",
+                        )
                             .into_response();
                     }
                     // Second poll: success (200)
@@ -493,9 +500,8 @@ async fn test_oauth_session_cancellation() {
     let state_token = start_json["state"].as_str().unwrap();
 
     // Cancel session
-    let cancel_url = format!(
-        "http://127.0.0.1:{gateway_port}/v0/management/oauth-session?state={state_token}"
-    );
+    let cancel_url =
+        format!("http://127.0.0.1:{gateway_port}/v0/management/oauth-session?state={state_token}");
     let cancel_resp = client
         .delete(&cancel_url)
         .bearer_auth(API_KEY)
@@ -634,7 +640,10 @@ async fn device_oauth_starts_polls_and_writes_generic_provider_credentials() {
     assert!(starts.contains("scope=inference%3Ainvoke"));
     let polls = mock.polls.lock().unwrap().join("\n");
     assert!(polls.contains("device_code=device-1"));
-    assert!(polls.contains("deviceCode=device-1"), "Qwen must use camelCase: {polls}");
+    assert!(
+        polls.contains("deviceCode=device-1"),
+        "Qwen must use camelCase: {polls}"
+    );
     mock_task.abort();
     std::fs::remove_dir_all(auth_dir).ok();
 }
@@ -658,8 +667,10 @@ async fn xai_pkce_callback_writes_a_live_generic_account() {
     std::fs::remove_dir_all(&auth_dir).ok();
     std::fs::create_dir_all(&auth_dir).unwrap();
     let config = GatewayConfig {
-        auth_dir: auth_dir.clone(), api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
-        config_path: auth_dir.join("config.yaml"), ..GatewayConfig::default()
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
     };
     let app = create_app(Arc::new(AppState::new(&config).unwrap()));
     let start = app.clone().oneshot(Request::builder()
@@ -668,19 +679,38 @@ async fn xai_pkce_callback_writes_a_live_generic_account() {
         .body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(start.status(), StatusCode::OK);
     let start_json = body_json(start).await;
-    assert!(start_json["url"].as_str().unwrap().contains("code_challenge="));
+    assert!(start_json["url"]
+        .as_str()
+        .unwrap()
+        .contains("code_challenge="));
     let state = start_json["state"].as_str().unwrap();
-    let callback = app.clone().oneshot(Request::builder()
-        .uri(format!("/v0/management/oauth-callback?code=xai-code&state={state}"))
-        .body(Body::empty()).unwrap()).await.unwrap();
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/oauth-callback?code=xai-code&state={state}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(callback.status(), StatusCode::OK);
-    let status = app.oneshot(Request::builder()
-        .uri(format!("/v0/management/get-auth-status?state={state}"))
-        .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
-        .body(Body::empty()).unwrap()).await.unwrap();
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(body_json(status).await["status"], "ok");
     assert!(auth_dir.join("generic-xai-grok_example.test.json").exists());
-    token_task.abort(); std::fs::remove_dir_all(auth_dir).ok();
+    token_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
 }
 
 #[tokio::test]
@@ -697,15 +727,401 @@ async fn gemini_pkce_callback_writes_google_adapter_account() {
     let token_url = format!("http://{}/token", listener.local_addr().unwrap());
     let token_task = tokio::spawn(async move { axum::serve(listener, token_app).await.unwrap() });
     let auth_dir = unique_temp_dir("qg-t13-gemini");
-    std::fs::remove_dir_all(&auth_dir).ok(); std::fs::create_dir_all(&auth_dir).unwrap();
-    let config=GatewayConfig{auth_dir:auth_dir.clone(),api_keys:mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),config_path:auth_dir.join("config.yaml"),..GatewayConfig::default()};
-    let app=create_app(Arc::new(AppState::new(&config).unwrap()));
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
     let start=app.clone().oneshot(Request::builder().uri(format!("/v0/management/gemini-cli-auth-url?client_id=gemini-client&client_secret=gemini-secret&auth_url=https%3A%2F%2Faccounts.example.test%2Fauth&token_url={}",url_encode(&token_url))).header(header::AUTHORIZATION,format!("Bearer {API_KEY}")).body(Body::empty()).unwrap()).await.unwrap();
-    let start_json=body_json(start).await; let state=start_json["state"].as_str().unwrap();
-    assert!(start_json["url"].as_str().unwrap().contains("access_type=offline"));
-    let callback=app.oneshot(Request::builder().uri(format!("/v0/management/oauth-callback?code=google-code&state={state}")).body(Body::empty()).unwrap()).await.unwrap();
-    assert_eq!(callback.status(),StatusCode::OK);
-    let saved:Value=serde_json::from_str(&std::fs::read_to_string(auth_dir.join("generic-gemini-cli-gemini_example.test.json")).unwrap()).unwrap();
-    assert_eq!(saved["adapter"],"google"); assert_eq!(saved["project_id"],"project-1"); assert_eq!(saved["auth_mode"],"oauth");
-    token_task.abort(); std::fs::remove_dir_all(auth_dir).ok();
+    let start_json = body_json(start).await;
+    let state = start_json["state"].as_str().unwrap();
+    assert!(start_json["url"]
+        .as_str()
+        .unwrap()
+        .contains("access_type=offline"));
+    let callback = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/oauth-callback?code=google-code&state={state}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+    let saved: Value = serde_json::from_str(
+        &std::fs::read_to_string(auth_dir.join("generic-gemini-cli-gemini_example.test.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["adapter"], "google");
+    assert_eq!(saved["project_id"], "project-1");
+    assert_eq!(saved["auth_mode"], "oauth");
+    token_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[derive(Clone)]
+struct MockAntigravityServerState {
+    token_hits: Arc<AtomicUsize>,
+    userinfo_hits: Arc<AtomicUsize>,
+    load_hits: Arc<AtomicUsize>,
+    last_token_body: Arc<tokio::sync::Mutex<Option<String>>>,
+    token_response_status: StatusCode,
+    token_response_body: Value,
+}
+
+#[tokio::test]
+async fn test_antigravity_oauth_flow_end_to_end() {
+    let auth_dir = unique_temp_dir("qg-t13-antigravity");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let server_state = MockAntigravityServerState {
+        token_hits: Arc::new(AtomicUsize::new(0)),
+        userinfo_hits: Arc::new(AtomicUsize::new(0)),
+        load_hits: Arc::new(AtomicUsize::new(0)),
+        last_token_body: Arc::new(tokio::sync::Mutex::new(None)),
+        token_response_status: StatusCode::OK,
+        token_response_body: json!({
+            "access_token": "mock-ag-access-token-99",
+            "refresh_token": "mock-ag-refresh-token-88",
+            "expires_in": 3600
+        }),
+    };
+    let s_clone = server_state.clone();
+
+    let mock_app = Router::new()
+        .route(
+            "/token",
+            post(
+                move |State(s): State<MockAntigravityServerState>, body: String| async move {
+                    s.token_hits.fetch_add(1, Ordering::SeqCst);
+                    *s.last_token_body.lock().await = Some(body);
+                    (s.token_response_status, Json(s.token_response_body))
+                },
+            ),
+        )
+        .route(
+            "/userinfo",
+            get(
+                move |State(s): State<MockAntigravityServerState>,
+                      headers: axum::http::HeaderMap| async move {
+                    s.userinfo_hits.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(
+                        headers.get("authorization").and_then(|v| v.to_str().ok()),
+                        Some("Bearer mock-ag-access-token-99")
+                    );
+                    Json(json!({
+                        "email": "antigravity.user@studio.dev",
+                        "id": "ag-user-123"
+                    }))
+                },
+            ),
+        )
+        .route(
+            "/v1internal:loadCodeAssist",
+            post(
+                move |State(s): State<MockAntigravityServerState>,
+                      headers: axum::http::HeaderMap,
+                      body: String| async move {
+                    s.load_hits.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(
+                        headers.get("authorization").and_then(|v| v.to_str().ok()),
+                        Some("Bearer mock-ag-access-token-99")
+                    );
+                    assert_eq!(
+                        headers.get("user-agent").and_then(|v| v.to_str().ok()),
+                        Some(mahoquot_providers::ANTIGRAVITY_USER_AGENT)
+                    );
+                    let body_json: Value = serde_json::from_str(&body).unwrap();
+                    assert_eq!(body_json["metadata"]["ideType"], "ANTIGRAVITY");
+                    Json(json!({
+                        "cloudaicompanionProject": "mock-cca-project-456"
+                    }))
+                },
+            ),
+        )
+        .with_state(s_clone);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+
+    let token_url = format!("http://127.0.0.1:{port}/token");
+    let userinfo_url = format!("http://127.0.0.1:{port}/userinfo");
+    let load_url = format!("http://127.0.0.1:{port}/v1internal:loadCodeAssist");
+    let auth_endpoint = "https://accounts.google.com/o/oauth2/v2/auth";
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app_state = Arc::new(AppState::new(&config).unwrap());
+    let app = create_app(app_state.clone());
+
+    // 1. Request antigravity auth URL
+    let start_uri = format!(
+        "/v0/management/antigravity-auth-url?auth_url={}&token_url={}&userinfo_url={}&load_url={}",
+        url_encode(auth_endpoint),
+        url_encode(&token_url),
+        url_encode(&userinfo_url),
+        url_encode(&load_url)
+    );
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(start_uri)
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    assert_eq!(start_json["status"], "ok");
+    assert_eq!(start_json["provider"], "antigravity");
+
+    let auth_url = start_json["url"].as_str().unwrap();
+    let state = start_json["state"].as_str().unwrap();
+
+    // Assert auth URL query params
+    assert!(auth_url.contains(&format!("client_id={}", url_encode(ANTIGRAVITY_CLIENT_ID))));
+    assert!(auth_url.contains("redirect_uri="));
+    assert!(auth_url.contains("scope="));
+    assert!(auth_url.contains("code_challenge="));
+    assert!(auth_url.contains("code_challenge_method=S256"));
+    assert!(auth_url.contains("access_type=offline"));
+    assert!(auth_url.contains("prompt=consent"));
+    assert!(auth_url.contains(&format!("state={state}")));
+
+    // 2. Invoke public callback
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/oauth-callback?code=antigravity-code-777&state={state}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+
+    // 3. Assert token exchange fields
+    assert_eq!(server_state.token_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(server_state.userinfo_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(server_state.load_hits.load(Ordering::SeqCst), 1);
+
+    let raw_token_body = server_state.last_token_body.lock().await.clone().unwrap();
+    assert!(raw_token_body.contains("grant_type=authorization_code"));
+    assert!(raw_token_body.contains(&format!("client_id={}", url_encode(ANTIGRAVITY_CLIENT_ID))));
+    assert!(raw_token_body.contains(&format!(
+        "client_secret={}",
+        url_encode(ANTIGRAVITY_CLIENT_SECRET)
+    )));
+    assert!(raw_token_body.contains("code=antigravity-code-777"));
+    assert!(raw_token_body.contains("redirect_uri="));
+    assert!(raw_token_body.contains("code_verifier="));
+
+    // 4. Assert antigravity-<email>.json credential file exists and has correct fields
+    let cred_file = auth_dir.join("antigravity-antigravity.user_studio.dev.json");
+    assert!(
+        cred_file.exists(),
+        "antigravity credential file must exist: {cred_file:?}"
+    );
+
+    let cred_raw = std::fs::read_to_string(&cred_file).unwrap();
+    let account: AntigravityAccount = serde_json::from_str(&cred_raw).unwrap();
+    assert_eq!(account.r#type, "antigravity");
+    assert_eq!(account.access_token, "mock-ag-access-token-99");
+    assert_eq!(account.refresh_token, "mock-ag-refresh-token-88");
+    assert_eq!(account.project_id, "mock-cca-project-456");
+    assert_eq!(account.email, "antigravity.user@studio.dev");
+    assert!(!account.expired.is_empty());
+    assert_eq!(account.expires_in, 3600);
+    assert!(account.timestamp > 0);
+    assert!(!account.disabled);
+
+    // 5. Assert it joins the runtime pool
+    let pool_members = app_state.pool.load().members.clone();
+    let found = pool_members.iter().find(|m| {
+        let guard = m.inner.read().unwrap();
+        match &*guard {
+            ProviderAccount::Antigravity(acct) => {
+                acct.email == "antigravity.user@studio.dev"
+                    && acct.project_id == "mock-cca-project-456"
+                    && acct.access_token == "mock-ag-access-token-99"
+            }
+            ProviderAccount::Codex(_)
+            | ProviderAccount::Claude(_)
+            | ProviderAccount::Cursor(_)
+            | ProviderAccount::Kiro(_)
+            | ProviderAccount::Zcode(_)
+            | ProviderAccount::Generic(_) => false,
+        }
+    });
+    assert!(
+        found.is_some(),
+        "antigravity account must join runtime pool"
+    );
+
+    // 6. Assert get-auth-status returns ok
+    let status_resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), StatusCode::OK);
+    let status_json = body_json(status_resp).await;
+    assert_eq!(status_json["status"], "ok");
+    assert_eq!(status_json["provider"], "antigravity");
+
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn test_antigravity_oauth_malformed_token_response_fails_cleanly() {
+    let auth_dir = unique_temp_dir("qg-t13-ag-malformed");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    // Mock token endpoint returning 500 error
+    let mock_app = Router::new().route(
+        "/token",
+        post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "token error") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+
+    let token_url = format!("http://127.0.0.1:{port}/token");
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/antigravity-auth-url?token_url={}",
+                    url_encode(&token_url)
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    let state = start_json["state"].as_str().unwrap();
+
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/oauth-callback?code=bad-code&state={state}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status(), StatusCode::BAD_REQUEST);
+    let status_json = body_json(status).await;
+    assert_eq!(status_json["status"], "error");
+
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn test_antigravity_oauth_callback_state_edge() {
+    let auth_dir = unique_temp_dir("qg-t13-ag-state-edge");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+
+    // Callback with unknown state
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/oauth-callback?code=any-code&state=nonexistent-state-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+
+    // No files written
+    let files = std::fs::read_dir(&auth_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+        .count();
+    assert_eq!(files, 0);
+
+    // Status check on unknown state returns stats (default) or pending/error
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/get-auth-status?state=nonexistent-state-123")
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status(), StatusCode::OK);
+    let status_json = body_json(status).await;
+    assert!(status_json.get("accounts").is_some());
+
+    std::fs::remove_dir_all(auth_dir).ok();
 }
