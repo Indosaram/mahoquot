@@ -872,7 +872,8 @@ mod tests {
 
     #[test]
     fn extract_combines_claude_message_start_and_delta() {
-        let head = b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":21}}}\n\n";
+        let head =
+            b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":21}}}\n\n";
         let tail = b"event: message_delta\ndata: {\"usage\":{\"output_tokens\":9}}\n\n";
         assert_eq!(extract_total_tokens(head, tail), Some(30));
     }
@@ -900,7 +901,9 @@ mod tests {
     #[test]
     fn capture_windows_preserve_usage_across_large_streams() {
         let mut capture = HeadTailCapture::new();
-        capture.push(b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":4}}}\n\n");
+        capture.push(
+            b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":4}}}\n\n",
+        );
         capture.push(&vec![b'.'; 20_000]);
         let tail_frame = b"data: {\"usage\":{\"total_tokens\":33}}\n\n";
         capture.push(tail_frame);

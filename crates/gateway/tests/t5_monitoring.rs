@@ -25,7 +25,9 @@ async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
         ..GatewayConfig::default()
     };
     let first = AppState::new(&config).expect("first state");
-    first.telemetry.record_with_account(1_800, "codex", Some("codex"), true);
+    first
+        .telemetry
+        .record_with_account(1_800, "codex", Some("codex"), true);
     first.telemetry.flush().expect("flush history");
     append_log_line(
         &first.settings.current(),
@@ -72,8 +74,7 @@ async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
 
 #[tokio::test]
 async fn logs_endpoint_serves_the_live_tail_while_file_logging_is_off() {
-    let auth_dir =
-        std::env::temp_dir().join(format!("mahoquot-live-tail-{}", std::process::id()));
+    let auth_dir = std::env::temp_dir().join(format!("mahoquot-live-tail-{}", std::process::id()));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
     std::fs::write(auth_dir.join("config.yaml"), "logging-to-file: false\n").expect("config");
     let config = GatewayConfig {
@@ -117,7 +118,10 @@ async fn logs_endpoint_serves_the_live_tail_while_file_logging_is_off() {
     let records = logs_json["records"].as_array().expect("records array");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["kind"], "proxy");
-    assert!(records[0]["message"].as_str().unwrap().contains("management: config updated"));
+    assert!(records[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("management: config updated"));
     assert!(!auth_dir.join("logs").exists(), "no file should be written");
 
     // File-backed error-log routes still refuse while logging is disabled.
@@ -177,7 +181,10 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
     let mut frames: Vec<String> = (0..3)
         .map(|i| format!("data: {{\"chunk\":{i}}}\n\n"))
         .collect();
-    frames.push("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n".to_string());
+    frames.push(
+        "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n"
+            .to_string(),
+    );
     frames.push("data: [DONE]\n\n".to_string());
     let expected_bytes_out: usize = frames.iter().map(|f| f.len()).sum();
 
@@ -188,7 +195,9 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
             let frames = frames_for_mock.clone();
             async move {
                 let stream = futures::stream::iter(
-                    frames.into_iter().map(|c| Ok::<_, std::io::Error>(bytes::Bytes::from(c))),
+                    frames
+                        .into_iter()
+                        .map(|c| Ok::<_, std::io::Error>(bytes::Bytes::from(c))),
                 );
                 Response::builder()
                     .status(axum::http::StatusCode::OK)
@@ -228,7 +237,9 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
     let request_body = r#"{"prompt":"write rust"}"#;
     let client = reqwest::Client::new();
     let res = client
-        .post(format!("http://127.0.0.1:{gw_port}/backend-api/codex/responses"))
+        .post(format!(
+            "http://127.0.0.1:{gw_port}/backend-api/codex/responses"
+        ))
         .header("Authorization", "Bearer stream-key")
         .header("Content-Type", "application/json")
         .body(request_body)
@@ -243,7 +254,10 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
     // written by a spawned task, so poll the endpoint with a bounded timeout.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let record = loop {
-        assert!(std::time::Instant::now() < deadline, "record never appeared");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "record never appeared"
+        );
         let logs = client
             .get(format!("http://127.0.0.1:{gw_port}/v0/management/logs"))
             .header("Authorization", "Bearer stream-key")
@@ -252,10 +266,7 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
             .unwrap();
         let logs_json: serde_json::Value = logs.json().await.unwrap();
         let records = logs_json["records"].as_array().cloned().unwrap_or_default();
-        if let Some(record) = records
-            .iter()
-            .find(|r| r["kind"] == "request")
-        {
+        if let Some(record) = records.iter().find(|r| r["kind"] == "request") {
             break record.clone();
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
