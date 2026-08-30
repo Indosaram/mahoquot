@@ -195,8 +195,8 @@ test("keeps an empty thin right-edge strip until hovered with complete isolation
   // Icons animate in from the strip rather than appearing fully formed.
   await expect(surface.locator(".notch-ring-item").first()).toHaveCSS("opacity", "1");
   await expect(shell).toHaveCSS("width", "420px");
-  await expect(shell).toHaveCSS("height", "480px");
-  await expect(notchSurface).toHaveCSS("width", "94px");
+  await expect(shell).toHaveCSS("height", "560px");
+  await expect(notchSurface).toHaveCSS("width", "108px");
   // The island hugs its icons, so assert it opened and stayed within bounds
   // rather than pinning a height that changes with provider count.
   const islandHeight = (await notchSurface.boundingBox())?.height ?? 0;

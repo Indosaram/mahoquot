@@ -1,29 +1,20 @@
+import { EmptyState } from "@/components/empty-state";
+import { buildRequestRate } from "@/features/dashboard/build-request-rate";
+import { RequestRateChart } from "@/features/dashboard/components/request-rate-chart";
+import { TotalRateChart } from "@/features/dashboard/components/total-rate-chart";
+import { Activity } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AdminStats } from "../lib/schemas";
 import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
 import {
-  type TelemetryPoint,
   type TelemetryRange,
   type TelemetrySample,
-  accountRateSeries,
   filterTelemetryRange,
-  rangeSeconds,
   summarizeTelemetry,
-  telemetrySeries,
 } from "../lib/telemetry";
 import { Cluster, IntrinsicGrid, Stack } from "./layout";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
-
-// Every point is one equal-duration bucket, so index maps straight to elapsed time.
-const chartPoints = (series: readonly TelemetryPoint[]): string => {
-  const values = series.length ? series.map((point) => point.requests) : [0];
-  const max = Math.max(1, ...values);
-  const denominator = Math.max(1, values.length - 1);
-  return values
-    .map((value, index) => `${(index / denominator) * 100},${34 - (value / max) * 30}`)
-    .join(" ");
-};
 
 // Persisted buckets carry no latency, so percentiles come from live stats.
 const latency = (stats: AdminStats, pick: "p50_ms" | "p90_ms"): string => {
@@ -41,9 +32,9 @@ export const OverviewDashboard = ({
   readonly stats: AdminStats;
   readonly samples: readonly TelemetrySample[];
 }) => {
+  const requestRate = useMemo(() => buildRequestRate(stats), [stats]);
   const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
   const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
-  const series = useMemo(() => telemetrySeries(filtered, range), [filtered, range]);
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
   const outcomes = summary.successes + summary.failures;
   const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
@@ -99,84 +90,27 @@ export const OverviewDashboard = ({
       </IntrinsicGrid>
 
       <section className="minimal-chart-section">
-        <header>
-          <h2>Request activity</h2>
-          <span>{range}</span>
-        </header>
-        <div className="minimal-request-chart" role="img" aria-label="Request activity over time">
-          <svg viewBox="0 0 100 36" preserveAspectRatio="none">
-            <title>Request activity over time</title>
-            <defs>
-              <linearGradient id="minimal-request-area" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.24" />
-                <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            <path d="M0 34H100 M0 18H100" className="minimal-chart-grid" />
-            <polygon
-              points={`0,34 ${chartPoints(series)} 100,34`}
-              fill="url(#minimal-request-area)"
-            />
-            <polyline points={chartPoints(series)} className="minimal-request-line" />
-          </svg>
-          {!series.some((point) => point.requests > 0) ? <span>No requests yet</span> : null}
-        </div>
+        {requestRate ? (
+          <TotalRateChart rate={requestRate} isLoading={false} />
+        ) : (
+          <EmptyState
+            icon={Activity}
+            title="No traffic in this window yet"
+            description="Minute buckets appear here the moment the gateway relays its first request."
+          />
+        )}
       </section>
 
       <section className="minimal-chart-section" aria-label="Per-account request rate">
-        <header>
-          <h2>Per-account request rate</h2>
-          <span>{range}</span>
-        </header>
-        <div className="minimal-account-panels">
-          {stats.accounts.map((account, index) => {
-            const label = `Account ${index + 1}`;
-            const series = accountRateSeries(filtered, account.id, range);
-            const total = series.reduce((sum, point) => sum + point.requests, 0);
-            const bucketSecs = rangeSeconds(range) / series.length;
-            const peakPerMin =
-              (Math.max(0, ...series.map((point) => point.requests)) * 60) / bucketSecs;
-            return (
-              <article key={account.id} className="minimal-account-panel">
-                <header>
-                  <span className="name">{label}</span>
-                  <span className="peak tnum">{Math.round(peakPerMin)}/min peak</span>
-                </header>
-                {total === 0 ? (
-                  <div className="minimal-account-empty">No traffic in this window</div>
-                ) : (
-                  <div
-                    className="minimal-account-chart"
-                    role="img"
-                    aria-label={`${label}: peak ${Math.round(peakPerMin)} requests per minute`}
-                  >
-                    <svg viewBox="0 0 100 36" preserveAspectRatio="none">
-                      <title>{`${label} peak request rate`}</title>
-                      <defs>
-                        <linearGradient
-                          id={`minimal-account-area-${account.id}`}
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="1"
-                        >
-                          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.24" />
-                          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      <path d="M0 34H100 M0 18H100" className="minimal-chart-grid" />
-                      <polygon
-                        points={`0,34 ${chartPoints(series)} 100,34`}
-                        fill={`url(#minimal-account-area-${account.id})`}
-                      />
-                      <polyline points={chartPoints(series)} className="minimal-request-line" />
-                    </svg>
-                  </div>
-                )}
-              </article>
-            );
-          })}
-        </div>
+        {requestRate ? (
+          <RequestRateChart rate={requestRate} isLoading={false} />
+        ) : (
+          <EmptyState
+            icon={Activity}
+            title="No account traffic yet"
+            description="Per-account rate panels fill in as soon as the pool serves its first minute."
+          />
+        )}
       </section>
 
       <section className="minimal-provider-mix" aria-label="Provider mix">

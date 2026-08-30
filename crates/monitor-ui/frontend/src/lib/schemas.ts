@@ -60,6 +60,9 @@ export const AccountStatsSchema = z.object({
   health: z.union([z.record(z.unknown()), z.string()]).default("unknown"),
   ok: z.number().default(0),
   fails: z.number().default(0),
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+  total_tokens: z.number().optional(),
   reset_at_unix_ms: z.number().nullable().optional(),
   last_error: LastErrorSchema.nullable().optional(),
   ttft: z.union([TtftSnapshotSchema, z.number()]).nullable().optional(),
@@ -72,6 +75,8 @@ export const ProviderTelemetrySchema = z.object({
   requests: z.number().default(0),
   successes: z.number().default(0),
   failures: z.number().default(0),
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
 });
 
 export const AccountTelemetrySchema = z.object({
@@ -79,6 +84,8 @@ export const AccountTelemetrySchema = z.object({
   requests: z.number().default(0),
   successes: z.number().default(0),
   failures: z.number().default(0),
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
 });
 
 export const TelemetryBucketSchema = z.object({
@@ -86,6 +93,8 @@ export const TelemetryBucketSchema = z.object({
   requests: z.number().default(0),
   successes: z.number().default(0),
   failures: z.number().default(0),
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
   providers: z.array(ProviderTelemetrySchema).default([]),
   accounts: z.array(AccountTelemetrySchema).default([]),
 });

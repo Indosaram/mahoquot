@@ -42,6 +42,7 @@ export interface GatewayClients {
     logs(): Promise<LogsResponse>;
     configYaml(): Promise<string>;
     saveConfigYaml(yaml: string): Promise<void>;
+    usageRefresh(): Promise<void>;
     removeCredential(name: string): Promise<void>;
     setCredentialDisabled(name: string, disabled: boolean): Promise<void>;
     createZcodeCredential(email: string, apiKey: string): Promise<void>;
@@ -82,7 +83,7 @@ const requestJson = async (
 
 export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayClients => {
   const base = baseUrl.replace(/\/$/, "");
-  const authHeaders = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+  const authHeaders: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   return {
     admin: {
       stats: async () => parseAdminStats(await requestJson(`${base}/admin/stats`, authHeaders)),
@@ -171,6 +172,9 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file: document }),
         });
+      },
+      usageRefresh: async () => {
+        await requestJson(`${base}/admin/usage/refresh`, authHeaders, { method: "POST" });
       },
       removeCredential: async (name) => {
         await requestJson(

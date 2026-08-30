@@ -11,6 +11,10 @@ pub struct ProviderTelemetry {
     pub requests: u64,
     pub successes: u64,
     pub failures: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +23,10 @@ pub struct AccountTelemetry {
     pub requests: u64,
     pub successes: u64,
     pub failures: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +35,10 @@ pub struct TelemetryBucket {
     pub requests: u64,
     pub successes: u64,
     pub failures: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
     pub providers: Vec<ProviderTelemetry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<AccountTelemetry>,
@@ -144,6 +156,87 @@ impl TelemetryStore {
             .clone()
     }
 
+    pub fn record_tokens(
+        &self,
+        unix_secs: i64,
+        provider: &str,
+        account: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        let minute_unix = unix_secs.div_euclid(60) * 60;
+        let mut buckets = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let bucket_index = match buckets.last() {
+            Some(bucket) if bucket.minute_unix == minute_unix => buckets.len() - 1,
+            _ => {
+                buckets.push(TelemetryBucket {
+                    minute_unix,
+                    ..TelemetryBucket::default()
+                });
+                buckets.len() - 1
+            }
+        };
+        let bucket = &mut buckets[bucket_index];
+        bucket.input_tokens = bucket.input_tokens.saturating_add(input_tokens);
+        bucket.output_tokens = bucket.output_tokens.saturating_add(output_tokens);
+
+        let provider_bucket = match bucket
+            .providers
+            .iter_mut()
+            .find(|item| item.provider == provider)
+        {
+            Some(provider_bucket) => provider_bucket,
+            None => {
+                bucket.providers.push(ProviderTelemetry {
+                    provider: provider.to_string(),
+                    ..ProviderTelemetry::default()
+                });
+                bucket
+                    .providers
+                    .last_mut()
+                    .expect("provider bucket inserted")
+            }
+        };
+        provider_bucket.input_tokens = provider_bucket.input_tokens.saturating_add(input_tokens);
+        provider_bucket.output_tokens = provider_bucket.output_tokens.saturating_add(output_tokens);
+
+        let account_bucket = match bucket
+            .accounts
+            .iter_mut()
+            .find(|item| item.account == account)
+        {
+            Some(account_bucket) => account_bucket,
+            None => {
+                bucket.accounts.push(AccountTelemetry {
+                    account: account.to_string(),
+                    ..AccountTelemetry::default()
+                });
+                bucket.accounts.last_mut().expect("account bucket inserted")
+            }
+        };
+        account_bucket.input_tokens = account_bucket.input_tokens.saturating_add(input_tokens);
+        account_bucket.output_tokens = account_bucket.output_tokens.saturating_add(output_tokens);
+        self.flush_requested.notify_one();
+    }
+
+    pub fn account_tokens(&self, account: &str) -> (u64, u64) {
+        self.buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .flat_map(|bucket| bucket.accounts.iter())
+            .filter(|item| item.account == account)
+            .fold((0_u64, 0_u64), |(input, output), item| {
+                (
+                    input.saturating_add(item.input_tokens),
+                    output.saturating_add(item.output_tokens),
+                )
+            })
+    }
+
     pub fn flush(&self) -> std::io::Result<()> {
         let document = TelemetryDocument {
             buckets: self.snapshot(),
@@ -199,6 +292,7 @@ mod tests {
         let store = TelemetryStore::load(path.clone());
         store.record_with_account(1_800, "codex", None, true);
         store.record_with_account(1_801, "codex", None, false);
+        store.record_tokens(1_801, "codex", "codex-1", 120, 45);
         store.flush().expect("flush telemetry");
 
         let restored = TelemetryStore::load(path);
@@ -207,7 +301,22 @@ mod tests {
         assert_eq!(restored.snapshot()[0].successes, 1);
         assert_eq!(restored.snapshot()[0].failures, 1);
         assert_eq!(restored.snapshot()[0].providers[0].provider, "codex");
+        assert_eq!(restored.account_tokens("codex-1"), (120, 45));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn token_usage_accumulates_without_incrementing_requests() {
+        let store = TelemetryStore::load(PathBuf::from("unused.json"));
+        store.record_with_account(1_800, "codex", Some("codex-1"), true);
+        store.record_tokens(1_800, "codex", "codex-1", 50, 20);
+        store.record_tokens(1_801, "codex", "codex-1", 25, 10);
+
+        let bucket = &store.snapshot()[0];
+        assert_eq!(bucket.requests, 1);
+        assert_eq!(bucket.input_tokens, 75);
+        assert_eq!(bucket.output_tokens, 30);
+        assert_eq!(store.account_tokens("codex-1"), (75, 30));
     }
 
     #[test]

@@ -19,6 +19,9 @@ export interface NormalizedAccount {
   readonly cooldownRemainingSecs: number | null;
   readonly ok: number;
   readonly fails: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
   readonly failureRate: number;
   readonly p50Ms: number | null;
   readonly lastError: LastError | null;
@@ -242,6 +245,9 @@ export const mergeAccountsAndCredentials = (
       cooldownRemainingSecs: cooldownRemaining,
       ok: r.ok,
       fails: r.fails,
+      inputTokens: r.input_tokens ?? 0,
+      outputTokens: r.output_tokens ?? 0,
+      totalTokens: r.total_tokens ?? 0,
       failureRate,
       p50Ms: p50,
       lastError: r.last_error ?? null,
@@ -281,6 +287,9 @@ export const mergeAccountsAndCredentials = (
       cooldownRemainingSecs: null,
       ok: 0,
       fails: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
       failureRate: 0,
       p50Ms: null,
       lastError: null,

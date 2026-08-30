@@ -47,10 +47,12 @@ import type { LogRecord } from "./lib/schemas";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import {
   getGatewayBaseUrl,
+  getQuotaShowRemaining,
   getRelayKey,
   getTheme,
   setTheme as persistTheme,
   setGatewayBaseUrl,
+  setQuotaShowRemaining,
   setRelayKey,
   validateGatewayBaseUrl,
 } from "./lib/storage";
@@ -268,6 +270,16 @@ const providerRingColors: Readonly<Record<string, string>> = {
 const providerRingColor = (provider: string): string =>
   providerRingColors[provider.trim().toLowerCase()] ?? "#8E8E93";
 
+// Island silhouette: short necks (27px), concave trumpet flares (60px), and a
+// long body (340px) — viewBox 0 0 108 520, shared by shadow/glass/edge layers.
+const NOTCH_ISLAND_PATH =
+  "M108 0H90C88.5 0 88 1 88 3V30C88 68 78 90 0 90V430C78 430 88 452 88 490V517C88 519 88.5 520 90 520H108Z";
+
+const worstUsedPercent = (rows: readonly { usedPercent: number }[]): number | null => {
+  const values = rows.map((row) => row.usedPercent).filter((value) => Number.isFinite(value));
+  return values.length ? Math.max(...values) : null;
+};
+
 const NotchGlyph = ({ provider }: { provider: string }) => {
   const normalized = provider.trim().toLowerCase();
   const logo = providerLogos[normalized] ?? providerLogos.generic;
@@ -319,6 +331,18 @@ export default function App() {
   const [logs, setLogs] = useState<readonly LogRecord[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  const [showRemaining, setShowRemainingState] = useState(getQuotaShowRemaining());
+
+  const setShowRemaining = useCallback((value: boolean) => {
+    setQuotaShowRemaining(value);
+    setShowRemainingState(value);
+    const api = (
+      window as {
+        __TAURI__?: { event?: { emit: (event: string, payload: unknown) => void } };
+      }
+    ).__TAURI__;
+    api?.event?.emit("mahoquot-quota-mode", value);
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [gatewayLifecycle, setGatewayLifecycle] = useState<GatewayLifecycleStatus>("running");
   const [provider, setProvider] = useState(
@@ -402,6 +426,29 @@ export default function App() {
     [resetOnboarding],
   );
 
+  const usageRefreshAt = useRef(0);
+  const refreshUsage = useCallback(
+    async (force = false) => {
+      const now = Date.now();
+      if (!force && now - usageRefreshAt.current < 30_000) return;
+      usageRefreshAt.current = now;
+      const api = (
+        window as {
+          __TAURI__?: {
+            core?: { invoke: (command: string) => Promise<unknown> };
+          };
+        }
+      ).__TAURI__;
+      try {
+        if (api?.core) await api.core.invoke("refresh_usage");
+        else await clients.management.usageRefresh();
+      } catch {
+        // the 120s poller is the fallback when the on-demand pass fails
+      }
+    },
+    [clients],
+  );
+
   const refresh = useCallback(async () => {
     if (firstLoad.current) setLoadState("loading");
     try {
@@ -477,11 +524,42 @@ export default function App() {
     // hidden tray/notch windows skip the poll; the moment one becomes visible
     // it must show fresh quota instead of waiting for the next tick
     const onVisibility = () => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) void refreshUsage().finally(() => void refresh());
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refresh]);
+  }, [refresh, refreshUsage]);
+
+  useEffect(() => {
+    // the quota display mode is flipped in the console settings; the tray and
+    // notch windows live in separate webviews and only hear about it via events
+    const api = (
+      window as {
+        __TAURI__?: {
+          event?: {
+            listen: (
+              event: string,
+              handler: (message: { payload: unknown }) => void,
+            ) => Promise<() => void>;
+          };
+        };
+      }
+    ).__TAURI__;
+    let dispose: (() => void) | undefined;
+    let cancelled = false;
+    void api?.event
+      ?.listen("mahoquot-quota-mode", (message: { payload: unknown }) => {
+        setShowRemainingState(Boolean(message.payload));
+      })
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else dispose = unlisten;
+      });
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -1040,6 +1118,7 @@ export default function App() {
         online={loadState === "online"}
         gatewayLifecycle={gatewayLifecycle}
         refreshing={refreshing}
+        showRemaining={showRemaining}
         fetchedAgoSecs={fetchedAt === null ? null : Math.round((Date.now() - fetchedAt) / 1000)}
         onRefresh={() => void refreshNow()}
         onOpenConsole={() => void api?.core?.invoke("open_console")}
@@ -1099,13 +1178,21 @@ export default function App() {
                     <div className="notch-tooltip-bar">
                       <i
                         style={{
-                          width: `${Math.min(100, Math.max(0, row.usedPercent))}%`,
+                          width: `${Math.min(
+                            100,
+                            Math.max(0, showRemaining ? 100 - row.usedPercent : row.usedPercent),
+                          )}%`,
                           background: index === 0 ? providerRingColor(group.provider) : "var(--ok)",
                         }}
                       />
                     </div>
                     <div className="notch-tooltip-meta">
-                      <span>{formatQuotaPercent(row.usedPercent)}% Used</span>
+                      <span>
+                        {formatQuotaPercent(
+                          showRemaining ? 100 - row.usedPercent : row.usedPercent,
+                        )}
+                        % {showRemaining ? "Left" : "Used"}
+                      </span>
                       <small>
                         Resets{" "}
                         {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
@@ -1129,41 +1216,76 @@ export default function App() {
         data-mahoquot-surface="notch"
       >
         <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
-        <svg
-          className="notch-island-shape"
-          viewBox="0 0 108 440"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <path d="M108 0H86C61 0 42 17 42 42V68C42 78 32 86 20 86H0V354H20C32 354 42 362 42 372V398C42 423 61 440 86 440H108Z" />
-        </svg>
+        <div className="notch-island-shape" aria-hidden="true">
+          <svg
+            className="notch-island-shadow"
+            viewBox="0 0 108 520"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path d={NOTCH_ISLAND_PATH} />
+          </svg>
+          <div
+            className="notch-island-glass"
+            style={{ clipPath: `path("${NOTCH_ISLAND_PATH}")` }}
+          />
+          <svg
+            className="notch-island-edge"
+            viewBox="0 0 108 520"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path d={NOTCH_ISLAND_PATH} />
+          </svg>
+        </div>
         <div className={`notch-surface${notchExpanded ? " expanded" : ""}`}>
           {notchGroups.length ? (
-            notchGroups.map((group) => (
-              <button
-                type="button"
-                className="notch-ring-item"
-                key={group.provider}
-                data-provider={group.provider}
-                data-testid={`notch-ring-${group.provider}`}
-                data-hover-provider={group.provider}
-                onMouseEnter={() => openNotchTooltip(group.provider)}
-                onMouseLeave={scheduleNotchTooltipClose}
-                onClick={() => openNotchTooltip(group.provider)}
-              >
-                <div className="notch-ring-wrap">
-                  <span className="notch-ring-logo">
-                    <NotchGlyph provider={group.provider} />
+            notchGroups.map((group) => {
+              const dial = worstUsedPercent(group.rows);
+              const circumference = 2 * Math.PI * 27;
+              const used =
+                dial === null ? 0 : (Math.min(100, Math.max(0, dial)) / 100) * circumference;
+              return (
+                <button
+                  type="button"
+                  className="notch-ring-item"
+                  key={group.provider}
+                  data-provider={group.provider}
+                  data-testid={`notch-ring-${group.provider}`}
+                  data-hover-provider={group.provider}
+                  onMouseEnter={() => openNotchTooltip(group.provider)}
+                  onMouseLeave={scheduleNotchTooltipClose}
+                  onClick={() => openNotchTooltip(group.provider)}
+                >
+                  <span className="notch-dial">
+                    <svg className="notch-dial-ring" viewBox="0 0 64 64" aria-hidden="true">
+                      <circle className="notch-dial-track" cx="32" cy="32" r="27" />
+                      {dial !== null && (
+                        <circle
+                          className="notch-dial-arc"
+                          cx="32"
+                          cy="32"
+                          r="27"
+                          style={{
+                            stroke: providerRingColor(group.provider),
+                            strokeDasharray: `${used} ${circumference}`,
+                          }}
+                        />
+                      )}
+                    </svg>
+                    <span className="notch-ring-logo">
+                      <NotchGlyph provider={group.provider} />
+                    </span>
                   </span>
-                  {group.accountCount > 1 && (
-                    <span className="notch-ring-count">{group.accountCount}</span>
-                  )}
-                </div>
-                <div className={activeTooltip === group.provider ? "react-visible" : undefined}>
-                  {renderNotchTooltip(group)}
-                </div>
-              </button>
-            ))
+                  <span className="notch-dial-label">
+                    {dial === null ? "–" : `${Math.round(dial)}%`}
+                  </span>
+                  <div className={activeTooltip === group.provider ? "react-visible" : undefined}>
+                    {renderNotchTooltip(group)}
+                  </div>
+                </button>
+              );
+            })
           ) : (
             <div
               className="notch-empty-ring"
@@ -1243,7 +1365,10 @@ export default function App() {
           <h1 data-tauri-drag-region>{surface.charAt(0).toUpperCase() + surface.slice(1)}</h1>
           {surface === "accounts" ? (
             <div className="top-actions">
-              <Button aria-label="Refresh snapshot" onClick={() => void refresh()}>
+              <Button
+                aria-label="Refresh snapshot"
+                onClick={() => void refreshUsage(true).finally(() => void refresh())}
+              >
                 <RefreshCw size={15} /> Refresh
               </Button>
               <Button aria-label="Add account" onClick={openOnboarding}>

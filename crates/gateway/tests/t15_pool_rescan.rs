@@ -214,3 +214,46 @@ async fn cors_allows_the_authorization_header_explicitly_for_webviews() {
     );
     std::fs::remove_dir_all(auth_dir).ok();
 }
+
+#[tokio::test]
+async fn rescan_preserves_runtime_state_for_surviving_accounts() {
+    // given a gateway whose codex account has live counters and cached usage
+    let auth_dir = std::env::temp_dir().join(format!("quotio-keep-state-{}", std::process::id()));
+    std::fs::create_dir_all(&auth_dir).expect("auth dir");
+    std::fs::write(auth_dir.join("codex-seed.json"), codex_credential_json()).expect("seed");
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: ApiKeys::new(vec!["rescan-key".to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).expect("state"));
+    state
+        .pool
+        .load()
+        .members
+        .first()
+        .expect("seeded member")
+        .ok_count
+        .store(7, std::sync::atomic::Ordering::Relaxed);
+
+    // when a second credential is written and the pool rescans
+    std::fs::write(
+        auth_dir.join("claude-imported.json"),
+        claude_credential_json().to_string(),
+    )
+    .expect("write claude");
+    state.rescan_pool().expect("rescan");
+
+    // then the surviving account keeps its counters and gains the new one
+    let members = state.pool.load().members.clone();
+    assert_eq!(members.len(), 2);
+    let codex = members
+        .iter()
+        .find(|m| m.id.contains("codex-seed"))
+        .expect("codex member");
+    assert_eq!(codex.ok_count.load(std::sync::atomic::Ordering::Relaxed), 7);
+
+    std::fs::remove_dir_all(auth_dir).ok();
+}

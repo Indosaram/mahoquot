@@ -36,6 +36,12 @@ export interface AccountCardProps {
   readonly onContextMenu: (event: MouseEvent, account: NormalizedAccount) => void;
 }
 
+const formatTokenCount = (tokens: number): string =>
+  new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(tokens);
+
 export const AccountCard = ({
   account,
   pending,
@@ -181,6 +187,26 @@ export const AccountCard = ({
               )}
             </>
           ) : null}
+        </div>
+      </div>
+      <div className="token-usage-summary" aria-label="Token usage">
+        <div>
+          <span>Input</span>
+          <strong title={account.inputTokens.toLocaleString()}>
+            {formatTokenCount(account.inputTokens)}
+          </strong>
+        </div>
+        <div>
+          <span>Output</span>
+          <strong title={account.outputTokens.toLocaleString()}>
+            {formatTokenCount(account.outputTokens)}
+          </strong>
+        </div>
+        <div>
+          <span>Total tokens</span>
+          <strong title={account.totalTokens.toLocaleString()}>
+            {formatTokenCount(account.totalTokens)}
+          </strong>
         </div>
       </div>
       <div className="usage-section">

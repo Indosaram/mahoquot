@@ -18,6 +18,9 @@ const mockAccount: NormalizedAccount = {
   cooldownRemainingSecs: null,
   ok: 10,
   fails: 0,
+  inputTokens: 1_250,
+  outputTokens: 430,
+  totalTokens: 1_680,
   failureRate: 0,
   p50Ms: 120,
   lastError: null,
@@ -52,6 +55,15 @@ const createProps = (overrides?: Partial<AccountsSurfaceProps>): AccountsSurface
 });
 
 describe("AccountsSurface component", () => {
+  it("renders persistent input, output, and total token usage", () => {
+    render(<AccountsSurface {...createProps()} />);
+
+    const usage = screen.getByLabelText("Token usage");
+    expect(usage).toHaveTextContent("1.3K");
+    expect(usage).toHaveTextContent("430");
+    expect(usage).toHaveTextContent("1.7K");
+  });
+
   it("renders provider tabs, count badges, and account cards", () => {
     render(<AccountsSurface {...createProps()} />);
     expect(screen.getByText("Codex")).toBeInTheDocument();

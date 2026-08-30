@@ -39,6 +39,35 @@ pub struct AppState {
     pub log_tail: LogTail,
 }
 
+fn adopt_runtime_state(target: &AccountMember, previous: &Arc<AccountMember>) {
+    let seq = std::sync::atomic::Ordering::Relaxed;
+    *target
+        .health
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = *previous
+        .health
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *target
+        .usage
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous
+        .usage
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    *target
+        .unsupported_models
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous
+        .unsupported_models
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    target.ok_count.store(previous.ok_count.load(seq), seq);
+    target.fail_count.store(previous.fail_count.load(seq), seq);
+}
+
 impl AppState {
     pub fn new(config: &GatewayConfig) -> anyhow::Result<Self> {
         let members = load_account_members(&config.auth_dir)?;
@@ -98,6 +127,27 @@ impl AppState {
     pub fn rescan_pool(&self) -> anyhow::Result<usize> {
         let auth_dir = self.settings.current().auth_dir.clone();
         let members = load_account_members(std::path::Path::new(&auth_dir))?;
+        // Surviving accounts keep their runtime state (health, counters, cached
+        // usage): reloading them fresh would wipe cooldowns and quota caches on
+        // every import or delete.
+        let previous: std::collections::BTreeMap<String, Arc<AccountMember>> = self
+            .pool
+            .load()
+            .members
+            .iter()
+            .map(|m| (m.id.clone(), m.clone()))
+            .collect();
+        let members: Vec<Arc<AccountMember>> = members
+            .into_iter()
+            .map(|m| match previous.get(&m.id) {
+                Some(previous_member) => {
+                    // fresh parse wins (new tokens/project), runtime state transfers
+                    adopt_runtime_state(&m, previous_member);
+                    m
+                }
+                None => m,
+            })
+            .collect();
         let provider_kinds: Vec<ProviderKind> = members.iter().map(|m| m.kind()).collect();
         let mut models = model_entries(&provider_kinds, self.models_env.as_deref());
         models.extend(crate::models_route::generic_model_entries(&members));
@@ -139,6 +189,7 @@ impl AppState {
             .iter()
             .map(|m| {
                 let health = m.health();
+                let (input_tokens, output_tokens) = self.telemetry.account_tokens(&m.id);
                 let reset_at_unix_ms = match health {
                     Health::Cooldown { until_unix_ms } => Some(until_unix_ms),
                     _ => None,
@@ -149,6 +200,9 @@ impl AppState {
                     health: health.into(),
                     ok: m.ok_count.load(Ordering::Relaxed),
                     fails: m.fail_count.load(Ordering::Relaxed),
+                    input_tokens,
+                    output_tokens,
+                    total_tokens: input_tokens.saturating_add(output_tokens),
                     reset_at_unix_ms,
                     last_error: self.monitor.last_error(&m.id),
                     ttft: self.monitor.account_ttft(&m.id),

@@ -19,6 +19,9 @@ const stats = {
       health: { status: "available" },
       ok: 91,
       fails: 2,
+      input_tokens: 1_234_567,
+      output_tokens: 4_200,
+      total_tokens: 1_238_767,
       usage: {
         primary: { used_percent: 44, reset_after_seconds: 3600 },
         reset_credits_available: 1,
@@ -320,7 +323,10 @@ test("adds from the plus drawer and deletes from the normal account list", async
     return route.fulfill({ json: { files } });
   });
   await page.goto("/management.html");
-  await page.getByRole("button", { name: /Accounts/ }).first().click();
+  await page
+    .getByRole("button", { name: /Accounts/ })
+    .first()
+    .click();
   await page.getByRole("button", { name: "Add account" }).click();
   await page.getByRole("textbox", { name: "Search providers" }).fill("DeepSeek");
   await page.getByRole("button", { name: "DeepSeek", exact: true }).click();
@@ -358,15 +364,18 @@ test("Kiro onboarding and account disable enable lifecycle", async ({ page }) =>
     await route.fulfill({ json: { status: "ok" } });
   });
   await page.goto("/management.html");
-  await page.getByRole("button", { name: /Accounts/ }).first().click();
+  await page
+    .getByRole("button", { name: /Accounts/ })
+    .first()
+    .click();
   await page.getByRole("button", { name: "Add account" }).click();
   await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
   await page.getByLabel("Close onboarding").click();
   await page.getByText("Codex", { exact: true }).click();
   await page.getByRole("button", { name: /Disable Primary Codex/ }).click();
-  await expect.poll(() => statusWrites).toEqual([
-    { name: "account@example.com.json", disabled: true },
-  ]);
+  await expect
+    .poll(() => statusWrites)
+    .toEqual([{ name: "account@example.com.json", disabled: true }]);
   await expect(page.getByRole("button", { name: /Enable Primary Codex/ })).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/account-disabled-lifecycle.png`, fullPage: true });
 });
@@ -382,7 +391,10 @@ for (const viewport of [
     if (viewport.name === "mobile") {
       await page.getByLabel("Mobile navigation").getByText("accounts").click();
     } else {
-      await page.getByRole("button", { name: /Accounts/ }).first().click();
+      await page
+        .getByRole("button", { name: /Accounts/ })
+        .first()
+        .click();
     }
     await page.getByRole("button", { name: "Add account" }).click();
     const search = page.getByRole("textbox", { name: "Search providers" });
@@ -418,6 +430,8 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
     .getByRole("button", { name: /Accounts/ })
     .first()
     .click();
+  await expect(page.getByText("Total tokens")).toBeVisible();
+  await expect(page.getByText("1.2M")).toBeVisible();
   await page.getByText("Claude", { exact: true }).click();
   await expect(page.getByText("Not reported by provider").first()).toBeVisible();
   await expect(
@@ -502,16 +516,14 @@ test("mobile responsive state without management controls", async ({ page }) => 
   await page.screenshot({ path: `${evidenceDir}/mobile-light-overview.png`, fullPage: true });
 });
 
-test("tray dropdown panel surfaces proxy, provider chips, and quota cards", async ({
-  page,
-}) => {
+test("tray dropdown panel surfaces proxy, provider chips, and quota cards", async ({ page }) => {
   await page.setViewportSize({ width: 340, height: 640 });
   await installMocks(page);
   await page.goto("/management.html?surface=tray");
 
   await expect(page.getByText("Same-origin gateway")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Codex" })).toBeVisible();
-  await expect(page.getByText("44%")).toBeVisible();
+  await expect(page.getByText("56% left")).toBeVisible();
   await expect(page.getByText("Gemini Pro")).toBeVisible();
   await expect(page.getByText("Open mahoquot")).toBeVisible();
   await expect(page.getByText("Quit mahoquot")).toBeVisible();
@@ -583,10 +595,7 @@ const stressCredentialsPayload = {
   })),
 };
 
-const installStressMocks = async (
-  page: Page,
-  options?: { empty?: boolean; logCount?: number },
-) => {
+const installStressMocks = async (page: Page, options?: { empty?: boolean; logCount?: number }) => {
   await page.addInitScript(() => {
     localStorage.setItem("mahoquot.base", "");
     localStorage.setItem("mahoquot.key", "relay-test-key");
@@ -798,9 +807,7 @@ test("content stress under empty data and extreme unbroken tokens", async ({ pag
   }
 });
 
-test("content stress under 10,000 high-volume log lines and logs containment", async ({
-  page,
-}) => {
+test("content stress under 10,000 high-volume log lines and logs containment", async ({ page }) => {
   await installStressMocks(page, { logCount: 10_000 });
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.goto("/management.html");

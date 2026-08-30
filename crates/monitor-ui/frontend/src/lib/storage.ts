@@ -86,3 +86,11 @@ export const setTheme = (theme: "dark" | "light"): void => {
   localStorage.setItem("mahoquot.theme", theme);
   document.documentElement.setAttribute("data-theme", theme);
 };
+
+export const getQuotaShowRemaining = (): boolean => {
+  return localStorage.getItem("mahoquot.show-remaining") !== "0";
+};
+
+export const setQuotaShowRemaining = (value: boolean): void => {
+  localStorage.setItem("mahoquot.show-remaining", value ? "1" : "0");
+};

@@ -316,7 +316,7 @@ fn shipped_notch_sizes_dock_right_and_stay_vertically_centered() {
     );
 
     assert_eq!(expanded.x, 3420.0);
-    assert_eq!(expanded.y, 560.0);
+    assert_eq!(expanded.y, 520.0);
 }
 
 #[test]

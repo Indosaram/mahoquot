@@ -83,7 +83,8 @@ async fn logs_endpoint_serves_the_live_tail_while_file_logging_is_off() {
         config_path: auth_dir.join("config.yaml"),
         ..GatewayConfig::default()
     };
-    let app = create_app(Arc::new(AppState::new(&config).expect("state")));
+    let state = Arc::new(AppState::new(&config).expect("state"));
+    let app = create_app(Arc::clone(&state));
 
     // A management edit lands in the live tail even with file logging off.
     let edit = app
@@ -226,7 +227,8 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
         max_failover: 3,
         ..GatewayConfig::default()
     };
-    let app = create_app(Arc::new(AppState::new(&config).expect("state")));
+    let state = Arc::new(AppState::new(&config).expect("state"));
+    let app = create_app(Arc::clone(&state));
     let gw_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let gw_port = gw_listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -279,6 +281,26 @@ async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
     assert_eq!(record["bytes-out"], expected_bytes_out as u64);
     assert_eq!(record["tokens"], 15);
     assert!(record["latency-ms"].as_u64().is_some());
+
+    let stats = client
+        .get(format!("http://127.0.0.1:{gw_port}/admin/stats"))
+        .header("Authorization", "Bearer stream-key")
+        .send()
+        .await
+        .unwrap();
+    let stats_json: serde_json::Value = stats.json().await.unwrap();
+    let account = &stats_json["accounts"][0];
+    assert_eq!(account["input_tokens"], 10);
+    assert_eq!(account["output_tokens"], 5);
+    assert_eq!(account["total_tokens"], 15);
+
+    state.telemetry.flush().expect("flush token usage");
+    let restored = AppState::new(&config)
+        .expect("restored token state")
+        .get_stats();
+    assert_eq!(restored.accounts[0].input_tokens, 10);
+    assert_eq!(restored.accounts[0].output_tokens, 5);
+    assert_eq!(restored.accounts[0].total_tokens, 15);
     std::fs::remove_dir_all(&temp_dir).ok();
 }
 

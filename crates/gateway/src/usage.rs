@@ -720,33 +720,52 @@ impl HeadTailCapture {
 /// `"usageMetadata":{...}`, and Claude SSE where `input_tokens` appears in
 /// `message_start` (stream head) and `output_tokens` in `message_delta`
 /// (stream tail). Returns `None` when nothing usable is present.
-pub fn extract_total_tokens(head: &[u8], tail: &[u8]) -> Option<u64> {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResponseTokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl ResponseTokenUsage {
+    pub fn total_tokens(self) -> u64 {
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
+}
+
+pub fn extract_response_token_usage(head: &[u8], tail: &[u8]) -> Option<ResponseTokenUsage> {
     if let Some(usage) = last_balanced_object(tail, b"\"usage\"") {
-        if let Some(total) = object_number(&usage, &["total_tokens"]) {
-            return Some(total);
-        }
         let prompt = object_number(&usage, &["prompt_tokens"]);
         let completion = object_number(&usage, &["completion_tokens"]);
         if prompt.is_some() || completion.is_some() {
-            return Some(prompt.unwrap_or(0) + completion.unwrap_or(0));
+            return Some(ResponseTokenUsage {
+                input_tokens: prompt.unwrap_or(0),
+                output_tokens: completion.unwrap_or(0),
+            });
         }
     }
     if let Some(usage) = last_balanced_object(tail, b"\"usageMetadata\"") {
-        if let Some(total) = object_number(&usage, &["totalTokenCount"]) {
-            return Some(total);
-        }
         let prompt = object_number(&usage, &["promptTokenCount"]);
         let completion = object_number(&usage, &["candidatesTokenCount"]);
         if prompt.is_some() || completion.is_some() {
-            return Some(prompt.unwrap_or(0) + completion.unwrap_or(0));
+            return Some(ResponseTokenUsage {
+                input_tokens: prompt.unwrap_or(0),
+                output_tokens: completion.unwrap_or(0),
+            });
         }
     }
     let input = last_number_after(head, b"\"input_tokens\"");
     let output = last_number_after(tail, b"\"output_tokens\"");
     if input.is_some() || output.is_some() {
-        return Some(input.unwrap_or(0) + output.unwrap_or(0));
+        return Some(ResponseTokenUsage {
+            input_tokens: input.unwrap_or(0),
+            output_tokens: output.unwrap_or(0),
+        });
     }
     None
+}
+
+pub fn extract_total_tokens(head: &[u8], tail: &[u8]) -> Option<u64> {
+    extract_response_token_usage(head, tail).map(ResponseTokenUsage::total_tokens)
 }
 
 fn last_balanced_object(haystack: &[u8], key: &[u8]) -> Option<String> {
@@ -859,8 +878,11 @@ mod tests {
 
     #[test]
     fn extract_prefers_the_last_usage_frame_in_sse_tail() {
-        let mut body = b"data: {\"usage\":{\"total_tokens\":100}}\n\n".to_vec();
-        body.extend_from_slice(b"data: {\"usage\":{\"total_tokens\":250}}\n\n");
+        let mut body =
+            b"data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":50}}\n\n".to_vec();
+        body.extend_from_slice(
+            b"data: {\"usage\":{\"prompt_tokens\":200,\"completion_tokens\":50}}\n\n",
+        );
         assert_eq!(extract_total_tokens(&body, &body), Some(250));
     }
 
@@ -905,7 +927,7 @@ mod tests {
             b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":4}}}\n\n",
         );
         capture.push(&vec![b'.'; 20_000]);
-        let tail_frame = b"data: {\"usage\":{\"total_tokens\":33}}\n\n";
+        let tail_frame = b"data: {\"usage\":{\"prompt_tokens\":30,\"completion_tokens\":3}}\n\n";
         capture.push(tail_frame);
         let (head, tail) = capture.parts();
         assert_eq!(extract_total_tokens(head, tail), Some(33));

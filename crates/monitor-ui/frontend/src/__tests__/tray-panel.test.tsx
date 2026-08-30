@@ -75,6 +75,7 @@ describe("TrayPanel", () => {
         online
         fetchedAgoSecs={12}
         refreshing
+        showRemaining
         onRefresh={vi.fn()}
         onOpenConsole={vi.fn()}
         onQuit={vi.fn()}
@@ -90,9 +91,9 @@ describe("TrayPanel", () => {
     expect(screen.getByText("Plus")).toBeTruthy();
     expect(screen.getByText("Pro 5x")).toBeTruthy();
     expect(screen.getAllByText("Session").length).toBe(2);
-    expect(screen.getByText("46%")).toBeTruthy();
+    expect(screen.getByText("54% left")).toBeTruthy();
     expect(screen.getByText("Weekly")).toBeTruthy();
-    expect(screen.getByText("100%")).toBeTruthy();
+    expect(screen.getByText("0% left")).toBeTruthy();
     expect(screen.getAllByText("12 seconds ago").length).toBe(2);
     const spinners = screen
       .getAllByRole("button")
@@ -121,6 +122,7 @@ describe("TrayPanel", () => {
         online
         fetchedAgoSecs={null}
         refreshing={false}
+        showRemaining={false}
         onRefresh={vi.fn()}
         onOpenConsole={vi.fn()}
         onQuit={vi.fn()}

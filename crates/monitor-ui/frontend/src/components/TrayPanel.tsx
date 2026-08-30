@@ -107,6 +107,7 @@ interface TrayPanelProps {
   readonly gatewayLifecycle: GatewayLifecycle;
   readonly fetchedAgoSecs: number | null;
   readonly refreshing: boolean;
+  readonly showRemaining: boolean;
   readonly onRefresh: () => void;
   readonly onOpenConsole: () => void;
   readonly onQuit: () => void;
@@ -121,6 +122,7 @@ export const TrayPanel = ({
   gatewayLifecycle,
   fetchedAgoSecs,
   refreshing,
+  showRemaining,
   onRefresh,
   onOpenConsole,
   onQuit,
@@ -227,20 +229,27 @@ export const TrayPanel = ({
               )}
             </div>
             <div className="tray-tiles">
-              {tiles.map((tile) => (
-                <div className="tray-tile" key={tile.label}>
-                  <div className="tray-tile-row">
-                    <span className="tray-tile-name">{tile.label}</span>
-                    {tile.resetIn && <span className="tray-tile-reset">{tile.resetIn}</span>}
-                    <span className={`tray-tile-percent${tile.usedPercent >= 100 ? " full" : ""}`}>
-                      {Math.round(tile.usedPercent)}%
-                    </span>
+              {tiles.map((tile) => {
+                const display = Math.round(
+                  showRemaining ? Math.max(0, 100 - tile.usedPercent) : tile.usedPercent,
+                );
+                return (
+                  <div className="tray-tile" key={tile.label}>
+                    <div className="tray-tile-row">
+                      <span className="tray-tile-name">{tile.label}</span>
+                      {tile.resetIn && <span className="tray-tile-reset">{tile.resetIn}</span>}
+                      <span
+                        className={`tray-tile-percent${tile.usedPercent >= 100 ? " full" : ""}`}
+                      >
+                        {display}% {showRemaining ? "left" : "used"}
+                      </span>
+                    </div>
+                    <div className={tileTone(tile.usedPercent)}>
+                      <i style={{ width: `${display}%` }} />
+                    </div>
                   </div>
-                  <div className={tileTone(tile.usedPercent)}>
-                    <i style={{ width: `${Math.min(100, Math.max(0, tile.usedPercent))}%` }} />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="tray-card-foot">
               {fetchedAgoSecs === null ? "" : `${fetchedAgoSecs} seconds ago`}

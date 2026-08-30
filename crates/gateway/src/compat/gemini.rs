@@ -106,10 +106,12 @@ pub fn openai_to_gemini(body: &Value) -> Result<Value, String> {
             .iter()
             .filter_map(|t| t.get("function"))
             .map(|f| {
+                let mut parameters = f.get("parameters").cloned().unwrap_or_else(|| json!({}));
+                sanitize_gemini_schema(&mut parameters);
                 json!({
                     "name": f.get("name").and_then(Value::as_str).unwrap_or(""),
                     "description": f.get("description").and_then(Value::as_str).unwrap_or(""),
-                    "parameters": f.get("parameters").cloned().unwrap_or_else(|| json!({})),
+                    "parameters": parameters,
                 })
             })
             .collect();
@@ -122,6 +124,46 @@ pub fn openai_to_gemini(body: &Value) -> Result<Value, String> {
     }
 
     Ok(Value::Object(request))
+}
+
+/// JSON-Schema keywords the Gemini function-declaration subset rejects with a
+/// request-wide 400 ("Unknown name"). `oneOf` folds into `anyOf`, the union
+/// form Gemini actually supports; the rest carry no translatable content.
+const GEMINI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &[
+    "const",
+    "additionalProperties",
+    "default",
+    "examples",
+    "$schema",
+    "$id",
+    "$defs",
+    "definitions",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "patternProperties",
+    "propertyNames",
+];
+
+fn sanitize_gemini_schema(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for key in GEMINI_UNSUPPORTED_SCHEMA_KEYS {
+                map.remove(*key);
+            }
+            if let Some(one) = map.remove("oneOf") {
+                map.entry("anyOf").or_insert(one);
+            }
+            for child in map.values_mut() {
+                sanitize_gemini_schema(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                sanitize_gemini_schema(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn openai_to_antigravity(body: &Value, project_id: &str) -> Result<Value, String> {
@@ -419,5 +461,97 @@ impl GeminiDecoder {
                 usage: self.usage.take(),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_parameters_strip_gemini_rejected_keywords_recursively() {
+        let body = json!({
+            "model": "gemini-3.7-flash-high",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "lookup a value",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mode": { "type": "string", "const": "fast", "default": "slow" },
+                            "nested": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                                "properties": {
+                                    "deep": { "type": "string", "const": "x" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }]
+        });
+
+        let request = openai_to_gemini(&body).expect("translate");
+        let decl = &request["tools"][0]["functionDeclarations"][0];
+        let params = &decl["parameters"];
+        assert!(params["properties"]["mode"].get("const").is_none());
+        assert!(params["properties"]["mode"].get("default").is_none());
+        assert!(params["properties"]["nested"]
+            .get("additionalProperties")
+            .is_none());
+        assert!(params["properties"]["nested"].get("$schema").is_none());
+        assert!(params["properties"]["nested"]["properties"]["deep"]
+            .get("const")
+            .is_none());
+        assert_eq!(decl["name"], "lookup");
+        assert_eq!(params["properties"]["mode"]["type"], "string");
+    }
+
+    #[test]
+    fn tool_parameters_fold_oneof_into_anyof() {
+        let body = json!({
+            "model": "gemini-3.7-flash-high",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "pick",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "value": {
+                                "oneOf": [
+                                    { "type": "string" },
+                                    { "type": "number" }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }]
+        });
+
+        let request = openai_to_gemini(&body).expect("translate");
+        let value =
+            &request["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["value"];
+        assert!(value.get("oneOf").is_none());
+        assert_eq!(value["anyOf"].as_array().expect("anyOf").len(), 2);
+    }
+
+    #[test]
+    fn non_tool_fields_are_untouched_by_the_sanitizer() {
+        let body = json!({
+            "model": "gemini-3.7-flash-high",
+            "messages": [{ "role": "user", "content": "{\"const\": \"payload text stays\"}" }]
+        });
+
+        let request = openai_to_gemini(&body).expect("translate");
+        let text = request["contents"][0]["parts"][0]["text"].as_str().unwrap();
+        assert!(text.contains("payload text stays"));
     }
 }

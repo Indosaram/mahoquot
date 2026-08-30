@@ -73,10 +73,11 @@ impl StreamCapture {
         let Some(outcome) = self.outcome.take() else {
             return;
         };
-        let tokens = {
+        let token_usage = {
             let (head, tail) = self.head_tail.parts();
-            crate::usage::extract_total_tokens(head, tail)
+            crate::usage::extract_response_token_usage(head, tail)
         };
+        let tokens = token_usage.map(crate::usage::ResponseTokenUsage::total_tokens);
         let bytes_out = self.bytes_out;
         let state = outcome.state;
         tokio::spawn(async move {
@@ -90,6 +91,7 @@ impl StreamCapture {
                 bytes_in: outcome.bytes_in,
                 bytes_out,
                 tokens,
+                token_usage,
             };
             record_request_outcome(&state, record).await;
         });
@@ -170,6 +172,7 @@ struct OutcomeRecord<'a> {
     bytes_in: usize,
     bytes_out: u64,
     tokens: Option<u64>,
+    token_usage: Option<crate::usage::ResponseTokenUsage>,
 }
 
 async fn record_request_outcome(state: &AppState, record: OutcomeRecord<'_>) {
@@ -177,6 +180,15 @@ async fn record_request_outcome(state: &AppState, record: OutcomeRecord<'_>) {
     state
         .telemetry
         .record_with_account(timestamp, record.provider, record.account, record.success);
+    if let (Some(account), Some(token_usage)) = (record.account, record.token_usage) {
+        state.telemetry.record_tokens(
+            timestamp,
+            record.provider,
+            account,
+            token_usage.input_tokens,
+            token_usage.output_tokens,
+        );
+    }
     let line = serde_json::json!({
         "kind": "request",
         "timestamp": timestamp,
@@ -1261,6 +1273,7 @@ pub async fn handle_relay(
                                         bytes_in,
                                         bytes_out: 0,
                                         tokens: None,
+                                        token_usage: None,
                                     },
                                 )
                                 .await;
@@ -1271,7 +1284,10 @@ pub async fn handle_relay(
                             }
                         };
                         let bytes = collected.to_bytes();
-                        let tokens = crate::usage::extract_total_tokens(&bytes, &bytes);
+                        let token_usage =
+                            crate::usage::extract_response_token_usage(&bytes, &bytes);
+                        let tokens =
+                            token_usage.map(crate::usage::ResponseTokenUsage::total_tokens);
                         record_request_outcome(
                             &state,
                             OutcomeRecord {
@@ -1284,6 +1300,7 @@ pub async fn handle_relay(
                                 bytes_in,
                                 bytes_out: bytes.len() as u64,
                                 tokens,
+                                token_usage,
                             },
                         )
                         .await;
@@ -1365,6 +1382,7 @@ pub async fn handle_relay(
                 bytes_in: plan.original_body.len(),
                 bytes_out: failure.body.len() as u64,
                 tokens: None,
+                token_usage: None,
             },
         )
         .await;
@@ -1405,6 +1423,7 @@ pub async fn handle_relay(
             bytes_in: plan.original_body.len(),
             bytes_out,
             tokens: None,
+            token_usage: None,
         },
     )
     .await;

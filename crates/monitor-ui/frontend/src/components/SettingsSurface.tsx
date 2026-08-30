@@ -15,6 +15,8 @@ export interface SettingsSurfaceProps {
   readonly proxyUrl: string;
   readonly loggingToFile: boolean;
   readonly theme: "dark" | "light";
+  readonly showRemaining: boolean;
+  readonly onShowRemainingChange: (value: boolean) => void;
   readonly onToggleGateway: () => void | Promise<void>;
   readonly onBaseUrlChange: (value: string) => void;
   readonly onRelayKeyChange: (value: string) => void;
@@ -56,6 +58,8 @@ export function SettingsSurface({
   onSaveProxySettings,
   onThemeChange,
   onOpenConfigEditor,
+  showRemaining,
+  onShowRemainingChange,
 }: SettingsSurfaceProps) {
   return (
     <div className="content settings">
@@ -174,6 +178,18 @@ export function SettingsSurface({
               onChange={(event) => onProxyUrlChange(event.target.value)}
             />
           </Field>
+          <label className="toggle-field">
+            <input
+              aria-label="Show remaining quota"
+              type="checkbox"
+              checked={showRemaining}
+              onChange={(event) => onShowRemainingChange(event.target.checked)}
+            />
+            <span>
+              <strong>Show remaining quota</strong>
+              <small>Show how much quota is left instead of how much was used.</small>
+            </span>
+          </label>
           <label className="toggle-field">
             <input
               aria-label="Write logs to file"

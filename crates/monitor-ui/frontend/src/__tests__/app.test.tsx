@@ -95,7 +95,8 @@ describe("operations console", () => {
     expect(nav).toHaveTextContent("Logs");
     expect(nav).toHaveTextContent("Settings");
     expect(nav).not.toHaveTextContent("Credentials");
-    expect(screen.getByRole("img", { name: "Request activity over time" })).toBeInTheDocument();
+    expect(screen.getByText("Total request rate")).toBeInTheDocument();
+    expect(screen.getByText("Per-account request rate")).toBeInTheDocument();
     expect(screen.getByText("Requests")).toBeInTheDocument();
     expect(screen.getByText("Success")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
