@@ -246,7 +246,9 @@ export const AccountCard = ({
       ) : null}
       {!account.runtimeId ? (
         <div className="restart-note">
-          Credential saved but the gateway could not load it into the runtime pool.
+          {account.disabled
+            ? "Disabled — enable this account to load it into the runtime pool."
+            : "Credential saved but the gateway could not load it into the runtime pool."}
         </div>
       ) : null}
     </Card>
