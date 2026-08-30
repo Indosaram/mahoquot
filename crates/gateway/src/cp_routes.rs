@@ -25,6 +25,7 @@ use crate::static_pages::{CALLBACK_HTML, MANAGEMENT_HTML, ROOT_JSON};
 use crate::v1beta::{self, GeminiAction};
 
 const CODEX_RESPONSES_PATH: &str = "/backend-api/codex/responses";
+const CODEX_RESPONSES_COMPACT_PATH: &str = "/backend-api/codex/responses/compact";
 
 fn json_status(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
@@ -363,21 +364,28 @@ fn chat_to_responses(chat: &Value, model: &str) -> Value {
 
 /// `compact` resolves the model first, so an unknown model is a 400 while a
 /// known non-codex model reaches the "not supported" branch.
-pub async fn responses_compact(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+pub async fn responses_compact(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let parsed = match parse_body(&body) {
         Ok(v) => v,
         Err(resp) => return *resp,
     };
     let model = model_of(&parsed);
     match owner_of(&state, model) {
-        None => json_status(
-            StatusCode::BAD_REQUEST,
-            capability::unknown_provider(model),
-        ),
-        Some(owner) if owner == "openai" => json_status(
-            StatusCode::NOT_FOUND,
-            json!({ "detail": "Not Found" }),
-        ),
+        None => json_status(StatusCode::BAD_REQUEST, capability::unknown_provider(model)),
+        Some(owner) if owner == "openai" => {
+            handle_relay(
+                state,
+                RelayMode::Native,
+                CODEX_RESPONSES_COMPACT_PATH,
+                &headers,
+                body,
+            )
+            .await
+        }
         Some(_) => json_status(
             StatusCode::NOT_IMPLEMENTED,
             json!({"error": {

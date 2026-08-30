@@ -54,14 +54,13 @@ enum UpstreamBehavior {
     Html,
     ModelUnsupported,
     TruncatedSse,
+    Compact,
 }
 
 async fn spawn_upstream(behavior: UpstreamBehavior) -> String {
-    let app = Router::new().route(
-        "/backend-api/codex/responses",
-        post(move || async move {
-            match behavior {
-                UpstreamBehavior::Sse(payload) => Response::builder()
+    let handler = move || async move {
+        match behavior {
+            UpstreamBehavior::Sse(payload) => Response::builder()
                     .status(StatusCode::OK)
                     .header("Content-Type", "text/event-stream")
                     .body(Body::from_stream(futures::stream::iter(
@@ -97,15 +96,59 @@ async fn spawn_upstream(behavior: UpstreamBehavior) -> String {
                         r#"{"detail":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}"#,
                     ))
                     .unwrap(),
-            }
-        }),
-    );
+            UpstreamBehavior::Compact => Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    r#"{"id":"resp_compact","object":"response.compaction","encrypted_content":"opaque-compaction"}"#,
+                ))
+                .unwrap(),
+        }
+    };
+    let app = Router::new()
+        .route("/backend-api/codex/responses", post(handler))
+        .route("/backend-api/codex/responses/compact", post(handler));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn test_t8_responses_compact_relays_to_codex_upstream() {
+    // Given: a Codex account whose upstream implements the native compact verb.
+    let upstream = spawn_upstream(UpstreamBehavior::Compact).await;
+    let temp_dir = unique_temp_dir("qgw-test-t8-compact");
+    std::fs::write(
+        temp_dir.join("codex-a-plus.json"),
+        create_auth_file_json("a", "acc_a", "token_a", Some(&upstream)),
+    )
+    .unwrap();
+    let (_state, gw) = spawn_gateway(&temp_dir).await;
+
+    // When: an OpenAI Responses client requests compaction.
+    let response = reqwest::Client::new()
+        .post(format!("{gw}/v1/responses/compact"))
+        .header("Content-Type", "application/json")
+        .body(
+            json!({
+                "model": "gpt-5.6-sol",
+                "input": [{"role": "user", "content": "compact this"}]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    // Then: the real upstream response is returned instead of a local 404.
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let payload: Value = response.json().await.unwrap();
+    assert_eq!(payload["object"], "response.compaction");
+    assert_eq!(payload["encrypted_content"], "opaque-compaction");
+    std::fs::remove_dir_all(&temp_dir).ok();
 }
 
 async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
