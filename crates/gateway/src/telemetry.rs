@@ -14,12 +14,22 @@ pub struct ProviderTelemetry {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountTelemetry {
+    pub account: String,
+    pub requests: u64,
+    pub successes: u64,
+    pub failures: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetryBucket {
     pub minute_unix: i64,
     pub requests: u64,
     pub successes: u64,
     pub failures: u64,
     pub providers: Vec<ProviderTelemetry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<AccountTelemetry>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -44,9 +54,23 @@ impl TelemetryStore {
         }
     }
 
+    /// Historical entry point: callers without an account context.
     pub fn record(&self, unix_secs: i64, provider: &str, success: bool) {
+        self.record_with_account(unix_secs, provider, None, success);
+    }
+
+    pub fn record_with_account(
+        &self,
+        unix_secs: i64,
+        provider: &str,
+        account: Option<&str>,
+        success: bool,
+    ) {
         let minute_unix = unix_secs.div_euclid(60) * 60;
-        let mut buckets = self.buckets.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut buckets = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let bucket_index = match buckets.last() {
             Some(bucket) if bucket.minute_unix == minute_unix => buckets.len() - 1,
             _ => {
@@ -64,7 +88,11 @@ impl TelemetryStore {
         } else {
             bucket.failures += 1;
         }
-        let provider_index = match bucket.providers.iter().position(|item| item.provider == provider) {
+        let provider_index = match bucket
+            .providers
+            .iter()
+            .position(|item| item.provider == provider)
+        {
             Some(provider_index) => provider_index,
             None => {
                 bucket.providers.push(ProviderTelemetry {
@@ -80,6 +108,29 @@ impl TelemetryStore {
             provider_bucket.successes += 1;
         } else {
             provider_bucket.failures += 1;
+        }
+        if let Some(account) = account {
+            let account_index = match bucket
+                .accounts
+                .iter()
+                .position(|item| item.account == account)
+            {
+                Some(account_index) => account_index,
+                None => {
+                    bucket.accounts.push(AccountTelemetry {
+                        account: account.to_string(),
+                        ..AccountTelemetry::default()
+                    });
+                    bucket.accounts.len() - 1
+                }
+            };
+            let account_bucket = &mut bucket.accounts[account_index];
+            account_bucket.requests += 1;
+            if success {
+                account_bucket.successes += 1;
+            } else {
+                account_bucket.failures += 1;
+            }
         }
         let earliest = minute_unix - RETENTION_MINUTES * 60;
         buckets.retain(|item| item.minute_unix >= earliest);
@@ -102,7 +153,9 @@ impl TelemetryStore {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let temporary = self.path.with_extension(format!("tmp{}", std::process::id()));
+        let temporary = self
+            .path
+            .with_extension(format!("tmp{}", std::process::id()));
         std::fs::write(&temporary, rendered)?;
         std::fs::rename(temporary, &self.path)
     }
@@ -144,8 +197,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mahoquot-telemetry-{}", std::process::id()));
         let path = dir.join("telemetry.json");
         let store = TelemetryStore::load(path.clone());
-        store.record(1_800, "codex", true);
-        store.record(1_801, "codex", false);
+        store.record_with_account(1_800, "codex", None, true);
+        store.record_with_account(1_801, "codex", None, false);
         store.flush().expect("flush telemetry");
 
         let restored = TelemetryStore::load(path);
@@ -160,8 +213,8 @@ mod tests {
     #[test]
     fn retention_drops_buckets_older_than_thirty_days() {
         let store = TelemetryStore::load(PathBuf::from("unused.json"));
-        store.record(0, "codex", true);
-        store.record((RETENTION_MINUTES + 1) * 60, "claude", true);
+        store.record_with_account(0, "codex", None, true);
+        store.record_with_account((RETENTION_MINUTES + 1) * 60, "claude", None, true);
 
         assert_eq!(store.snapshot().len(), 1);
         assert_eq!(store.snapshot()[0].providers[0].provider, "claude");
