@@ -142,13 +142,30 @@ describe("Gateway API Zod Schemas", () => {
 
   it("parses /v0/management/logs response", () => {
     const raw = {
-      lines: ["2026-08-29T10:00:00Z INFO starting gateway", "2026-08-29T10:00:01Z INFO ready"],
-      "line-count": 2,
+      records: [
+        {
+          kind: "request",
+          timestamp: 1756548000,
+          provider: "codex",
+          account: "codex-1",
+          model: "gpt-5.6",
+          status: 200,
+          success: true,
+          "latency-ms": 71,
+          "bytes-in": 1169359,
+        },
+        { kind: "proxy", timestamp: 1756548001, message: "management: config updated" },
+      ],
+      "request-count": 1,
+      "proxy-count": 1,
       "latest-timestamp": 1720000001,
     };
 
     const parsed = parseLogs(raw);
-    expect(parsed.lines.length).toBe(2);
-    expect(parsed["line-count"]).toBe(2);
+    expect(parsed.records.length).toBe(2);
+    expect(parsed.records[0]?.kind).toBe("request");
+    expect(parsed.records[0]?.status).toBe(200);
+    expect(parsed.records[1]?.message).toContain("config updated");
+    expect(parsed["request-count"]).toBe(1);
   });
 });

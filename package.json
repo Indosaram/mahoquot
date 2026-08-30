@@ -1,0 +1,7 @@
+{
+  "name": "mahoquot-workspace",
+  "private": true,
+  "scripts": {
+    "tauri": "cd crates/monitor-ui && bunx @tauri-apps/cli@2.11.4"
+  }
+}

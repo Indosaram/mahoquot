@@ -37,19 +37,13 @@ const providerName = (provider: string): string =>
 export const OverviewDashboard = ({
   stats,
   samples,
-  accountSamples,
 }: {
   readonly stats: AdminStats;
   readonly samples: readonly TelemetrySample[];
-  readonly accountSamples: readonly TelemetrySample[];
 }) => {
   const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
   const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
   const series = useMemo(() => telemetrySeries(filtered, range), [filtered, range]);
-  const accountFiltered = useMemo(
-    () => filterTelemetryRange(accountSamples, range),
-    [accountSamples, range],
-  );
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
   const outcomes = summary.successes + summary.failures;
   const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
@@ -137,7 +131,7 @@ export const OverviewDashboard = ({
         <div className="minimal-account-panels">
           {stats.accounts.map((account, index) => {
             const label = `Account ${index + 1}`;
-            const series = accountRateSeries(accountFiltered, account.id, range);
+            const series = accountRateSeries(filtered, account.id, range);
             const total = series.reduce((sum, point) => sum + point.requests, 0);
             const bucketSecs = rangeSeconds(range) / series.length;
             const peakPerMin =

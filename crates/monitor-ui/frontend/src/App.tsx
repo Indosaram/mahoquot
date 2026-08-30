@@ -42,7 +42,12 @@ import {
   stopManagedGateway,
 } from "./lib/native";
 import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/notch";
-import { PROVIDER_CATALOG, type ProviderCatalogEntry } from "./lib/provider-catalog";
+import {
+  DEDICATED_ONBOARDING_PROVIDER_IDS,
+  PROVIDER_CATALOG,
+  type ProviderCatalogEntry,
+} from "./lib/provider-catalog";
+import type { LogRecord } from "./lib/schemas";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import {
   getGatewayBaseUrl,
@@ -191,9 +196,9 @@ const ONBOARDING_PROVIDERS: readonly {
     name: "Command Code",
     methods: [
       {
-        id: "command-code-key",
-        name: "Add Command Code key",
-        hint: "Uses the OpenAI-compatible Provider API.",
+        id: "command-code",
+        name: "Sign in with Command Code",
+        hint: "Opens Command Code Studio and validates the returned key with whoami.",
       },
     ],
   },
@@ -255,7 +260,10 @@ const ONBOARDING_PROVIDERS: readonly {
 
 const dedicatedProviderIds = new Set(ONBOARDING_PROVIDERS.map((provider) => provider.glyph));
 const GENERIC_PROVIDER_OPTIONS = PROVIDER_CATALOG.filter(
-  (provider) => !dedicatedProviderIds.has(provider.id) && provider.authKind !== "oauth",
+  (provider) =>
+    !dedicatedProviderIds.has(provider.id) &&
+    !DEDICATED_ONBOARDING_PROVIDER_IDS.has(provider.id) &&
+    provider.authKind !== "oauth",
 );
 
 const errorMessage = (reason: unknown): string =>
@@ -278,7 +286,7 @@ const NotchGlyph = ({ provider }: { provider: string }) => {
   return logo ? (
     <img
       src={logo}
-      className={`provider-logo notch-provider-logo notch-provider-logo-${normalized}`}
+      className={`provider-logo notch-provider-logo notch-provider-logo-color notch-provider-logo-${normalized}`}
       alt=""
       aria-hidden="true"
       data-testid={`provider-logo-${normalized}`}
@@ -320,7 +328,7 @@ export default function App() {
   const [relayKey, setRelayKeyState] = useState(getRelayKey);
   const [stats, setStats] = useState<AdminStats>(emptyStats);
   const [credentials, setCredentials] = useState<readonly AuthFileItem[]>([]);
-  const [logs, setLogs] = useState<readonly string[]>([]);
+  const [logs, setLogs] = useState<readonly LogRecord[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [gatewayLifecycle, setGatewayLifecycle] = useState<GatewayLifecycleStatus>("running");
@@ -364,9 +372,6 @@ export default function App() {
   const [loggingToFile, setLoggingToFile] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [telemetry, setTelemetry] = useState<readonly TelemetrySample[]>([]);
-  // Live-only buffer for the per-account panels: gateway history buckets carry
-  // no per-account breakdown, so these samples are never replaced by hydration.
-  const [accountSamples, setAccountSamples] = useState<readonly TelemetrySample[]>([]);
   const firstLoad = useRef(true);
 
   useEffect(() => {
@@ -418,7 +423,6 @@ export default function App() {
         const persisted = persistedTelemetrySamples(nextStats.history ?? []);
         return persisted.length ? persisted : appendTelemetrySample(samples, nextStats, now);
       });
-      setAccountSamples((samples) => appendTelemetrySample(samples, nextStats, now));
       setLoadState("online");
       setFetchedAt(Date.now());
       setGatewayLifecycle("running");
@@ -449,7 +453,7 @@ export default function App() {
       setCredentialsError(errorMessage(credentialResult.reason));
     }
     if (logResult.status === "fulfilled") {
-      setLogs(logResult.value.lines);
+      setLogs(logResult.value.records);
       setLogsError("");
     } else {
       setLogs([]);
@@ -467,6 +471,16 @@ export default function App() {
       if (!document.hidden) void refresh();
     }, 10_000);
     return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  useEffect(() => {
+    // hidden tray/notch windows skip the poll; the moment one becomes visible
+    // it must show fresh quota instead of waiting for the next tick
+    const onVisibility = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [refresh]);
 
   useEffect(() => {
@@ -729,11 +743,11 @@ export default function App() {
         setRawCredentialForm({ provider: "vertex", document: "" });
         return;
       }
-      if (nextProvider === "command-code-key" || nextProvider === "iflow-key") {
-        const provider = nextProvider === "command-code-key" ? "command-code" : "iflow";
+      if (nextProvider === "iflow-key") {
+        const provider = "iflow";
         setKeyImportForm({
           provider,
-          label: provider === "command-code" ? "Command Code" : "iFlow",
+          label: "iFlow",
           apiKey: "",
         });
         return;
@@ -836,6 +850,9 @@ export default function App() {
         baseUrl: genericForm.baseUrl.trim(),
         apiKey: genericForm.apiKey.trim(),
         models: genericForm.provider.models,
+        ...(genericForm.provider.staticHeaders
+          ? { staticHeaders: genericForm.provider.staticHeaders }
+          : {}),
       });
       setGenericForm(null);
       setNotice(`${genericForm.provider.label} account saved and live in the runtime pool.`);
@@ -867,11 +884,10 @@ export default function App() {
   };
 
   const reauthenticate = async (account: NormalizedAccount) => {
-    setOpenMethods(
-      ONBOARDING_PROVIDERS.find((provider) => provider.glyph === account.provider) ?? null,
-    );
+    const dedicated = ONBOARDING_PROVIDERS.find((provider) => provider.glyph === account.provider);
+    setOpenMethods(dedicated ?? null);
     setOnboardingOpen(true);
-    await beginOnboarding(account.provider);
+    await beginOnboarding(dedicated ? account.provider : `generic:${account.provider}`);
   };
 
   // Approval happens in a separate browser window the console cannot observe,
@@ -1022,12 +1038,14 @@ export default function App() {
         accounts={accounts}
         proxyUrl={baseUrl || "Same-origin gateway"}
         online={loadState === "online"}
-        fetchedAgoSecs={
-          fetchedAt === null ? null : Math.max(0, Math.round((Date.now() - fetchedAt) / 1000))
-        }
+        gatewayLifecycle={gatewayLifecycle}
+        refreshing={refreshing}
+        fetchedAgoSecs={fetchedAt === null ? null : Math.round((Date.now() - fetchedAt) / 1000)}
         onRefresh={() => void refresh()}
         onOpenConsole={() => void api?.core?.invoke("open_console")}
         onQuit={() => void api?.core?.invoke("quit_app")}
+        onStartGateway={() => void api?.core?.invoke("start_gateway")}
+        onStopGateway={() => void api?.core?.invoke("stop_gateway")}
       />
     );
   }
@@ -1064,15 +1082,18 @@ export default function App() {
               {group.accountCount} account{group.accountCount > 1 ? "s" : ""}
             </span>
           </div>
-          {group.accounts.map((entry) => (
+          {group.accounts.map((entry, accountIndex) => (
             <div
               className="notch-tooltip-account"
               key={entry.label}
               data-testid={`notch-tooltip-account-${entry.label}`}
             >
-              <div className="notch-tooltip-account-name">{entry.label}</div>
+              <div className="notch-tooltip-account-head">
+                <span>Account {accountIndex + 1}</span>
+                <strong title={entry.label}>{entry.label}</strong>
+              </div>
               {entry.rows.length ? (
-                entry.rows.slice(0, 2).map((row, index) => (
+                entry.rows.map((row, index) => (
                   <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
                     <div className="notch-tooltip-label">{row.name}</div>
                     <div className="notch-tooltip-bar">
@@ -1108,10 +1129,19 @@ export default function App() {
         data-mahoquot-surface="notch"
       >
         <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
+        <svg
+          className="notch-island-shape"
+          viewBox="0 0 108 440"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <path d="M108 0H86C61 0 42 17 42 42V68C42 78 32 86 20 86H0V354H20C32 354 42 362 42 372V398C42 423 61 440 86 440H108Z" />
+        </svg>
         <div className={`notch-surface${notchExpanded ? " expanded" : ""}`}>
           {notchGroups.length ? (
             notchGroups.map((group) => (
-              <div
+              <button
+                type="button"
                 className="notch-ring-item"
                 key={group.provider}
                 data-provider={group.provider}
@@ -1119,6 +1149,7 @@ export default function App() {
                 data-hover-provider={group.provider}
                 onMouseEnter={() => openNotchTooltip(group.provider)}
                 onMouseLeave={scheduleNotchTooltipClose}
+                onClick={() => openNotchTooltip(group.provider)}
               >
                 <div className="notch-ring-wrap">
                   <span className="notch-ring-logo">
@@ -1131,7 +1162,7 @@ export default function App() {
                 <div className={activeTooltip === group.provider ? "react-visible" : undefined}>
                   {renderNotchTooltip(group)}
                 </div>
-              </div>
+              </button>
             ))
           ) : (
             <div
@@ -1241,9 +1272,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {surface === "overview" ? (
-          <OverviewDashboard stats={stats} samples={telemetry} accountSamples={accountSamples} />
-        ) : null}
+        {surface === "overview" ? <OverviewDashboard stats={stats} samples={telemetry} /> : null}
 
         {surface === "accounts" ? (
           <AccountsSurface
@@ -1270,7 +1299,9 @@ export default function App() {
           />
         ) : null}
 
-        {surface === "logs" ? <LogsSurface logs={logs} logsError={logsError} /> : null}
+        {surface === "logs" ? (
+          <LogsSurface records={logs} logsError={logsError} fromMemoryTail={!loggingToFile} />
+        ) : null}
 
         {surface === "settings" ? (
           <SettingsSurface
@@ -1462,7 +1493,9 @@ export default function App() {
                     !genericForm.label.trim() ||
                     !genericForm.baseUrl.trim() ||
                     genericForm.baseUrl.includes("{") ||
-                    (genericForm.provider.authKind !== "local" && !genericForm.apiKey.trim())
+                    (genericForm.provider.authKind !== "local" &&
+                      !genericForm.provider.keyOptional &&
+                      !genericForm.apiKey.trim())
                   }
                   onClick={() => void submitGenericCredential()}
                 >

@@ -74,13 +74,19 @@ describe("TrayPanel", () => {
         proxyUrl="http://127.0.0.1:18801"
         online
         fetchedAgoSecs={12}
+        refreshing
         onRefresh={vi.fn()}
         onOpenConsole={vi.fn()}
         onQuit={vi.fn()}
+        onStartGateway={vi.fn()}
+        onStopGateway={vi.fn()}
+        gatewayLifecycle="running"
       />,
     );
 
     expect(screen.getByText("http://127.0.0.1:18801")).toBeTruthy();
+    expect(screen.getByLabelText("Stop gateway")).toBeTruthy();
+    expect(screen.getAllByTestId("provider-logo-codex").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Plus")).toBeTruthy();
     expect(screen.getByText("Pro 5x")).toBeTruthy();
     expect(screen.getAllByText("Session").length).toBe(2);
@@ -88,6 +94,10 @@ describe("TrayPanel", () => {
     expect(screen.getByText("Weekly")).toBeTruthy();
     expect(screen.getByText("100%")).toBeTruthy();
     expect(screen.getAllByText("12 seconds ago").length).toBe(2);
+    const spinners = screen
+      .getAllByRole("button")
+      .filter((button) => button.querySelector(".tray-spin"));
+    expect(spinners.length).toBeGreaterThanOrEqual(2);
   });
 
   it("filters cards down to the selected provider chip", () => {
@@ -110,9 +120,13 @@ describe("TrayPanel", () => {
         proxyUrl="http://127.0.0.1:18801"
         online
         fetchedAgoSecs={null}
+        refreshing={false}
         onRefresh={vi.fn()}
         onOpenConsole={vi.fn()}
         onQuit={vi.fn()}
+        onStartGateway={vi.fn()}
+        onStopGateway={vi.fn()}
+        gatewayLifecycle="running"
       />,
     );
 

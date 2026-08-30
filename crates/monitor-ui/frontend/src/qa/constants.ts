@@ -1,0 +1,4 @@
+export const LONG_LABEL_40 = "Primary Gateway Cluster Configuration Management Endpoint Profile";
+
+export const UNBROKEN_TOKEN_256 =
+  "sk-live-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

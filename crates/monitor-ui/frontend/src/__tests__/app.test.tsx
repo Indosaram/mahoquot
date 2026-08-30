@@ -48,7 +48,9 @@ describe("operations console", () => {
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
         if (url.includes("/logs"))
-          return new Response(JSON.stringify({ lines: ["gateway ready"] }));
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         if (url.includes("config.yaml")) {
           return new Response("port: 18801\n", {
             headers: { "Content-Type": "application/yaml" },
@@ -68,7 +70,10 @@ describe("operations console", () => {
         calls.push(url);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -148,7 +153,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         if (url.includes("codex-auth-url")) {
           return new Response(
             JSON.stringify({ url: "https://example.com/auth", state: "auth-77" }),
@@ -234,7 +242,10 @@ describe("operations console", () => {
             }),
           );
         }
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -266,7 +277,10 @@ describe("operations console", () => {
         if (init?.method === "POST") calls.push({ url, body: String(init.body ?? "") });
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ status: "ok" }));
       }),
     );
@@ -329,7 +343,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(claudeStats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -379,7 +396,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(groupedStats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -482,7 +502,10 @@ describe("operations console", () => {
         requests.push({ url, method: init?.method ?? "GET" });
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(claudeStats));
         if (url.includes("auth-files")) return new Response(JSON.stringify(files));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -512,6 +535,64 @@ describe("operations console", () => {
     );
   });
 
+  it("re-authenticates an API-key account through its provider form instead of OAuth", async () => {
+    const genericStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "deepseek-main",
+          provider: "deepseek",
+          health: { status: "available" },
+          ok: 3,
+          fails: 0,
+        },
+      ],
+    };
+    const files = {
+      files: [
+        {
+          name: "generic-deepseek-main.json",
+          size: 180,
+          auth_index: "generic-deepseek-main",
+          path: "/auth/generic-deepseek-main.json",
+          label: "deepseek-main",
+          disabled: false,
+          unavailable: false,
+          runtime_only: false,
+          type: "generic",
+          provider: "deepseek",
+        },
+      ],
+    };
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        requests.push(url);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(genericStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify(files));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    await waitFor(() => expect(requests.some((url) => url.includes("auth-files"))).toBe(true));
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByLabelText("deepseek 1 account"));
+    expect(await screen.findByText("deepseek-main")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Re-authenticate deepseek-main" }));
+
+    expect(await screen.findByText("DeepSeek")).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider API key")).toBeInTheDocument();
+    expect(requests.some((url) => url.includes("deepseek-auth-url"))).toBe(false);
+  });
+
   it("updates Overview totals when the telemetry range changes", async () => {
     const now = Date.now();
     const historyStats = {
@@ -539,7 +620,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(historyStats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -623,6 +707,94 @@ describe("operations console", () => {
 
       expect(container.querySelector(".notch-shell")).toHaveClass("expanded", "open");
       expect(container.querySelector(".notch-surface")).toHaveClass("expanded");
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("automatically opens provider detail from forwarded native cursor coordinates", async () => {
+    window.history.pushState({}, "", "/management.html?surface=notch");
+    try {
+      render(<App />);
+      await screen.findByTestId("notch-ring-codex");
+      const ring = screen.getByTestId("notch-ring-codex");
+      vi.spyOn(ring, "getBoundingClientRect").mockReturnValue({
+        x: 350,
+        y: 210,
+        left: 350,
+        top: 210,
+        right: 393,
+        bottom: 253,
+        width: 43,
+        height: 43,
+        toJSON: () => ({}),
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("mahoquot:notch-hover", { detail: true }));
+        window.dispatchEvent(
+          new CustomEvent("mahoquot:notch-cursor", { detail: { x: 370, y: 230 } }),
+        );
+      });
+
+      expect(await screen.findByTestId("notch-tooltip-codex")).toBeVisible();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("keeps official provider colors and every account quota row in notch detail", async () => {
+    window.history.pushState({}, "", "/management.html?surface=notch");
+    const firstAccount = stats.accounts[0];
+    if (!firstAccount) throw new Error("fixture account missing");
+    const manyAccounts = {
+      ...stats,
+      accounts: [
+        ...stats.accounts,
+        {
+          ...firstAccount,
+          id: "second@example.com",
+          usage: {
+            ...firstAccount.usage,
+            groups: [
+              {
+                display_name: "Limits",
+                models: "codex",
+                buckets: [
+                  { display_name: "Daily", used_percent: 10, reset_after_seconds: 100 },
+                  { display_name: "Monthly", used_percent: 20, reset_after_seconds: 200 },
+                  { display_name: "Credits", used_percent: 30, reset_after_seconds: 300 },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(manyAccounts));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    try {
+      render(<App />);
+      fireEvent.click(await screen.findByTestId("notch-ring-codex"));
+      const tooltip = screen.getByTestId("notch-tooltip-codex");
+      expect(within(tooltip).getAllByTestId(/notch-tooltip-account-/)).toHaveLength(2);
+      expect(within(tooltip).getByText("Account 1")).toBeInTheDocument();
+      expect(within(tooltip).getByText("Account 2")).toBeInTheDocument();
+      expect(within(tooltip).getByText("Credits")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("notch-ring-codex").querySelector(".notch-ring-logo .provider-logo"),
+      ).toHaveClass("notch-provider-logo-color");
     } finally {
       window.history.pushState({}, "", "/");
     }
@@ -714,7 +886,10 @@ describe("operations console", () => {
         if (url.includes("codex-auth-url")) authCalls.push(url);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         if (url.includes("codex-auth-url")) {
           return new Response(JSON.stringify({ url: "https://example.com/auth", state: "s" }));
         }
@@ -735,6 +910,58 @@ describe("operations console", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenAI" }));
     await waitFor(() => expect(authCalls).toHaveLength(1));
+  });
+
+  it("does not duplicate dedicated canonical providers in generic key onboarding", async () => {
+    render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+
+    expect(
+      screen.queryByRole("button", { name: /OpenAI \(Codex login\)/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Google Vertex AI/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Z\.AI — GLM Coding Plan/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("allows a reference key-optional provider to save without an API key", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files") && init?.method === "POST") {
+          requests.push({ url, body: String(init.body ?? "") });
+          return new Response(JSON.stringify({ status: "ok" }));
+        }
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Requests");
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    fireEvent.change(screen.getByLabelText("Search providers"), {
+      target: { value: "OpenCode Free" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /OpenCode Free/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add API key" }));
+
+    const save = screen.getByRole("button", { name: "Save account" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(JSON.parse(requests[0]?.body ?? "{}").content.api_key).toBe("");
   });
 
   it("renders bundled official logos for every onboarding provider", async () => {
@@ -772,7 +999,10 @@ describe("operations console", () => {
             }),
           );
         }
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         if (init?.method === "PATCH") {
           writes.push({ url, method: init.method, body: String(init.body) });
           return new Response(JSON.stringify({ status: "ok" }));
@@ -811,7 +1041,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(tinyStats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -864,7 +1097,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(multiProvider));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ ok: true }));
       }),
     );
@@ -887,7 +1123,10 @@ describe("operations console", () => {
         calls.push(url);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         return new Response(JSON.stringify({ status: "ok" }));
       }),
     );
@@ -916,7 +1155,10 @@ describe("operations console", () => {
         calls.push(url);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         if (url.includes("codex-auth-url")) {
           return new Response(
             JSON.stringify({ status: "ok", url: "https://example.com/auth", state: "auth-42" }),
@@ -950,7 +1192,10 @@ describe("operations console", () => {
         const url = String(input);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
         if (init?.method === "PUT") {
           writes.push({ url, body: typeof init.body === "string" ? init.body : null });
           return new Response(JSON.stringify({ status: "ok" }));
@@ -1022,7 +1267,7 @@ describe("operations console", () => {
     fireEvent.click((await screen.findAllByText("Logs")).at(0) as HTMLElement);
     expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
     expect(
-      screen.getByText("Raw server output, not a reconstructed request history."),
+      screen.getByText(/Parsed request outcomes, not a reconstructed request history\./),
     ).toBeInTheDocument();
   });
 

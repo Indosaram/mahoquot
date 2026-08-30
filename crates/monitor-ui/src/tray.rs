@@ -81,20 +81,9 @@ pub const EDGE_CORRIDOR_WIDTH: f64 = 480.0;
 
 pub fn cursor_within_edge_corridor(display: &ScreenRect, cursor: &CursorPoint) -> bool {
     cursor.x >= display.x + display.width - EDGE_CORRIDOR_WIDTH
-}
-
-/// The panel stays open while the pointer lingers near the right edge of the
-/// display the panel itself is docked to.
-pub fn cursor_within_panel_corridor(
-    panel: &ScreenRect,
-    displays: &[ScreenRect],
-    cursor: &CursorPoint,
-) -> bool {
-    displays
-        .iter()
-        .find(|display| screen_rect_touches_display(panel, std::slice::from_ref(display)))
-        .map(|display| cursor_within_edge_corridor(display, cursor))
-        .unwrap_or_else(|| cursor_within(panel, cursor))
+        && cursor.x <= display.x + display.width
+        && cursor.y >= display.y
+        && cursor.y <= display.y + display.height
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
@@ -161,9 +150,7 @@ pub fn calculate_notch_window_position(
     let max_y = display.origin_y + display.height - window.height;
     WindowPosition {
         x: (display.origin_x + display.width - window.width).max(display.origin_x),
-        y: (display.origin_y
-            + (display.height - window.height) / 2.0
-            + insets.vertical_offset)
+        y: (display.origin_y + (display.height - window.height) / 2.0 + insets.vertical_offset)
             .clamp(display.origin_y, max_y.max(display.origin_y)),
     }
 }
@@ -214,7 +201,8 @@ pub fn resolve_gateway_binary(env_override: Option<String>, exe: Option<&Path>) 
     if let Some(path) = env_override {
         return Some(PathBuf::from(path));
     }
-    exe.and_then(Path::parent).map(|dir| dir.join("mahoquot-gateway"))
+    exe.and_then(Path::parent)
+        .map(|dir| dir.join("mahoquot-gateway"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

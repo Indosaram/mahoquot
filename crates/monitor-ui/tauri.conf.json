@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.mahoquot.monitor",
   "build": {
+    "beforeDevCommand": "bun dev",
+    "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "ui"
   },
   "app": {

@@ -1,0 +1,9 @@
+crates/monitor-ui/frontend/node_modules/
+crates/monitor-ui/frontend/test-results/
+crates/monitor-ui/frontend/playwright-report/
+crates/monitor-ui/frontend/.tmp/
+crates/monitor-ui/frontend/shots/
+crates/monitor-ui/frontend/**/*.timestamp-*.mjs
+crates/gateway/logs/
+.omo/
+.tmp/

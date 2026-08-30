@@ -114,4 +114,15 @@ describe("groupNotchProviders", () => {
     expect(groups[0]?.rows[1]?.usedPercent).toBe(30);
     expect(groups[0]?.rows[1]?.resetSeconds).toBe(120);
   });
+
+  it("coalesces runtime aliases into one provider with every account", () => {
+    const grouped = groupNotchProviders([
+      { provider: "codex", label: "one", rows: [] },
+      { provider: "openai", label: "two", rows: [] },
+    ]);
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]?.provider).toBe("codex");
+    expect(grouped[0]?.accounts.map((account) => account.label)).toEqual(["one", "two"]);
+  });
 });

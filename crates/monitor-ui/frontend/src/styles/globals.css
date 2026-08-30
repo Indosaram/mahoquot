@@ -912,6 +912,113 @@ h2 {
   min-height: calc(100vh - 110px);
   grid-template-rows: auto minmax(0, 1fr);
 }
+.logs-tabs {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+.logs-tabs button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.logs-tabs button.active {
+  background: var(--panel-3);
+  color: var(--fg);
+}
+.logs-kpi {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px 16px;
+}
+.logs-kpi > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.logs-kpi span {
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+.logs-kpi strong {
+  color: var(--fg);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.logs-provider-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.logs-provider-filter span {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.logs-provider-filter select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.logs-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.logs-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 7px 12px;
+}
+.logs-table td {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 6px 12px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.logs-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.logs-table .dim {
+  color: var(--fg-dim);
+}
+.logs-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.logs-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
 .logs-header,
 .gateway-process-card,
 .gateway-process-action {
@@ -925,20 +1032,6 @@ h2 {
   margin-top: 3px;
   color: var(--fg-faint);
   font-size: 11px;
-}
-.logs-surface pre {
-  min-height: 0;
-  min-width: 0;
-  margin: 0;
-  overflow: auto;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  background: var(--panel);
-  padding: 14px;
-  color: var(--fg-dim);
-  font: 11px / 1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 .gateway-process-card {
   padding: 14px 17px;
@@ -1649,9 +1742,6 @@ h2 {
   align-items: center;
   background: transparent;
   transform: translateY(-50%);
-  /* Brink's panel curve: timingCurve(0.32, 0.9, 0.35, 1) over 0.38s. */
-  transition: width 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), height 0.38s
-    cubic-bezier(0.32, 0.9, 0.35, 1);
 }
 
 .notch-shell.expanded {
@@ -1660,11 +1750,12 @@ h2 {
 }
 
 .notch-surface {
-  width: 8px;
+  position: relative;
+  width: 108px;
   height: auto;
   min-height: 180px;
   max-height: 180px;
-  background: #000000;
+  background: transparent;
   color: var(--fg);
   border-radius: 4px 0 0 4px;
   box-shadow: none;
@@ -1676,39 +1767,59 @@ h2 {
   padding: 0;
   overflow: hidden;
   user-select: none;
-  transition: width 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), max-height 0.38s
+  transform: translateX(86px);
+  transition: transform 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), max-height 0.38s
     cubic-bezier(0.32, 0.9, 0.35, 1), border-radius 0.38s cubic-bezier(0.32, 0.9, 0.35, 1);
+  will-change: transform, max-height;
+}
+
+.notch-island-shape {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 108px;
+  height: 440px;
+  overflow: visible;
+  filter: drop-shadow(-1px 0 rgba(255, 255, 255, 0.12)) drop-shadow(0 24px 30px rgba(0, 0, 0, 0.5));
+  pointer-events: none;
+  transform: translate(100px, -50%);
+  transition: transform 0.38s cubic-bezier(0.32, 0.9, 0.35, 1);
+  will-change: transform;
+}
+
+.notch-island-shape path {
+  fill: rgba(24, 24, 34, 0.97);
 }
 
 .notch-surface.expanded {
-  width: 94px;
   /* Brink sizes the tab to its rings; a fixed height leaves dead black space
      below the icons whenever fewer providers are connected. */
   height: auto;
   max-height: 440px;
-  border-radius: 28px 0 0 28px;
-  padding: 41px 0;
+  border-radius: 0;
+  padding: 52px 0 58px;
   gap: 18px;
   justify-content: center;
   overflow: visible;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  box-shadow: none;
+  transform: translateX(0);
+}
+
+.notch-shell.expanded .notch-island-shape {
+  transform: translate(0, -50%);
 }
 
 .notch-ring-item {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  /* Brink slides the whole tab in from tabWidth * 1.1 rather than fading icons. */
-  transform: translateX(106px);
-  transition: opacity 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), transform 0.38s
-    cubic-bezier(0.32, 0.9, 0.35, 1);
+  transition: opacity 0.24s ease 0.08s;
 }
 
 .notch-surface.expanded .notch-ring-item {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translateX(0) scale(1);
 }
 
 .notch-ring-wrap {
@@ -1723,6 +1834,7 @@ h2 {
 
 @media (prefers-reduced-motion: reduce) {
   .notch-shell,
+  .notch-island-shape,
   .notch-surface,
   .notch-ring-item {
     transition: none;
@@ -1744,6 +1856,11 @@ h2 {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .notch-ring-wrap {
@@ -1751,14 +1868,14 @@ h2 {
   width: 43px;
   height: 43px;
   border-radius: 50%;
-  border: 1px solid #2a2a31;
-  background: #101014;
+  border: 7px solid rgba(89, 91, 108, 0.62);
+  background: rgba(18, 18, 27, 0.92);
   transition: border-color 0.18s ease, background 0.18s ease;
 }
 
 .notch-ring-item:hover .notch-ring-wrap {
-  border-color: #4a4a55;
-  background: #17171d;
+  border-color: rgba(116, 119, 139, 0.82);
+  background: rgba(25, 25, 36, 0.96);
 }
 
 .notch-ring-logo {
@@ -1775,11 +1892,7 @@ h2 {
 
 .notch-ring-logo .notch-provider-logo {
   object-fit: contain;
-  filter: grayscale(1) brightness(2.4);
-}
-
-.notch-ring-logo .notch-provider-logo-codex {
-  filter: invert(1) grayscale(1) brightness(2.2);
+  filter: none;
 }
 
 .notch-ring-count {
@@ -1807,7 +1920,7 @@ h2 {
 .notch-tooltip-anchor {
   position: fixed;
   top: 0;
-  right: 108px;
+  right: 122px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -1844,7 +1957,7 @@ h2 {
 .notch-tooltip {
   /* Brink's card pop-in: spring(response: 0.42, dampingFraction: 0.68). */
   animation: notch-card-in 0.42s cubic-bezier(0.3, 0.9, 0.25, 1);
-  width: 266px;
+  width: 286px;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   scrollbar-width: thin;
@@ -1878,16 +1991,46 @@ h2 {
 }
 
 .notch-tooltip-account + .notch-tooltip-account {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #23232a;
+  margin-top: 10px;
 }
 
-.notch-tooltip-account-name {
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 6px;
+.notch-tooltip-account {
+  position: relative;
+  padding: 11px 12px 12px;
   overflow: hidden;
+  background: rgba(35, 35, 44, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+.notch-tooltip-account::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  content: "";
+  background: var(--account-accent, var(--accent));
+}
+
+.notch-tooltip-account-head {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 10px;
+  padding-left: 2px;
+}
+
+.notch-tooltip-account-head span {
+  color: var(--fg-faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notch-tooltip-account-head strong {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2172,19 +2315,15 @@ h2 {
   font-weight: 700;
 }
 
-/* ── Tray dropdown panel (menu bar) ─────────────────────────────── */
-[data-surface="tray"] body,
-.tray-shell {
-  background: #101012;
-  color: #e8e8ea;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-}
-
+/* ── Tray dropdown panel (menu bar) — mirrors the incumbent Quotio tray ── */
 .tray-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: #141416;
+  color: #f5f5f7;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   user-select: none;
 }
 
@@ -2193,45 +2332,88 @@ h2 {
 }
 .tray-header strong {
   font-size: 15px;
-  letter-spacing: 0.2px;
+  font-weight: 600;
 }
 
 .tray-proxy {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 12px 10px;
+  margin: 0 12px 8px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: #1a1a1d;
+  background: #1e1e21;
 }
 .tray-proxy-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: #ff453a;
+  flex: none;
 }
 .tray-proxy.online .tray-proxy-dot {
-  background: #32d74b;
+  background: #30d158;
 }
 .tray-proxy-label {
-  font-weight: 600;
   font-size: 13px;
+  font-weight: 600;
 }
 .tray-proxy-url {
   font-size: 12px;
-  color: #a8a8ad;
+  color: #98989d;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
 }
-.tray-copy {
-  background: none;
+.tray-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: none;
+  border-radius: 6px;
+  background: none;
   color: #8e8e93;
   cursor: pointer;
+}
+.tray-icon-button:hover {
+  background: #2c2c30;
+  color: #d8d8dc;
+}
+.tray-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 7px;
+  background: rgba(255, 69, 58, 0.16);
+  color: #ff453a;
+  cursor: pointer;
+  flex: none;
+}
+.tray-stop:hover {
+  background: rgba(255, 69, 58, 0.28);
+}
+
+.tray-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 12px 8px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: #98989d;
   font-size: 13px;
+  cursor: pointer;
+}
+.tray-start:hover {
+  background: #1e1e21;
 }
 
 .tray-chips {
@@ -2247,14 +2429,19 @@ h2 {
   padding: 6px 12px;
   border-radius: 999px;
   border: none;
-  background: #1f1f23;
+  background: #232327;
   color: #cfcfd4;
   font-size: 12px;
   cursor: pointer;
 }
+.tray-chip svg,
+.tray-chip .provider-logo {
+  width: 12px;
+  height: 12px;
+}
 .tray-chip.active {
-  background: #1f3a66;
-  color: #6ea8ff;
+  background: #3478f6;
+  color: #ffffff;
 }
 
 .tray-cards {
@@ -2266,7 +2453,7 @@ h2 {
   gap: 10px;
 }
 .tray-card {
-  background: #1a1a1d;
+  background: #1e1e21;
   border-radius: 14px;
   padding: 12px;
 }
@@ -2276,6 +2463,10 @@ h2 {
   gap: 8px;
   margin-bottom: 10px;
 }
+.tray-card-head .provider-logo {
+  width: 18px;
+  height: 18px;
+}
 .tray-card-name {
   font-size: 13px;
   font-weight: 600;
@@ -2284,28 +2475,14 @@ h2 {
   white-space: nowrap;
   flex: 1;
 }
-.tray-glyph {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  background: #2c2c30;
-}
-.tray-glyph.codex {
-  background: #e5e5e5;
-}
-.tray-glyph.antigravity {
-  background: #8e44ad;
-}
-.tray-glyph.claude {
-  background: #d97757;
-}
 .tray-plan {
-  padding: 3px 8px;
-  border-radius: 8px;
-  background: #1f3a66;
-  color: #6ea8ff;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #3478f6;
+  color: #ffffff;
   font-size: 11px;
   font-weight: 600;
+  flex: none;
 }
 
 .tray-tiles {
@@ -2314,7 +2491,7 @@ h2 {
   gap: 8px;
 }
 .tray-tile {
-  background: #232326;
+  background: #17171a;
   border-radius: 10px;
   padding: 8px 10px;
 }
@@ -2326,35 +2503,36 @@ h2 {
 }
 .tray-tile-name {
   font-size: 11px;
-  color: #8e8e93;
+  color: #d8d8dc;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
 }
 .tray-tile-reset {
   font-size: 10px;
   color: #6e6e73;
+  margin-left: auto;
 }
 .tray-tile-percent {
   font-size: 11px;
   font-weight: 700;
-  color: #32d74b;
+  color: #30d158;
+  flex: none;
 }
 .tray-tile-percent.full {
   color: #ff453a;
 }
 .tray-bar {
-  height: 5px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: 2px;
   background: #2c2c30;
   overflow: hidden;
 }
 .tray-bar i {
   display: block;
   height: 100%;
-  border-radius: 3px;
-  background: #32d74b;
+  border-radius: 2px;
+  background: #30d158;
 }
 .tray-bar.amber i {
   background: #ffd60a;
@@ -2370,7 +2548,7 @@ h2 {
 }
 
 .tray-empty {
-  padding: 24px;
+  padding: 28px 16px;
   text-align: center;
   color: #8e8e93;
   font-size: 12px;
@@ -2385,13 +2563,13 @@ h2 {
 .tray-footer button {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: none;
   border: none;
   color: #d8d8dc;
   font-size: 13px;
   text-align: left;
-  padding: 9px 10px;
+  padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
 }
@@ -2399,131 +2577,13 @@ h2 {
   background: #232327;
 }
 
-/* ── Visual-neutral spatial layout primitives ────────────────────── */
-.app-shell {
-  display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
-  min-block-size: 100dvh;
-  min-inline-size: 0;
+.tray-spin,
+.spin {
+  animation: tray-spin 0.8s linear infinite;
 }
 
-@media (max-width: 760px) {
-  .app-shell {
-    display: block;
+@keyframes tray-spin {
+  to {
+    transform: rotate(360deg);
   }
-}
-
-.layout-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-inline-size: 0;
-  min-block-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.layout-cluster {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.layout-wrap-row {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.layout-intrinsic-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 12px;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.layout-content-limiter {
-  inline-size: 100%;
-  max-inline-size: 1260px;
-  margin-inline: auto;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.layout-overlay-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  min-inline-size: 0;
-  min-block-size: 0;
-}
-
-/* Per-account small multiples (kiro-lb style): one gradient-area panel per
-   pooled account. Idle accounts keep a dashed placeholder so the grid shape
-   never changes with traffic. */
-.minimal-account-panels {
-  display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  gap: 10px;
-}
-@media (min-width: 720px) {
-  .minimal-account-panels {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-.minimal-account-panel {
-  min-width: 0;
-  padding: 10px 12px 8px;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-}
-.minimal-account-panel > header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.minimal-account-panel .name {
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--fg);
-}
-.minimal-account-panel .peak {
-  color: var(--fg-faint);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.minimal-account-chart {
-  position: relative;
-  height: 96px;
-}
-.minimal-account-chart svg {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.minimal-account-chart > span {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--fg-faint);
-  font-size: 11px;
-}
-.minimal-account-empty {
-  display: grid;
-  place-items: center;
-  height: 96px;
-  border: 1px dashed var(--line-soft);
-  border-radius: 6px;
-  color: var(--fg-faint);
-  font-size: 11px;
 }

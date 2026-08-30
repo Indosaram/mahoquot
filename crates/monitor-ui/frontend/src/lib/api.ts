@@ -52,6 +52,7 @@ export interface GatewayClients {
       readonly baseUrl: string;
       readonly apiKey: string;
       readonly models: readonly string[];
+      readonly staticHeaders?: Readonly<Record<string, string>>;
     }): Promise<void>;
     importCommandCode(apiKey: string, label: string): Promise<void>;
     importLocalTrae(): Promise<void>;
@@ -139,6 +140,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
               base_url: input.baseUrl,
               api_key: input.apiKey,
               models: input.models,
+              static_headers: input.staticHeaders,
               disabled: false,
             },
           }),
@@ -207,6 +209,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           nous: "nous-auth-url",
           "gemini-cli": "gemini-cli-auth-url",
           "github-copilot": "github-copilot-auth-url",
+          "command-code": "command-code-auth-url",
           xai: "xai-auth-url",
         };
         const route = endpoint[provider];

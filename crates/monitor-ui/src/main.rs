@@ -82,15 +82,14 @@ struct NotchHoverState {
     expanded: std::sync::Arc<std::sync::atomic::AtomicBool>,
     collapse_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
     generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    last_hit_test_ms: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Tokens returned by `addGlobal/LocalMonitorForEventsMatchingMask:`, kept so
 /// the monitors can be removed (and their blocks released) at exit instead of
 /// firing against a half-torn-down app.
 #[cfg(target_os = "macos")]
-struct NotchHoverMonitors(
-    std::sync::Mutex<[*mut objc::runtime::Object; 2]>,
-);
+struct NotchHoverMonitors(std::sync::Mutex<[*mut objc::runtime::Object; 2]>);
 // Raw ObjC pointers are not `Send`/`Sync`; the tokens are only ever read on
 // the main thread inside `removeMonitor:` at exit.
 #[cfg(target_os = "macos")]
@@ -121,6 +120,7 @@ fn reclaim_gateway_port() {
     for pid in String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| line.trim().parse::<i32>().ok())
+        .filter(|pid| *pid > 1)
     {
         println!("reclaiming gateway port from orphan pid={pid}");
         let _ = std::process::Command::new("kill")
@@ -140,16 +140,17 @@ fn spawn_gateway() -> Option<std::process::Child> {
         reclaim_gateway_port();
     }
     let exe = std::env::current_exe().ok();
-    let bin = tray::resolve_gateway_binary(
-        std::env::var("MAHOQUOT_GATEWAY_BIN").ok(),
-        exe.as_deref(),
-    )?;
+    let bin =
+        tray::resolve_gateway_binary(std::env::var("MAHOQUOT_GATEWAY_BIN").ok(), exe.as_deref())?;
     let auth_dir = std::env::var("AUTH_DIR").unwrap_or_else(|_| {
         tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
             .display()
             .to_string()
     });
-    match std::process::Command::new(&bin).env("AUTH_DIR", auth_dir).spawn() {
+    match std::process::Command::new(&bin)
+        .env("AUTH_DIR", auth_dir)
+        .spawn()
+    {
         Ok(child) => {
             println!("mahoquot-gateway spawned pid={}", child.id());
             GATEWAY_CHILD_PID.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
@@ -197,6 +198,7 @@ fn stop_gateway(
         .lock()
         .map_err(|_| "gateway process state unavailable".to_string())?;
     if let Some(mut child) = owned.take() {
+        GATEWAY_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
         child
             .kill()
             .map_err(|error| format!("failed to stop gateway: {error}"))?;
@@ -207,9 +209,7 @@ fn stop_gateway(
     Ok(GatewayLifecycleStatus::Stopped)
 }
 
-fn notched_monitor<R: Runtime>(
-    app: &AppHandle<R>,
-) -> tauri::Result<Option<tauri::Monitor>> {
+fn notched_monitor<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Option<tauri::Monitor>> {
     let monitors = app.available_monitors()?;
     let summaries: Vec<tray::MonitorSummary> = monitors
         .iter()
@@ -317,7 +317,6 @@ fn apply_menu_bar_level<R: Runtime>(window: &WebviewWindow<R>) {
         // events reaching an inactive app.
         let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
         let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: true];
-
     }
 }
 
@@ -374,6 +373,7 @@ fn sync_notch_hover(
     expanded: &std::sync::atomic::AtomicBool,
     collapse_pending: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     generation: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    last_hit_test_ms: &std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     use std::sync::atomic::Ordering;
 
@@ -398,27 +398,26 @@ fn sync_notch_hover(
     }
     let was_open = expanded.load(Ordering::Relaxed);
     let was_pending = collapse_pending.load(Ordering::Relaxed);
-    // Opening needs a deliberate touch of the strip, but staying open only needs
-    // the pointer to remain in the edge corridor, so travelling out to the
-    // detail card never folds the panel away mid-reach.
-    let inside = if was_open {
-        tray::cursor_within_panel_corridor(&rect, &display_logical_bounds(app), &cursor)
-    } else {
-        tray::cursor_within(&rect, &cursor)
-    };
+    let inside = tray::cursor_within(&rect, &cursor);
     if was_open {
-        // wry's WKWebView builds its own tracking areas, which stay silent while
-        // another app is frontmost, so the webview can never hit-test the icons
-        // itself. Forward the pointer the global monitor can still see.
-        if let Some(point) = tray::cursor_to_window_local(&rect, &cursor) {
-            let _ = window.eval(format!(
-                "(()=>{{const p={{x:{},y:{}}};document.querySelectorAll('.notch-tooltip-anchor.native-visible').forEach(e=>e.classList.remove('native-visible'));const h=document.elementFromPoint(p.x,p.y)?.closest('[data-hover-provider]');h?.querySelector('.notch-tooltip-anchor')?.classList.add('native-visible');}})();",
-                point.x, point.y
-            ));
-        } else {
-            let _ = window.eval(
-                "window.dispatchEvent(new CustomEvent('mahoquot:notch-cursor',{detail:null}));",
-            );
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_millis() as u64);
+        let previous_ms = last_hit_test_ms.swap(now_ms, Ordering::Relaxed);
+        if now_ms.saturating_sub(previous_ms) >= 16 {
+            // wry's WKWebView builds its own tracking areas, which stay silent while
+            // another app is frontmost, so the webview can never hit-test the icons
+            // itself. Forward the pointer the global monitor can still see.
+            if let Some(point) = tray::cursor_to_window_local(&rect, &cursor) {
+                let _ = window.eval(format!(
+                    "window.dispatchEvent(new CustomEvent('mahoquot:notch-cursor',{{detail:{{x:{},y:{}}}}}));",
+                    point.x, point.y
+                ));
+            } else {
+                let _ = window.eval(
+                    "window.dispatchEvent(new CustomEvent('mahoquot:notch-cursor',{detail:null}));",
+                );
+            }
         }
     }
     match tray::brink_hover_intent(was_open, was_pending, inside) {
@@ -428,7 +427,7 @@ fn sync_notch_hover(
             expanded.store(true, Ordering::Relaxed);
             resize_notch(app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
             let _ = window.eval(
-                "(()=>{document.querySelector('.notch-shell')?.classList.add('expanded','open');document.querySelector('.notch-surface')?.classList.add('expanded');window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));})();",
+                "window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));",
             );
             println!(
                 "notch hover open=true rect=({},{},{},{}) cursor=({},{})",
@@ -436,28 +435,18 @@ fn sync_notch_hover(
             );
         }
         tray::HoverIntent::ScheduleCollapse => {
-            collapse_pending.store(true, Ordering::Relaxed);
+            collapse_pending.store(false, Ordering::Relaxed);
             let scheduled_generation = generation.fetch_add(1, Ordering::Relaxed) + 1;
+            expanded.store(false, Ordering::Relaxed);
+            let _ = window.eval(
+                "window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:false}));",
+            );
+            println!("notch hover open=false immediate=true");
             let app = app.clone();
             let state = app.state::<NotchHoverState>();
             let expanded = state.expanded.clone();
-            let collapse_pending = state.collapse_pending.clone();
             let generation = state.generation.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if generation.load(Ordering::Relaxed) != scheduled_generation
-                    || !collapse_pending.load(Ordering::Relaxed)
-                {
-                    return;
-                }
-                collapse_pending.store(false, Ordering::Relaxed);
-                expanded.store(false, Ordering::Relaxed);
-                if let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) {
-                    let _ = window.eval(
-                        "(()=>{document.querySelector('.notch-shell')?.classList.remove('expanded','open');document.querySelector('.notch-surface')?.classList.remove('expanded');document.querySelectorAll('.notch-tooltip-anchor.native-visible').forEach(e=>e.classList.remove('native-visible'));window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:false}));})();",
-                    );
-                }
-                println!("notch hover open=false delayed=true");
                 std::thread::sleep(std::time::Duration::from_millis(400));
                 let current = generation.load(Ordering::Relaxed);
                 if tray::should_apply_delayed_collapse(
@@ -504,10 +493,7 @@ fn display_logical_bounds(app: &AppHandle) -> Vec<tray::ScreenRect> {
 /// frontmost app, so the webview's own mouseenter never fires while the user
 /// works elsewhere. A global NSEvent monitor gives us the cursor regardless.
 #[cfg(target_os = "macos")]
-fn start_notch_hover_watch(
-    app: &AppHandle,
-    state: &NotchHoverState,
-) {
+fn start_notch_hover_watch(app: &AppHandle, state: &NotchHoverState) {
     use block::ConcreteBlock;
     use objc::{class, msg_send, sel, sel_impl};
 
@@ -515,12 +501,14 @@ fn start_notch_hover_watch(
     let global_state = state.expanded.clone();
     let global_pending = state.collapse_pending.clone();
     let global_generation = state.generation.clone();
+    let global_last_hit_test_ms = state.last_hit_test_ms.clone();
     let global_handler = ConcreteBlock::new(move |_event: *mut objc::runtime::Object| {
         sync_notch_hover(
             &global_handle,
             &global_state,
             &global_pending,
             &global_generation,
+            &global_last_hit_test_ms,
         );
     })
     .copy();
@@ -531,6 +519,7 @@ fn start_notch_hover_watch(
     let local_state = state.expanded.clone();
     let local_pending = state.collapse_pending.clone();
     let local_generation = state.generation.clone();
+    let local_last_hit_test_ms = state.last_hit_test_ms.clone();
     let local_handler = ConcreteBlock::new(
         move |event: *mut objc::runtime::Object| -> *mut objc::runtime::Object {
             sync_notch_hover(
@@ -538,6 +527,7 @@ fn start_notch_hover_watch(
                 &local_state,
                 &local_pending,
                 &local_generation,
+                &local_last_hit_test_ms,
             );
             event
         },
@@ -586,8 +576,7 @@ fn apply_dock_icon() {
             eprintln!("failed to decode mahoquot dock icon");
             return;
         }
-        let app: *mut objc::runtime::Object =
-            msg_send![class!(NSApplication), sharedApplication];
+        let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
         let _: () = msg_send![app, setApplicationIconImage: image];
     }
 }
@@ -638,17 +627,29 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
 
 #[tauri::command]
 fn expand_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>) {
-    state.collapse_pending.store(false, std::sync::atomic::Ordering::Relaxed);
-    state.expanded.store(true, std::sync::atomic::Ordering::Relaxed);
-    state.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .collapse_pending
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .expanded
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     resize_notch(&app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
 }
 
 #[tauri::command]
 fn collapse_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>) {
-    state.collapse_pending.store(false, std::sync::atomic::Ordering::Relaxed);
-    state.expanded.store(false, std::sync::atomic::Ordering::Relaxed);
-    state.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .collapse_pending
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .expanded
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
 }
 
@@ -693,7 +694,10 @@ fn toggle_tray_panel<R: Runtime>(
     let x = (icon_right - panel_width).max(icon_x);
     let y = below_icon;
     panel
-        .set_position(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32))
+        .set_position(tauri::PhysicalPosition::new(
+            x.round() as i32,
+            y.round() as i32,
+        ))
         .map_err(|error| eprintln!("failed to position tray panel: {error}"))
         .ok();
     let _ = panel.show();
@@ -724,13 +728,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         None::<&str>,
     )?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(
-        app,
-        tray::MENU_ID_QUIT,
-        "Quit Mahoquot",
-        true,
-        None::<&str>,
-    )?;
+    let quit = MenuItem::with_id(app, tray::MENU_ID_QUIT, "Quit Mahoquot", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &refresh, &gateway, &separator, &quit])?;
 
     let mut tray_icon = TrayIconBuilder::with_id(TRAY_ID)
@@ -765,7 +763,6 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         tray_icon = tray_icon.icon(icon).icon_as_template(false);
     }
     tray_icon.build(app)?;
-
 
     #[cfg(target_os = "macos")]
     apply_dock_icon();
@@ -919,6 +916,7 @@ fn main() {
             expanded: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             collapse_pending: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_hit_test_ms: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
         .manage(Config {
             base_url,
@@ -964,33 +962,32 @@ fn main() {
     // ours is overwritten during setup and SIGTERM strands the gateway.
     install_gateway_signal_guard();
     app.run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                #[cfg(target_os = "macos")]
-                {
-                    use objc::{class, msg_send, sel, sel_impl};
-                    let monitors = app.state::<NotchHoverMonitors>();
-                    if let Ok(tokens) = monitors.0.lock() {
-                        unsafe {
-                            for token in tokens.iter().copied() {
-                                if !token.is_null() {
-                                    let _: () =
-                                        msg_send![class!(NSEvent), removeMonitor: token];
-                                }
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            #[cfg(target_os = "macos")]
+            {
+                use objc::{class, msg_send, sel, sel_impl};
+                let monitors = app.state::<NotchHoverMonitors>();
+                if let Ok(tokens) = monitors.0.lock() {
+                    unsafe {
+                        for token in tokens.iter().copied() {
+                            if !token.is_null() {
+                                let _: () = msg_send![class!(NSEvent), removeMonitor: token];
                             }
                         }
-                    };
-                }
-                let gateway = app.state::<GatewayProcess>();
-                let mut child_guard = match gateway.0.lock() {
-                    Ok(guard) => guard,
-                    Err(_) => return,
+                    }
                 };
-                if let Some(child) = child_guard.as_mut() {
-                    GATEWAY_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    println!("mahoquot-gateway terminated");
-                }
             }
-        });
+            let gateway = app.state::<GatewayProcess>();
+            let mut child_guard = match gateway.0.lock() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            };
+            if let Some(child) = child_guard.as_mut() {
+                GATEWAY_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
+                let _ = child.kill();
+                let _ = child.wait();
+                println!("mahoquot-gateway terminated");
+            }
+        }
+    });
 }

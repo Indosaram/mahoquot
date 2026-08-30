@@ -1,3 +1,5 @@
+import { normalizeToQuotioProviderId } from "./provider-catalog";
+
 export interface LocalPoint {
   readonly x: number;
   readonly y: number;
@@ -83,18 +85,19 @@ export const groupNotchProviders = (
   const accountsByProvider = new Map<string, NotchAccountEntry[]>();
 
   for (const entry of entries) {
-    if (!counts.has(entry.provider)) {
-      order.push(entry.provider);
-      rowsByProvider.set(entry.provider, new Map());
-      accountsByProvider.set(entry.provider, []);
+    const provider = normalizeToQuotioProviderId(entry.provider);
+    if (!counts.has(provider)) {
+      order.push(provider);
+      rowsByProvider.set(provider, new Map());
+      accountsByProvider.set(provider, []);
     }
-    counts.set(entry.provider, (counts.get(entry.provider) ?? 0) + 1);
-    accountsByProvider.get(entry.provider)?.push({
-      label: entry.label ?? entry.provider,
+    counts.set(provider, (counts.get(provider) ?? 0) + 1);
+    accountsByProvider.get(provider)?.push({
+      label: entry.label ?? provider,
       rows: entry.rows,
     });
 
-    const accumulators = rowsByProvider.get(entry.provider) as Map<string, RowAccumulator>;
+    const accumulators = rowsByProvider.get(provider) as Map<string, RowAccumulator>;
     for (const row of entry.rows) {
       const existing = accumulators.get(row.name);
       if (existing) {

@@ -1,9 +1,10 @@
 use crate::tray::{
-    calculate_notch_window_position, calculate_notch_window_physical_position, cursor_within, cursor_within_edge_corridor, default_auth_dir, resolve_gateway_binary,
-    cursor_to_window_local, gateway_startup_action, screen_rect_touches_display, CursorPoint,
-    DisplayBounds, GatewayStartup, LocalPoint,
-    NotchInsets, ScreenRect, WindowDimensions, MonitorSummary, WindowPosition,
-    MENU_ID_GATEWAY, MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE, pick_notched_monitor_index,
+    calculate_notch_window_physical_position, calculate_notch_window_position,
+    cursor_to_window_local, cursor_within, cursor_within_edge_corridor, default_auth_dir,
+    gateway_startup_action, pick_notched_monitor_index, resolve_gateway_binary,
+    screen_rect_touches_display, CursorPoint, DisplayBounds, GatewayStartup, LocalPoint,
+    MonitorSummary, NotchInsets, ScreenRect, WindowDimensions, WindowPosition, MENU_ID_GATEWAY,
+    MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE,
 };
 
 #[test]
@@ -19,21 +20,45 @@ fn cursor_to_window_local_flips_appkit_origin_to_css_top_left() {
     // when the pointer sits at the window's top-left in AppKit terms
     // then CSS-space hit-testing sees the origin
     assert_eq!(
-        cursor_to_window_local(&window, &CursorPoint { x: 3420.0, y: 1040.0 }),
+        cursor_to_window_local(
+            &window,
+            &CursorPoint {
+                x: 3420.0,
+                y: 1040.0
+            }
+        ),
         Some(LocalPoint { x: 0.0, y: 0.0 })
     );
     assert_eq!(
-        cursor_to_window_local(&window, &CursorPoint { x: 3420.0, y: 560.0 }),
+        cursor_to_window_local(
+            &window,
+            &CursorPoint {
+                x: 3420.0,
+                y: 560.0
+            }
+        ),
         Some(LocalPoint { x: 0.0, y: 480.0 })
     );
     assert_eq!(
-        cursor_to_window_local(&window, &CursorPoint { x: 3600.0, y: 800.0 }),
+        cursor_to_window_local(
+            &window,
+            &CursorPoint {
+                x: 3600.0,
+                y: 800.0
+            }
+        ),
         Some(LocalPoint { x: 180.0, y: 240.0 })
     );
 
     // and a pointer outside the window has nothing to hit-test
     assert_eq!(
-        cursor_to_window_local(&window, &CursorPoint { x: 3419.0, y: 800.0 }),
+        cursor_to_window_local(
+            &window,
+            &CursorPoint {
+                x: 3419.0,
+                y: 800.0
+            }
+        ),
         None
     );
 }
@@ -52,21 +77,46 @@ fn hover_region_keeps_the_panel_open_within_the_edge_corridor() {
     // then the panel must remain open: the detail card lives out here
     assert!(cursor_within_edge_corridor(
         &display,
-        &CursorPoint { x: 3400.0, y: 800.0 }
+        &CursorPoint {
+            x: 3400.0,
+            y: 800.0
+        }
     ));
     assert!(cursor_within_edge_corridor(
         &display,
-        &CursorPoint { x: 3361.0, y: 100.0 }
+        &CursorPoint {
+            x: 3361.0,
+            y: 100.0
+        }
     ));
 
     // and once it wanders past the corridor the panel may fold away
     assert!(!cursor_within_edge_corridor(
         &display,
-        &CursorPoint { x: 3359.0, y: 800.0 }
+        &CursorPoint {
+            x: 3359.0,
+            y: 800.0
+        }
     ));
     assert!(!cursor_within_edge_corridor(
         &display,
         &CursorPoint { x: 100.0, y: 800.0 }
+    ));
+
+    // and another display beside or above this one must not inherit its corridor
+    assert!(!cursor_within_edge_corridor(
+        &display,
+        &CursorPoint {
+            x: 3900.0,
+            y: 800.0
+        }
+    ));
+    assert!(!cursor_within_edge_corridor(
+        &display,
+        &CursorPoint {
+            x: 3800.0,
+            y: 1700.0
+        }
     ));
 }
 
@@ -80,13 +130,49 @@ fn cursor_within_covers_the_strip_edges_and_rejects_the_gap_beside_it() {
         height: 180.0,
     };
 
-    assert!(cursor_within(&strip, &CursorPoint { x: 3832.0, y: 800.0 }));
-    assert!(cursor_within(&strip, &CursorPoint { x: 3839.0, y: 710.0 }));
-    assert!(cursor_within(&strip, &CursorPoint { x: 3836.0, y: 889.0 }));
+    assert!(cursor_within(
+        &strip,
+        &CursorPoint {
+            x: 3832.0,
+            y: 800.0
+        }
+    ));
+    assert!(cursor_within(
+        &strip,
+        &CursorPoint {
+            x: 3839.0,
+            y: 710.0
+        }
+    ));
+    assert!(cursor_within(
+        &strip,
+        &CursorPoint {
+            x: 3836.0,
+            y: 889.0
+        }
+    ));
 
-    assert!(!cursor_within(&strip, &CursorPoint { x: 3831.0, y: 800.0 }));
-    assert!(!cursor_within(&strip, &CursorPoint { x: 3836.0, y: 709.0 }));
-    assert!(!cursor_within(&strip, &CursorPoint { x: 3836.0, y: 891.0 }));
+    assert!(!cursor_within(
+        &strip,
+        &CursorPoint {
+            x: 3831.0,
+            y: 800.0
+        }
+    ));
+    assert!(!cursor_within(
+        &strip,
+        &CursorPoint {
+            x: 3836.0,
+            y: 709.0
+        }
+    ));
+    assert!(!cursor_within(
+        &strip,
+        &CursorPoint {
+            x: 3836.0,
+            y: 891.0
+        }
+    ));
 }
 
 #[test]
@@ -126,7 +212,10 @@ fn delayed_collapse_applies_only_to_the_latest_closed_generation() {
 fn brink_hover_intent_delays_collapse_and_cancels_it_on_reentry() {
     use super::tray::HoverIntent;
 
-    assert_eq!(super::tray::brink_hover_intent(false, false, true), HoverIntent::Expand);
+    assert_eq!(
+        super::tray::brink_hover_intent(false, false, true),
+        HoverIntent::Expand
+    );
     assert_eq!(
         super::tray::brink_hover_intent(true, false, false),
         HoverIntent::ScheduleCollapse
@@ -135,7 +224,10 @@ fn brink_hover_intent_delays_collapse_and_cancels_it_on_reentry() {
         super::tray::brink_hover_intent(true, true, true),
         HoverIntent::CancelCollapse
     );
-    assert_eq!(super::tray::brink_hover_intent(true, true, false), HoverIntent::None);
+    assert_eq!(
+        super::tray::brink_hover_intent(true, true, false),
+        HoverIntent::None
+    );
 }
 
 #[test]
@@ -267,8 +359,7 @@ fn notch_position_physical_calculation_applies_scale_factor() {
         vertical_offset: 0.0,
     };
 
-    let physical_pos =
-        calculate_notch_window_physical_position(&screen, &window, &insets, 2.0);
+    let physical_pos = calculate_notch_window_physical_position(&screen, &window, &insets, 2.0);
 
     assert_eq!(physical_pos.x, 3304.0);
     assert_eq!(physical_pos.y, 697.0);
@@ -299,8 +390,7 @@ fn gateway_binary_resolves_env_override_then_exe_sibling() {
         Some(std::path::Path::new("/custom/mahoquot-gateway"))
     );
     assert_eq!(
-        resolve_gateway_binary(None, Some(std::path::Path::new("/opt/app/mahoquot")))
-            .as_deref(),
+        resolve_gateway_binary(None, Some(std::path::Path::new("/opt/app/mahoquot"))).as_deref(),
         Some(std::path::Path::new("/opt/app/mahoquot-gateway"))
     );
     assert_eq!(resolve_gateway_binary(None, None), None);
@@ -335,10 +425,8 @@ fn notched_monitor_prefers_retina_panel_for_island_placement() {
 #[test]
 fn default_auth_dir_adopts_the_incumbent_store_when_present() {
     // given a home directory carrying the incumbent credential store
-    let home = std::env::temp_dir().join(format!(
-        "mahoquot-auth-dir-legacy-{}",
-        std::process::id()
-    ));
+    let home =
+        std::env::temp_dir().join(format!("mahoquot-auth-dir-legacy-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     let legacy = home.join(".cli-proxy-api");
     std::fs::create_dir_all(&legacy).expect("legacy dir");
@@ -352,10 +440,7 @@ fn default_auth_dir_adopts_the_incumbent_store_when_present() {
 #[test]
 fn default_auth_dir_stays_app_local_without_a_legacy_store() {
     // given a home directory without the incumbent store
-    let home = std::env::temp_dir().join(format!(
-        "mahoquot-auth-dir-fresh-{}",
-        std::process::id()
-    ));
+    let home = std::env::temp_dir().join(format!("mahoquot-auth-dir-fresh-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("home dir");
     // when the default auth dir is resolved

@@ -129,6 +129,41 @@ describe("Account Normalization and Quota Capability", () => {
     expect(acc.isCredentialOnly).toBe(false);
   });
 
+  it("binds a single generic runtime account to its provider credential", () => {
+    const accounts: AdminStats["accounts"] = [
+      {
+        id: "deepseek-main",
+        provider: "deepseek",
+        health: { status: "available" },
+        ok: 3,
+        fails: 0,
+        reset_at_unix_ms: null,
+        last_error: null,
+        ttft: null,
+        usage: null,
+      },
+    ];
+    const creds: AuthFileItem[] = [
+      {
+        name: "generic-deepseek-main.json",
+        size: 180,
+        auth_index: "generic-deepseek-main",
+        path: "/auth/generic-deepseek-main.json",
+        label: "deepseek-main",
+        disabled: false,
+        unavailable: false,
+        runtime_only: false,
+        type: "generic",
+        provider: "deepseek",
+      },
+    ];
+
+    const normalized = mergeAccountsAndCredentials(accounts, creds);
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]?.credentialName).toBe("generic-deepseek-main.json");
+    expect(normalized[0]?.isCredentialOnly).toBe(false);
+  });
+
   it("leaves ambiguous provider pairings unbound instead of guessing", () => {
     const accounts: AdminStats["accounts"] = ["claude-code", "claude-code-2"].map((id) => ({
       id,

@@ -1,6 +1,16 @@
+import {
+  Ban,
+  Copy,
+  LayoutGrid,
+  Play,
+  RefreshCw,
+  Square,
+  SquareArrowOutUpRight,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
 import type { QuotaWindow } from "../lib/schemas";
+import { ProviderGlyph } from "./ProviderGlyph";
 
 interface TrayTile {
   readonly label: string;
@@ -12,6 +22,8 @@ interface TrayCard {
   readonly account: NormalizedAccount;
   readonly tiles: readonly TrayTile[];
 }
+
+export type GatewayLifecycle = "running" | "starting" | "stopped";
 
 const planBadge = (plan: string | null | undefined): string | null => {
   const normalized = plan?.trim().toLowerCase();
@@ -85,12 +97,6 @@ const tilesOf = (account: NormalizedAccount): readonly TrayTile[] => {
   return [...core, ...grouped];
 };
 
-const tileTone = (usedPercent: number): string => {
-  if (usedPercent >= 100) return "tray-bar full";
-  if (usedPercent >= 80) return "tray-bar amber";
-  return "tray-bar";
-};
-
 const providerChipLabel = (provider: string): string =>
   provider.charAt(0).toUpperCase() + provider.slice(1);
 
@@ -98,20 +104,28 @@ interface TrayPanelProps {
   readonly accounts: readonly NormalizedAccount[];
   readonly proxyUrl: string;
   readonly online: boolean;
+  readonly gatewayLifecycle: GatewayLifecycle;
   readonly fetchedAgoSecs: number | null;
+  readonly refreshing: boolean;
   readonly onRefresh: () => void;
   readonly onOpenConsole: () => void;
   readonly onQuit: () => void;
+  readonly onStartGateway: () => void;
+  readonly onStopGateway: () => void;
 }
 
 export const TrayPanel = ({
   accounts,
   proxyUrl,
   online,
+  gatewayLifecycle,
   fetchedAgoSecs,
+  refreshing,
   onRefresh,
   onOpenConsole,
   onQuit,
+  onStartGateway,
+  onStopGateway,
 }: TrayPanelProps) => {
   const [filter, setFilter] = useState<string>("all");
 
@@ -142,13 +156,30 @@ export const TrayPanel = ({
         <span className="tray-proxy-url">{proxyUrl}</span>
         <button
           type="button"
-          className="tray-copy"
+          className="tray-icon-button"
           aria-label="Copy proxy URL"
           onClick={() => void navigator.clipboard?.writeText(proxyUrl)}
         >
-          ⧉
+          <Copy size={13} />
         </button>
+        {gatewayLifecycle === "running" && (
+          <button
+            type="button"
+            className="tray-stop"
+            aria-label="Stop gateway"
+            onClick={onStopGateway}
+          >
+            <Square size={9} fill="currentColor" />
+          </button>
+        )}
       </div>
+
+      {gatewayLifecycle !== "running" && (
+        <button type="button" className="tray-start" onClick={onStartGateway}>
+          <span className="tray-start-label">Start Gateway</span>
+          <Play size={13} />
+        </button>
+      )}
 
       <div className="tray-chips" role="tablist" aria-label="Provider filter">
         <button
@@ -158,6 +189,7 @@ export const TrayPanel = ({
           className={`tray-chip${filter === "all" ? " active" : ""}`}
           onClick={() => setFilter("all")}
         >
+          <LayoutGrid size={12} />
           All
         </button>
         {providers.map((provider) => (
@@ -170,6 +202,7 @@ export const TrayPanel = ({
             data-provider={provider}
             onClick={() => setFilter(provider)}
           >
+            <ProviderGlyph provider={provider} />
             {providerChipLabel(provider)}
           </button>
         ))}
@@ -179,8 +212,16 @@ export const TrayPanel = ({
         {cards.map(({ account, tiles }) => (
           <article className="tray-card" key={account.id} data-provider={account.provider}>
             <div className="tray-card-head">
-              <span className={`tray-glyph ${account.provider}`} aria-hidden />
+              <ProviderGlyph provider={account.provider} />
               <strong className="tray-card-name">{account.email || account.label}</strong>
+              <button
+                type="button"
+                className="tray-icon-button"
+                aria-label={`Refresh ${account.email || account.label}`}
+                onClick={onRefresh}
+              >
+                <RefreshCw size={12} className={refreshing ? "tray-spin" : undefined} />
+              </button>
               {planBadge(account.usage?.plan_type) && (
                 <span className="tray-plan">{planBadge(account.usage?.plan_type)}</span>
               )}
@@ -217,15 +258,21 @@ export const TrayPanel = ({
 
       <footer className="tray-footer">
         <button type="button" onClick={onRefresh}>
-          ⟳ Refresh
+          <RefreshCw size={14} className={refreshing ? "tray-spin" : undefined} /> Refresh
         </button>
         <button type="button" onClick={onOpenConsole}>
-          ▢ Open mahoquot
+          <SquareArrowOutUpRight size={14} /> Open mahoquot
         </button>
         <button type="button" onClick={onQuit}>
-          ⊘ Quit mahoquot
+          <Ban size={14} /> Quit mahoquot
         </button>
       </footer>
     </div>
   );
 };
+
+function tileTone(usedPercent: number): string {
+  if (usedPercent >= 100) return "tray-bar full";
+  if (usedPercent >= 80) return "tray-bar amber";
+  return "tray-bar";
+}

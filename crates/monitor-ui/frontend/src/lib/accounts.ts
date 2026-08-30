@@ -1,3 +1,4 @@
+import { normalizeToQuotioProviderId } from "./provider-catalog";
 import type { AccountStats, AuthFileItem, LastError, Usage } from "./schemas";
 
 export type AccountHealth = "healthy" | "cooldown" | "degraded" | "error" | "not_loaded";
@@ -125,15 +126,23 @@ export const formatResetTime = (sec: number | null | undefined): string => {
   return `${s}s`;
 };
 
-const providerOf = (value: string | undefined): string => (value || "").toLowerCase();
+const providerOf = (value: string | undefined): string => normalizeToQuotioProviderId(value || "");
 
 const credentialProvider = (credential: AuthFileItem): string =>
-  providerOf(credential.type || credential.provider);
+  providerOf(
+    credential.type === "generic" && credential.provider
+      ? credential.provider
+      : credential.type || credential.provider,
+  );
 
 const sharesProvider = (accountProvider: string, credential: AuthFileItem): boolean => {
   const credProvider = credentialProvider(credential);
   if (!credProvider || !accountProvider) return true;
-  return credProvider === accountProvider || accountProvider.includes(credProvider);
+  return (
+    credProvider === accountProvider ||
+    accountProvider.includes(credProvider) ||
+    credProvider.includes(accountProvider)
+  );
 };
 
 /**
@@ -224,7 +233,7 @@ export const mergeAccountsAndCredentials = (
       credentialName: cred ? cred.name : null,
       disabled: cred?.disabled ?? false,
       authIndex: cred ? cred.auth_index : null,
-      provider: r.provider || "unknown",
+      provider: providerOf(r.provider || "unknown"),
       email: rEmail,
       label: cred?.label || rEmail || r.id,
       health,
@@ -263,7 +272,7 @@ export const mergeAccountsAndCredentials = (
       credentialName: c.name,
       disabled: c.disabled,
       authIndex: c.auth_index,
-      provider: c.type || c.provider || "unknown",
+      provider: providerOf(c.type || c.provider || "unknown"),
       email: cEmail,
       label: c.label || c.name,
       health: "not_loaded",

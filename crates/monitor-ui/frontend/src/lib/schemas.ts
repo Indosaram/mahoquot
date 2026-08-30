@@ -126,9 +126,26 @@ export const AuthFilesResponseSchema = z.object({
 });
 export type AuthFilesResponse = z.infer<typeof AuthFilesResponseSchema>;
 
+export const LogRecordSchema = z.object({
+  kind: z.enum(["request", "proxy"]),
+  timestamp: z.number().nullable().optional(),
+  provider: z.string().optional(),
+  account: z.string().nullable().optional(),
+  model: z.string().optional(),
+  status: z.number().optional(),
+  success: z.boolean().optional(),
+  "latency-ms": z.number().optional(),
+  "bytes-in": z.number().optional(),
+  "bytes-out": z.number().optional(),
+  tokens: z.number().nullable().optional(),
+  message: z.string().optional(),
+});
+export type LogRecord = z.infer<typeof LogRecordSchema>;
+
 export const LogsResponseSchema = z.object({
-  lines: z.array(z.string()).default([]),
-  "line-count": z.number().default(0),
+  records: z.array(LogRecordSchema).default([]),
+  "request-count": z.number().default(0),
+  "proxy-count": z.number().default(0),
   "latest-timestamp": z.number().optional(),
 });
 export type LogsResponse = z.infer<typeof LogsResponseSchema>;

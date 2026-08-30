@@ -37,10 +37,8 @@ mod tests {
     #[test]
     fn quote_breaking_characters_never_reach_the_embedded_script() {
         // given hostile values that could escape the single-quoted JS strings
-        let script = console_initialization_script(
-            "http://127.0.0.1:18885'; evil(",
-            "key\\'); evil(",
-        );
+        let script =
+            console_initialization_script("http://127.0.0.1:18885'; evil(", "key\\'); evil(");
         // then the escape characters are stripped and values stay inside the quotes
         assert!(!script.contains("'; evil"));
         assert!(!script.contains('\\'));

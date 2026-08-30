@@ -53,7 +53,6 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
-
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct AdminStats {
     #[serde(default)]
@@ -195,8 +194,16 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
             credits_unlimited: a.usage.credits_unlimited,
             reset_credits_available: a.usage.reset_credits_available,
             can_reset: a.usage.reset_credits_available.unwrap_or(0) > 0,
-            primary: window_view(&a.usage.primary, a.usage.observed_at_unix, now_unix_ms / 1000),
-            secondary: window_view(&a.usage.secondary, a.usage.observed_at_unix, now_unix_ms / 1000),
+            primary: window_view(
+                &a.usage.primary,
+                a.usage.observed_at_unix,
+                now_unix_ms / 1000,
+            ),
+            secondary: window_view(
+                &a.usage.secondary,
+                a.usage.observed_at_unix,
+                now_unix_ms / 1000,
+            ),
             p50_ms: a.ttft.p50_ms,
             p99_ms: a.ttft.p99_ms,
             samples: a.ttft.samples,
@@ -251,7 +258,6 @@ pub async fn fetch_stats(
     }
     serde_json::from_str(&body).map_err(|e| format!("parse failed: {e}"))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -323,7 +329,10 @@ mod tests {
 
     #[test]
     fn expired_reset_clamps_to_zero_not_negative() {
-        let w = QuotaWindow { reset_at_unix: Some(100), ..Default::default() };
+        let w = QuotaWindow {
+            reset_at_unix: Some(100),
+            ..Default::default()
+        };
         assert_eq!(window_view(&w, Some(0), 9_999).reset_in_secs, Some(0));
     }
 
@@ -340,7 +349,11 @@ mod tests {
         let v = build_view(&stats_json(), 4000);
         // served counts delivered responses and failed_over counts discarded
         // upstream attempts, so the rate is over total attempts (4 of 14).
-        assert!((v.failover_rate - 4.0 / 14.0).abs() < 1e-9, "{}", v.failover_rate);
+        assert!(
+            (v.failover_rate - 4.0 / 14.0).abs() < 1e-9,
+            "{}",
+            v.failover_rate
+        );
         assert_eq!(v.accounts[0].failure_rate, 1.0);
         assert_eq!(v.accounts[1].failure_rate, 0.0);
         assert_eq!(v.accounts[2].failure_rate, 0.75);
