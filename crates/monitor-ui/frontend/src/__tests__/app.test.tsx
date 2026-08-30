@@ -801,12 +801,22 @@ describe("operations console", () => {
       fireEvent.click(await screen.findByTestId("notch-ring-codex"));
       const tooltip = screen.getByTestId("notch-tooltip-codex");
       expect(within(tooltip).getAllByTestId(/notch-tooltip-account-/)).toHaveLength(2);
-      expect(within(tooltip).getByText("Account 1")).toBeInTheDocument();
-      expect(within(tooltip).getByText("Account 2")).toBeInTheDocument();
+      expect(within(tooltip).getByText("runtime-id@example.com")).toBeInTheDocument();
+      expect(within(tooltip).getByText("second@example.com")).toBeInTheDocument();
       expect(within(tooltip).getByText("Credits")).toBeInTheDocument();
       expect(
         screen.getByTestId("notch-ring-codex").querySelector(".notch-ring-logo .provider-logo"),
       ).toHaveClass("notch-provider-logo-color");
+
+      // Verify that hidden tooltips are not queried as hover targets
+      const queryableTargets = document.querySelectorAll(
+        ".notch-ring-item[data-hover-provider], .react-visible .notch-tooltip[data-hover-provider], .notch-empty-ring[data-hover-provider]",
+      );
+      // Tooltip target should ONLY be codex (the active one), not antigravity or others
+      const tooltipProviders = [...queryableTargets]
+        .filter((el) => el.classList.contains("notch-tooltip"))
+        .map((el) => (el as HTMLElement).dataset.hoverProvider);
+      expect(tooltipProviders).toEqual(["codex"]);
     } finally {
       window.history.pushState({}, "", "/");
     }

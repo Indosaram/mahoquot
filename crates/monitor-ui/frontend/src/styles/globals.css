@@ -2039,14 +2039,14 @@ h2 {
 .notch-tooltip {
   /* Brink's card pop-in: spring(response: 0.42, dampingFraction: 0.68). */
   animation: notch-card-in 0.42s cubic-bezier(0.3, 0.9, 0.25, 1);
-  width: 286px;
+  width: 270px;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   scrollbar-width: thin;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 17px;
-  padding: 12px 14px;
+  border-radius: 15px;
+  padding: 10px 12px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   pointer-events: auto;
   overscroll-behavior: contain;
@@ -2057,7 +2057,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   text-align: left;
 }
 
@@ -2075,16 +2075,16 @@ h2 {
 }
 
 .notch-tooltip-account + .notch-tooltip-account {
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .notch-tooltip-account {
   position: relative;
-  padding: 11px 12px 12px;
+  padding: 8px 10px 9px;
   overflow: hidden;
   background: rgba(35, 35, 44, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: 10px;
   text-align: left;
 }
 
@@ -2097,28 +2097,17 @@ h2 {
 }
 
 .notch-tooltip-account-head {
-  display: grid;
-  justify-items: start;
-  gap: 3px;
-  margin-bottom: 10px;
+  margin-bottom: 5px;
   padding-left: 2px;
   text-align: left;
 }
 
-.notch-tooltip-account-head span {
-  color: var(--fg-faint);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  text-align: left;
-}
-
 .notch-tooltip-account-head strong {
+  display: block;
   overflow: hidden;
   color: var(--fg);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
@@ -2130,24 +2119,37 @@ h2 {
 }
 
 .notch-tooltip-row + .notch-tooltip-row {
-  margin-top: 12px;
+  margin-top: 7px;
 }
 
 .notch-tooltip-row {
   text-align: left;
 }
 
+.notch-tooltip-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+
 .notch-tooltip-label {
-  font-size: 10px;
-  color: var(--fg-faint);
-  margin-bottom: 5px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #d1d2d8;
   text-align: left;
 }
 
+.notch-tooltip-reset {
+  font-size: 9.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .notch-tooltip-bar {
-  height: 5px;
+  height: 4px;
   border-radius: 999px;
-  background: var(--panel-3);
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 }
 
@@ -2159,19 +2161,20 @@ h2 {
 
 .notch-tooltip-meta {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  margin-top: 5px;
+  margin-top: 2px;
 }
 
 .notch-tooltip-meta span {
-  font-size: 11px;
-  color: var(--fg);
+  font-size: 9.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
 }
 
-.notch-tooltip-meta small {
+.notch-tooltip-empty {
   font-size: 10px;
   color: var(--fg-faint);
+  padding: 1px 0;
 }
 
 @media (max-width: 760px) {

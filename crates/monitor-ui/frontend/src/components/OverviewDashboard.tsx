@@ -1,8 +1,3 @@
-import { EmptyState } from "@/components/empty-state";
-import { buildRequestRate } from "@/features/dashboard/build-request-rate";
-import { RequestRateChart } from "@/features/dashboard/components/request-rate-chart";
-import { TotalRateChart } from "@/features/dashboard/components/total-rate-chart";
-import { Activity } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AdminStats } from "../lib/schemas";
 import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
@@ -11,7 +6,9 @@ import {
   type TelemetrySample,
   filterTelemetryRange,
   summarizeTelemetry,
+  telemetrySeries,
 } from "../lib/telemetry";
+import { DitherArea } from "@/components/dither-area";
 import { Cluster, IntrinsicGrid, Stack } from "./layout";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -32,9 +29,9 @@ export const OverviewDashboard = ({
   readonly stats: AdminStats;
   readonly samples: readonly TelemetrySample[];
 }) => {
-  const requestRate = useMemo(() => buildRequestRate(stats), [stats]);
   const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
   const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
+  const series = useMemo(() => telemetrySeries(filtered, range), [filtered, range]);
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
   const outcomes = summary.successes + summary.failures;
   const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
@@ -90,27 +87,22 @@ export const OverviewDashboard = ({
       </IntrinsicGrid>
 
       <section className="minimal-chart-section">
-        {requestRate ? (
-          <TotalRateChart rate={requestRate} isLoading={false} />
-        ) : (
-          <EmptyState
-            icon={Activity}
-            title="No traffic in this window yet"
-            description="Minute buckets appear here the moment the gateway relays its first request."
-          />
-        )}
-      </section>
-
-      <section className="minimal-chart-section" aria-label="Per-account request rate">
-        {requestRate ? (
-          <RequestRateChart rate={requestRate} isLoading={false} />
-        ) : (
-          <EmptyState
-            icon={Activity}
-            title="No account traffic yet"
-            description="Per-account rate panels fill in as soon as the pool serves its first minute."
-          />
-        )}
+        <header>
+          <h2>Request activity</h2>
+          <span>{range}</span>
+        </header>
+        <div className="minimal-request-chart">
+          {series.some((point) => point.requests > 0) ? (
+            <DitherArea
+              values={series.map((point) => point.requests)}
+              seed={{ fill: [240, 128, 26], line: [255, 178, 102] }}
+              height={250}
+              ariaLabel="Request activity over time"
+            />
+          ) : (
+            <span>No traffic in this window</span>
+          )}
+        </div>
       </section>
 
       <section className="minimal-provider-mix" aria-label="Provider mix">

@@ -650,12 +650,14 @@ export default function App() {
       scheduleNotchTooltipClose();
       return;
     }
-    const targets = [...document.querySelectorAll<HTMLElement>("[data-hover-provider]")].map(
-      (element) => ({
-        provider: element.dataset.hoverProvider as string,
-        rect: element.getBoundingClientRect(),
-      }),
-    );
+    const targets = [
+      ...document.querySelectorAll<HTMLElement>(
+        ".notch-ring-item[data-hover-provider], .react-visible .notch-tooltip[data-hover-provider], .notch-empty-ring[data-hover-provider]",
+      ),
+    ].map((element) => ({
+      provider: element.dataset.hoverProvider as string,
+      rect: element.getBoundingClientRect(),
+    }));
     const hit = providerAtPoint(nativeCursor, targets);
     if (hit) openNotchTooltip(hit);
     else scheduleNotchTooltipClose();
@@ -1161,20 +1163,25 @@ export default function App() {
               {group.accountCount} account{group.accountCount > 1 ? "s" : ""}
             </span>
           </div>
-          {group.accounts.map((entry, accountIndex) => (
+          {group.accounts.map((entry) => (
             <div
               className="notch-tooltip-account"
               key={entry.label}
               data-testid={`notch-tooltip-account-${entry.label}`}
             >
               <div className="notch-tooltip-account-head">
-                <span>Account {accountIndex + 1}</span>
                 <strong title={entry.label}>{entry.label}</strong>
               </div>
               {entry.rows.length ? (
                 entry.rows.map((row, index) => (
                   <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
-                    <div className="notch-tooltip-label">{row.name}</div>
+                    <div className="notch-tooltip-row-head">
+                      <span className="notch-tooltip-label">{row.name}</span>
+                      <small className="notch-tooltip-reset">
+                        Resets{" "}
+                        {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
+                      </small>
+                    </div>
                     <div className="notch-tooltip-bar">
                       <i
                         style={{
@@ -1193,16 +1200,12 @@ export default function App() {
                         )}
                         % {showRemaining ? "Left" : "Used"}
                       </span>
-                      <small>
-                        Resets{" "}
-                        {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
-                      </small>
                     </div>
                   </div>
                 ))
               ) : (
                 <div className="notch-tooltip-row">
-                  <div className="notch-tooltip-label">No quota reported</div>
+                  <div className="notch-tooltip-empty">No quota reported</div>
                 </div>
               )}
             </div>
@@ -1290,6 +1293,7 @@ export default function App() {
             <div
               className="notch-empty-ring"
               data-testid="notch-empty-ring"
+              data-hover-provider="__empty__"
               onMouseEnter={() => openNotchTooltip("__empty__")}
               onMouseLeave={scheduleNotchTooltipClose}
             >
@@ -1305,6 +1309,7 @@ export default function App() {
                   className="notch-tooltip"
                   role="tooltip"
                   data-testid="notch-tooltip-empty"
+                  data-hover-provider="__empty__"
                   onMouseEnter={() => openNotchTooltip("__empty__")}
                   onMouseLeave={scheduleNotchTooltipClose}
                 >
