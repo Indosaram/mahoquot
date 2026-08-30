@@ -356,13 +356,38 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
                     protocol: compat::Protocol::Anthropic,
                 });
             }
-            if adapter == "openai-responses" {
+            if adapter == "mimo-free" {
+                let endpoint = member.upstream_override.clone().unwrap_or_default();
+                if !mahoquot_providers::is_mimo_endpoint(&endpoint) {
+                    return Err(
+                        "the mimo-free adapter only serves the canonical MiMo Free endpoint; use openai-chat for a custom one"
+                            .to_string(),
+                    );
+                }
+                let mut body = openai_body.clone();
+                compat::mimo::inject_system_marker(&mut body);
                 return Ok(UpstreamTarget {
-                    url: crate::url::build_provider_url(
-                        member.kind(),
-                        member.upstream_override.as_deref(),
-                        "/v1/responses",
-                    ),
+                    url: endpoint,
+                    body: Bytes::from(body.to_string()),
+                    protocol: compat::Protocol::Codex,
+                });
+            }
+            if adapter == "openai-responses" || adapter == "azure-openai" {
+                let url = crate::url::build_provider_url(
+                    member.kind(),
+                    member.upstream_override.as_deref(),
+                    "/v1/responses",
+                );
+                // The catalog ships Azure's host as a {resource} template, so a
+                // request against an unedited base URL must fail loudly here
+                // rather than reach a nonexistent host.
+                if url.contains('{') || url.contains('}') {
+                    return Err(format!(
+                        "{adapter} base URL still contains a placeholder: set your real resource URL"
+                    ));
+                }
+                return Ok(UpstreamTarget {
+                    url,
                     body: plan.body.clone(),
                     protocol: compat::Protocol::Codex,
                 });

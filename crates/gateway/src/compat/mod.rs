@@ -69,6 +69,7 @@ pub fn cursor_is_get_blob_reply(frame: &[u8], expected_id: u32) -> bool {
 pub mod events;
 pub mod gemini;
 pub mod kiro;
+pub mod mimo;
 pub mod render;
 pub mod request;
 

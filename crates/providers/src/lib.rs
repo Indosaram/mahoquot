@@ -10,6 +10,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod cursor;
 pub mod kiro;
+pub mod mimo;
 pub mod refresh;
 pub mod refresh_exec;
 pub mod vertex;
@@ -40,6 +41,10 @@ pub use kiro::{
     is_kiro_model, kiro_generate_url, kiro_refresh_url, list_kiro_auth_files, KiroAccount,
     KiroAuthMode, KIRO_API_HOST_TEMPLATE, KIRO_DEFAULT_REGION, KIRO_GENERATE_PATH,
     KIRO_IDC_REFRESH_TEMPLATE, KIRO_MODELS, KIRO_SOCIAL_REFRESH_TEMPLATE,
+};
+pub use mimo::{
+    execute_mimo_bootstrap, is_mimo_endpoint, MIMO_BOOTSTRAP_URL, MIMO_CHAT_URL, MIMO_SOURCE,
+    MIMO_SYSTEM_MARKER, MIMO_USER_AGENT,
 };
 pub use refresh::{
     build_antigravity_refresh_request, build_claude_refresh_request, build_cursor_refresh_request,

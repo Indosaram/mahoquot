@@ -339,6 +339,285 @@ async fn generic_anthropic_adapter_account_relays_native_messages_wire() {
 }
 
 #[tokio::test]
+async fn azure_openai_account_relays_the_responses_wire_with_an_api_key_header() {
+    let response = r#"{"id":"resp_1","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"azure-ok"}]}]}"#;
+    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
+    let (gateway, auth_dir, gateway_task) =
+        start_adapter_gateway("azure-openai", "azure-openai", "gpt-5.3", &upstream).await;
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "gpt-5.3",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let body = reply.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert!(body.contains("azure-ok"), "client response: {body}");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
+    assert_eq!(request.path, "/v1/responses");
+    assert_eq!(request.headers.get("api-key").unwrap(), "provider-secret");
+    assert!(!request.headers.contains_key("authorization"));
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[derive(Clone)]
+struct MimoMock {
+    seen: Arc<Mutex<Vec<SeenRequest>>>,
+    chat_calls: Arc<AtomicU64>,
+    reject_first_chat: bool,
+}
+
+async fn mimo_capture(
+    State(state): State<MimoMock>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    let path = uri.path().to_string();
+    state.seen.lock().unwrap().push(SeenRequest {
+        path: path.clone(),
+        headers,
+        body: value,
+        raw_body: body.to_vec(),
+    });
+    if path.ends_with("/bootstrap") {
+        let issued = state.chat_calls.load(Ordering::SeqCst);
+        let jwt = format!("header.payload.signature-{issued}");
+        return (
+            StatusCode::OK,
+            [("content-type", "application/json")],
+            serde_json::json!({ "jwt": jwt }).to_string(),
+        )
+            .into_response();
+    }
+    let call = state.chat_calls.fetch_add(1, Ordering::SeqCst);
+    if state.reject_first_chat && call == 0 {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [("content-type", "application/json")],
+            r#"{"error":"expired"}"#,
+        )
+            .into_response();
+    }
+    (
+        StatusCode::OK,
+        [("content-type", "application/json")],
+        r#"{"id":"chatcmpl-mimo","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"mimo-ok"},"finish_reason":"stop"}]}"#,
+    )
+        .into_response()
+}
+
+async fn start_mimo_gateway(
+    reject_first_chat: bool,
+) -> (
+    String,
+    std::path::PathBuf,
+    Arc<Mutex<Vec<SeenRequest>>>,
+    Vec<tokio::task::JoinHandle<()>>,
+) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .fallback(post(mimo_capture))
+        .with_state(MimoMock {
+            seen: seen.clone(),
+            chat_calls: Arc::new(AtomicU64::new(0)),
+            reject_first_chat,
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let upstream = format!("http://{addr}");
+
+    let auth_dir = common::unique_temp_dir("t12-mimo-free");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    let mut credential = serde_json::json!({
+        "type": "generic",
+        "provider": "mimo-free",
+        "label": "MiMo Free",
+        "adapter": "mimo-free",
+        "base_url": format!("{upstream}/api/free-ai/openai/chat"),
+        "token_url": format!("{upstream}/api/free-ai/bootstrap"),
+        "models": ["mimo-auto"]
+    });
+    if reject_first_chat {
+        // A JWT the gateway still believes is valid: the upstream rejecting it
+        // is what must trigger the single re-bootstrap.
+        credential["api_key"] = serde_json::json!("header.payload.stale");
+        credential["expired"] = serde_json::json!("2099-01-01T00:00:00Z");
+        credential["client_id"] = serde_json::json!("11111111-2222-3333-4444-555555555555");
+    }
+    std::fs::write(
+        auth_dir.join("generic-mimo-free.json"),
+        credential.to_string(),
+    )
+    .unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        auth_refresh_enabled: true,
+        max_failover: 3,
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).unwrap());
+    assert_eq!(
+        state.pool.load().members.len(),
+        1,
+        "keyless mimo account loaded"
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = create_app(state);
+    let gateway_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (
+        format!("http://{addr}"),
+        auth_dir,
+        seen,
+        vec![mock_task, gateway_task],
+    )
+}
+
+async fn ask_mimo(gateway: &str) -> (StatusCode, String) {
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "mimo-auto",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    (status, reply.text().await.unwrap())
+}
+
+#[tokio::test]
+async fn mimo_free_account_bootstraps_a_jwt_and_marks_the_request() {
+    let (gateway, auth_dir, seen, tasks) = start_mimo_gateway(false).await;
+    let (status, body) = ask_mimo(&gateway).await;
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert!(body.contains("mimo-ok"), "client response: {body}");
+
+    let requests = seen.lock().unwrap().clone();
+    let bootstrap = requests
+        .iter()
+        .find(|request| request.path.ends_with("/bootstrap"))
+        .expect("bootstrap call");
+    assert!(
+        bootstrap.body["client"]
+            .as_str()
+            .is_some_and(|client| client.len() == 36),
+        "bootstrap sends a persisted client id: {}",
+        bootstrap.body
+    );
+    let chat = requests
+        .iter()
+        .find(|request| request.path.ends_with("/chat"))
+        .expect("chat call");
+    assert!(chat
+        .headers
+        .get("authorization")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("Bearer header.payload.signature"));
+    assert_eq!(
+        chat.headers.get("x-mimo-source").unwrap(),
+        mahoquot_providers::MIMO_SOURCE
+    );
+    assert!(chat
+        .headers
+        .get("x-session-affinity")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("ses_"));
+    assert!(chat
+        .headers
+        .get("user-agent")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("Chrome"));
+    assert_eq!(chat.body["messages"][0]["role"], "system");
+    assert_eq!(
+        chat.body["messages"][0]["content"],
+        mahoquot_providers::MIMO_SYSTEM_MARKER
+    );
+    assert_eq!(chat.body["messages"][1]["content"], "hello");
+
+    let stored: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(auth_dir.join("generic-mimo-free.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        stored["client_id"].as_str().map(str::len),
+        Some(36),
+        "the anonymous client id is persisted for the next bootstrap"
+    );
+    assert!(stored["api_key"].as_str().unwrap().starts_with("header."));
+
+    for task in tasks {
+        task.abort();
+    }
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn mimo_free_rebootstraps_once_when_the_jwt_is_rejected() {
+    let (gateway, auth_dir, seen, tasks) = start_mimo_gateway(true).await;
+    let (status, body) = ask_mimo(&gateway).await;
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert!(body.contains("mimo-ok"), "client response: {body}");
+
+    let requests = seen.lock().unwrap().clone();
+    let bootstraps = requests
+        .iter()
+        .filter(|request| request.path.ends_with("/bootstrap"))
+        .count();
+    let chats = requests
+        .iter()
+        .filter(|request| request.path.ends_with("/chat"))
+        .count();
+    assert_eq!(
+        bootstraps, 1,
+        "the rejected JWT triggers exactly one re-bootstrap"
+    );
+    assert_eq!(chats, 2, "the request is retried once with the fresh JWT");
+    let retried = requests
+        .iter()
+        .rfind(|request| request.path.ends_with("/chat"))
+        .expect("retried chat call");
+    assert_eq!(
+        retried.headers.get("authorization").unwrap(),
+        "Bearer header.payload.signature-1",
+        "the retry carries the freshly bootstrapped JWT"
+    );
+
+    for task in tasks {
+        task.abort();
+    }
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
 async fn generic_openai_chat_provider_relays_json_without_codex_translation() {
     let response = r#"{"id":"chatcmpl-generic","object":"chat.completion","created":1,"model":"deepseek-chat","choices":[{"index":0,"message":{"role":"assistant","content":"generic-ok"},"finish_reason":"stop"}]}"#;
     let (upstream, seen, mock_task) = start_mock(response, "application/json").await;

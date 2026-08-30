@@ -210,7 +210,12 @@ impl ProviderAccount {
                     && expired_at_is_past(&a.expired, now_unix)
             }
             Self::Vertex(a) => a.is_expired(now_unix),
-            Self::Generic(a) => a.auth_mode == "oauth" && expired_at_is_past(&a.expired, now_unix),
+            // A MiMo Free account holds a bootstrap JWT rather than a pasted
+            // key, so it expires and re-bootstraps like an OAuth credential.
+            Self::Generic(a) => {
+                (a.auth_mode == "oauth" || a.adapter == "mimo-free")
+                    && expired_at_is_past(&a.expired, now_unix)
+            }
         }
     }
 
@@ -310,8 +315,26 @@ impl ProviderAccount {
                 if a.adapter == "anthropic" {
                     headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
                 }
+                // The free MiMo endpoint rejects anything that does not look
+                // like its own CLI client.
+                if a.adapter == "mimo-free" {
+                    headers.push((
+                        "x-mimo-source".to_string(),
+                        mahoquot_providers::MIMO_SOURCE.to_string(),
+                    ));
+                    headers.push((
+                        "x-session-affinity".to_string(),
+                        crate::compat::mimo::session_affinity_id().to_string(),
+                    ));
+                    headers.push((
+                        "user-agent".to_string(),
+                        mahoquot_providers::MIMO_USER_AGENT.to_string(),
+                    ));
+                }
                 if !a.api_key.is_empty() {
-                    if a.adapter == "google" && a.auth_mode != "oauth" {
+                    if a.adapter == "azure-openai" {
+                        headers.push(("api-key".to_string(), a.api_key.clone()));
+                    } else if a.adapter == "google" && a.auth_mode != "oauth" {
                         headers.push(("x-goog-api-key".to_string(), a.api_key.clone()));
                     } else if a.adapter == "anthropic" && a.auth_mode != "oauth" {
                         headers.push(("x-api-key".to_string(), a.api_key.clone()));
@@ -603,6 +626,47 @@ impl AccountMember {
         guard.is_expired(now_unix)
     }
 
+    /// The bootstrap `client` field is an anonymous per-account id, minted on
+    /// first use and persisted so it survives restarts. It is deliberately
+    /// random rather than derived from the machine, which would be a stable
+    /// device fingerprint.
+    fn ensure_mimo_client_id(&self) -> Result<(String, String), RefreshError> {
+        let (token_url, client_id) = {
+            let guard = self
+                .inner
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let ProviderAccount::Generic(account) = &*guard else {
+                return Err(RefreshError::Parse(
+                    "mimo account kind mismatch".to_string(),
+                ));
+            };
+            (account.token_url.clone(), account.client_id.clone())
+        };
+        let bootstrap_url = if token_url.is_empty() {
+            mahoquot_providers::MIMO_BOOTSTRAP_URL.to_string()
+        } else {
+            token_url
+        };
+        if !client_id.is_empty() {
+            return Ok((bootstrap_url, client_id));
+        }
+        let fresh = uuid::Uuid::new_v4().to_string();
+        let content = std::fs::read_to_string(&self.file_path)?;
+        let mut root: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| RefreshError::Parse(e.to_string()))?;
+        root.as_object_mut()
+            .ok_or_else(|| RefreshError::Parse("root is not a JSON object".to_string()))?
+            .insert(
+                "client_id".to_string(),
+                serde_json::Value::String(fresh.clone()),
+            );
+        std::fs::write(&self.file_path, root.to_string())?;
+        self.reload_from_file()
+            .map_err(|e| RefreshError::Parse(e.to_string()))?;
+        Ok((bootstrap_url, fresh))
+    }
+
     pub fn build_upstream_headers(&self) -> Vec<(String, String)> {
         let guard = self
             .inner
@@ -733,6 +797,10 @@ impl AccountMember {
                 private_key_id.as_deref(),
             )
             .await?
+        } else if self.generic_adapter().as_deref() == Some("mimo-free") {
+            let (bootstrap_url, client_id) = self.ensure_mimo_client_id()?;
+            mahoquot_providers::execute_mimo_bootstrap(client, &bootstrap_url, &client_id, now_unix)
+                .await?
         } else if self.kind() == ProviderKind::Zcode {
             let base = self
                 .upstream_override
