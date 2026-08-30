@@ -16,14 +16,5 @@
       "reason": "The reference label distinguishes two onboarding modes in its own picker. Quotio exposes a single Command Code entry whose OAuth callback lifecycle is implemented, so the mode suffix would be misleading in this UI."
     }
   ],
-  "omissions": [
-    {
-      "id": "azure-openai",
-      "reason": "The reference routes Azure through its Responses passthrough (opencodex/src/adapters/azure.ts). Quotio relays the chat-completions path, so shipping the entry would onboard accounts against a wire the gateway does not implement; the provider is dropped from the catalog until that passthrough is ported."
-    },
-    {
-      "id": "mimo-free",
-      "reason": "The reference mints an anonymous bootstrap JWT and adds X-Mimo-Source, x-session-affinity and an anti-abuse system marker (opencodex/src/adapters/mimo-free.ts). Without that flow a Quotio account could only carry a pasted token the free tier does not issue, so the provider is dropped from the catalog until the bootstrap is ported."
-    }
-  ]
+  "omissions": []
 }

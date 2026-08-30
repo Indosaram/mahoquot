@@ -438,18 +438,6 @@
   ],
   "adapters": [
     {
-      "id": "openai-chat",
-      "owner": {
-        "path": "crates/gateway/src/relay.rs",
-        "needle": "\"/v1/chat/completions\""
-      },
-      "green_test": {
-        "path": "crates/gateway/tests/t12_provider_relay.rs",
-        "needle": "generic_openai_chat_provider_relays_json_without_codex_translation"
-      },
-      "coverage": "full"
-    },
-    {
       "id": "anthropic",
       "owner": {
         "path": "crates/gateway/src/relay.rs",
@@ -462,26 +450,26 @@
       "coverage": "full"
     },
     {
-      "id": "openai-responses",
+      "id": "azure-openai",
       "owner": {
         "path": "crates/gateway/src/relay.rs",
-        "needle": "if adapter == \"openai-responses\""
+        "needle": "adapter == \"azure-openai\""
       },
       "green_test": {
-        "path": "crates/gateway/tests/t8_openai_compat.rs",
-        "needle": "test_t8_responses_compact_relays_to_codex_upstream"
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "azure_openai_account_relays_the_responses_wire_with_an_api_key_header"
       },
       "coverage": "full"
     },
     {
-      "id": "google",
+      "id": "command-code",
       "owner": {
-        "path": "crates/gateway/src/relay.rs",
-        "needle": "streamGenerateContent?alt=sse"
+        "path": "crates/gateway/src/management/creds.rs",
+        "needle": "\"provider\":\"command-code\""
       },
       "green_test": {
-        "path": "crates/gateway/tests/t12_provider_relay.rs",
-        "needle": "google_ai_studio_uses_generativelanguage_wire_and_api_key_header"
+        "path": "crates/gateway/tests/t13_provider_oauth.rs",
+        "needle": "test_command_code_oauth_flow_end_to_end"
       },
       "coverage": "full"
     },
@@ -498,6 +486,18 @@
       "coverage": "full"
     },
     {
+      "id": "google",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "streamGenerateContent?alt=sse"
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "google_ai_studio_uses_generativelanguage_wire_and_api_key_header"
+      },
+      "coverage": "full"
+    },
+    {
       "id": "kiro",
       "owner": {
         "path": "crates/gateway/src/relay.rs",
@@ -510,14 +510,38 @@
       "coverage": "full"
     },
     {
-      "id": "command-code",
+      "id": "mimo-free",
       "owner": {
-        "path": "crates/gateway/src/management/creds.rs",
-        "needle": "\"provider\":\"command-code\""
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "adapter == \"mimo-free\""
       },
       "green_test": {
-        "path": "crates/gateway/tests/t13_provider_oauth.rs",
-        "needle": "test_command_code_oauth_flow_end_to_end"
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "mimo_free_account_bootstraps_a_jwt_and_marks_the_request"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "openai-chat",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "\"/v1/chat/completions\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "generic_openai_chat_provider_relays_json_without_codex_translation"
+      },
+      "coverage": "full"
+    },
+    {
+      "id": "openai-responses",
+      "owner": {
+        "path": "crates/gateway/src/relay.rs",
+        "needle": "if adapter == \"openai-responses\""
+      },
+      "green_test": {
+        "path": "crates/gateway/tests/t8_openai_compat.rs",
+        "needle": "test_t8_responses_compact_relays_to_codex_upstream"
       },
       "coverage": "full"
     }
@@ -556,6 +580,16 @@
       "adapter": "anthropic",
       "auth_kind": "key",
       "coverage": "adapter"
+    },
+    {
+      "id": "azure-openai",
+      "adapter": "azure-openai",
+      "auth_kind": "key",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "azure_openai_account_relays_the_responses_wire_with_an_api_key_header"
+      }
     },
     {
       "id": "baseten",
@@ -780,6 +814,16 @@
       "adapter": "openai-chat",
       "auth_kind": "key",
       "coverage": "adapter"
+    },
+    {
+      "id": "mimo-free",
+      "adapter": "mimo-free",
+      "auth_kind": "key",
+      "coverage": "dedicated",
+      "green_test": {
+        "path": "crates/gateway/tests/t12_provider_relay.rs",
+        "needle": "mimo_free_account_bootstraps_a_jwt_and_marks_the_request"
+      }
     },
     {
       "id": "minimax",

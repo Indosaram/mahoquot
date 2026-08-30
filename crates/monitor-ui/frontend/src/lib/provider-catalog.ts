@@ -427,6 +427,14 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     ],
   },
   {
+    id: "azure-openai",
+    label: "Azure OpenAI",
+    authKind: "key",
+    adapter: "azure-openai",
+    baseUrl: "https://{resource}.openai.azure.com/openai",
+    models: [],
+  },
+  {
     id: "ollama",
     label: "Ollama (local)",
     authKind: "local",
@@ -1010,6 +1018,16 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     adapter: "openai-chat",
     baseUrl: "https://api.kilo.ai/api/gateway",
     models: [],
+  },
+  {
+    id: "mimo-free",
+    label: "MiMo Free",
+    authKind: "key",
+    keyOptional: true,
+    adapter: "mimo-free",
+    baseUrl: "https://api.xiaomimimo.com/api/free-ai/openai/chat",
+    defaultModel: "mimo-auto",
+    models: ["mimo-auto"],
   },
   {
     id: "mimo",

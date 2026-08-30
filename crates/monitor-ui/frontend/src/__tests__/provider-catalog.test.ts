@@ -49,14 +49,14 @@ describe("provider-catalog", () => {
     expect(missing).toEqual([]);
   });
 
-  it("exports exactly 81 unique production provider IDs", () => {
-    expect(PROVIDER_CATALOG).toHaveLength(81);
-    expect(TOTAL_PROVIDER_COUNT).toBe(81);
-    expect(PROVIDER_IDS).toHaveLength(81);
-    expect(Object.keys(PROVIDER_CATALOG_BY_ID)).toHaveLength(81);
+  it("exports exactly 83 unique production provider IDs", () => {
+    expect(PROVIDER_CATALOG).toHaveLength(83);
+    expect(TOTAL_PROVIDER_COUNT).toBe(83);
+    expect(PROVIDER_IDS).toHaveLength(83);
+    expect(Object.keys(PROVIDER_CATALOG_BY_ID)).toHaveLength(83);
 
     const uniqueIds = new Set(PROVIDER_IDS);
-    expect(uniqueIds.size).toBe(81);
+    expect(uniqueIds.size).toBe(83);
   });
 
   it("ensures every catalog row has strict required fields and valid authKind", () => {
@@ -364,6 +364,7 @@ describe("reference registry parity", () => {
   });
 
   it("marks the providers whose keyless mode is ported as key-optional", () => {
+    expect(PROVIDER_CATALOG_BY_ID["mimo-free"]?.keyOptional).toBe(true);
     expect(PROVIDER_CATALOG_BY_ID.litellm?.keyOptional).toBe(true);
     expect(PROVIDER_CATALOG_BY_ID["opencode-free"]?.keyOptional).toBe(true);
   });
