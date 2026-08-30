@@ -128,13 +128,6 @@ export const LIVE_RUN = {
   samples: "400",
 } as const;
 
-/** Real per-minute request totals from the 26-minute shaped run (persisted
- * gateway minute buckets). Rendered by the Request rate chart. */
-export const RATE_TOTALS: readonly number[] = [
-  1600, 400, 700, 200, 1400, 300, 500, 150, 1100, 250, 800, 200, 1500, 300, 600,
-  150, 1300, 250, 900, 200, 1000, 150, 1200, 200, 1000, 200, 400,
-];
-
 
 
 type BenchRow = {

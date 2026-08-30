@@ -1,5 +1,4 @@
 import { LIVE_RUN } from "@/content/site";
-import { RateChartCard } from "@/components/sections/rate-chart";
 import { SectionHeader } from "@/components/ui/section-header";
 
 const MEASURED = [
@@ -86,10 +85,6 @@ export function Console() {
               Accounts — pool health, quota state and credential lifecycle
             </figcaption>
           </figure>
-        </div>
-
-        <div className="mt-4">
-          <RateChartCard />
         </div>
       </div>
     </section>
