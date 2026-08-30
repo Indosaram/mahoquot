@@ -149,9 +149,7 @@ mod tests {
         let path = dir.join("config.yaml");
         let store = SettingsStore::load_or(path.clone(), Settings::default()).expect("loads");
         // when a field is mutated
-        store
-            .mutate(|s| s.request_retry = 9)
-            .expect("mutates");
+        store.mutate(|s| s.request_retry = 9).expect("mutates");
         // then the live document reflects it
         assert_eq!(store.current().request_retry, 9);
         // and so does the file on disk
@@ -196,9 +194,7 @@ mod tests {
         // given a store under concurrent readers and writers
         let dir = temp_dir("concurrent");
         let path = dir.join("config.yaml");
-        let store = Arc::new(
-            SettingsStore::load_or(path, Settings::default()).expect("loads"),
-        );
+        let store = Arc::new(SettingsStore::load_or(path, Settings::default()).expect("loads"));
         let writer = {
             let store = Arc::clone(&store);
             std::thread::spawn(move || {

@@ -46,10 +46,12 @@ pub fn openai_to_cursor_connect(body: &Value) -> Result<Vec<u8>, String> {
             tool_name: function["name"].as_str().unwrap_or("tool").to_string(),
         })
         .collect();
-    let parameter = requested.strip_prefix("auto-").map(|level| proto::RequestedModelParameter {
-        id: "optimization".to_string(),
-        value: level.to_string(),
-    });
+    let parameter = requested
+        .strip_prefix("auto-")
+        .map(|level| proto::RequestedModelParameter {
+            id: "optimization".to_string(),
+            value: level.to_string(),
+        });
     let messages = body["messages"].as_array().expect("parsed messages");
     let root_prompt_messages_json = messages
         .iter()
@@ -98,7 +100,9 @@ pub fn openai_to_cursor_connect(body: &Value) -> Result<Vec<u8>, String> {
         }),
     };
     let envelope = proto::AgentClientMessage {
-        message: Some(proto::agent_client_message::Message::RunRequest(Box::new(run))),
+        message: Some(proto::agent_client_message::Message::RunRequest(Box::new(
+            run,
+        ))),
     };
     Ok(connect_frame(&envelope.encode_to_vec(), 0))
 }
@@ -150,9 +154,7 @@ impl CursorDecoder {
         Self::default()
     }
 
-    pub fn with_reply_sender(
-        reply_tx: tokio::sync::mpsc::UnboundedSender<bytes::Bytes>,
-    ) -> Self {
+    pub fn with_reply_sender(reply_tx: tokio::sync::mpsc::UnboundedSender<bytes::Bytes>) -> Self {
         Self {
             reply_tx: Some(reply_tx),
             ..Self::default()
@@ -197,7 +199,9 @@ impl CursorDecoder {
     }
 
     fn decode_message(&mut self, message: proto::AgentServerMessage, out: &mut Vec<CodexEvent>) {
-        let Some(message) = message.message else { return };
+        let Some(message) = message.message else {
+            return;
+        };
         let update = match message {
             proto::agent_server_message::Message::InteractionUpdate(update) => update,
             proto::agent_server_message::Message::KvServerMessage(message) => {
@@ -222,7 +226,9 @@ impl CursorDecoder {
                 }
             }
             Some(proto::interaction_update::Message::TokenDelta(delta)) => {
-                self.output_tokens = self.output_tokens.saturating_add(delta.tokens.max(0) as u64);
+                self.output_tokens = self
+                    .output_tokens
+                    .saturating_add(delta.tokens.max(0) as u64);
             }
             Some(proto::interaction_update::Message::ToolCallStarted(call)) => {
                 self.start_tool(call.call_id, call.tool_call, out);
@@ -257,7 +263,10 @@ impl CursorDecoder {
 
     fn send_reply(&self, message: proto::AgentClientMessage) {
         if let Some(tx) = &self.reply_tx {
-            let _ = tx.send(bytes::Bytes::from(connect_frame(&message.encode_to_vec(), 0)));
+            let _ = tx.send(bytes::Bytes::from(connect_frame(
+                &message.encode_to_vec(),
+                0,
+            )));
         }
     }
 
@@ -307,18 +316,16 @@ impl CursorDecoder {
                 proto::ExecClientMessage {
                     id: message.id,
                     exec_id: message.exec_id,
-                    message: Some(
-                        proto::exec_client_message::Message::RequestContextResult(
-                            proto::RequestContextResult {
-                                result: Some(proto::request_context_result::Result::Success(
-                                    proto::RequestContextSuccess {
-                                        request_context: Some(context),
-                                        served_from_disk_cache: Some(false),
-                                    },
-                                )),
-                            },
-                        ),
-                    ),
+                    message: Some(proto::exec_client_message::Message::RequestContextResult(
+                        proto::RequestContextResult {
+                            result: Some(proto::request_context_result::Result::Success(
+                                proto::RequestContextSuccess {
+                                    request_context: Some(context),
+                                    served_from_disk_cache: Some(false),
+                                },
+                            )),
+                        },
+                    )),
                 },
             )),
         });
@@ -336,11 +343,18 @@ impl CursorDecoder {
         let name = tool
             .and_then(|tool| tool.mcp_tool_call)
             .and_then(|tool| tool.args)
-            .map(|args| if args.tool_name.is_empty() { args.name } else { args.tool_name })
+            .map(|args| {
+                if args.tool_name.is_empty() {
+                    args.name
+                } else {
+                    args.tool_name
+                }
+            })
             .unwrap_or_else(|| "tool".to_string());
         let index = self.next_tool_index;
         self.next_tool_index += 1;
-        self.open_tools.insert(call_id.clone(), (name.clone(), index));
+        self.open_tools
+            .insert(call_id.clone(), (name.clone(), index));
         out.push(CodexEvent::ToolCallBegin {
             output_index: index,
             call_id,
@@ -423,15 +437,13 @@ mod tests {
                     proto::ExecServerMessage {
                         id: 9,
                         exec_id: "exec-9".to_string(),
-                        message: Some(
-                            proto::exec_server_message::Message::RequestContextArgs(
-                                proto::RequestContextArgs {
-                                    notes_session_id: None,
-                                    workspace_id: None,
-                                    use_cached: Some(false),
-                                },
-                            ),
-                        ),
+                        message: Some(proto::exec_server_message::Message::RequestContextArgs(
+                            proto::RequestContextArgs {
+                                notes_session_id: None,
+                                workspace_id: None,
+                                use_cached: Some(false),
+                            },
+                        )),
                     },
                 )),
             },
@@ -470,7 +482,9 @@ mod tests {
             message: Some(proto::agent_server_message::Message::InteractionUpdate(
                 proto::InteractionUpdate {
                     message: Some(proto::interaction_update::Message::ThinkingDelta(
-                        proto::TextDeltaUpdate { text: "internal".into() },
+                        proto::TextDeltaUpdate {
+                            text: "internal".into(),
+                        },
                     )),
                 },
             )),
@@ -483,7 +497,9 @@ mod tests {
             ),
             &mut events,
         );
-        assert!(!events.iter().any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
         assert!(events.iter().any(|event| matches!(event, CodexEvent::Failed { message } if message.contains("quota exceeded"))));
     }
 
@@ -507,8 +523,10 @@ mod tests {
             )),
         };
         decoder.decode(&connect_frame(&ended.encode_to_vec(), 0), &mut events);
-        assert!(events.iter().any(|event| matches!(event, CodexEvent::Completed { usage: Some(usage) }
+        assert!(events.iter().any(
+            |event| matches!(event, CodexEvent::Completed { usage: Some(usage) }
             if usage.prompt_tokens == 150 && usage.completion_tokens == 42
-                && usage.cached_tokens == 10 && usage.reasoning_tokens == 11)));
+                && usage.cached_tokens == 10 && usage.reasoning_tokens == 11)
+        ));
     }
 }

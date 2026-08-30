@@ -9,6 +9,7 @@ use crate::account::{load_account_members, AccountMember, ProviderKind};
 use crate::config::GatewayConfig;
 use crate::inbound::ApiKeys;
 use crate::management::store::SettingsStore;
+use crate::management::observability::LogTail;
 use crate::metrics::{AdminStatsResponse, GatewayMetrics};
 use crate::models_route::{model_entries, ModelEntry};
 use crate::monitor::MonitorState;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub model_restrictions: AtomicBool,
     pub settings: Arc<SettingsStore>,
     pub telemetry: Arc<TelemetryStore>,
+    /// Live in-memory log tail, always fed regardless of `logging-to-file`.
+    pub log_tail: LogTail,
 }
 
 impl AppState {
@@ -65,6 +68,7 @@ impl AppState {
         Ok(Self {
             settings,
             telemetry,
+            log_tail: LogTail::default(),
             router,
             pool: arc_swap::ArcSwap::from_pointee(PoolSnapshot { members, models }),
             models_env: config.models_env.clone(),
@@ -98,8 +102,7 @@ impl AppState {
         let mut models = model_entries(&provider_kinds, self.models_env.as_deref());
         models.extend(crate::models_route::generic_model_entries(&members));
         let count = members.len();
-        self.pool
-            .store(Arc::new(PoolSnapshot { members, models }));
+        self.pool.store(Arc::new(PoolSnapshot { members, models }));
         Ok(count)
     }
 

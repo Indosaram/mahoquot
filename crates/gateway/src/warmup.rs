@@ -27,7 +27,10 @@ fn warmup_request(member: &AccountMember) -> Option<WarmupRequest> {
     match &*guard {
         ProviderAccount::Codex(a) => {
             let mut headers = vec![
-                ("OpenAI-Beta".to_string(), "responses=experimental".to_string()),
+                (
+                    "OpenAI-Beta".to_string(),
+                    "responses=experimental".to_string(),
+                ),
                 ("originator".to_string(), "codex_cli_rs".to_string()),
             ];
             if !a.account_id.is_empty() {
@@ -65,7 +68,8 @@ fn warmup_request(member: &AccountMember) -> Option<WarmupRequest> {
         | ProviderAccount::Cursor(_)
         | ProviderAccount::Kiro(_)
         | ProviderAccount::Zcode(_)
-        | ProviderAccount::Generic(_) => None,
+        | ProviderAccount::Generic(_)
+        | ProviderAccount::Vertex(_) => None,
     }
 }
 
@@ -149,7 +153,14 @@ pub async fn warm_account(state: &Arc<AppState>, member: &Arc<AccountMember>) ->
         detail: if status.is_success() {
             None
         } else {
-            Some(resp.text().await.unwrap_or_default().chars().take(160).collect())
+            Some(
+                resp.text()
+                    .await
+                    .unwrap_or_default()
+                    .chars()
+                    .take(160)
+                    .collect(),
+            )
         },
     }
 }
@@ -158,9 +169,7 @@ pub async fn warm_all(state: &Arc<AppState>) -> Vec<WarmupResult> {
     let mut tasks = Vec::new();
     for m in state.pool.load().members.clone() {
         let state = Arc::clone(state);
-        tasks.push(tokio::spawn(
-            async move { warm_account(&state, &m).await },
-        ));
+        tasks.push(tokio::spawn(async move { warm_account(&state, &m).await }));
     }
     let mut out = Vec::new();
     for t in tasks {
@@ -224,7 +233,9 @@ mod tests {
         }));
         let (_, body, headers) = warmup_request(&member).expect("codex warmup");
         assert!(body.get("max_output_tokens").is_none());
-        assert!(headers.iter().any(|(k, v)| k == "chatgpt-account-id" && v == "acct"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "chatgpt-account-id" && v == "acct"));
     }
 
     #[test]

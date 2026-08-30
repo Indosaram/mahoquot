@@ -157,14 +157,9 @@ fn test_t10_stream_emits_anthropic_event_sequence() {
     assert!(joined.contains("\"text\":\"bravo\""));
 
     let start = frames.first().expect("message_start frame");
-    let start_json: serde_json::Value = serde_json::from_str(
-        start
-            .split_once("data: ")
-            .expect("data payload")
-            .1
-            .trim(),
-    )
-    .expect("parse message_start");
+    let start_json: serde_json::Value =
+        serde_json::from_str(start.split_once("data: ").expect("data payload").1.trim())
+            .expect("parse message_start");
     assert_eq!(
         start_json["message"]["usage"]["input_tokens"], 6,
         "message_start must carry real input tokens, not a placeholder zero"

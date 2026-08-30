@@ -85,14 +85,22 @@ impl AccountUsage {
 /// truthful worst case.
 pub fn parse_antigravity_quota_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
     let mut groups = Vec::new();
-    for g in body.get("groups").and_then(|v| v.as_array()).into_iter().flatten() {
+    for g in body
+        .get("groups")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
         let buckets: Vec<QuotaBucket> = g
             .get("buckets")
             .and_then(|v| v.as_array())
             .into_iter()
             .flatten()
             .map(|b| QuotaBucket {
-                bucket_id: b.get("bucketId").and_then(|v| v.as_str()).map(str::to_string),
+                bucket_id: b
+                    .get("bucketId")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
                 display_name: b
                     .get("displayName")
                     .and_then(|v| v.as_str())
@@ -256,10 +264,7 @@ pub fn parse_codex_headers(headers: &HashMap<String, String>, now_unix: i64) -> 
     // rather than by header name: which family carries the 5h vs the weekly
     // window varies per account, so trusting `primary`/`secondary` positionally
     // mislabels them.
-    let mut candidates = vec![
-        win("x-codex-", "primary"),
-        win("x-codex-", "secondary"),
-    ];
+    let mut candidates = vec![win("x-codex-", "primary"), win("x-codex-", "secondary")];
     if let Some(p) = named_prefix.as_deref() {
         candidates.push(win(p, "primary"));
         candidates.push(win(p, "secondary"));
@@ -276,12 +281,12 @@ pub fn parse_codex_headers(headers: &HashMap<String, String>, now_unix: i64) -> 
         .find(|w| w.window_minutes != primary.window_minutes)
         .unwrap_or_default();
 
-    let observed = if primary.is_empty() && secondary.is_empty() && !lower.contains_key("x-codex-plan-type")
-    {
-        None
-    } else {
-        Some(now_unix)
-    };
+    let observed =
+        if primary.is_empty() && secondary.is_empty() && !lower.contains_key("x-codex-plan-type") {
+            None
+        } else {
+            Some(now_unix)
+        };
 
     AccountUsage {
         plan_type: text(&lower, "x-codex-plan-type"),
@@ -311,8 +316,11 @@ pub fn parse_claude_headers(headers: &HashMap<String, String>, now_unix: i64) ->
         .collect();
 
     let window = |slug: &str, minutes: i64, name: &str| QuotaWindow {
-        used_percent: num(&lower, &format!("anthropic-ratelimit-unified-{slug}-utilization"))
-            .map(|fraction| (fraction * 100.0).clamp(0.0, 100.0)),
+        used_percent: num(
+            &lower,
+            &format!("anthropic-ratelimit-unified-{slug}-utilization"),
+        )
+        .map(|fraction| (fraction * 100.0).clamp(0.0, 100.0)),
         window_minutes: Some(minutes),
         reset_after_seconds: None,
         reset_at_unix: int(&lower, &format!("anthropic-ratelimit-unified-{slug}-reset")),
@@ -423,15 +431,31 @@ fn usage_bucket(
 
 pub fn parse_cursor_usage_summary(body: &serde_json::Value, now_unix: i64) -> AccountUsage {
     let mut buckets = Vec::new();
-    let usage = body.get("individualUsage").or_else(|| body.get("individual_usage"));
+    let usage = body
+        .get("individualUsage")
+        .or_else(|| body.get("individual_usage"));
     for (key, label) in [("plan", "Plan"), ("onDemand", "On-Demand")] {
         let value = usage.and_then(|usage| usage.get(key));
-        if !value.and_then(|value| value.get("enabled")).and_then(|v| v.as_bool()).unwrap_or(false) {
+        if !value
+            .and_then(|value| value.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             continue;
         }
-        let limit = value.and_then(|value| value.get("limit")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let remaining = value.and_then(|value| value.get("remaining")).and_then(|v| v.as_f64()).unwrap_or(limit);
-        let used = if limit > 0.0 { (1.0 - remaining / limit) * 100.0 } else { 0.0 };
+        let limit = value
+            .and_then(|value| value.get("limit"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let remaining = value
+            .and_then(|value| value.get("remaining"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(limit);
+        let used = if limit > 0.0 {
+            (1.0 - remaining / limit) * 100.0
+        } else {
+            0.0
+        };
         buckets.push(usage_bucket(label, used, None, now_unix));
     }
     AccountUsage {
@@ -443,7 +467,11 @@ pub fn parse_cursor_usage_summary(body: &serde_json::Value, now_unix: i64) -> Ac
         groups: if buckets.is_empty() {
             Vec::new()
         } else {
-            vec![QuotaGroup { display_name: Some("Cursor".to_string()), buckets, models: None }]
+            vec![QuotaGroup {
+                display_name: Some("Cursor".to_string()),
+                buckets,
+                models: None,
+            }]
         },
         ..AccountUsage::default()
     }
@@ -457,11 +485,23 @@ pub fn parse_kiro_usage_summary(body: &serde_json::Value, now_unix: i64) -> Acco
         .into_iter()
         .flatten()
         .map(|item| {
-            let limit = item.get("usageLimit").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let used = item.get("currentUsage").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let percent = if limit > 0.0 { used / limit * 100.0 } else { 0.0 };
+            let limit = item
+                .get("usageLimit")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let used = item
+                .get("currentUsage")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let percent = if limit > 0.0 {
+                used / limit * 100.0
+            } else {
+                0.0
+            };
             usage_bucket(
-                item.get("displayName").and_then(|v| v.as_str()).unwrap_or("Usage"),
+                item.get("displayName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Usage"),
                 percent,
                 item.get("nextDateReset").and_then(|v| v.as_i64()),
                 now_unix,
@@ -469,7 +509,15 @@ pub fn parse_kiro_usage_summary(body: &serde_json::Value, now_unix: i64) -> Acco
         })
         .collect::<Vec<_>>();
     AccountUsage {
-        groups: if buckets.is_empty() { Vec::new() } else { vec![QuotaGroup { display_name: Some("Kiro".to_string()), buckets, models: None }] },
+        groups: if buckets.is_empty() {
+            Vec::new()
+        } else {
+            vec![QuotaGroup {
+                display_name: Some("Kiro".to_string()),
+                buckets,
+                models: None,
+            }]
+        },
         ..AccountUsage::default()
     }
 }
@@ -483,27 +531,45 @@ pub fn parse_zcode_usage_summary(body: &serde_json::Value, now_unix: i64) -> Acc
         .into_iter()
         .flatten()
     {
-        let Some(label) = limit.get("type").and_then(|v| v.as_str()).and_then(|kind| match kind {
-            "TOKENS_LIMIT" => Some("Tokens"),
-            "TIME_LIMIT" => Some("MCP Usage"),
-            _ => None,
-        }) else {
+        let Some(label) = limit
+            .get("type")
+            .and_then(|v| v.as_str())
+            .and_then(|kind| match kind {
+                "TOKENS_LIMIT" => Some("Tokens"),
+                "TIME_LIMIT" => Some("MCP Usage"),
+                _ => None,
+            })
+        else {
             continue;
         };
         let bucket = usage_bucket(
             label,
-            limit.get("percentage").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            limit
+                .get("percentage")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0),
             limit.get("nextResetTime").and_then(|v| v.as_i64()),
             now_unix,
         );
-        groups.push(QuotaGroup { display_name: Some(label.to_string()), buckets: vec![bucket], models: None });
+        groups.push(QuotaGroup {
+            display_name: Some(label.to_string()),
+            buckets: vec![bucket],
+            models: None,
+        });
     }
-    AccountUsage { groups, ..AccountUsage::default() }
+    AccountUsage {
+        groups,
+        ..AccountUsage::default()
+    }
 }
 
 /// Seconds until the window resets, preferring the absolute timestamp because
 /// the relative value ages as the snapshot sits in memory.
-pub fn seconds_until_reset(window: &QuotaWindow, observed_at: Option<i64>, now: i64) -> Option<i64> {
+pub fn seconds_until_reset(
+    window: &QuotaWindow,
+    observed_at: Option<i64>,
+    now: i64,
+) -> Option<i64> {
     if let Some(at) = window.reset_at_unix.filter(|v| *v > 0) {
         return Some((at - now).max(0));
     }
@@ -609,9 +675,238 @@ impl WhamUsage {
     }
 }
 
+/// Bounded head/tail capture of a streamed body: the first `cap` bytes and
+/// the last `cap` bytes, enough to locate usage objects without ever holding
+/// the whole stream in memory.
+#[derive(Debug, Default)]
+pub struct HeadTailCapture {
+    head: Vec<u8>,
+    tail: Vec<u8>,
+    cap: usize,
+}
+
+const CAPTURE_WINDOW: usize = 8 * 1024;
+
+impl HeadTailCapture {
+    pub fn new() -> Self {
+        Self {
+            head: Vec::new(),
+            tail: Vec::new(),
+            cap: CAPTURE_WINDOW,
+        }
+    }
+
+    pub fn push(&mut self, chunk: &[u8]) {
+        let head_room = self.cap.saturating_sub(self.head.len());
+        if head_room > 0 {
+            let take = head_room.min(chunk.len());
+            self.head.extend_from_slice(&chunk[..take]);
+        }
+        self.tail.extend_from_slice(chunk);
+        let overflow = self.tail.len().saturating_sub(self.cap);
+        if overflow > 0 {
+            self.tail.drain(..overflow);
+        }
+    }
+
+    pub fn parts(&self) -> (&[u8], &[u8]) {
+        (&self.head, &self.tail)
+    }
+}
+
+/// Extract a total token count from the captured head/tail windows of a
+/// response body. Handles the three wire shapes the gateway relays:
+/// OpenAI-style `"usage":{...}` (JSON or SSE frame), Gemini
+/// `"usageMetadata":{...}`, and Claude SSE where `input_tokens` appears in
+/// `message_start` (stream head) and `output_tokens` in `message_delta`
+/// (stream tail). Returns `None` when nothing usable is present.
+pub fn extract_total_tokens(head: &[u8], tail: &[u8]) -> Option<u64> {
+    if let Some(usage) = last_balanced_object(tail, b"\"usage\"") {
+        if let Some(total) = object_number(&usage, &["total_tokens"]) {
+            return Some(total);
+        }
+        let prompt = object_number(&usage, &["prompt_tokens"]);
+        let completion = object_number(&usage, &["completion_tokens"]);
+        if prompt.is_some() || completion.is_some() {
+            return Some(prompt.unwrap_or(0) + completion.unwrap_or(0));
+        }
+    }
+    if let Some(usage) = last_balanced_object(tail, b"\"usageMetadata\"") {
+        if let Some(total) = object_number(&usage, &["totalTokenCount"]) {
+            return Some(total);
+        }
+        let prompt = object_number(&usage, &["promptTokenCount"]);
+        let completion = object_number(&usage, &["candidatesTokenCount"]);
+        if prompt.is_some() || completion.is_some() {
+            return Some(prompt.unwrap_or(0) + completion.unwrap_or(0));
+        }
+    }
+    let input = last_number_after(head, b"\"input_tokens\"");
+    let output = last_number_after(tail, b"\"output_tokens\"");
+    if input.is_some() || output.is_some() {
+        return Some(input.unwrap_or(0) + output.unwrap_or(0));
+    }
+    None
+}
+
+fn last_balanced_object(haystack: &[u8], key: &[u8]) -> Option<String> {
+    let mut start = 0;
+    let mut found = None;
+    while let Some(pos) = find_sub(&haystack[start..], key) {
+        let after = &haystack[start + pos + key.len()..];
+        let colon = after.iter().position(|b| *b != b' ').map_or(0, |p| p);
+        let after = &after[colon..];
+        if after.first() == Some(&b':') {
+            let after = &after[1..];
+            let brace = after.iter().position(|b| *b != b' ').map_or(0, |p| p);
+            let after = &after[brace..];
+            if after.first() == Some(&b'{') {
+                if let Some(end) = balanced_end(after) {
+                    found = Some(String::from_utf8_lossy(&after[..=end]).into_owned());
+                }
+            }
+        }
+        start += pos + key.len();
+    }
+    found
+}
+
+fn balanced_end(bytes: &[u8]) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn object_number(json: &str, keys: &[&str]) -> Option<u64> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    keys.iter().find_map(|key| value.get(key)?.as_u64())
+}
+
+fn last_number_after(haystack: &[u8], key: &[u8]) -> Option<u64> {
+    let mut start = 0;
+    let mut found = None;
+    while let Some(pos) = find_sub(&haystack[start..], key) {
+        let after = &haystack[start + pos + key.len()..];
+        let digits: Vec<u8> = after
+            .iter()
+            .skip_while(|b| **b != b':')
+            .skip(1)
+            .skip_while(|b| b.is_ascii_whitespace())
+            .take_while(|b| b.is_ascii_digit())
+            .copied()
+            .collect();
+        if !digits.is_empty() {
+            let text = std::str::from_utf8(&digits).unwrap_or("");
+            if let Ok(value) = text.parse::<u64>() {
+                found = Some(value);
+            }
+        }
+        start += pos + key.len();
+    }
+    found
+}
+
+fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_reads_openai_usage_from_tail_json() {
+        let body = br#"{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
+        assert_eq!(extract_total_tokens(body, body), Some(15));
+    }
+
+    #[test]
+    fn extract_sums_openai_tokens_without_total() {
+        let body = br#"data: {"usage":{"prompt_tokens":7,"completion_tokens":3}}
+
+"#;
+        assert_eq!(extract_total_tokens(body, body), Some(10));
+    }
+
+    #[test]
+    fn extract_prefers_the_last_usage_frame_in_sse_tail() {
+        let mut body = b"data: {\"usage\":{\"total_tokens\":100}}\n\n".to_vec();
+        body.extend_from_slice(b"data: {\"usage\":{\"total_tokens\":250}}\n\n");
+        assert_eq!(extract_total_tokens(&body, &body), Some(250));
+    }
+
+    #[test]
+    fn extract_reads_gemini_usage_metadata() {
+        let body = br#"{"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":8,"totalTokenCount":20}}"#;
+        assert_eq!(extract_total_tokens(body, body), Some(20));
+    }
+
+    #[test]
+    fn extract_combines_claude_message_start_and_delta() {
+        let head = b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":21}}}\n\n";
+        let tail = b"event: message_delta\ndata: {\"usage\":{\"output_tokens\":9}}\n\n";
+        assert_eq!(extract_total_tokens(head, tail), Some(30));
+    }
+
+    #[test]
+    fn extract_returns_none_without_usage() {
+        let body = br#"data: {"choices":[{"delta":{"content":"hi"}}]}"#;
+        assert_eq!(extract_total_tokens(body, body), None);
+    }
+
+    #[test]
+    fn capture_keeps_head_and_tail_within_capacity() {
+        let mut capture = HeadTailCapture::new();
+        let chunk = vec![b'x'; 4096];
+        for _ in 0..5 {
+            capture.push(&chunk);
+        }
+        let (head, tail) = capture.parts();
+        assert_eq!(head.len(), 8192);
+        assert_eq!(head[0], b'x');
+        assert_eq!(tail.len(), 8192);
+        assert_eq!(tail[tail.len() - 1], b'x');
+    }
+
+    #[test]
+    fn capture_windows_preserve_usage_across_large_streams() {
+        let mut capture = HeadTailCapture::new();
+        capture.push(b"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":4}}}\n\n");
+        capture.push(&vec![b'.'; 20_000]);
+        let tail_frame = b"data: {\"usage\":{\"total_tokens\":33}}\n\n";
+        capture.push(tail_frame);
+        let (head, tail) = capture.parts();
+        assert_eq!(extract_total_tokens(head, tail), Some(33));
+    }
 
     // Captured verbatim from a live GET /backend-api/wham/usage response.
     const LIVE_WHAM: &str = r#"{
@@ -746,7 +1041,10 @@ mod tests {
             reset_after_seconds: Some(999_999),
             ..Default::default()
         };
-        assert_eq!(seconds_until_reset(&w, Some(1_000_000), 1_000_000), Some(100));
+        assert_eq!(
+            seconds_until_reset(&w, Some(1_000_000), 1_000_000),
+            Some(100)
+        );
     }
 
     #[test]
@@ -756,13 +1054,19 @@ mod tests {
             ..Default::default()
         };
         // Observed 120s ago, so 180s remain.
-        assert_eq!(seconds_until_reset(&w, Some(1_000_000), 1_000_120), Some(180));
+        assert_eq!(
+            seconds_until_reset(&w, Some(1_000_000), 1_000_120),
+            Some(180)
+        );
         assert_eq!(seconds_until_reset(&w, Some(1_000_000), 1_099_999), Some(0));
     }
 
     #[test]
     fn reset_is_unknown_without_any_signal() {
-        assert_eq!(seconds_until_reset(&QuotaWindow::default(), Some(5), 10), None);
+        assert_eq!(
+            seconds_until_reset(&QuotaWindow::default(), Some(5), 10),
+            None
+        );
     }
 
     /// Verbatim shape of a live cloudcode-pa `retrieveUserQuotaSummary` 200.
@@ -808,10 +1112,18 @@ mod tests {
         let gemini = &u.groups[0];
         assert_eq!(gemini.display_name.as_deref(), Some("Gemini Models"));
         // remainingFraction 0.5 -> 50% consumed, not 50% remaining.
-        let five_h = gemini.buckets.iter().find(|b| b.window.as_deref() == Some("5h")).unwrap();
+        let five_h = gemini
+            .buckets
+            .iter()
+            .find(|b| b.window.as_deref() == Some("5h"))
+            .unwrap();
         assert!((five_h.used_percent.unwrap() - 50.0).abs() < 1e-6);
         // 0.99998575 remaining is ~0% consumed.
-        let weekly = gemini.buckets.iter().find(|b| b.window.as_deref() == Some("weekly")).unwrap();
+        let weekly = gemini
+            .buckets
+            .iter()
+            .find(|b| b.window.as_deref() == Some("weekly"))
+            .unwrap();
         assert!(weekly.used_percent.unwrap() < 0.01);
     }
 
@@ -840,7 +1152,10 @@ mod tests {
         assert_eq!(parse_rfc3339_unix("2026-13-04T01:27:21Z"), None);
         assert_eq!(parse_rfc3339_unix("garbage"), None);
         // Leap day must round-trip.
-        assert_eq!(parse_rfc3339_unix("2024-02-29T00:00:00Z"), Some(1_709_164_800));
+        assert_eq!(
+            parse_rfc3339_unix("2024-02-29T00:00:00Z"),
+            Some(1_709_164_800)
+        );
     }
 
     #[test]

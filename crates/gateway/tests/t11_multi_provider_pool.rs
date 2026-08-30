@@ -39,7 +39,9 @@ impl Drop for TempAuthDir {
 
 fn credential(kind: &str) -> String {
     let extra = match kind {
-        "codex" => r#""account_id":"acc-1","id_token":"idt","last_refresh":"2026-01-01T00:00:00Z","#,
+        "codex" => {
+            r#""account_id":"acc-1","id_token":"idt","last_refresh":"2026-01-01T00:00:00Z","#
+        }
         "antigravity" => r#""project_id":"proj-1","#,
         "kiro" => r#""region":"us-east-1","#,
         _ => "",

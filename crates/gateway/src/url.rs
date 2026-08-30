@@ -33,6 +33,7 @@ pub fn build_provider_url(
         ProviderKind::Kiro => mahoquot_providers::KIRO_API_HOST_TEMPLATE
             .replace("{region}", mahoquot_providers::KIRO_DEFAULT_REGION),
         ProviderKind::Generic => upstream_override.unwrap_or_default().to_string(),
+        ProviderKind::Vertex => "https://aiplatform.googleapis.com".to_string(),
     };
 
     join_provider_path(upstream_override.unwrap_or(&base), req_path)
@@ -118,7 +119,10 @@ mod tests {
         assert!(kiro.contains("kiro.dev"), "kiro routed to {kiro}");
 
         for url in [claude, zcode, cursor, kiro] {
-            assert!(!url.contains("chatgpt.com"), "leaked to codex upstream: {url}");
+            assert!(
+                !url.contains("chatgpt.com"),
+                "leaked to codex upstream: {url}"
+            );
         }
     }
 

@@ -467,7 +467,7 @@ async fn test_t7_concurrent_single_flight_refresh() {
     .unwrap();
 
     let config = GatewayConfig {
-            usage_poll_secs: 120,
+        usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: Strategy::StrictRoundRobin,

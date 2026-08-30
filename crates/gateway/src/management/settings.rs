@@ -303,10 +303,7 @@ impl Settings {
             }
         }
 
-        let temp_path = path.with_extension(format!(
-            "tmp{}",
-            std::process::id()
-        ));
+        let temp_path = path.with_extension(format!("tmp{}", std::process::id()));
         let write = |target: &Path| -> std::io::Result<()> {
             let mut file = std::fs::File::create(target)?;
             file.write_all(rendered.as_bytes())?;
@@ -325,7 +322,6 @@ impl Settings {
             }
         })
     }
-
 }
 
 #[cfg(test)]
@@ -335,7 +331,8 @@ mod tests {
     #[test]
     fn unknown_upstream_keys_survive_a_round_trip() {
         // given a config carrying keys this build does not model
-        let raw = "port: 9999\nauth-dir: /tmp/a\nclaude-api-key:\n  - sk-test\ntls:\n  enable: true\n";
+        let raw =
+            "port: 9999\nauth-dir: /tmp/a\nclaude-api-key:\n  - sk-test\ntls:\n  enable: true\n";
         // when it is parsed and re-rendered
         let settings = Settings::from_yaml(raw).expect("parses");
         let rendered = settings.to_yaml().expect("renders");
@@ -405,7 +402,8 @@ mod tests {
     #[test]
     fn persist_leaves_no_temp_file_behind() {
         // given a persisted config
-        let dir = std::env::temp_dir().join(format!("mahoquot-settings-tmp-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("mahoquot-settings-tmp-{}", std::process::id()));
         let path = dir.join("config.yaml");
         Settings::default().persist(&path).expect("persists");
         // when the directory is listed
@@ -419,5 +417,4 @@ mod tests {
         assert!(leftovers.is_empty(), "leftovers: {leftovers:?}");
         std::fs::remove_dir_all(&dir).ok();
     }
-
 }

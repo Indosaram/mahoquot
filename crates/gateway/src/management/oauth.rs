@@ -3,9 +3,9 @@ use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::prelude::*;
 use serde_json::{json, Value};
@@ -23,6 +23,11 @@ const CODEX_DEFAULT_AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_DEFAULT_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_DEFAULT_REDIRECT: &str = "http://localhost:1455/auth/callback";
 const CODEX_SCOPES: &str = "openid profile email offline_access";
+
+const COMMAND_CODE_STUDIO_URL: &str = "https://commandcode.ai";
+const COMMAND_CODE_DEFAULT_WHOAMI_URL: &str = "https://api.commandcode.ai/alpha/whoami";
+const COMMAND_CODE_DEFAULT_BASE_URL: &str = "https://api.commandcode.ai/provider/v1";
+const COMMAND_CODE_DEFAULT_CALLBACK_URL: &str = "http://127.0.0.1:5959/callback";
 
 const CURSOR_DEFAULT_LOGIN_URL: &str = "https://cursor.com/loginDeepControl";
 const CURSOR_DEFAULT_POLL_URL: &str = "https://api2.cursor.sh/auth/poll";
@@ -1568,10 +1573,267 @@ async fn auth_status(
     )
 }
 
+pub fn create_command_code_auth_url(
+    params: &HashMap<String, String>,
+) -> (String, String, OAuthSession) {
+    let state = new_state();
+    let auth_base = params
+        .get("auth_url")
+        .or_else(|| params.get("studio_url"))
+        .cloned()
+        .or_else(|| std::env::var("COMMAND_CODE_STUDIO_URL").ok())
+        .unwrap_or_else(|| COMMAND_CODE_STUDIO_URL.to_string());
+
+    let callback_url = params
+        .get("callback")
+        .or_else(|| params.get("callback_url"))
+        .or_else(|| params.get("redirect_uri"))
+        .cloned()
+        .unwrap_or_else(|| COMMAND_CODE_DEFAULT_CALLBACK_URL.to_string());
+
+    let whoami_url = params
+        .get("whoami_url")
+        .cloned()
+        .or_else(|| std::env::var("COMMAND_CODE_WHOAMI_URL").ok())
+        .unwrap_or_else(|| COMMAND_CODE_DEFAULT_WHOAMI_URL.to_string());
+
+    let base_url = params
+        .get("base_url")
+        .cloned()
+        .unwrap_or_else(|| COMMAND_CODE_DEFAULT_BASE_URL.to_string());
+
+    let url = if auth_base.contains("/studio/auth/cli") {
+        format!(
+            "{}?callback={}&state={}",
+            auth_base,
+            url_encode(&callback_url),
+            url_encode(&state)
+        )
+    } else {
+        format!(
+            "{}/studio/auth/cli?callback={}&state={}",
+            auth_base.trim_end_matches('/'),
+            url_encode(&callback_url),
+            url_encode(&state)
+        )
+    };
+
+    let session = OAuthSession {
+        state: state.clone(),
+        provider: "command-code".to_string(),
+        verifier: String::new(),
+        challenge: base_url,
+        redirect_uri: callback_url,
+        token_url: whoami_url,
+        poll_url: String::new(),
+        uuid: "deepseek/deepseek-v4-flash".to_string(),
+        status: SessionStatus::Pending,
+        created_at: Instant::now(),
+        saved_account_email: None,
+    };
+
+    (url, state, session)
+}
+
+async fn exchange_command_code_callback(
+    state: &AppState,
+    session: &mut OAuthSession,
+    api_key: &str,
+    _user_name: &str,
+) -> Result<(), String> {
+    let whoami_url = if session.token_url.is_empty() {
+        COMMAND_CODE_DEFAULT_WHOAMI_URL
+    } else {
+        &session.token_url
+    };
+
+    let response = state
+        .http_client
+        .get(whoami_url)
+        .header("authorization", format!("Bearer {api_key}"))
+        .header("accept", "application/json")
+        .send()
+        .await
+        .map_err(|err| format!("Command Code whoami request failed: {err}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!(
+            "Command Code whoami validation failed with status {status}"
+        ));
+    }
+
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|err| format!("Command Code whoami response was invalid JSON: {err}"))?;
+
+    let validated_user_id = body
+        .get("user")
+        .and_then(|u| u.get("id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Command Code whoami response missing user.id".to_string())?;
+    let validated_user_name = body
+        .get("user")
+        .and_then(|u| u.get("userName").or_else(|| u.get("username")))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Command Code whoami response missing user.userName".to_string())?;
+
+    let final_label = validated_user_name.trim();
+
+    let base_url = if session.challenge.is_empty() {
+        COMMAND_CODE_DEFAULT_BASE_URL
+    } else {
+        &session.challenge
+    };
+
+    let models: Vec<&str> = if session.uuid.is_empty() {
+        vec!["deepseek/deepseek-v4-flash"]
+    } else {
+        session.uuid.split(',').collect()
+    };
+
+    let credential = json!({
+        "type": "generic",
+        "provider": "command-code",
+        "account_id": validated_user_id,
+        "label": final_label,
+        "adapter": "openai-chat",
+        "base_url": base_url,
+        "api_key": api_key,
+        "auth_mode": "oauth",
+        "models": models,
+        "disabled": false,
+    });
+
+    let filename = format!(
+        "generic-command-code-{}.json",
+        sanitize_filename(final_label)
+    );
+    let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
+    let rendered = serde_json::to_string_pretty(&credential).map_err(|e| e.to_string())?;
+    write_atomically(&auth_dir.join(filename), &rendered).map_err(|e| e.to_string())?;
+
+    if let Err(error) = state.rescan_pool() {
+        eprintln!("pool rescan failed after Command Code onboarding: {error}");
+    }
+
+    session.saved_account_email = Some(final_label.to_string());
+    session.status = SessionStatus::Completed;
+    Ok(())
+}
+
 pub async fn oauth_callback(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
+    body: axum::body::Bytes,
 ) -> Response {
+    if !body.is_empty() {
+        let Ok(body_json) = serde_json::from_slice::<Value>(&body) else {
+            return json_status(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "Command Code callback must be valid JSON", "status": "error" }),
+            );
+        };
+
+        if !body_json.is_object() {
+            return json_status(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "Command Code callback must be an object", "status": "error" }),
+            );
+        }
+
+        let state_val = body_json.get("state").and_then(Value::as_str).unwrap_or("");
+        if state_val.is_empty() {
+            return json_status(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "Command Code callback missing state", "status": "error" }),
+            );
+        }
+
+        let session_opt = {
+            let sessions = SESSIONS.read().unwrap();
+            sessions.get(state_val).cloned()
+        };
+
+        let Some(mut session) = session_opt else {
+            return json_status(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "Command Code OAuth state mismatch", "status": "error" }),
+            );
+        };
+
+        if session.provider != "command-code" {
+            return json_status(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "OAuth session provider mismatch", "status": "error" }),
+            );
+        }
+
+        let api_key = body_json
+            .get("apiKey")
+            .or_else(|| body_json.get("api_key"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let user_id = body_json
+            .get("userId")
+            .or_else(|| body_json.get("user_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let user_name = body_json
+            .get("userName")
+            .or_else(|| body_json.get("user_name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let key_name = body_json
+            .get("keyName")
+            .or_else(|| body_json.get("key_name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+
+        if api_key.trim().is_empty()
+            || user_id.trim().is_empty()
+            || user_name.trim().is_empty()
+            || key_name.trim().is_empty()
+        {
+            session.status =
+                SessionStatus::Failed("Command Code callback missing required fields".to_string());
+            SESSIONS
+                .write()
+                .unwrap()
+                .insert(session.state.clone(), session);
+            return json_status(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "Command Code callback missing required fields", "status": "error" }),
+            );
+        }
+
+        match exchange_command_code_callback(&state, &mut session, api_key, user_name).await {
+            Ok(()) => {
+                SESSIONS
+                    .write()
+                    .unwrap()
+                    .insert(session.state.clone(), session);
+                return json_status(
+                    StatusCode::OK,
+                    json!({ "status": "ok", "success": true, "provider": "command-code" }),
+                );
+            }
+            Err(err) => {
+                session.status = SessionStatus::Failed(err.clone());
+                SESSIONS
+                    .write()
+                    .unwrap()
+                    .insert(session.state.clone(), session);
+                return json_status(
+                    StatusCode::BAD_REQUEST,
+                    json!({ "error": err, "status": "error" }),
+                );
+            }
+        }
+    }
     if let (Some(code), Some(state_param)) = (params.get("code"), params.get("state")) {
         let session_opt = {
             let sessions = SESSIONS.read().unwrap();
@@ -1761,7 +2023,12 @@ async fn codex_auth_url_handler(
                 let callback_state = callback_state.clone();
                 let callback_finished = callback_finished.clone();
                 async move {
-                    let response = oauth_callback(State(callback_state), Query(query)).await;
+                    let response = oauth_callback(
+                        State(callback_state),
+                        Query(query),
+                        axum::body::Bytes::new(),
+                    )
+                    .await;
                     callback_finished.notify_one();
                     response
                 }
@@ -1776,6 +2043,66 @@ async fn codex_auth_url_handler(
     json_status(
         StatusCode::OK,
         json!({ "url": url, "state": state, "provider": "codex", "status": "ok" }),
+    )
+}
+
+async fn command_code_auth_url_handler(
+    State(app_state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let (url, state, session) = create_command_code_auth_url(&params);
+    if !params.contains_key("redirect_uri") && !params.contains_key("callback") {
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:5959").await {
+            Ok(listener) => listener,
+            Err(error) => {
+                return json_status(
+                    StatusCode::CONFLICT,
+                    json!({
+                        "status": "error",
+                        "error": format!("Command Code callback port 5959 is unavailable: {error}")
+                    }),
+                )
+            }
+        };
+        let finished = Arc::new(Notify::new());
+        let callback_state = app_state.clone();
+        let callback_finished = finished.clone();
+        let callback_app = Router::new().route(
+            "/callback",
+            post(move |body: axum::body::Bytes| {
+                let callback_state = callback_state.clone();
+                let callback_finished = callback_finished.clone();
+                async move {
+                    let res =
+                        oauth_callback(State(callback_state), Query(HashMap::new()), body).await;
+                    callback_finished.notify_one();
+                    res
+                }
+            })
+            .options(|| async {
+                (
+                    StatusCode::NO_CONTENT,
+                    [
+                        (
+                            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                            "https://commandcode.ai",
+                        ),
+                        (header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"),
+                        (header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"),
+                    ],
+                )
+            }),
+        );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, callback_app)
+                .with_graceful_shutdown(async move { finished.notified().await })
+                .await;
+        });
+    }
+    register_session(session);
+    json_status(
+        StatusCode::OK,
+        json!({ "url": url, "state": state, "provider": "command-code", "status": "ok" }),
     )
 }
 
@@ -1826,6 +2153,7 @@ pub fn oauth_routes() -> Router<Arc<AppState>> {
         .route("/antigravity-auth-url", get(antigravity_auth_url_handler))
         .route("/xai-auth-url", get(xai_auth_url_handler))
         .route("/gemini-cli-auth-url", get(gemini_auth_url_handler))
+        .route("/command-code-auth-url", get(command_code_auth_url_handler))
         .route(
             "/kimi-auth-url",
             get(|state, params| device_auth_url(state, params, "kimi")),
@@ -1883,6 +2211,7 @@ mod tests {
             "qwen",
             "nous",
             "github-copilot",
+            "command-code",
         ];
         for path in &advertised {
             let provider = path.trim_start_matches('/').trim_end_matches("-auth-url");
@@ -1976,5 +2305,22 @@ mod tests {
         assert!(url.contains("redirectTarget=cli"));
         assert_eq!(session.provider, "cursor");
         assert_eq!(session.state, state);
+    }
+
+    #[test]
+    fn command_code_auth_url_carries_studio_url_and_callback() {
+        let mut params = HashMap::new();
+        params.insert(
+            "callback".to_string(),
+            "http://127.0.0.1:5959/callback".to_string(),
+        );
+        let (url, state, session) = create_command_code_auth_url(&params);
+
+        assert!(url.starts_with(COMMAND_CODE_STUDIO_URL));
+        assert!(url.contains("/studio/auth/cli"));
+        assert!(url.contains("callback="));
+        assert!(url.contains(&format!("state={state}")));
+        assert_eq!(session.provider, "command-code");
+        assert_eq!(session.status, SessionStatus::Pending);
     }
 }

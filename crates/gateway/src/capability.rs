@@ -10,25 +10,18 @@
 use serde_json::{json, Value};
 
 /// Models CLIProxyAPI accepts on `/v1/images/generations` and `/v1/images/edits`.
-pub const IMAGE_MODELS: &[&str] = &[
-    "gpt-image-1.5",
-    "gpt-image-2",
-    "grok-imagine-image",
-    "grok-imagine-image-quality",
-    "grok-imagine-image-2.0",
-];
+pub const IMAGE_MODELS: &[&str] = &["gpt-image-1.5", "gpt-image-2"];
 
 /// Models CLIProxyAPI accepts on the `/v1/videos/*` surface.
-pub const VIDEO_MODELS: &[&str] = &["grok-imagine-video"];
+pub const VIDEO_MODELS: &[&str] = &[];
 
 /// The model `/openai/v1/videos` resolves against regardless of the request body.
 pub const OPENAI_VIDEO_MODEL: &str = "grok-imagine-video";
 
-const IMAGE_HINT: &str = "Use gpt-image-1.5, gpt-image-2, grok-imagine-image, \
-grok-imagine-image-quality, grok-imagine-image-2.0, or a configured \
-openai-compatibility image model.";
+const IMAGE_HINT: &str =
+    "Use gpt-image-1.5, gpt-image-2, or a configured openai-compatibility image model.";
 
-const VIDEO_HINT: &str = "Use grok-imagine-video.";
+const VIDEO_HINT: &str = "No reference-backed video model is configured.";
 
 /// `{"error":{"message":..,"type":"invalid_request_error"}}` - no code/param.
 pub fn unsupported_on_surface(model: &str, surface: &str, hint: &str) -> Value {
@@ -87,8 +80,7 @@ mod tests {
             v["error"]["message"].as_str().unwrap(),
             "Model gemini-3-pro-image-preview is not supported on \
              /v1/images/generations or /v1/images/edits. Use gpt-image-1.5, \
-             gpt-image-2, grok-imagine-image, grok-imagine-image-quality, \
-             grok-imagine-image-2.0, or a configured openai-compatibility image model."
+             gpt-image-2, or a configured openai-compatibility image model."
         );
         assert_eq!(v["error"]["type"], "invalid_request_error");
         assert!(v["error"].get("code").is_none());
@@ -100,21 +92,32 @@ mod tests {
         assert_eq!(
             v["error"]["message"].as_str().unwrap(),
             "Model veo-3.1 is not supported on /v1/videos/generations, \
-             /v1/videos/edits, or /v1/videos/extensions. Use grok-imagine-video."
+             /v1/videos/edits, or /v1/videos/extensions. No reference-backed \
+             video model is configured."
         );
     }
 
     #[test]
     fn unknown_provider_carries_code_and_param() {
         let v = unknown_provider("grok-imagine-video");
-        assert_eq!(v["error"]["message"], "unknown provider for model grok-imagine-video");
+        assert_eq!(
+            v["error"]["message"],
+            "unknown provider for model grok-imagine-video"
+        );
         assert_eq!(v["error"]["code"], "model_not_found");
         assert_eq!(v["error"]["param"], "model");
     }
 
     #[test]
-    fn supported_models_are_routable() {
+    fn reference_backed_image_models_pass_surface_gate() {
         assert!(check_image("gpt-image-2").is_none());
-        assert!(check_video("grok-imagine-video").is_none());
+    }
+
+    #[test]
+    fn unimplemented_media_models_are_not_advertised_as_routable() {
+        assert!(check_image("grok-imagine-image").is_some());
+        assert!(check_image("grok-imagine-image-quality").is_some());
+        assert!(check_image("grok-imagine-image-2.0").is_some());
+        assert!(check_video("grok-imagine-video").is_some());
     }
 }

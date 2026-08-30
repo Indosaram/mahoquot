@@ -44,7 +44,9 @@ pub async fn execute_refresh_spec(
     let request = req_spec
         .headers
         .iter()
-        .fold(request, |request, (name, value)| request.header(name, value));
+        .fold(request, |request, (name, value)| {
+            request.header(name, value)
+        });
     let request = match &req_spec.json_body {
         Some(body) => request.json(body),
         None => request.form(&req_spec.form_fields),
@@ -124,7 +126,11 @@ pub async fn execute_zcode_refresh(
         .await?;
     let existing_key_id = keys["data"]
         .as_array()
-        .and_then(|entries| entries.iter().find(|entry| entry["name"] == "zcode-api-key"))
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry["name"] == "zcode-api-key")
+        })
         .and_then(|entry| entry["apiKey"].as_str().or_else(|| entry["id"].as_str()));
     let created_key: serde_json::Value;
     let key_id = match existing_key_id {
@@ -143,7 +149,9 @@ pub async fn execute_zcode_refresh(
             entry["apiKey"]
                 .as_str()
                 .or_else(|| entry["id"].as_str())
-                .ok_or_else(|| RefreshError::Parse("Z-code API key create missing id".to_string()))?
+                .ok_or_else(|| {
+                    RefreshError::Parse("Z-code API key create missing id".to_string())
+                })?
         }
     };
     let copied: serde_json::Value = client
@@ -216,7 +224,10 @@ pub fn apply_refresh_to_file(
     // credential unloadable on the next start, so mirror whichever is there.
     match obj.get("timestamp") {
         Some(Value::Number(_)) => {
-            obj.insert("timestamp".to_string(), Value::Number((now_unix * 1000).into()));
+            obj.insert(
+                "timestamp".to_string(),
+                Value::Number((now_unix * 1000).into()),
+            );
         }
         Some(_) => {
             obj.insert("timestamp".to_string(), Value::String(lr_str));
@@ -463,14 +474,13 @@ mod tests {
             )
             .route(
                 "/api/biz/v1/organization/org/projects/proj/api_keys",
-                axum::routing::get(|| async {
-                    axum::Json(serde_json::json!({"data":[]}))
-                })
-                .post(|body: String| async move {
-                    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-                    assert_eq!(value["name"], "zcode-api-key");
-                    axum::Json(serde_json::json!({"data":{"apiKey":"created-id"}}))
-                }),
+                axum::routing::get(|| async { axum::Json(serde_json::json!({"data":[]})) }).post(
+                    |body: String| async move {
+                        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+                        assert_eq!(value["name"], "zcode-api-key");
+                        axum::Json(serde_json::json!({"data":{"apiKey":"created-id"}}))
+                    },
+                ),
             )
             .route(
                 "/api/biz/v1/organization/org/projects/proj/api_keys/copy/created-id",
@@ -541,7 +551,10 @@ mod tests {
         assert_eq!(val["timestamp"], now_unix * 1000);
 
         let reparsed = apply_refresh_to_file(&path, &tokens, now_unix + 10);
-        assert!(reparsed.is_ok(), "a refreshed file must refresh again cleanly");
+        assert!(
+            reparsed.is_ok(),
+            "a refreshed file must refresh again cleanly"
+        );
     }
 
     #[test]

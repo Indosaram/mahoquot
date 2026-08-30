@@ -62,7 +62,7 @@ async fn test_t3_failover() {
     std::fs::write(temp_dir.join("codex-b-plus.json"), json_b).unwrap();
 
     let config = GatewayConfig {
-            usage_poll_secs: 120,
+        usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: Strategy::FillFirst, // FillFirst will always try 'a' first

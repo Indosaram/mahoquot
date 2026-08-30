@@ -103,12 +103,19 @@ async fn an_imported_credential_appears_in_the_live_pool_without_restart() {
         .unwrap();
     let after = body_json(stats).await;
     let accounts = after["accounts"].as_array().unwrap();
-    assert_eq!(accounts.len(), 2, "imported credential must join the live pool");
+    assert_eq!(
+        accounts.len(),
+        2,
+        "imported credential must join the live pool"
+    );
     let providers: Vec<&str> = accounts
         .iter()
         .map(|a| a["provider"].as_str().unwrap())
         .collect();
-    assert!(providers.contains(&"claude"), "claude account visible: {providers:?}");
+    assert!(
+        providers.contains(&"claude"),
+        "claude account visible: {providers:?}"
+    );
     assert!(providers.contains(&"codex"));
 
     std::fs::remove_dir_all(auth_dir).ok();
@@ -200,7 +207,9 @@ async fn cors_allows_the_authorization_header_explicitly_for_webviews() {
 
     // then Authorization is named explicitly, never left to a wildcard
     assert!(
-        allow_headers.split(',').any(|h| h.trim() == "authorization"),
+        allow_headers
+            .split(',')
+            .any(|h| h.trim() == "authorization"),
         "allow-headers must list authorization explicitly, got: {allow_headers:?}"
     );
     std::fs::remove_dir_all(auth_dir).ok();

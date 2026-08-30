@@ -72,7 +72,6 @@ fn test_t9_thinking_model_small_max_tokens_gets_headroom() {
     assert_eq!(out["request"]["generationConfig"]["maxOutputTokens"], 32);
 }
 
-
 #[test]
 fn test_t9_live_captured_frame_decodes_to_text_and_usage() {
     let live = r#"{"response": {"candidates": [{"content": {"role": "model","parts": [{"text": "alpha bravo"}]}}],"usageMetadata": {"promptTokenCount": 6,"candidatesTokenCount": 2,"totalTokenCount": 68,"thoughtsTokenCount": 60},"modelVersion": "gemini-3.7-flash","responseId": "bOSQar2JGfDe2roP1Iec8Qs"},"traceId": "8ac79e0a6b70c6a2","metadata": {}}"#;
@@ -105,9 +104,7 @@ fn test_t9_thought_signature_part_emits_no_text() {
     let thought = r#"{"response":{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"EpIDCo8DARFNMg"}]}}]}}"#;
     let events = decode_all(&[thought]);
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, CodexEvent::TextDelta(_))),
+        !events.iter().any(|e| matches!(e, CodexEvent::TextDelta(_))),
         "thoughtSignature must not leak into client-visible content: {events:?}"
     );
 }
@@ -149,7 +146,8 @@ fn test_t9_upstream_error_frame_becomes_failed_not_silence() {
 
 #[test]
 fn test_t9_truncated_stream_still_completes() {
-    let partial = r#"{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"half"}]}}]}}"#;
+    let partial =
+        r#"{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"half"}]}}]}}"#;
     let events = decode_all(&[partial]);
     assert!(
         matches!(events.last(), Some(CodexEvent::Completed { .. })),

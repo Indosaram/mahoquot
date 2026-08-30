@@ -63,7 +63,9 @@ async fn disabled_credentials_leave_and_rejoin_the_pool() {
         serde_json::to_vec_pretty(&codex_credential()).unwrap(),
     )
     .expect("credential");
-    let app = create_app(Arc::new(AppState::new(&config(auth_dir.clone())).expect("state")));
+    let app = create_app(Arc::new(
+        AppState::new(&config(auth_dir.clone())).expect("state"),
+    ));
     assert_eq!(stats(&app).await["accounts"].as_array().unwrap().len(), 1);
 
     let disable = app
@@ -74,7 +76,9 @@ async fn disabled_credentials_leave_and_rejoin_the_pool() {
                 .uri("/v0/management/auth-files/status")
                 .header(header::AUTHORIZATION, "Bearer lifecycle-key")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"name":"codex-toggle.json","disabled":true}"#))
+                .body(Body::from(
+                    r#"{"name":"codex-toggle.json","disabled":true}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -103,7 +107,9 @@ async fn disabled_credentials_leave_and_rejoin_the_pool() {
                 .uri("/v0/management/auth-files/status")
                 .header(header::AUTHORIZATION, "Bearer lifecycle-key")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"name":"codex-toggle.json","disabled":false}"#))
+                .body(Body::from(
+                    r#"{"name":"codex-toggle.json","disabled":false}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -117,7 +123,9 @@ async fn disabled_credentials_leave_and_rejoin_the_pool() {
 async fn generic_openai_key_provider_joins_pool() {
     let auth_dir = std::env::temp_dir().join(format!("quotio-generic-{}", std::process::id()));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
-    let app = create_app(Arc::new(AppState::new(&config(auth_dir.clone())).expect("state")));
+    let app = create_app(Arc::new(
+        AppState::new(&config(auth_dir.clone())).expect("state"),
+    ));
     let create = app
         .clone()
         .oneshot(
@@ -149,7 +157,11 @@ async fn generic_openai_key_provider_joins_pool() {
     assert_eq!(create.status(), StatusCode::OK);
     let account_stats = stats(&app).await;
     let accounts = account_stats["accounts"].as_array().unwrap();
-    assert_eq!(accounts.len(), 1, "generic credential must join pool: {account_stats}");
+    assert_eq!(
+        accounts.len(),
+        1,
+        "generic credential must join pool: {account_stats}"
+    );
     assert_eq!(accounts[0]["provider"], "deepseek");
     std::fs::remove_dir_all(auth_dir).ok();
 }
@@ -159,7 +171,9 @@ async fn vertex_import_exchanges_service_account_and_joins_google_pool() {
     let token_app = axum::Router::new().route(
         "/token",
         axum::routing::post(|body: String| async move {
-            assert!(body.contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer"));
+            assert!(
+                body.contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer")
+            );
             assert!(body.contains("assertion="));
             axum::Json(serde_json::json!({"access_token":"vertex-access","expires_in":3600}))
         }),
@@ -168,17 +182,34 @@ async fn vertex_import_exchanges_service_account_and_joins_google_pool() {
     let token_uri = format!("http://{}/token", listener.local_addr().unwrap());
     let token_task = tokio::spawn(async move { axum::serve(listener, token_app).await.unwrap() });
     let auth_dir = std::env::temp_dir().join(format!("quotio-vertex-{}", std::process::id()));
-    std::fs::remove_dir_all(&auth_dir).ok(); std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
     let app = create_app(Arc::new(AppState::new(&config(auth_dir.clone())).unwrap()));
     let private_key = include_str!("fixtures/test-rsa-private.pem");
-    let response = app.clone().oneshot(Request::builder().method("POST").uri("/v0/management/vertex/import")
-        .header(header::AUTHORIZATION,"Bearer lifecycle-key").header(header::CONTENT_TYPE,"application/json")
-        .body(Body::from(serde_json::json!({"file":serde_json::json!({
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v0/management/vertex/import")
+                .header(header::AUTHORIZATION, "Bearer lifecycle-key")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"file":serde_json::json!({
             "type":"service_account","project_id":"project-1","private_key":private_key,
             "client_email":"service@project-1.iam.gserviceaccount.com","token_uri":token_uri
-        }).to_string()}).to_string())).unwrap()).await.unwrap();
-    let status=response.status(); let body=json(response).await;
-    assert_eq!(status,StatusCode::OK,"response: {body}");
-    let accounts=stats(&app).await; assert_eq!(accounts["accounts"][0]["provider"],"google-vertex");
-    token_task.abort(); std::fs::remove_dir_all(auth_dir).ok();
+        }).to_string()})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = json(response).await;
+    assert_eq!(status, StatusCode::OK, "response: {body}");
+    let accounts = stats(&app).await;
+    assert_eq!(accounts["accounts"][0]["provider"], "google-vertex");
+    token_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
 }

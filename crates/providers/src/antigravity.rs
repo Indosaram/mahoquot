@@ -121,10 +121,7 @@ impl AntigravityAccount {
                 "Authorization".to_string(),
                 format!("Bearer {}", self.access_token),
             ),
-            (
-                "User-Agent".to_string(),
-                ANTIGRAVITY_USER_AGENT.to_string(),
-            ),
+            ("User-Agent".to_string(), ANTIGRAVITY_USER_AGENT.to_string()),
         ]
     }
 }
@@ -162,9 +159,7 @@ pub fn antigravity_quota_summary_url(base: &str) -> String {
 }
 
 pub fn derive_antigravity_slug_from_filename(file_name: &str) -> String {
-    let without_prefix = file_name
-        .strip_prefix("antigravity-")
-        .unwrap_or(file_name);
+    let without_prefix = file_name.strip_prefix("antigravity-").unwrap_or(file_name);
     without_prefix
         .strip_suffix(".json")
         .unwrap_or(without_prefix)

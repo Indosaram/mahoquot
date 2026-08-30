@@ -24,6 +24,7 @@ base64 = "0.22"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body = "1"
 http-body-util = "0.1"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }

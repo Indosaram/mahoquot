@@ -61,7 +61,10 @@ fn model_object(entry: &ModelEntry, with_methods: bool) -> Value {
     if with_methods {
         obj.as_object_mut()
             .expect("model_object builds a map")
-            .insert("supportedGenerationMethods".into(), json!(["generateContent"]));
+            .insert(
+                "supportedGenerationMethods".into(),
+                json!(["generateContent"]),
+            );
     }
     obj
 }

@@ -110,10 +110,12 @@ pub fn client_secret(body: &Value) -> Value {
 pub fn legacy_session(body: &Value) -> Value {
     let expires_at = now_unix() + EPHEMERAL_TTL_SECS;
     let mut out = session_object(&requested_model(body), expires_at);
-    out.as_object_mut().expect("session_object builds a map").insert(
-        "client_secret".into(),
-        json!({"expires_at": expires_at, "value": token("ek_", 32)}),
-    );
+    out.as_object_mut()
+        .expect("session_object builds a map")
+        .insert(
+            "client_secret".into(),
+            json!({"expires_at": expires_at, "value": token("ek_", 32)}),
+        );
     out
 }
 
@@ -165,7 +167,10 @@ mod tests {
     #[test]
     fn legacy_session_nests_the_secret_instead_of_the_session() {
         let v = legacy_session(&json!({"model": "gpt-realtime-mini"}));
-        assert!(v["client_secret"]["value"].as_str().unwrap().starts_with("ek_"));
+        assert!(v["client_secret"]["value"]
+            .as_str()
+            .unwrap()
+            .starts_with("ek_"));
         assert_eq!(v["model"], "gpt-realtime-mini");
         assert_eq!(v["object"], "realtime.session");
         assert_eq!(v["expires_at"], v["client_secret"]["expires_at"]);

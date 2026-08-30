@@ -1,10 +1,10 @@
 mod common;
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
-use axum::body::Bytes;
 use axum::body::Body;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -56,15 +56,17 @@ async fn capture(
 async fn start_mock(
     response: &'static str,
     content_type: &'static str,
-) -> (String, Arc<Mutex<Vec<SeenRequest>>>, tokio::task::JoinHandle<()>) {
+) -> (
+    String,
+    Arc<Mutex<Vec<SeenRequest>>>,
+    tokio::task::JoinHandle<()>,
+) {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let app = Router::new()
-        .fallback(post(capture))
-        .with_state(MockState {
-            seen: seen.clone(),
-            response,
-            content_type,
-        });
+    let app = Router::new().fallback(post(capture)).with_state(MockState {
+        seen: seen.clone(),
+        response,
+        content_type,
+    });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -150,13 +152,206 @@ async fn start_generic_gateway(
         ..GatewayConfig::default()
     };
     let state = Arc::new(AppState::new(&config).unwrap());
-    assert_eq!(state.pool.load().members.len(), 1, "state pool must retain generic account");
+    assert_eq!(
+        state.pool.load().members.len(),
+        1,
+        "state pool must retain generic account"
+    );
     assert!(state.pool.load().members[0].supports_model("deepseek-chat"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = create_app(state);
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{addr}"), auth_dir, task)
+}
+
+async fn start_google_gateway(
+    upstream: &str,
+) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    let auth_dir = common::unique_temp_dir("t12-google-ai-studio");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::write(
+        auth_dir.join("generic-google-primary.json"),
+        serde_json::json!({
+            "type": "generic",
+            "provider": "google",
+            "label": "Google AI Studio",
+            "adapter": "google",
+            "base_url": upstream,
+            "api_key": "google-secret",
+            "models": ["gemini-3.5-flash"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        auth_refresh_enabled: false,
+        max_failover: 3,
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = create_app(state);
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), auth_dir, task)
+}
+
+async fn start_static_header_gateway(
+    upstream: &str,
+) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    let auth_dir = common::unique_temp_dir("t12-static-headers");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::write(
+        auth_dir.join("generic-opencode-free.json"),
+        serde_json::json!({
+            "type": "generic",
+            "provider": "opencode-free",
+            "label": "OpenCode Free",
+            "adapter": "openai-chat",
+            "base_url": upstream,
+            "api_key": "",
+            "models": ["free-model"],
+            "static_headers": {
+                "User-Agent": "opencode",
+                "x-opencode-client": "desktop"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        auth_refresh_enabled: false,
+        max_failover: 3,
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).unwrap());
+    assert_eq!(state.pool.load().members.len(), 1, "key-optional account loaded");
+    assert!(
+        state.pool.load().members[0].supports_model("free-model"),
+        "key-optional account owns its declared model"
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = create_app(state);
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), auth_dir, task)
+}
+
+async fn start_adapter_gateway(
+    provider: &str,
+    adapter: &str,
+    model: &str,
+    upstream: &str,
+) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    let auth_dir = common::unique_temp_dir(&format!("t12-{provider}"));
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::write(
+        auth_dir.join(format!("generic-{provider}.json")),
+        serde_json::json!({
+            "type": "generic",
+            "provider": provider,
+            "label": provider,
+            "adapter": adapter,
+            "base_url": upstream,
+            "api_key": "provider-secret",
+            "models": [model]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::from_env_value("relay-key"),
+        auth_refresh_enabled: false,
+        max_failover: 3,
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let state = Arc::new(AppState::new(&config).unwrap());
+    assert_eq!(state.pool.load().members.len(), 1, "{provider} account loaded");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = create_app(state);
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), auth_dir, task)
+}
+
+#[tokio::test]
+async fn generic_anthropic_adapter_account_relays_native_messages_wire() {
+    let response = r#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"anthropic-key-ok"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}"#;
+    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
+    let (gateway, auth_dir, gateway_task) = start_adapter_gateway(
+        "anthropic-apikey",
+        "anthropic",
+        "claude-sonnet-5",
+        &upstream,
+    )
+    .await;
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let body: serde_json::Value = reply.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert_eq!(body["choices"][0]["message"]["content"], "anthropic-key-ok");
+    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    assert_eq!(request.path, "/v1/messages");
+    assert_eq!(request.headers.get("x-api-key").unwrap(), "provider-secret");
+    assert_eq!(
+        request.headers.get("anthropic-version").unwrap(),
+        "2023-06-01"
+    );
+    assert!(!request.headers.contains_key("authorization"));
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn azure_openai_account_sends_api_key_header_without_bearer() {
+    let response = r#"{"id":"chatcmpl-azure","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"azure-ok"},"finish_reason":"stop"}]}"#;
+    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
+    let (gateway, auth_dir, gateway_task) =
+        start_adapter_gateway("azure-openai", "azure-openai", "gpt-5.3", &upstream).await;
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "gpt-5.3",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let body = reply.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert!(body.contains("azure-ok"), "client response: {body}");
+    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    assert_eq!(request.headers.get("api-key").unwrap(), "provider-secret");
+    assert!(!request.headers.contains_key("authorization"));
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
 }
 
 #[tokio::test]
@@ -179,10 +374,94 @@ async fn generic_openai_chat_provider_relays_json_without_codex_translation() {
     let body = reply.text().await.unwrap();
     assert_eq!(status, StatusCode::OK, "client response: {body}");
     assert!(body.contains("generic-ok"), "client response: {body}");
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.path, "/v1/chat/completions");
-    assert_eq!(request.headers.get("authorization").unwrap(), "Bearer deepseek-secret");
+    assert_eq!(
+        request.headers.get("authorization").unwrap(),
+        "Bearer deepseek-secret"
+    );
     assert_eq!(request.body["model"], "deepseek-chat");
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn generic_provider_forwards_reference_static_headers_without_an_api_key() {
+    let response = r#"{"id":"chatcmpl-free","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"free-ok"},"finish_reason":"stop"}]}"#;
+    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
+    let (gateway, auth_dir, gateway_task) = start_static_header_gateway(&upstream).await;
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "free-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let response_body = reply.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "gateway response: {response_body}");
+    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    assert_eq!(request.headers.get("user-agent").unwrap(), "opencode");
+    assert_eq!(
+        request.headers.get("x-opencode-client").unwrap(),
+        "desktop"
+    );
+    assert!(!request.headers.contains_key("authorization"));
+    gateway_task.abort();
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn google_ai_studio_uses_generativelanguage_wire_and_api_key_header() {
+    let response = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"google-ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}"#;
+    let (upstream, seen, mock_task) = start_mock(response, "application/json").await;
+    let (gateway, auth_dir, gateway_task) = start_google_gateway(&upstream).await;
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("relay-key")
+        .json(&serde_json::json!({
+            "model": "gemini-3.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = reply.status();
+    let body: serde_json::Value = reply.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "client response: {body}");
+    assert_eq!(body["choices"][0]["message"]["content"], "google-ok");
+
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
+    assert_eq!(
+        request.path,
+        "/v1beta/models/gemini-3.5-flash:generateContent"
+    );
+    assert_eq!(
+        request.headers.get("x-goog-api-key").unwrap(),
+        "google-secret"
+    );
+    assert!(request.headers.get("authorization").is_none());
+    assert!(request.body.get("contents").is_some());
+    assert!(request.body.get("project").is_none());
+    assert!(request.body.get("request").is_none());
+
     gateway_task.abort();
     mock_task.abort();
     std::fs::remove_dir_all(auth_dir).ok();
@@ -204,8 +483,7 @@ const ANTHROPIC_STREAM: &str = concat!(
 );
 
 async fn assert_anthropic_native(kind: &str, model: &str) {
-    let (upstream, seen, mock_task) =
-        start_mock(ANTHROPIC_STREAM, "text/event-stream").await;
+    let (upstream, seen, mock_task) = start_mock(ANTHROPIC_STREAM, "text/event-stream").await;
     let (gateway, auth_dir, gateway_task) = start_gateway(kind, &upstream).await;
 
     let response = reqwest::Client::new()
@@ -227,10 +505,18 @@ async fn assert_anthropic_native(kind: &str, model: &str) {
     assert!(body.contains("relay-ok"), "client stream: {body}");
     assert!(body.contains("message_stop"), "client stream: {body}");
 
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.path, "/v1/messages");
     assert_eq!(request.body["messages"][0]["content"], "ping");
-    assert!(request.body.get("input").is_none(), "must not send Codex body");
+    assert!(
+        request.body.get("input").is_none(),
+        "must not send Codex body"
+    );
     assert_eq!(
         request
             .headers
@@ -321,7 +607,10 @@ async fn anthropic_stream_forwards_first_delta_before_upstream_finishes() {
     })
     .await
     .expect("gateway buffered the upstream instead of forwarding the first delta");
-    assert!(first_live.contains("first-live"), "client stream: {first_live}");
+    assert!(
+        first_live.contains("first-live"),
+        "client stream: {first_live}"
+    );
     let _ = release_tx.send(());
     gateway_task.abort();
     mock_task.abort();
@@ -351,7 +640,12 @@ async fn claude_accepts_openai_input_and_returns_openai_nonstream() {
     assert_eq!(status, StatusCode::OK, "gateway response: {body}");
     assert_eq!(body["choices"][0]["message"]["content"], "json-ok");
 
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.path, "/v1/messages");
     assert_eq!(request.body["messages"][0]["content"][0]["type"], "text");
     assert_eq!(request.body["messages"][0]["content"][0]["text"], "ping");
@@ -434,7 +728,12 @@ async fn kiro_relays_conversation_state_and_decodes_eventstream() {
     assert_eq!(status, StatusCode::OK, "gateway response: {body}");
     assert!(body.contains("kiro-ok"), "client stream: {body}");
 
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.path, "/generateAssistantResponse");
     assert_eq!(
         request.body["profileArn"],
@@ -501,12 +800,20 @@ async fn cursor_relays_connect_protobuf_and_decodes_text_delta() {
     assert_eq!(status, StatusCode::OK, "gateway response: {body}");
     assert!(body.contains("cursor-ok"), "client stream: {body}");
 
-    let request = seen.lock().unwrap().first().cloned().expect("upstream call");
+    let request = seen
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("upstream call");
     assert_eq!(request.path, "/agent.v1.AgentService/Run");
     assert_eq!(request.raw_body.first(), Some(&0));
     assert!(request.raw_body.windows(4).any(|window| window == b"ping"));
     assert_eq!(
-        request.headers.get("content-type").and_then(|v| v.to_str().ok()),
+        request
+            .headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
         Some("application/connect+proto")
     );
     assert_eq!(
@@ -533,27 +840,26 @@ async fn cursor_keeps_request_open_and_replies_to_server_kv_frames() {
 
         let get_blob = mahoquot_gateway::compat::cursor_fixture_get_blob(42);
         let first = Bytes::from(connect_frame(&get_blob.encode_to_vec(), 0));
-        let stream = futures::stream::once(async move {
-            Ok::<Bytes, std::convert::Infallible>(first)
-        })
-        .chain(futures::stream::once(async move {
-            let reply = tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                request.next(),
-            )
-            .await
-            .expect("gateway closed the Cursor request body before the KV reply")
-            .expect("missing Cursor KV reply")
-            .expect("Cursor request body error");
-            assert!(mahoquot_gateway::compat::cursor_is_get_blob_reply(&reply, 42));
+        let stream =
+            futures::stream::once(async move { Ok::<Bytes, std::convert::Infallible>(first) })
+                .chain(futures::stream::once(async move {
+                    let reply =
+                        tokio::time::timeout(std::time::Duration::from_secs(1), request.next())
+                            .await
+                            .expect("gateway closed the Cursor request body before the KV reply")
+                            .expect("missing Cursor KV reply")
+                            .expect("Cursor request body error");
+                    assert!(mahoquot_gateway::compat::cursor_is_get_blob_reply(
+                        &reply, 42
+                    ));
 
-            let text = mahoquot_gateway::compat::cursor_fixture_text("duplex-ok");
-            let end = mahoquot_gateway::compat::cursor_fixture_turn_end();
-            let mut frames = connect_frame(&text.encode_to_vec(), 0);
-            frames.extend_from_slice(&connect_frame(&end.encode_to_vec(), 0));
-            frames.extend_from_slice(&connect_frame(b"{}", 2));
-            Ok(Bytes::from(frames))
-        }));
+                    let text = mahoquot_gateway::compat::cursor_fixture_text("duplex-ok");
+                    let end = mahoquot_gateway::compat::cursor_fixture_turn_end();
+                    let mut frames = connect_frame(&text.encode_to_vec(), 0);
+                    frames.extend_from_slice(&connect_frame(&end.encode_to_vec(), 0));
+                    frames.extend_from_slice(&connect_frame(b"{}", 2));
+                    Ok(Bytes::from(frames))
+                }));
         Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/connect+proto")

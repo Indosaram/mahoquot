@@ -12,6 +12,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
+jsonwebtoken.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

@@ -52,7 +52,7 @@ async fn test_t4_passthrough_integrity() {
     std::fs::write(temp_dir.join("codex-a-plus.json"), json_a).unwrap();
 
     let config = GatewayConfig {
-            usage_poll_secs: 120,
+        usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: Strategy::StrictRoundRobin,

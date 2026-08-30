@@ -126,11 +126,7 @@ async fn api_key_usage(State(state): State<Arc<AppState>>) -> Response {
 /// usage inline rather than through a queue, so the depth is always zero;
 /// reporting a fabricated backlog would be worse than reporting the truth.
 async fn usage_queue() -> Response {
-    (
-        StatusCode::OK,
-        Json(json!([])),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!([]))).into_response()
 }
 
 pub fn apikeys_routes() -> Router<Arc<AppState>> {
@@ -140,28 +136,29 @@ pub fn apikeys_routes() -> Router<Arc<AppState>> {
 
     for list in KEY_LISTS {
         let path = list.path;
-        router = router.route(
-            path,
-            get(move |State(state): State<Arc<AppState>>| async move {
-                read(state, entry(path)).await
-            })
-            .put(
-                move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
-                    replace(state, entry(path), body).await
-                },
-            )
-            .patch(
-                move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
-                    edit(state, entry(path), body).await
-                },
-            )
-            .delete(
-                move |State(state): State<Arc<AppState>>,
-                      Query(params): Query<HashMap<String, String>>| async move {
-                    remove(state, entry(path), params).await
-                },
-            ),
-        );
+        router =
+            router.route(
+                path,
+                get(move |State(state): State<Arc<AppState>>| async move {
+                    read(state, entry(path)).await
+                })
+                .put(
+                    move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
+                        replace(state, entry(path), body).await
+                    },
+                )
+                .patch(
+                    move |State(state): State<Arc<AppState>>, body: bytes::Bytes| async move {
+                        edit(state, entry(path), body).await
+                    },
+                )
+                .delete(
+                    move |State(state): State<Arc<AppState>>,
+                          Query(params): Query<HashMap<String, String>>| async move {
+                        remove(state, entry(path), params).await
+                    },
+                ),
+            );
     }
     router
 }
@@ -180,7 +177,14 @@ mod tests {
             .as_array()
             .expect("apikeys")
             .iter()
-            .map(|r| r.as_str().expect("route").split_once(' ').expect("pair").1.to_string())
+            .map(|r| {
+                r.as_str()
+                    .expect("route")
+                    .split_once(' ')
+                    .expect("pair")
+                    .1
+                    .to_string()
+            })
             .collect();
         // then each is either a key list or one of the two read-only reports
         let known = ["/api-key-usage", "/usage-queue"];

@@ -10,7 +10,10 @@ pub fn replace(target: &mut Vec<String>, body: &Value) -> Result<(), Refusal> {
         *target = array;
         return Ok(());
     }
-    match body.get("items").and_then(|i| serde_json::from_value::<Vec<String>>(i.clone()).ok()) {
+    match body
+        .get("items")
+        .and_then(|i| serde_json::from_value::<Vec<String>>(i.clone()).ok())
+    {
         Some(items) if !items.is_empty() => {
             *target = items;
             Ok(())
@@ -47,7 +50,11 @@ pub fn edit(target: &mut Vec<String>, body: &Value) -> Result<(), Refusal> {
 }
 
 /// Remove by `?index=` or `?value=`; upstream refuses when neither is usable.
-pub fn remove(target: &mut Vec<String>, index: Option<&str>, value: Option<&str>) -> Result<(), Refusal> {
+pub fn remove(
+    target: &mut Vec<String>,
+    index: Option<&str>,
+    value: Option<&str>,
+) -> Result<(), Refusal> {
     if let Some(index) = index.and_then(|raw| raw.parse::<usize>().ok()) {
         if index < target.len() {
             target.remove(index);
@@ -140,7 +147,10 @@ mod tests {
         // when removing
         let result = remove(&mut target, None, None);
         // then upstream's message is returned and nothing is dropped
-        assert!(matches!(result, Err(Refusal::Message("missing index or value"))));
+        assert!(matches!(
+            result,
+            Err(Refusal::Message("missing index or value"))
+        ));
         assert_eq!(target, vec!["a"]);
     }
 }

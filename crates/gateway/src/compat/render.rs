@@ -104,8 +104,10 @@ impl GeminiChunkRenderer {
                 Vec::new()
             }
             CodexEvent::ReasoningDelta(text) => {
-                self.pending
-                    .push(Self::candidate(json!([{"text": text, "thought": true}]), None));
+                self.pending.push(Self::candidate(
+                    json!([{"text": text, "thought": true}]),
+                    None,
+                ));
                 Vec::new()
             }
             CodexEvent::ReasoningSignature(sig) => {
@@ -530,7 +532,10 @@ mod gemini_stream_tests {
         let mut r = GeminiChunkRenderer::new("m".into(), 1);
         r.render(CodexEvent::ReasoningSignature("SIG".into()));
         let out = payloads(r.render(CodexEvent::Completed { usage: None }));
-        assert_eq!(out[0]["candidates"][0]["content"]["parts"][0]["thoughtSignature"], "SIG");
+        assert_eq!(
+            out[0]["candidates"][0]["content"]["parts"][0]["thoughtSignature"],
+            "SIG"
+        );
     }
 
     #[test]

@@ -970,6 +970,7 @@ async fn test_antigravity_oauth_flow_end_to_end() {
             | ProviderAccount::Cursor(_)
             | ProviderAccount::Kiro(_)
             | ProviderAccount::Zcode(_)
+            | ProviderAccount::Vertex(_)
             | ProviderAccount::Generic(_) => false,
         }
     });
@@ -1123,5 +1124,533 @@ async fn test_antigravity_oauth_callback_state_edge() {
     let status_json = body_json(status).await;
     assert!(status_json.get("accounts").is_some());
 
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[derive(Clone)]
+struct MockCommandCodeWhoamiState {
+    hit_count: Arc<AtomicUsize>,
+    last_auth_header: Arc<tokio::sync::Mutex<Option<String>>>,
+    status_code: StatusCode,
+    user_id: String,
+    user_name: String,
+}
+
+#[tokio::test]
+async fn test_command_code_oauth_flow_end_to_end() {
+    // Given: a mock /alpha/whoami endpoint and an isolated gateway instance
+    let auth_dir = unique_temp_dir("qg-t13-cc-e2e");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let server_state = MockCommandCodeWhoamiState {
+        hit_count: Arc::new(AtomicUsize::new(0)),
+        last_auth_header: Arc::new(tokio::sync::Mutex::new(None)),
+        status_code: StatusCode::OK,
+        user_id: "cc-user-123".to_string(),
+        user_name: "command-user".to_string(),
+    };
+    let s_clone = server_state.clone();
+
+    let mock_app = Router::new()
+        .route(
+            "/alpha/whoami",
+            get(
+                move |State(s): State<MockCommandCodeWhoamiState>,
+                      headers: axum::http::HeaderMap| async move {
+                    s.hit_count.fetch_add(1, Ordering::SeqCst);
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    *s.last_auth_header.lock().await = auth;
+                    (
+                        s.status_code,
+                        Json(json!({
+                            "user": {
+                                "id": s.user_id,
+                                "userName": s.user_name,
+                            }
+                        })),
+                    )
+                },
+            ),
+        )
+        .with_state(s_clone);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+
+    let whoami_url = format!("http://127.0.0.1:{port}/alpha/whoami");
+    let callback_url = "http://127.0.0.1:5959/callback";
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app_state = Arc::new(AppState::new(&config).unwrap());
+    let app = create_app(app_state.clone());
+
+    // When: GET /v0/management/command-code-auth-url is requested
+    let start_uri = format!(
+        "/v0/management/command-code-auth-url?whoami_url={}&callback={}",
+        url_encode(&whoami_url),
+        url_encode(callback_url)
+    );
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(start_uri)
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Then: returns studio URL with callback and random state
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    assert_eq!(start_json["status"], "ok");
+    assert_eq!(start_json["provider"], "command-code");
+
+    let auth_url = start_json["url"].as_str().unwrap();
+    let state = start_json["state"].as_str().unwrap();
+    assert!(!state.is_empty());
+    assert!(auth_url.contains("https://commandcode.ai/studio/auth/cli"));
+    assert!(auth_url.contains(&format!("callback={}", url_encode(callback_url))));
+    assert!(auth_url.contains(&format!("state={}", url_encode(state))));
+
+    // When: callback ingestion arrives with matching state and required fields
+    let callback_payload = json!({
+        "apiKey": "cc-test-api-key-456",
+        "state": state,
+        "userId": "cc-user-123",
+        "userName": "command-user",
+        "keyName": "dev-box"
+    });
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v0/management/oauth-callback")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(callback_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Then: whoami is validated, generic credential is written, and pool is rescanned
+    assert_eq!(callback.status(), StatusCode::OK);
+    assert_eq!(server_state.hit_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        server_state.last_auth_header.lock().await.as_deref(),
+        Some("Bearer cc-test-api-key-456")
+    );
+
+    let cred_file = auth_dir.join("generic-command-code-command-user.json");
+    assert!(
+        cred_file.exists(),
+        "credential file must exist: {cred_file:?}"
+    );
+    let cred_raw = std::fs::read_to_string(&cred_file).unwrap();
+    let cred_json: Value = serde_json::from_str(&cred_raw).unwrap();
+    assert_eq!(cred_json["type"], "generic");
+    assert_eq!(cred_json["provider"], "command-code");
+    assert_eq!(cred_json["api_key"], "cc-test-api-key-456");
+    assert_eq!(cred_json["label"], "command-user");
+    assert_eq!(
+        cred_json["base_url"],
+        "https://api.commandcode.ai/provider/v1"
+    );
+    assert_eq!(cred_json["models"], json!(["deepseek/deepseek-v4-flash"]));
+    assert_eq!(cred_json["disabled"], false);
+
+    // Then: credential is in runtime pool
+    let pool_members = app_state.pool.load().members.clone();
+    let found = pool_members.iter().find(|m| {
+        let guard = m.inner.read().unwrap();
+        match &*guard {
+            ProviderAccount::Generic(acct) => {
+                acct.provider == "command-code"
+                    && acct.api_key == "cc-test-api-key-456"
+                    && acct.label == "command-user"
+            }
+            _ => false,
+        }
+    });
+    assert!(
+        found.is_some(),
+        "command-code generic credential must join pool"
+    );
+
+    // Then: get-auth-status returns ok
+    let status_resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), StatusCode::OK);
+    let status_json = body_json(status_resp).await;
+    assert_eq!(status_json["status"], "ok");
+    assert_eq!(status_json["provider"], "command-code");
+
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn test_command_code_oauth_mismatched_state_fails_without_persistence() {
+    // Given: a gateway with a registered command-code session
+    let auth_dir = unique_temp_dir("qg-t13-cc-mismatch");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app_state = Arc::new(AppState::new(&config).unwrap());
+    let app = create_app(app_state);
+
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/command-code-auth-url?callback=http%3A%2F%2F127.0.0.1%3A35959%2Fcallback")
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    let real_state = start_json["state"].as_str().unwrap();
+
+    // When: callback is submitted with a mismatched state
+    let callback_payload = json!({
+        "apiKey": "cc-test-api-key-456",
+        "state": "mismatched-state-999",
+        "userId": "cc-user-123",
+        "userName": "command-user",
+        "keyName": "dev-box"
+    });
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v0/management/oauth-callback")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(callback_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Then: callback fails and no credentials are written
+    assert_ne!(callback.status(), StatusCode::OK);
+    let files = std::fs::read_dir(&auth_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name().to_string_lossy().ends_with(".json") && e.file_name() != "config.yaml"
+        })
+        .count();
+    assert_eq!(
+        files, 0,
+        "no credential file may be persisted on mismatched state"
+    );
+
+    // Real session remains pending
+    let status_resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={real_state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), StatusCode::OK);
+    let status_json = body_json(status_resp).await;
+    assert_eq!(status_json["status"], "pending");
+
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn test_command_code_oauth_malformed_callback_fails_without_persistence() {
+    // Given: a gateway with a registered command-code session
+    let auth_dir = unique_temp_dir("qg-t13-cc-malformed");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/command-code-auth-url?callback=http%3A%2F%2F127.0.0.1%3A35959%2Fcallback")
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    let state = start_json["state"].as_str().unwrap();
+
+    // When: callback is missing required fields (apiKey is empty / missing userId)
+    for bad_payload in [
+        json!({ "state": state, "userId": "u1", "userName": "alice", "keyName": "k1" }),
+        json!({ "apiKey": "", "state": state, "userId": "u1", "userName": "alice", "keyName": "k1" }),
+        json!({ "apiKey": "k", "state": state, "userId": "", "userName": "alice", "keyName": "k1" }),
+        json!("not an object"),
+    ] {
+        let callback = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v0/management/oauth-callback")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(bad_payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Then: callback is rejected
+        assert_ne!(callback.status(), StatusCode::OK);
+    }
+
+    let files = std::fs::read_dir(&auth_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name().to_string_lossy().ends_with(".json") && e.file_name() != "config.yaml"
+        })
+        .count();
+    assert_eq!(files, 0, "no credentials written on malformed callback");
+
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn test_command_code_oauth_whoami_failure_fails_without_persistence() {
+    // Given: a mock whoami endpoint returning 401 Unauthorized
+    let auth_dir = unique_temp_dir("qg-t13-cc-whoami-fail");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let mock_app = Router::new().route(
+        "/alpha/whoami",
+        get(|| async { (StatusCode::UNAUTHORIZED, "Invalid API key") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+
+    let whoami_url = format!("http://127.0.0.1:{port}/alpha/whoami");
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/command-code-auth-url?whoami_url={}&callback=http%3A%2F%2F127.0.0.1%3A35959%2Fcallback",
+                    url_encode(&whoami_url)
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_json = body_json(start).await;
+    let state = start_json["state"].as_str().unwrap();
+
+    // When: callback arrives with invalid API key
+    let callback_payload = json!({
+        "apiKey": "invalid-key-xyz",
+        "state": state,
+        "userId": "u1",
+        "userName": "alice",
+        "keyName": "k1"
+    });
+    let callback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v0/management/oauth-callback")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(callback_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Then: callback fails and no credential is saved
+    assert_ne!(callback.status(), StatusCode::OK);
+    let files = std::fs::read_dir(&auth_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name().to_string_lossy().ends_with(".json") && e.file_name() != "config.yaml"
+        })
+        .count();
+    assert_eq!(files, 0, "no credential saved when whoami fails");
+
+    let status_resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v0/management/get-auth-status?state={state}"))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), StatusCode::BAD_REQUEST);
+    let status_json = body_json(status_resp).await;
+    assert_eq!(status_json["status"], "error");
+
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn test_command_code_oauth_rejects_whoami_without_identity() {
+    let auth_dir = unique_temp_dir("qg-t13-cc-empty-identity");
+    std::fs::remove_dir_all(&auth_dir).ok();
+    std::fs::create_dir_all(&auth_dir).unwrap();
+
+    let mock_app = Router::new().route(
+        "/alpha/whoami",
+        get(|| async { Json(json!({"user": {"id": "", "userName": ""}})) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mock_task = tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v0/management/command-code-auth-url?whoami_url={}&callback=http%3A%2F%2F127.0.0.1%3A35959%2Fcallback",
+                    url_encode(&format!("http://127.0.0.1:{port}/alpha/whoami"))
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let state = body_json(start).await["state"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let callback = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v0/management/oauth-callback")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "apiKey": "valid-key-without-identity",
+                        "state": state,
+                        "userId": "attacker-selected-id",
+                        "userName": "attacker-selected-name",
+                        "keyName": "dev-box"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        std::fs::read_dir(&auth_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
+            .count(),
+        0
+    );
+    mock_task.abort();
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+#[tokio::test]
+async fn test_command_code_oauth_reports_unavailable_default_callback_port() {
+    let occupied = match tokio::net::TcpListener::bind("127.0.0.1:5959").await {
+        Ok(listener) => listener,
+        Err(_) => return,
+    };
+    let auth_dir = unique_temp_dir("qg-t13-cc-port-conflict");
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: mahoquot_gateway::inbound::ApiKeys::new(vec![API_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).unwrap()));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/command-code-auth-url")
+                .header(header::AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    drop(occupied);
     std::fs::remove_dir_all(auth_dir).ok();
 }

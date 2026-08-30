@@ -5,7 +5,6 @@ use mahoquot_types::Strategy;
 use crate::inbound::ApiKeys;
 use crate::management::settings::{RemoteManagement, RoutingSettings, Settings};
 
-
 #[derive(Debug, Clone, Default)]
 pub struct GatewayConfig {
     pub port: u16,

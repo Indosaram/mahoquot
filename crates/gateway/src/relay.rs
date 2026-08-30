@@ -12,8 +12,8 @@ use mahoquot_types::{Health, Outcome, PoolMember, SessionHint};
 
 use crate::account::AccountMember;
 use crate::compat;
-use crate::usage::{parse_claude_headers, parse_codex_headers};
 use crate::state::AppState;
+use crate::usage::{parse_claude_headers, parse_codex_headers};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RelayMode {
@@ -41,29 +41,162 @@ fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
-async fn record_request_outcome(
-    state: &AppState,
-    provider: &str,
-    model: Option<&str>,
+/// Everything needed to finalize a streamed request record once the response
+/// body has been fully delivered (or abandoned by a client disconnect).
+struct StreamedOutcome {
+    state: Arc<AppState>,
+    provider: String,
+    account: Option<String>,
+    model: Option<String>,
+    status: u16,
+    started: std::time::Instant,
+    bytes_in: usize,
+}
+
+/// Shared state of a counting body: byte counter, bounded head/tail windows
+/// for usage parsing, and the pending record — all under one mutex, finalized
+/// exactly once at end of stream or on early drop.
+struct StreamCapture {
+    bytes_out: u64,
+    head_tail: crate::usage::HeadTailCapture,
+    outcome: Option<StreamedOutcome>,
+}
+
+impl StreamCapture {
+    fn observe(&mut self, data: &[u8]) {
+        self.bytes_out += data.len() as u64;
+        self.head_tail.push(data);
+    }
+
+    /// Spawn the deferred record exactly once; safe to call from `Drop`.
+    fn finalize(&mut self) {
+        let Some(outcome) = self.outcome.take() else {
+            return;
+        };
+        let tokens = {
+            let (head, tail) = self.head_tail.parts();
+            crate::usage::extract_total_tokens(head, tail)
+        };
+        let bytes_out = self.bytes_out;
+        let state = outcome.state;
+        tokio::spawn(async move {
+            let record = OutcomeRecord {
+                provider: &outcome.provider,
+                account: outcome.account.as_deref(),
+                model: outcome.model.as_deref(),
+                status: outcome.status,
+                success: true,
+                elapsed_ms: outcome.started.elapsed().as_millis() as u64,
+                bytes_in: outcome.bytes_in,
+                bytes_out,
+                tokens,
+            };
+            record_request_outcome(&state, record).await;
+        });
+    }
+}
+
+type SharedCapture = Arc<std::sync::Mutex<StreamCapture>>;
+
+fn with_capture(shared: &SharedCapture, f: impl FnOnce(&mut StreamCapture)) {
+    let mut guard = shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&mut guard);
+}
+
+/// Stream wrapper over the success response body: counts delivered bytes,
+/// captures head/tail windows for usage parsing, and spawns the request
+/// record at end of stream. Chunks pass through untouched — nothing is
+/// buffered beyond the bounded capture windows.
+struct CountedStream {
+    inner: http_body_util::BodyStream<Body>,
+    shared: SharedCapture,
+}
+
+impl CountedStream {
+    fn new(body: Body, outcome: StreamedOutcome) -> Self {
+        Self {
+            inner: http_body_util::BodyStream::new(body),
+            shared: SharedCapture::new(std::sync::Mutex::new(StreamCapture {
+                bytes_out: 0,
+                head_tail: crate::usage::HeadTailCapture::new(),
+                outcome: Some(outcome),
+            })),
+        }
+    }
+}
+
+impl Drop for CountedStream {
+    fn drop(&mut self) {
+        with_capture(&self.shared, StreamCapture::finalize);
+    }
+}
+
+impl futures::Stream for CountedStream {
+    type Item = Result<Bytes, axum::Error>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        loop {
+            match std::task::ready!(std::pin::Pin::new(&mut self.inner).poll_next(cx)) {
+                Some(Ok(frame)) => {
+                    if let Some(data) = frame.data_ref() {
+                        with_capture(&self.shared, |capture| capture.observe(data));
+                        return std::task::Poll::Ready(Some(Ok(data.clone())));
+                    }
+                }
+                Some(Err(error)) => return std::task::Poll::Ready(Some(Err(error))),
+                None => {
+                    with_capture(&self.shared, StreamCapture::finalize);
+                    return std::task::Poll::Ready(None);
+                }
+            }
+        }
+    }
+}
+
+/// Fields of one finalized request record, handed to `record_request_outcome`
+/// by the synchronous error paths and the streamed-success finalizer alike.
+struct OutcomeRecord<'a> {
+    provider: &'a str,
+    account: Option<&'a str>,
+    model: Option<&'a str>,
     status: u16,
     success: bool,
     elapsed_ms: u64,
-) {
+    bytes_in: usize,
+    bytes_out: u64,
+    tokens: Option<u64>,
+}
+
+async fn record_request_outcome(state: &AppState, record: OutcomeRecord<'_>) {
     let timestamp = now_unix_secs();
-    state.telemetry.record(timestamp, provider, success);
+    state
+        .telemetry
+        .record_with_account(timestamp, record.provider, record.account, record.success);
+    let line = serde_json::json!({
+        "kind": "request",
+        "timestamp": timestamp,
+        "provider": record.provider,
+        "account": record.account,
+        "model": record.model.unwrap_or(""),
+        "status": record.status,
+        "success": record.success,
+        "latency-ms": record.elapsed_ms,
+        "bytes-in": record.bytes_in,
+        "bytes-out": record.bytes_out,
+        "tokens": record.tokens,
+    })
+    .to_string();
+    // The live tail is always fed; file persistence is the only gated part.
+    state.log_tail.push(line.clone());
     let settings = state.settings.current();
     if !settings.logging_to_file {
         return;
     }
-    let line = serde_json::json!({
-        "timestamp": timestamp,
-        "provider": provider,
-        "model": model.unwrap_or(""),
-        "status": status,
-        "success": success,
-        "latency_ms": elapsed_ms,
-    })
-    .to_string();
     let settings = (*settings).clone();
     let _ = tokio::task::spawn_blocking(move || {
         crate::management::observability::append_log_line(&settings, &line);
@@ -147,35 +280,88 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
     }
 
     if member.kind() != crate::account::ProviderKind::Antigravity {
+        if member.kind() == crate::account::ProviderKind::Vertex {
+            let openai = plan
+                .openai_body
+                .as_ref()
+                .ok_or_else(|| "Vertex requires an OpenAI-shaped request".to_string())?;
+            let model = openai
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "Vertex request missing model".to_string())?;
+            let project = member
+                .project_id()
+                .ok_or_else(|| "Vertex account missing project_id".to_string())?;
+            let location = member
+                .vertex_location()
+                .unwrap_or_else(|| "us-central1".to_string());
+            let action = if plan.client_stream {
+                "streamGenerateContent?alt=sse"
+            } else {
+                "generateContent"
+            };
+            let path = format!(
+                "/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:{action}"
+            );
+            return Ok(UpstreamTarget {
+                url: crate::url::build_provider_url(
+                    member.kind(),
+                    member.upstream_override.as_deref(),
+                    &path,
+                ),
+                body: Bytes::from(compat::gemini::openai_to_gemini(openai)?.to_string()),
+                protocol: compat::Protocol::Antigravity,
+            });
+        }
         if member.kind() == crate::account::ProviderKind::Generic {
-            let adapter = member.generic_adapter().unwrap_or_else(|| "openai-chat".to_string());
+            let adapter = member
+                .generic_adapter()
+                .unwrap_or_else(|| "openai-chat".to_string());
             let openai_body = plan
                 .openai_body
                 .as_ref()
                 .ok_or_else(|| "generic adapter requires OpenAI-compatible input".to_string())?;
             if adapter == "google" {
-                let project = member.project_id().unwrap_or_default();
-                let translated = compat::openai_to_antigravity(openai_body, &project)?;
+                let model = openai_body
+                    .get("model")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "Google request missing model".to_string())?;
+                let action = if plan.client_stream {
+                    "streamGenerateContent?alt=sse"
+                } else {
+                    "generateContent"
+                };
+                let path = format!("/v1beta/models/{model}:{action}");
                 return Ok(UpstreamTarget {
-                    url: crate::url::build_antigravity_url(member.upstream_override.as_deref()),
-                    body: Bytes::from(translated.to_string()),
+                    url: crate::url::build_provider_url(
+                        member.kind(),
+                        member.upstream_override.as_deref(),
+                        &path,
+                    ),
+                    body: Bytes::from(compat::gemini::openai_to_gemini(openai_body)?.to_string()),
                     protocol: compat::Protocol::Antigravity,
                 });
             }
             if adapter == "anthropic" {
                 return Ok(UpstreamTarget {
                     url: crate::url::build_provider_url(
-                        member.kind(), member.upstream_override.as_deref(), "/v1/messages",
+                        member.kind(),
+                        member.upstream_override.as_deref(),
+                        "/v1/messages",
                     ),
-                    body: Bytes::from(serde_json::to_vec(&compat::claude::openai_to_anthropic(openai_body)?)
-                        .map_err(|error| error.to_string())?),
+                    body: Bytes::from(
+                        serde_json::to_vec(&compat::claude::openai_to_anthropic(openai_body)?)
+                            .map_err(|error| error.to_string())?,
+                    ),
                     protocol: compat::Protocol::Anthropic,
                 });
             }
             if adapter == "openai-responses" {
                 return Ok(UpstreamTarget {
                     url: crate::url::build_provider_url(
-                        member.kind(), member.upstream_override.as_deref(), "/v1/responses",
+                        member.kind(),
+                        member.upstream_override.as_deref(),
+                        "/v1/responses",
                     ),
                     body: plan.body.clone(),
                     protocol: compat::Protocol::Codex,
@@ -236,10 +422,9 @@ fn resolve_target(member: &AccountMember, plan: &RelayPlan) -> Result<UpstreamTa
             let body = if plan.mode == RelayMode::Anthropic {
                 plan.original_body.clone()
             } else {
-                let openai = plan
-                    .openai_body
-                    .as_ref()
-                    .ok_or_else(|| "Anthropic provider requires an OpenAI-shaped request".to_string())?;
+                let openai = plan.openai_body.as_ref().ok_or_else(|| {
+                    "Anthropic provider requires an OpenAI-shaped request".to_string()
+                })?;
                 Bytes::from(
                     serde_json::to_vec(&compat::claude::openai_to_anthropic(openai)?)
                         .map_err(|e| e.to_string())?,
@@ -326,7 +511,13 @@ async fn send_upstream(
                     .map(|chunk| (Ok::<Bytes, std::io::Error>(chunk), rx))
             },
         );
-        (req_builder.body(reqwest::Body::wrap_stream(stream)).send().await?, Some(tx))
+        (
+            req_builder
+                .body(reqwest::Body::wrap_stream(stream))
+                .send()
+                .await?,
+            Some(tx),
+        )
     } else {
         (req_builder.body(body_bytes.clone()).send().await?, None)
     };
@@ -454,11 +645,7 @@ fn is_account_scoped_model_rejection(status_code: u16, body: &[u8]) -> bool {
         || text.contains("MONTHLY_REQUEST_COUNT")
 }
 
-fn build_plan(
-    mode: RelayMode,
-    req_path: &str,
-    body_bytes: Bytes,
-) -> Result<RelayPlan, String> {
+fn build_plan(mode: RelayMode, req_path: &str, body_bytes: Bytes) -> Result<RelayPlan, String> {
     match mode {
         RelayMode::Native => Ok(RelayPlan {
             upstream_path: req_path.to_string(),
@@ -485,8 +672,7 @@ fn build_plan(
                 .map_err(|e| format!("invalid anthropic request: {e}"))?;
             let openai = compat::anthropic_to_openai(&anthropic)?;
             let openai_bytes = Bytes::from(openai.to_string());
-            let translated =
-                compat::openai_to_codex(&openai_bytes).map_err(|e| e.to_string())?;
+            let translated = compat::openai_to_codex(&openai_bytes).map_err(|e| e.to_string())?;
             Ok(RelayPlan {
                 upstream_path: compat::CODEX_PATH.to_string(),
                 body: Bytes::from(translated.body),
@@ -516,19 +702,21 @@ fn build_plan(
                 original_body: body_bytes.clone(),
             })
         }
-        RelayMode::OpenAiCompat | RelayMode::LegacyCompletions => match compat::openai_to_codex(&body_bytes) {
-            Ok(translated) => Ok(RelayPlan {
-                upstream_path: compat::CODEX_PATH.to_string(),
-                body: Bytes::from(translated.body),
-                model: Some(translated.model),
-                mode,
-                client_stream: translated.stream,
-                include_usage: translated.include_usage,
-                openai_body: serde_json::from_slice(&body_bytes).ok(),
-                original_body: body_bytes,
-            }),
-            Err(err) => Err(err.to_string()),
-        },
+        RelayMode::OpenAiCompat | RelayMode::LegacyCompletions => {
+            match compat::openai_to_codex(&body_bytes) {
+                Ok(translated) => Ok(RelayPlan {
+                    upstream_path: compat::CODEX_PATH.to_string(),
+                    body: Bytes::from(translated.body),
+                    model: Some(translated.model),
+                    mode,
+                    client_stream: translated.stream,
+                    include_usage: translated.include_usage,
+                    openai_body: serde_json::from_slice(&body_bytes).ok(),
+                    original_body: body_bytes,
+                }),
+                Err(err) => Err(err.to_string()),
+            }
+        }
     }
 }
 
@@ -551,25 +739,19 @@ fn eligible_indices(
                 && member.kind().serves_model(model)
         })
     });
-    pool
-        .members
+    pool.members
         .iter()
         .enumerate()
         .filter(|(_, m)| m.health().is_available(now_ms))
         .filter(|(_, m)| {
-            !(model_owned_by_dedicated_provider
-                && m.kind() == crate::account::ProviderKind::Codex)
+            !(model_owned_by_dedicated_provider && m.kind() == crate::account::ProviderKind::Codex)
         })
         .filter(|(_, m)| model.is_none_or(|model| m.supports_model(model)))
         .map(|(i, _)| i)
         .collect()
 }
 
-fn select_index(
-    state: &AppState,
-    hint: &SessionHint,
-    model: Option<&str>,
-) -> Option<usize> {
+fn select_index(state: &AppState, hint: &SessionHint, model: Option<&str>) -> Option<usize> {
     let pool = state.pool.load();
     let as_dyn = |members: &[Arc<AccountMember>]| {
         members
@@ -666,7 +848,15 @@ async fn finish_success(
     let content_type = content_type_of(&resp);
     capture_usage(member, resp.headers());
 
-    if member.kind() == crate::account::ProviderKind::Generic {
+    // Generic accounts relay verbatim only when the upstream speaks the same
+    // wire as the client. The google and anthropic adapters do not, so they
+    // fall through to the conversion branches below.
+    if member.kind() == crate::account::ProviderKind::Generic
+        && !matches!(
+            member.generic_adapter().as_deref(),
+            Some("google") | Some("anthropic")
+        )
+    {
         if content_type
             .as_deref()
             .is_some_and(|ct| ct.trim_start().starts_with("text/html"))
@@ -706,16 +896,45 @@ async fn finish_success(
             .is_some_and(|ct| ct.starts_with("application/json"))
     {
         let raw = resp.bytes().await.map_err(|e| e.to_string())?;
-        let value: serde_json::Value =
-            serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+        let value: serde_json::Value = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
         member.record_ok();
         state.metrics.served.fetch_add(1, Ordering::Relaxed);
         state.router.feedback(member.id(), Outcome::Success);
         let output = if plan.mode == RelayMode::Anthropic {
             value
         } else {
-            compat::claude::anthropic_json_to_openai(&value, &plan.model.clone().unwrap_or_default(), created)
+            compat::claude::anthropic_json_to_openai(
+                &value,
+                &plan.model.clone().unwrap_or_default(),
+                created,
+            )
         };
+        return Ok(body_response(
+            StatusCode::OK,
+            Some("application/json"),
+            Bytes::from(output.to_string()),
+        ));
+    }
+
+    if !plan.client_stream
+        && (member.kind() == crate::account::ProviderKind::Vertex
+            || (member.kind() == crate::account::ProviderKind::Generic
+                && member.generic_adapter().as_deref() == Some("google")))
+        && content_type
+            .as_deref()
+            .is_some_and(|ct| ct.starts_with("application/json"))
+    {
+        let raw = resp.bytes().await.map_err(|error| error.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|error| error.to_string())?;
+        let output = compat::gemini::gemini_json_to_openai(
+            &value,
+            &plan.model.clone().unwrap_or_default(),
+            created,
+        );
+        member.record_ok();
+        state.metrics.served.fetch_add(1, Ordering::Relaxed);
+        state.router.feedback(member.id(), Outcome::Success);
         return Ok(body_response(
             StatusCode::OK,
             Some("application/json"),
@@ -839,8 +1058,7 @@ pub async fn handle_relay(
         Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
     };
 
-    let available_count =
-        eligible_indices(&state.pool.load(), plan.model.as_deref(), now_ms).len();
+    let available_count = eligible_indices(&state.pool.load(), plan.model.as_deref(), now_ms).len();
     let max_attempts = std::cmp::min(available_count, state.max_failover);
     if max_attempts == 0 {
         return json_error(
@@ -981,16 +1199,67 @@ pub async fn handle_relay(
             .await
             {
                 Ok(response) => {
-                    record_request_outcome(
-                        &state,
-                        member.kind().as_str(),
-                        plan.model.as_deref(),
-                        response.status().as_u16(),
-                        response.status().is_success(),
-                        request_started.elapsed().as_millis() as u64,
-                    )
-                    .await;
-                    return response;
+                    let (parts, body) = response.into_parts();
+                    let bytes_in = plan.original_body.len();
+                    // A buffered body is already fully in memory: finalize the
+                    // record synchronously so stats and logs reflect the
+                    // request the moment the client sees the response. Only
+                    // true streams defer to the end-of-stream finalizer.
+                    if http_body::Body::size_hint(&body).exact().is_some() {
+                        let collected = match http_body_util::BodyExt::collect(body).await {
+                            Ok(collected) => collected,
+                            Err(error) => {
+                                record_request_outcome(
+                                    &state,
+                                    OutcomeRecord {
+                                        provider: member.kind().as_str(),
+                                        account: Some(member.id()),
+                                        model: plan.model.as_deref(),
+                                        status: StatusCode::BAD_GATEWAY.as_u16(),
+                                        success: false,
+                                        elapsed_ms: request_started.elapsed().as_millis() as u64,
+                                        bytes_in,
+                                        bytes_out: 0,
+                                        tokens: None,
+                                    },
+                                )
+                                .await;
+                                return json_error(
+                                    StatusCode::BAD_GATEWAY,
+                                    &format!("buffered upstream body failed: {error}"),
+                                );
+                            }
+                        };
+                        let bytes = collected.to_bytes();
+                        let tokens = crate::usage::extract_total_tokens(&bytes, &bytes);
+                        record_request_outcome(
+                            &state,
+                            OutcomeRecord {
+                                provider: member.kind().as_str(),
+                                account: Some(member.id()),
+                                model: plan.model.as_deref(),
+                                status: status_code,
+                                success: true,
+                                elapsed_ms: request_started.elapsed().as_millis() as u64,
+                                bytes_in,
+                                bytes_out: bytes.len() as u64,
+                                tokens,
+                            },
+                        )
+                        .await;
+                        return Response::from_parts(parts, Body::from(bytes));
+                    }
+                    let outcome = StreamedOutcome {
+                        state: Arc::clone(&state),
+                        provider: member.kind().as_str().to_string(),
+                        account: Some(member.id().to_string()),
+                        model: plan.model.clone(),
+                        status: status_code,
+                        started: request_started,
+                        bytes_in,
+                    };
+                    let counted = CountedStream::new(body, outcome);
+                    return Response::from_parts(parts, Body::from_stream(counted));
                 }
                 Err(reason) => {
                     member.record_fail();
@@ -1046,11 +1315,17 @@ pub async fn handle_relay(
             .record_error(member.id(), status_code, "client error");
         record_request_outcome(
             &state,
-            member.kind().as_str(),
-            plan.model.as_deref(),
-            failure.status.as_u16(),
-            false,
-            request_started.elapsed().as_millis() as u64,
+            OutcomeRecord {
+                provider: member.kind().as_str(),
+                account: Some(member.id()),
+                model: plan.model.as_deref(),
+                status: failure.status.as_u16(),
+                success: false,
+                elapsed_ms: request_started.elapsed().as_millis() as u64,
+                bytes_in: plan.original_body.len(),
+                bytes_out: failure.body.len() as u64,
+                tokens: None,
+            },
         )
         .await;
         return body_response(
@@ -1075,13 +1350,22 @@ pub async fn handle_relay(
             .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "upstream failure").into_response()),
         None => json_error(StatusCode::BAD_GATEWAY, "all failover attempts failed"),
     };
+    let (parts, body) = response.into_parts();
+    let bytes_out = http_body::Body::size_hint(&body).exact().unwrap_or(0);
+    let response = Response::from_parts(parts, body);
     record_request_outcome(
         &state,
-        "unknown",
-        plan.model.as_deref(),
-        response.status().as_u16(),
-        false,
-        request_started.elapsed().as_millis() as u64,
+        OutcomeRecord {
+            provider: "unknown",
+            account: None,
+            model: plan.model.as_deref(),
+            status: response.status().as_u16(),
+            success: false,
+            elapsed_ms: request_started.elapsed().as_millis() as u64,
+            bytes_in: plan.original_body.len(),
+            bytes_out,
+            tokens: None,
+        },
     )
     .await;
     response
@@ -1114,11 +1398,8 @@ mod routing_tests {
         ));
         std::fs::create_dir_all(&auth_dir).expect("create auth dir");
         for kind in ["codex", "antigravity", "claude", "cursor", "kiro", "zcode"] {
-            std::fs::write(
-                auth_dir.join(format!("{kind}-test.json")),
-                credential(kind),
-            )
-            .expect("write credential");
+            std::fs::write(auth_dir.join(format!("{kind}-test.json")), credential(kind))
+                .expect("write credential");
         }
         let config = GatewayConfig {
             auth_dir: auth_dir.clone(),

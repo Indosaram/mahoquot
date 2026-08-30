@@ -43,11 +43,23 @@ async fn read_scalar(state: Arc<AppState>, scalar: &'static Scalar) -> Response 
 /// The edit runs inside the store's mutate so persistence and publication stay
 /// atomic, and its refusal is captured out rather than returned, because the
 /// store's closure cannot fail the mutation itself.
-/// Record management writes to the log file so the log view reflects real
-/// activity rather than staying empty until some other subsystem logs.
+/// Record management writes to the live tail (and the log file while it is
+/// enabled) so the log view reflects real activity rather than staying empty
+/// until some other subsystem logs.
 fn note_edit(state: &AppState, what: &str) {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let line = serde_json::json!({
+        "kind": "proxy",
+        "timestamp": timestamp,
+        "message": format!("management: {what}"),
+    })
+    .to_string();
+    state.log_tail.push(line.clone());
     let settings = state.settings.current();
-    super::observability::append_log_line(&settings, &format!("management: {what}"));
+    super::observability::append_log_line(&settings, &line);
 }
 
 pub fn apply_edit(
@@ -73,7 +85,11 @@ pub fn apply_edit(
     }
 }
 
-async fn write_scalar(state: Arc<AppState>, scalar: &'static Scalar, raw: bytes::Bytes) -> Response {
+async fn write_scalar(
+    state: Arc<AppState>,
+    scalar: &'static Scalar,
+    raw: bytes::Bytes,
+) -> Response {
     // Parse here rather than through axum's Json extractor: that extractor
     // answers a malformed payload with its own parser text, which upstream
     // never emits -- every bad body must read {"error":"invalid body"}.
@@ -136,7 +152,8 @@ pub fn scalars_routes() -> Router<Arc<AppState>> {
         );
         if scalar.clear.is_some() {
             method = method.delete(
-                move |State(state): State<Arc<AppState>>, Query(params): Query<HashMap<String, String>>| async move {
+                move |State(state): State<Arc<AppState>>,
+                      Query(params): Query<HashMap<String, String>>| async move {
                     clear_scalar(state, find(path).expect("registered"), params).await
                 },
             );
@@ -196,7 +213,11 @@ mod tests {
             ("Fill-First", "fill-first"),
         ] {
             // then it maps to upstream's canonical spelling
-            assert_eq!(normalize_routing_strategy(input), Some(canonical), "{input}");
+            assert_eq!(
+                normalize_routing_strategy(input),
+                Some(canonical),
+                "{input}"
+            );
         }
         // and an unknown strategy is rejected
         assert_eq!(normalize_routing_strategy("nonsense"), None);

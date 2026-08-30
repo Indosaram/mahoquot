@@ -25,7 +25,10 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/admin/stats", get(admin_stats_handler))
         .route("/admin/usage", get(admin_usage_handler))
         .route("/admin/warmup", post(admin_warmup_handler))
-        .route("/admin/accounts/{id}/warmup", post(admin_warmup_one_handler))
+        .route(
+            "/admin/accounts/{id}/warmup",
+            post(admin_warmup_one_handler),
+        )
         .route("/admin/usage/refresh", post(admin_usage_refresh_handler))
         .route("/admin/accounts/{id}/reset", post(admin_reset_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
@@ -61,7 +64,10 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/videos/extensions", post(cp_routes::videos))
         .route("/v1/videos/{request_id}", get(cp_routes::videos_by_id))
         .route("/openai/v1/videos", post(cp_routes::openai_videos))
-        .route("/openai/v1/videos/{video_id}", get(cp_routes::openai_videos))
+        .route(
+            "/openai/v1/videos/{video_id}",
+            get(cp_routes::openai_videos),
+        )
         .route(
             "/openai/v1/videos/{video_id}/content",
             get(cp_routes::openai_videos),
@@ -89,10 +95,7 @@ pub fn create_app(state: Arc<AppState>) -> Router {
             "/v1/realtime/client_secrets",
             post(cp_routes::realtime_client_secrets),
         )
-        .route(
-            "/v1/realtime/sessions",
-            post(cp_routes::realtime_sessions),
-        )
+        .route("/v1/realtime/sessions", post(cp_routes::realtime_sessions))
         .route(
             "/v1/realtime/transcription_sessions",
             post(cp_routes::realtime_transcription),

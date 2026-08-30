@@ -295,7 +295,11 @@ mod red_tests {
         let mut uniq = picked.clone();
         uniq.sort_unstable();
         uniq.dedup();
-        assert_eq!(uniq.len(), 3, "each new session should take a fresh account");
+        assert_eq!(
+            uniq.len(),
+            3,
+            "each new session should take a fresh account"
+        );
     }
 
     #[test]
@@ -304,8 +308,22 @@ mod red_tests {
         let p = pool(&[("a", Health::Available), ("b", Health::Available)]);
         let first = r.select(&p, &keyed("conv-1")).expect("first");
         let healthy = pool(&[
-            ("a", if first == 0 { Health::AuthFailed } else { Health::Available }),
-            ("b", if first == 1 { Health::AuthFailed } else { Health::Available }),
+            (
+                "a",
+                if first == 0 {
+                    Health::AuthFailed
+                } else {
+                    Health::Available
+                },
+            ),
+            (
+                "b",
+                if first == 1 {
+                    Health::AuthFailed
+                } else {
+                    Health::Available
+                },
+            ),
         ]);
         let next = r.select(&healthy, &keyed("conv-1")).expect("failover");
         assert_ne!(next, first);

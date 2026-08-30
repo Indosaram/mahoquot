@@ -68,17 +68,35 @@ pub async fn refresh_account_usage(
         ProviderKind::Antigravity => refresh_antigravity_usage(state, member).await,
         ProviderKind::Claude => refresh_claude_usage(state, member).await,
         ProviderKind::Cursor => {
-            let url = member.upstream_override.as_deref().map(|base| format!("{}/auth/usage-summary", base.trim_end_matches('/'))).unwrap_or_else(|| CURSOR_USAGE_URL.to_string());
+            let url = member
+                .upstream_override
+                .as_deref()
+                .map(|base| format!("{}/auth/usage-summary", base.trim_end_matches('/')))
+                .unwrap_or_else(|| CURSOR_USAGE_URL.to_string());
             refresh_json_usage(member, &state.http_client, &url, parse_cursor_usage_summary).await
         }
         ProviderKind::Kiro => {
-            let url = member.upstream_override.as_deref().map(|base| format!("{}/getUsageLimits", base.trim_end_matches('/'))).unwrap_or_else(|| KIRO_USAGE_URL.to_string());
+            let url = member
+                .upstream_override
+                .as_deref()
+                .map(|base| format!("{}/getUsageLimits", base.trim_end_matches('/')))
+                .unwrap_or_else(|| KIRO_USAGE_URL.to_string());
             refresh_json_usage(member, &state.http_client, &url, parse_kiro_usage_summary).await
         }
         ProviderKind::Zcode => {
-            let url = member.upstream_override.as_deref().map(|base| format!("{}/api/monitor/usage/quota/limit", base.trim_end_matches('/'))).unwrap_or_else(|| ZCODE_USAGE_URL.to_string());
+            let url = member
+                .upstream_override
+                .as_deref()
+                .map(|base| {
+                    format!(
+                        "{}/api/monitor/usage/quota/limit",
+                        base.trim_end_matches('/')
+                    )
+                })
+                .unwrap_or_else(|| ZCODE_USAGE_URL.to_string());
             refresh_json_usage(member, &state.http_client, &url, parse_zcode_usage_summary).await
         }
+        ProviderKind::Vertex => Err(QuotaError::Unsupported),
         ProviderKind::Generic => Err(QuotaError::Unsupported),
     }
 }
@@ -97,15 +115,23 @@ async fn refresh_json_usage(
     for (name, value) in member.build_upstream_headers() {
         request = request.header(name, value);
     }
-    let response = request.send().await.map_err(|error| QuotaError::Upstream(error.to_string()))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| QuotaError::Upstream(error.to_string()))?;
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(QuotaError::Unauthorized);
     }
     if !status.is_success() {
-        return Err(QuotaError::Upstream(format!("quota endpoint returned {status}")));
+        return Err(QuotaError::Upstream(format!(
+            "quota endpoint returned {status}"
+        )));
     }
-    let body = response.json::<serde_json::Value>().await.map_err(|error| QuotaError::Upstream(error.to_string()))?;
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| QuotaError::Upstream(error.to_string()))?;
     let usage = parser(&body, now_unix);
     member.set_usage(usage.clone());
     Ok(())
@@ -136,10 +162,7 @@ async fn refresh_claude_usage(
     }
 }
 
-async fn try_claude_usage(
-    state: &AppState,
-    member: &Arc<AccountMember>,
-) -> Result<(), QuotaError> {
+async fn try_claude_usage(state: &AppState, member: &Arc<AccountMember>) -> Result<(), QuotaError> {
     let token = member.access_token();
     if token.is_empty() {
         return Err(QuotaError::Unauthorized);
@@ -262,9 +285,7 @@ async fn try_antigravity_quota(
         if status == reqwest::StatusCode::FORBIDDEN && detail.contains("valid license") {
             return Err(QuotaError::Upstream("quota rejected client (403)".into()));
         }
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             tracing::debug!(%status, detail = %&detail[..detail.len().min(240)], "antigravity quota rejected");
             return Err(QuotaError::Unauthorized);
         }

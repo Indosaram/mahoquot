@@ -171,9 +171,43 @@ async fn test_t8_unsupported_websocket_transport_fails_before_upgrade() {
     std::fs::remove_dir_all(temp_dir).ok();
 }
 
+#[tokio::test]
+async fn test_t8_unimplemented_xai_media_models_fail_closed() {
+    let temp_dir = unique_temp_dir("qgw-test-t8-xai-media-disabled");
+    let (_state, gw) = spawn_gateway(&temp_dir).await;
+    let client = reqwest::Client::new();
+
+    let image = client
+        .post(format!("{gw}/v1/images/generations"))
+        .json(&json!({"model": "grok-imagine-image", "prompt": "cat"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(image.status(), reqwest::StatusCode::BAD_REQUEST);
+    let image_error: Value = image.json().await.unwrap();
+    assert!(image_error["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("is not supported"));
+
+    let video = client
+        .post(format!("{gw}/v1/videos/generations"))
+        .json(&json!({"model": "grok-imagine-video", "prompt": "cat"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(video.status(), reqwest::StatusCode::BAD_REQUEST);
+    let video_error: Value = video.json().await.unwrap();
+    let video_message = video_error["error"]["message"].as_str().unwrap();
+    assert!(video_message.contains("is not supported"));
+    assert!(video_message.contains("No reference-backed video model is configured"));
+
+    std::fs::remove_dir_all(temp_dir).ok();
+}
+
 async fn spawn_gateway(temp_dir: &std::path::Path) -> (Arc<AppState>, String) {
     let config = GatewayConfig {
-            usage_poll_secs: 120,
+        usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.to_path_buf(),
         strategy: Strategy::StrictRoundRobin,

@@ -5,40 +5,48 @@ mod cursor_proto;
 #[doc(hidden)]
 pub fn cursor_fixture_text(text: &str) -> cursor_proto::AgentServerMessage {
     cursor_proto::AgentServerMessage {
-        message: Some(cursor_proto::agent_server_message::Message::InteractionUpdate(
-            cursor_proto::InteractionUpdate {
-                message: Some(cursor_proto::interaction_update::Message::TextDelta(
-                    cursor_proto::TextDeltaUpdate { text: text.to_string() },
-                )),
-            },
-        )),
+        message: Some(
+            cursor_proto::agent_server_message::Message::InteractionUpdate(
+                cursor_proto::InteractionUpdate {
+                    message: Some(cursor_proto::interaction_update::Message::TextDelta(
+                        cursor_proto::TextDeltaUpdate {
+                            text: text.to_string(),
+                        },
+                    )),
+                },
+            ),
+        ),
     }
 }
 
 #[doc(hidden)]
 pub fn cursor_fixture_turn_end() -> cursor_proto::AgentServerMessage {
     cursor_proto::AgentServerMessage {
-        message: Some(cursor_proto::agent_server_message::Message::InteractionUpdate(
-            cursor_proto::InteractionUpdate {
-                message: Some(cursor_proto::interaction_update::Message::TurnEnded(
-                    cursor_proto::TurnEndedUpdate::default(),
-                )),
-            },
-        )),
+        message: Some(
+            cursor_proto::agent_server_message::Message::InteractionUpdate(
+                cursor_proto::InteractionUpdate {
+                    message: Some(cursor_proto::interaction_update::Message::TurnEnded(
+                        cursor_proto::TurnEndedUpdate::default(),
+                    )),
+                },
+            ),
+        ),
     }
 }
 
 #[doc(hidden)]
 pub fn cursor_fixture_get_blob(id: u32) -> cursor_proto::AgentServerMessage {
     cursor_proto::AgentServerMessage {
-        message: Some(cursor_proto::agent_server_message::Message::KvServerMessage(
-            cursor_proto::KvServerMessage {
-                id,
-                message: Some(cursor_proto::kv_server_message::Message::GetBlobArgs(
-                    cursor_proto::GetBlobArgs { blob_id: vec![1] },
-                )),
-            },
-        )),
+        message: Some(
+            cursor_proto::agent_server_message::Message::KvServerMessage(
+                cursor_proto::KvServerMessage {
+                    id,
+                    message: Some(cursor_proto::kv_server_message::Message::GetBlobArgs(
+                        cursor_proto::GetBlobArgs { blob_id: vec![1] },
+                    )),
+                },
+            ),
+        ),
     }
 }
 
@@ -111,8 +119,7 @@ pub async fn open_stream(
     let mut stream: UpstreamStream = Box::pin(resp.bytes_stream());
     match stream.next().await {
         Some(Ok(first))
-            if matches!(protocol, Protocol::Kiro | Protocol::Cursor)
-                || looks_like_sse(&first) =>
+            if matches!(protocol, Protocol::Kiro | Protocol::Cursor) || looks_like_sse(&first) =>
         {
             Ok((first, stream))
         }

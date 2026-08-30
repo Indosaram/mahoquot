@@ -14,10 +14,8 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn management_uses_the_same_api_key_as_proxy_routes() {
-    let auth_dir = std::env::temp_dir().join(format!(
-        "mahoquot-unified-key-{}",
-        std::process::id()
-    ));
+    let auth_dir =
+        std::env::temp_dir().join(format!("mahoquot-unified-key-{}", std::process::id()));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
     let config = GatewayConfig {
         port: 0,
@@ -193,7 +191,7 @@ async fn test_inbound_auth_cases() {
     let temp_dir = std::env::temp_dir().join(format!("qgw-test-t6-exempt-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).unwrap();
     let config = mahoquot_gateway::config::GatewayConfig {
-            usage_poll_secs: 120,
+        usage_poll_secs: 120,
         port: 0,
         auth_dir: temp_dir.clone(),
         strategy: mahoquot_types::Strategy::StrictRoundRobin,

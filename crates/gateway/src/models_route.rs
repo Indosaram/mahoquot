@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use mahoquot_providers::{
-    ANTIGRAVITY_MODELS, CLAUDE_MODELS, KIRO_MODELS, ZCODE_MODELS,
+    ANTIGRAVITY_MODELS, CLAUDE_MODELS, KIRO_MODELS, VERTEX_MODELS, ZCODE_MODELS,
 };
 
 use crate::account::{AccountMember, ProviderKind};
@@ -39,10 +39,7 @@ pub fn model_ids_from_env(raw: Option<&str>) -> Vec<String> {
 
 /// Advertise a model only when an account that can actually serve it is loaded,
 /// so a client selecting from /v1/models never gets a routing failure.
-pub fn model_entries(
-    providers: &[ProviderKind],
-    env_override: Option<&str>,
-) -> Vec<ModelEntry> {
+pub fn model_entries(providers: &[ProviderKind], env_override: Option<&str>) -> Vec<ModelEntry> {
     let mut entries: Vec<ModelEntry> = Vec::new();
 
     if providers.contains(&ProviderKind::Codex) {
@@ -83,10 +80,23 @@ pub fn model_entries(
         }
     }
     if providers.contains(&ProviderKind::Cursor) {
-        for id in ["cursor/auto", "cursor/auto-cost", "cursor/auto-balance", "cursor/auto-intelligence"] {
+        for id in [
+            "cursor/auto",
+            "cursor/auto-cost",
+            "cursor/auto-balance",
+            "cursor/auto-intelligence",
+        ] {
             entries.push(ModelEntry {
                 id: id.to_string(),
                 owned_by: "cursor".to_string(),
+            });
+        }
+    }
+    if providers.contains(&ProviderKind::Vertex) {
+        for id in VERTEX_MODELS {
+            entries.push(ModelEntry {
+                id: id.to_string(),
+                owned_by: "google-vertex".to_string(),
             });
         }
     }

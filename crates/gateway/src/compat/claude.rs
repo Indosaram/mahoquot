@@ -254,7 +254,10 @@ pub fn openai_to_anthropic(body: &Value) -> Result<Value, String> {
     let mut system = Vec::new();
     let mut out: Vec<Value> = Vec::new();
     for message in messages {
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
         if role == "system" || role == "developer" {
             if let Some(text) = message.get("content").and_then(content_text) {
                 system.push(text.to_string());
@@ -733,7 +736,11 @@ impl AnthropicStreamRenderer {
                         json!({"type":"content_block_stop","index":index}),
                     ));
                 }
-                let stop = if self.tool_index > 0 { "tool_use" } else { "end_turn" };
+                let stop = if self.tool_index > 0 {
+                    "tool_use"
+                } else {
+                    "end_turn"
+                };
                 out.push(Self::frame(
                     "message_delta",
                     json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":Value::Null},"usage":{"output_tokens":usage.map(|u|u.completion_tokens).unwrap_or(0)}}),
@@ -840,7 +847,9 @@ mod contract_tests {
             br#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"internal"}}"#,
             &mut events,
         );
-        assert!(!events.iter().any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
     }
 
     #[test]

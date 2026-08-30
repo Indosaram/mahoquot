@@ -52,13 +52,22 @@ fn stamped(response: &axum::response::Response) -> bool {
     response.headers().contains_key("x-cpa-version")
 }
 
+fn explicitly_excluded(path: &str) -> bool {
+    matches!(
+        path,
+        "/plugins"
+            | "/plugins/:id"
+            | "/plugins/:id/enabled"
+            | "/plugins/:id/config"
+            | "/plugin-store"
+            | "/plugin-store/:id/install"
+    )
+}
+
 #[tokio::test]
 async fn every_manifest_management_route_answers_from_a_registered_handler() {
     // given a live gateway with the management surface mounted
-    let auth_dir = std::env::temp_dir().join(format!(
-        "mahoquot-route-gate-{}",
-        std::process::id()
-    ));
+    let auth_dir = std::env::temp_dir().join(format!("mahoquot-route-gate-{}", std::process::id()));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
@@ -73,6 +82,9 @@ async fn every_manifest_management_route_answers_from_a_registered_handler() {
     let manifest = manifest_routes();
     assert_eq!(manifest.len(), 129, "manifest snapshot size drifted");
     for (method, path) in &manifest {
+        if explicitly_excluded(path) {
+            continue;
+        }
         let request = Request::builder()
             .method(method.as_str())
             .uri(concrete(path))
@@ -93,7 +105,10 @@ async fn every_manifest_management_route_answers_from_a_registered_handler() {
         }
     }
     std::fs::remove_dir_all(auth_dir).ok();
-    assert!(failures.is_empty(), "unregistered manifest routes: {failures:?}");
+    assert!(
+        failures.is_empty(),
+        "unregistered manifest routes: {failures:?}"
+    );
 }
 
 #[tokio::test]
@@ -124,5 +139,46 @@ async fn an_unimplemented_management_path_answers_the_bare_fallback() {
     // then the fallback answers unstamped so the positive gate stays honest
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(!stamped(&response));
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn unimplemented_pluginhost_routes_are_not_advertised_as_handlers() {
+    let auth_dir = std::env::temp_dir().join(format!(
+        "mahoquot-route-gate-pluginhost-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&auth_dir).expect("auth dir");
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: ApiKeys::new(vec![PROBE_KEY.to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).expect("state")));
+
+    for (method, path) in [
+        ("GET", "/v0/management/plugins"),
+        ("GET", "/v0/management/plugin-store"),
+        ("POST", "/v0/management/plugin-store/probe/install"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {PROBE_KEY}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+        assert!(
+            !stamped(&response),
+            "{method} {path} was falsely registered"
+        );
+    }
     std::fs::remove_dir_all(auth_dir).ok();
 }

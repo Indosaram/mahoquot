@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -15,9 +16,10 @@ fn json_status(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
 
-/// Upstream serves log files out of a directory beside the config, and refuses
-/// every log route with 400 while `logging-to-file` is off rather than
-/// returning an empty list, so a client can tell "disabled" from "no logs".
+/// Upstream serves log files out of a directory beside the config. While
+/// `logging-to-file` is off the file-backed routes keep refusing with 400 so a
+/// client can tell "disabled" from "no logs"; `/logs` itself always answers,
+/// falling back to the in-memory tail (see `LogTail`).
 fn log_dir(settings: &Settings) -> std::path::PathBuf {
     std::path::PathBuf::from(&settings.auth_dir).join("logs")
 }
@@ -30,6 +32,36 @@ fn require_file_logging(settings: &Settings) -> Option<Response> {
         StatusCode::BAD_REQUEST,
         json!({ "error": "logging to file disabled" }),
     ))
+}
+
+/// Capacity of the in-memory tail served while file logging is off.
+const LOG_TAIL_CAPACITY: usize = 1000;
+
+/// Bounded in-memory tail of recent log lines. File persistence is a setting;
+/// the live tail is always fed, so the Logs surface keeps showing real-time
+/// output even while `logging-to-file` is off.
+#[derive(Default)]
+pub struct LogTail {
+    lines: Mutex<VecDeque<String>>,
+}
+
+impl LogTail {
+    pub fn push(&self, line: String) {
+        let mut lines = self.lines.lock().expect("log tail lock");
+        if lines.len() >= LOG_TAIL_CAPACITY {
+            lines.pop_front();
+        }
+        lines.push_back(line);
+    }
+
+    pub fn snapshot(&self) -> Vec<String> {
+        let lines = self.lines.lock().expect("log tail lock");
+        lines.iter().cloned().collect()
+    }
+
+    pub fn clear(&self) {
+        self.lines.lock().expect("log tail lock").clear();
+    }
 }
 
 pub fn append_log_line(settings: &Settings, line: &str) {
@@ -113,19 +145,38 @@ fn list_log_files(dir: &std::path::Path) -> Vec<Value> {
     files
 }
 
+/// Parse one stored log line into a structured record. Well-formed records
+/// pass through; legacy or foreign lines degrade to proxy events so the UI
+/// never loses them.
+fn parse_log_record(line: &str) -> Value {
+    match serde_json::from_str::<Value>(line) {
+        Ok(value) if value.get("kind").is_some() => value,
+        _ => json!({ "kind": "proxy", "timestamp": Value::Null, "message": line }),
+    }
+}
+
 async fn get_logs(State(state): State<Arc<AppState>>) -> Response {
     let settings = state.settings.current();
-    if let Some(refusal) = require_file_logging(&settings) {
-        return refusal;
-    }
     let dir = log_dir(&settings);
-    let lines = read_log_lines(&dir);
+    let lines = if settings.logging_to_file {
+        read_log_lines(&dir)
+    } else {
+        // File logging is off, but the live tail is still being fed: answer
+        // with it instead of refusing, so the Logs surface shows real-time
+        // output rather than an error.
+        state.log_tail.snapshot()
+    };
+    let records: Vec<Value> = lines.iter().map(|line| parse_log_record(line)).collect();
+    let request_count = records
+        .iter()
+        .filter(|record| record["kind"] == "request")
+        .count();
     json_status(
         StatusCode::OK,
         json!({
-            "lines": lines,
-            "line-count": lines.len(),
-            "next-cursor": Value::Null,
+            "records": records,
+            "request-count": request_count,
+            "proxy-count": records.len() - request_count,
             "latest-timestamp": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -136,17 +187,19 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Response {
 
 async fn delete_logs(State(state): State<Arc<AppState>>) -> Response {
     let settings = state.settings.current();
-    if let Some(refusal) = require_file_logging(&settings) {
-        return refusal;
-    }
+    // The tail is the live data while file logging is off, so a clear must
+    // always reach it; files are only touched while logging is enabled.
+    state.log_tail.clear();
     let dir = log_dir(&settings);
     let mut removed = 0u64;
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            if entry.metadata().map(|m| m.is_file()).unwrap_or(false)
-                && std::fs::remove_file(entry.path()).is_ok()
-            {
-                removed += 1;
+    if settings.logging_to_file {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry.metadata().map(|m| m.is_file()).unwrap_or(false)
+                    && std::fs::remove_file(entry.path()).is_ok()
+                {
+                    removed += 1;
+                }
             }
         }
     }
@@ -250,16 +303,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn log_routes_are_refused_while_file_logging_is_off() {
+    fn file_backed_log_routes_are_refused_while_file_logging_is_off() {
         // given a config with logging-to-file disabled
         let settings = Settings {
             logging_to_file: false,
             ..Settings::default()
         };
-        // when a log route checks availability
+        // when a file-backed log route checks availability
         let refusal = require_file_logging(&settings);
         // then it refuses rather than reporting an empty list
         assert!(refusal.is_some());
+    }
+
+    #[test]
+    fn log_tail_serves_recent_lines_in_order_and_stays_bounded() {
+        // given a tail already at capacity
+        let tail = LogTail::default();
+        for index in 0..(LOG_TAIL_CAPACITY as u64) {
+            tail.push(index.to_string());
+        }
+        // when one more line is pushed
+        tail.push("newest".to_string());
+        // then the oldest line was dropped and order is preserved
+        let snapshot = tail.snapshot();
+        assert_eq!(snapshot.len(), LOG_TAIL_CAPACITY);
+        assert_eq!(snapshot[0], (1u64).to_string());
+        assert_eq!(snapshot[LOG_TAIL_CAPACITY - 1], "newest");
+        // and clearing empties it completely
+        tail.clear();
+        assert!(tail.snapshot().is_empty());
     }
 
     #[test]

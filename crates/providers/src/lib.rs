@@ -12,19 +12,19 @@ pub mod cursor;
 pub mod kiro;
 pub mod refresh;
 pub mod refresh_exec;
+pub mod vertex;
 pub mod zcode;
 
-pub use antigravity::{
-    antigravity_count_tokens_url, antigravity_quota_summary_url, antigravity_stream_url,
-    derive_antigravity_slug_from_filename, is_antigravity_model,
-    list_antigravity_auth_files, load_antigravity_account, AntigravityAccount,
-    ANTIGRAVITY_API_VERSION, ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET,
-    ANTIGRAVITY_LOAD_BASE, ANTIGRAVITY_MODELS, ANTIGRAVITY_TOKEN_URL, ANTIGRAVITY_UPSTREAM_BASE,
-    ANTIGRAVITY_USER_AGENT,
-};
 pub use account::{
     derive_identity_slug, derive_identity_slug_from_filename, list_codex_auth_files,
     load_codex_account, parse_expired_unix, CodexAccount, LoadError, UPSTREAM_BASE, USER_AGENT,
+};
+pub use antigravity::{
+    antigravity_count_tokens_url, antigravity_quota_summary_url, antigravity_stream_url,
+    derive_antigravity_slug_from_filename, is_antigravity_model, list_antigravity_auth_files,
+    load_antigravity_account, AntigravityAccount, ANTIGRAVITY_API_VERSION, ANTIGRAVITY_CLIENT_ID,
+    ANTIGRAVITY_CLIENT_SECRET, ANTIGRAVITY_LOAD_BASE, ANTIGRAVITY_MODELS, ANTIGRAVITY_TOKEN_URL,
+    ANTIGRAVITY_UPSTREAM_BASE, ANTIGRAVITY_USER_AGENT,
 };
 pub use claude::{
     claude_messages_url, is_claude_model, list_claude_auth_files, ClaudeAccount,
@@ -41,19 +41,22 @@ pub use kiro::{
     KiroAuthMode, KIRO_API_HOST_TEMPLATE, KIRO_DEFAULT_REGION, KIRO_GENERATE_PATH,
     KIRO_IDC_REFRESH_TEMPLATE, KIRO_MODELS, KIRO_SOCIAL_REFRESH_TEMPLATE,
 };
+pub use refresh::{
+    build_antigravity_refresh_request, build_claude_refresh_request, build_cursor_refresh_request,
+    build_kiro_idc_refresh_request, build_kiro_social_refresh_request, build_refresh_request,
+    parse_refresh_response, RefreshRequest, Tokens, REFRESH_CLIENT_ID, REFRESH_TOKEN_URL,
+};
+pub use refresh_exec::format_expired_rfc3339;
+pub use vertex::{
+    build_vertex_jwt_assertion, derive_vertex_slug_from_filename, execute_vertex_refresh,
+    is_vertex_model, list_vertex_auth_files, load_vertex_account, VertexAccount, VERTEX_MODELS,
+};
 pub use zcode::{
     is_provisioned_api_key, is_zcode_model, list_zcode_auth_files, zcode_messages_url,
     ZcodeAccount, ZCODE_ANTHROPIC_BASE, ZCODE_API_BASE, ZCODE_LOGIN_URL, ZCODE_MESSAGES_PATH,
     ZCODE_MODELS, ZCODE_OAUTH_AUTHORIZE_URL, ZCODE_OAUTH_BROKER_TOKEN_URL, ZCODE_OAUTH_CLIENT_ID,
     ZCODE_OAUTH_REDIRECT_URI, ZCODE_USERINFO_URL,
 };
-pub use refresh::{
-    build_antigravity_refresh_request, build_claude_refresh_request,
-    build_cursor_refresh_request, build_kiro_idc_refresh_request,
-    build_kiro_social_refresh_request, build_refresh_request, parse_refresh_response,
-    RefreshRequest, Tokens, REFRESH_CLIENT_ID, REFRESH_TOKEN_URL,
-};
-pub use refresh_exec::format_expired_rfc3339;
 
 #[cfg(test)]
 mod red_tests {

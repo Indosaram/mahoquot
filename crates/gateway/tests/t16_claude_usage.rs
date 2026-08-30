@@ -68,7 +68,9 @@ async fn claude_relay_records_subscription_usage_in_admin_stats() {
     let gateway_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let gateway = format!("http://{}", gateway_listener.local_addr().unwrap());
     let gateway_task = tokio::spawn(async move {
-        axum::serve(gateway_listener, create_app(state)).await.unwrap();
+        axum::serve(gateway_listener, create_app(state))
+            .await
+            .unwrap();
     });
 
     let relayed = reqwest::Client::new()

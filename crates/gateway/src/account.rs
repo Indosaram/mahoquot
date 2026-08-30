@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mahoquot_providers::refresh_exec::{apply_refresh_to_file, execute_refresh_spec, RefreshError};
 use mahoquot_providers::{
-    derive_identity_slug, is_antigravity_model, load_antigravity_account, AntigravityAccount, ClaudeAccount, CodexAccount, CursorAccount,
-    KiroAccount, LoadError, ZcodeAccount,
+    derive_identity_slug, is_antigravity_model, load_antigravity_account, AntigravityAccount,
+    ClaudeAccount, CodexAccount, CursorAccount, KiroAccount, LoadError, VertexAccount,
+    ZcodeAccount,
 };
 use mahoquot_types::{Health, PoolMember};
 
@@ -18,6 +19,7 @@ pub enum ProviderKind {
     Cursor,
     Kiro,
     Zcode,
+    Vertex,
     Generic,
 }
 
@@ -28,6 +30,7 @@ pub enum ProviderAccount {
     Cursor(CursorAccount),
     Kiro(KiroAccount),
     Zcode(ZcodeAccount),
+    Vertex(VertexAccount),
     Generic(GenericAccount),
 }
 
@@ -57,6 +60,8 @@ pub struct GenericAccount {
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
+    pub static_headers: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     pub disabled: bool,
 }
 
@@ -76,6 +81,7 @@ impl ProviderKind {
                     && !model.starts_with("cursor/")
                     && !model.starts_with("kiro/")
                     && model != "auto-kiro"
+                    && !mahoquot_providers::is_vertex_model(model)
             }
             ProviderKind::Antigravity => is_antigravity_model(model),
             ProviderKind::Claude => mahoquot_providers::is_claude_model(model),
@@ -89,6 +95,7 @@ impl ProviderKind {
                         .is_some_and(mahoquot_providers::is_kiro_model)
             }
             ProviderKind::Zcode => mahoquot_providers::is_zcode_model(model),
+            ProviderKind::Vertex => mahoquot_providers::is_vertex_model(model),
             ProviderKind::Generic => true,
         }
     }
@@ -101,6 +108,7 @@ impl ProviderKind {
             ProviderKind::Cursor => "cursor",
             ProviderKind::Kiro => "kiro",
             ProviderKind::Zcode => "zcode",
+            ProviderKind::Vertex => "google-vertex",
             ProviderKind::Generic => "generic",
         }
     }
@@ -113,6 +121,7 @@ impl ProviderKind {
             "cursor" => Some(Self::Cursor),
             "kiro" => Some(Self::Kiro),
             "zcode" => Some(Self::Zcode),
+            "vertex" | "google-vertex" => Some(Self::Vertex),
             "generic" => Some(Self::Generic),
             _ => None,
         }
@@ -125,7 +134,10 @@ mod provider_kind_contract_tests {
 
     #[test]
     fn anthropic_credential_type_maps_to_claude() {
-        assert_eq!(ProviderKind::from_type_str("anthropic"), Some(ProviderKind::Claude));
+        assert_eq!(
+            ProviderKind::from_type_str("anthropic"),
+            Some(ProviderKind::Claude)
+        );
     }
 
     #[test]
@@ -152,6 +164,7 @@ impl ProviderAccount {
             Self::Cursor(_) => ProviderKind::Cursor,
             Self::Kiro(_) => ProviderKind::Kiro,
             Self::Zcode(_) => ProviderKind::Zcode,
+            Self::Vertex(_) => ProviderKind::Vertex,
             Self::Generic(_) => ProviderKind::Generic,
         }
     }
@@ -164,6 +177,7 @@ impl ProviderAccount {
             Self::Cursor(a) => a.access_token.clone(),
             Self::Kiro(a) => a.access_token.clone(),
             Self::Zcode(a) => a.access_token.clone(),
+            Self::Vertex(a) => a.access_token.clone(),
             Self::Generic(a) => a.api_key.clone(),
         }
     }
@@ -176,6 +190,7 @@ impl ProviderAccount {
             Self::Cursor(a) => a.refresh_token.clone(),
             Self::Kiro(a) => a.refresh_token.clone(),
             Self::Zcode(a) => a.refresh_token.clone(),
+            Self::Vertex(_) => String::new(),
             Self::Generic(a) => a.refresh_token.clone(),
         }
     }
@@ -194,9 +209,8 @@ impl ProviderAccount {
                 !mahoquot_providers::zcode::is_provisioned_api_key(&a.access_token)
                     && expired_at_is_past(&a.expired, now_unix)
             }
-            Self::Generic(a) => {
-                a.auth_mode == "oauth" && expired_at_is_past(&a.expired, now_unix)
-            }
+            Self::Vertex(a) => a.is_expired(now_unix),
+            Self::Generic(a) => a.auth_mode == "oauth" && expired_at_is_past(&a.expired, now_unix),
         }
     }
 
@@ -221,11 +235,17 @@ impl ProviderAccount {
                     "authorization".to_string(),
                     format!("Bearer {}", a.access_token),
                 ),
-                ("content-type".to_string(), "application/connect+proto".to_string()),
+                (
+                    "content-type".to_string(),
+                    "application/connect+proto".to_string(),
+                ),
                 ("connect-protocol-version".to_string(), "1".to_string()),
                 ("connect-timeout-ms".to_string(), "300000".to_string()),
                 ("x-ghost-mode".to_string(), "true".to_string()),
-                ("x-cursor-client-version".to_string(), "cli-2026.07.08-0c04a8a".to_string()),
+                (
+                    "x-cursor-client-version".to_string(),
+                    "cli-2026.07.08-0c04a8a".to_string(),
+                ),
                 ("x-cursor-client-type".to_string(), "cli".to_string()),
                 ("te".to_string(), "trailers".to_string()),
             ],
@@ -234,14 +254,23 @@ impl ProviderAccount {
                     "authorization".to_string(),
                     format!("Bearer {}", a.access_token),
                 ),
-                ("content-type".to_string(), "application/x-amz-json-1.0".to_string()),
+                (
+                    "content-type".to_string(),
+                    "application/x-amz-json-1.0".to_string(),
+                ),
                 (
                     "x-amz-target".to_string(),
                     "AmazonCodeWhispererStreamingService.GenerateAssistantResponse".to_string(),
                 ),
-                ("x-amzn-codewhisperer-optout".to_string(), "true".to_string()),
+                (
+                    "x-amzn-codewhisperer-optout".to_string(),
+                    "true".to_string(),
+                ),
                 ("x-amzn-kiro-agent-mode".to_string(), "vibe".to_string()),
-                ("amz-sdk-request".to_string(), "attempt=1; max=3".to_string()),
+                (
+                    "amz-sdk-request".to_string(),
+                    "attempt=1; max=3".to_string(),
+                ),
                 (
                     "user-agent".to_string(),
                     "aws-sdk-js/1.0.27 KiroIDE-0.7.45-mahoquot".to_string(),
@@ -274,15 +303,33 @@ impl ProviderAccount {
                     .to_string(),
                 ),
             ],
+            Self::Vertex(a) => a.build_upstream_headers(),
             Self::Generic(a) => {
-                let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
+                let mut headers =
+                    vec![("content-type".to_string(), "application/json".to_string())];
+                if a.adapter == "anthropic" {
+                    headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
+                }
                 if !a.api_key.is_empty() {
                     if a.adapter == "azure-openai" {
                         headers.push(("api-key".to_string(), a.api_key.clone()));
                     } else if a.adapter == "google" && a.auth_mode != "oauth" {
                         headers.push(("x-goog-api-key".to_string(), a.api_key.clone()));
+                    } else if a.adapter == "anthropic" && a.auth_mode != "oauth" {
+                        headers.push(("x-api-key".to_string(), a.api_key.clone()));
                     } else {
-                        headers.push(("authorization".to_string(), format!("Bearer {}", a.api_key)));
+                        headers
+                            .push(("authorization".to_string(), format!("Bearer {}", a.api_key)));
+                    }
+                }
+                for (name, value) in &a.static_headers {
+                    if let Some((_, existing)) = headers
+                        .iter_mut()
+                        .find(|(existing, _)| existing.eq_ignore_ascii_case(name))
+                    {
+                        *existing = value.clone();
+                    } else {
+                        headers.push((name.clone(), value.clone()));
                     }
                 }
                 headers
@@ -293,6 +340,7 @@ impl ProviderAccount {
     fn project_id(&self) -> Option<String> {
         match self {
             Self::Antigravity(a) => Some(a.project_id.clone()),
+            Self::Vertex(a) => Some(a.effective_project_id().to_string()),
             Self::Generic(a) if !a.project_id.is_empty() => Some(a.project_id.clone()),
             _ => None,
         }
@@ -334,6 +382,7 @@ impl ProviderAccount {
                 }
             }
             Self::Generic(_) => mahoquot_providers::build_refresh_request(""),
+            Self::Vertex(_) => mahoquot_providers::build_refresh_request(""),
             other => mahoquot_providers::build_refresh_request(&other.refresh_token()),
         }
     }
@@ -398,10 +447,7 @@ impl AccountMember {
     }
 
     pub fn usage_snapshot(&self) -> crate::usage::AccountUsage {
-        self.usage
-            .read()
-            .map(|u| u.clone())
-            .unwrap_or_default()
+        self.usage.read().map(|u| u.clone()).unwrap_or_default()
     }
 
     pub fn set_usage(&self, usage: crate::usage::AccountUsage) {
@@ -498,6 +544,17 @@ impl AccountMember {
         }
     }
 
+    pub fn vertex_location(&self) -> Option<String> {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*guard {
+            ProviderAccount::Vertex(account) => Some(account.effective_location().to_string()),
+            _ => None,
+        }
+    }
+
     pub fn supports_model(&self, model: &str) -> bool {
         let declared = {
             let guard = self
@@ -506,7 +563,8 @@ impl AccountMember {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             match &*guard {
                 ProviderAccount::Generic(account) => {
-                    account.models.is_empty() || account.models.iter().any(|candidate| candidate == model)
+                    account.models.is_empty()
+                        || account.models.iter().any(|candidate| candidate == model)
                 }
                 account => account.kind().serves_model(model),
             }
@@ -587,6 +645,13 @@ impl AccountMember {
                 }
                 ProviderAccount::Antigravity(a)
             }
+            ProviderKind::Vertex => {
+                let mut account = mahoquot_providers::load_vertex_account(&self.file_path)?;
+                if account.identity_slug.is_empty() {
+                    account.identity_slug = self.id.clone();
+                }
+                ProviderAccount::Vertex(account)
+            }
             other => {
                 let content = std::fs::read_to_string(&self.file_path)?;
                 let value: serde_json::Value =
@@ -644,7 +709,33 @@ impl AccountMember {
         } else {
             spec.url.as_str()
         };
-        let tokens = if self.kind() == ProviderKind::Zcode {
+        let tokens = if self.kind() == ProviderKind::Vertex {
+            let (token_url, email, private_key, private_key_id) = {
+                let account = self
+                    .inner
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let ProviderAccount::Vertex(account) = &*account else {
+                    return Err(RefreshError::Parse(
+                        "vertex account kind mismatch".to_string(),
+                    ));
+                };
+                (
+                    account.effective_token_url().to_string(),
+                    account.effective_email().to_string(),
+                    account.effective_private_key().to_string(),
+                    account.private_key_id.clone(),
+                )
+            };
+            mahoquot_providers::execute_vertex_refresh(
+                client,
+                &token_url,
+                &email,
+                &private_key,
+                private_key_id.as_deref(),
+            )
+            .await?
+        } else if self.kind() == ProviderKind::Zcode {
             let base = self
                 .upstream_override
                 .as_deref()
@@ -687,6 +778,7 @@ fn provider_account_from_value(
         ProviderKind::Cursor => ProviderAccount::Cursor(serde_json::from_value(value)?),
         ProviderKind::Kiro => ProviderAccount::Kiro(serde_json::from_value(value)?),
         ProviderKind::Zcode => ProviderAccount::Zcode(serde_json::from_value(value)?),
+        ProviderKind::Vertex => ProviderAccount::Vertex(serde_json::from_value(value)?),
         ProviderKind::Generic => ProviderAccount::Generic(serde_json::from_value(value)?),
     })
 }
@@ -699,6 +791,7 @@ fn set_identity_slug(account: &mut ProviderAccount, slug: String) {
         ProviderAccount::Cursor(a) => a.identity_slug = slug,
         ProviderAccount::Kiro(a) => a.identity_slug = slug,
         ProviderAccount::Zcode(a) => a.identity_slug = slug,
+        ProviderAccount::Vertex(a) => a.identity_slug = slug,
         ProviderAccount::Generic(a) => a.identity_slug = slug,
     }
 }
@@ -711,6 +804,7 @@ fn identity_slug_of(account: &ProviderAccount) -> &str {
         ProviderAccount::Cursor(a) => &a.identity_slug,
         ProviderAccount::Kiro(a) => &a.identity_slug,
         ProviderAccount::Zcode(a) => &a.identity_slug,
+        ProviderAccount::Vertex(a) => &a.identity_slug,
         ProviderAccount::Generic(a) => &a.identity_slug,
     }
 }
@@ -815,9 +909,12 @@ fn classify_credential(file_path: &Path, declared_type: &str) -> Option<Provider
         ProviderKind::Cursor,
         ProviderKind::Kiro,
         ProviderKind::Zcode,
+        ProviderKind::Vertex,
         ProviderKind::Generic,
     ] {
-        if name.starts_with(&format!("{}-", kind.as_str())) {
+        if name.starts_with(&format!("{}-", kind.as_str()))
+            || (kind == ProviderKind::Vertex && name.starts_with("vertex-"))
+        {
             return Some(kind);
         }
     }
@@ -867,7 +964,10 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             }
         };
 
-        let declared_type = value.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+        let declared_type = value
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         if value
             .get("disabled")
             .and_then(|v| v.as_bool())
@@ -947,7 +1047,6 @@ pub fn load_account_members(auth_dir: &Path) -> anyhow::Result<Vec<Arc<AccountMe
             usage: RwLock::new(Default::default()),
         }));
     }
-
 
     Ok(members)
 }

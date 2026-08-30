@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 
 use super::events::{CodexEvent, Usage};
 
-pub fn openai_to_antigravity(body: &Value, project_id: &str) -> Result<Value, String> {
+pub fn openai_to_gemini(body: &Value) -> Result<Value, String> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -121,11 +121,129 @@ pub fn openai_to_antigravity(body: &Value, project_id: &str) -> Result<Value, St
         }
     }
 
+    Ok(Value::Object(request))
+}
+
+pub fn openai_to_antigravity(body: &Value, project_id: &str) -> Result<Value, String> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing model".to_string())?;
+
+    let request = openai_to_gemini(body)?;
+
     Ok(json!({
         "model": model,
         "project": project_id,
-        "request": Value::Object(request),
+        "request": request,
     }))
+}
+
+pub fn gemini_json_to_openai(body: &Value, model: &str, created: i64) -> Value {
+    let response = body.get("response").unwrap_or(body);
+    let candidate = response
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|c| c.first());
+
+    let mut text = String::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+
+    if let Some(parts) = candidate
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(Value::as_array)
+    {
+        for (idx, part) in parts.iter().enumerate() {
+            if let Some(call) = part.get("functionCall") {
+                let name = call.get("name").and_then(Value::as_str).unwrap_or("");
+                let args = call
+                    .get("args")
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|| "{}".to_string());
+                tool_calls.push(json!({
+                    "id": format!("call_{name}_{idx}"),
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": args,
+                    }
+                }));
+            } else if let Some(t) = part.get("text").and_then(Value::as_str) {
+                text.push_str(t);
+            }
+        }
+    }
+
+    let finish_reason = if !tool_calls.is_empty() {
+        "tool_calls"
+    } else {
+        match candidate
+            .and_then(|c| c.get("finishReason"))
+            .and_then(Value::as_str)
+        {
+            Some("MAX_TOKENS") => "length",
+            _ => "stop",
+        }
+    };
+
+    let usage = response.get("usageMetadata");
+    let prompt_tokens = usage
+        .and_then(|u| u.get("promptTokenCount"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .and_then(|u| u.get("candidatesTokenCount"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_tokens = usage
+        .and_then(|u| u.get("totalTokenCount"))
+        .and_then(Value::as_u64)
+        .unwrap_or(prompt_tokens + completion_tokens);
+
+    let message = if !tool_calls.is_empty() {
+        if text.is_empty() {
+            json!({
+                "role": "assistant",
+                "content": Value::Null,
+                "tool_calls": tool_calls
+            })
+        } else {
+            json!({
+                "role": "assistant",
+                "content": text,
+                "tool_calls": tool_calls
+            })
+        }
+    } else {
+        json!({
+            "role": "assistant",
+            "content": text
+        })
+    };
+
+    let id = response
+        .get("responseId")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("chatcmpl-{created}"));
+
+    json!({
+        "id": id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": finish_reason,
+        }],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+    })
 }
 
 /// Antigravity thinking models bill internal reasoning against maxOutputTokens

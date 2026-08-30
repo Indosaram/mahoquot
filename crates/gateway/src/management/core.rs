@@ -82,7 +82,10 @@ async fn put_config_yaml(State(state): State<Arc<AppState>>, raw: bytes::Bytes) 
 }
 
 async fn get_latest_version() -> Response {
-    json_status(StatusCode::OK, json!({ "latest-version": format!("v{}", super::gate::cpa_version()) }))
+    json_status(
+        StatusCode::OK,
+        json!({ "latest-version": format!("v{}", super::gate::cpa_version()) }),
+    )
 }
 
 async fn reset_quota(State(state): State<Arc<AppState>>, raw: bytes::Bytes) -> Response {
@@ -154,7 +157,10 @@ async fn api_call(raw: bytes::Bytes) -> Response {
         .and_then(Value::as_str)
         .is_some_and(|m| !m.trim().is_empty());
     if !has_method {
-        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "missing method" }));
+        return json_status(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "missing method" }),
+        );
     }
     json_status(
         StatusCode::SERVICE_UNAVAILABLE,

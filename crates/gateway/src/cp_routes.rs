@@ -54,15 +54,27 @@ fn owner_of(state: &AppState, model: &str) -> Option<String> {
 }
 
 pub async fn root() -> Response {
-    ([(header::CONTENT_TYPE, "application/json; charset=utf-8")], ROOT_JSON).into_response()
+    (
+        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+        ROOT_JSON,
+    )
+        .into_response()
 }
 
 pub async fn management_html() -> Response {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], MANAGEMENT_HTML).into_response()
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        MANAGEMENT_HTML,
+    )
+        .into_response()
 }
 
 pub async fn oauth_callback() -> Response {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], CALLBACK_HTML).into_response()
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        CALLBACK_HTML,
+    )
+        .into_response()
 }
 
 pub async fn images_generations(body: Bytes) -> Response {
@@ -252,8 +264,14 @@ pub async fn responses(
     let model = model_of(&parsed).to_string();
 
     if owner_of(&state, &model).as_deref() != Some("google") {
-        return handle_relay(state, RelayMode::Native, CODEX_RESPONSES_PATH, &headers, body)
-            .await;
+        return handle_relay(
+            state,
+            RelayMode::Native,
+            CODEX_RESPONSES_PATH,
+            &headers,
+            body,
+        )
+        .await;
     }
 
     let chat = responses_input_to_chat(&parsed, &model);
@@ -357,7 +375,10 @@ fn chat_to_responses(chat: &Value, model: &str) -> Value {
         "tools": [],
     });
     if let Some(usage) = chat.get("usage") {
-        let input = usage.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
+        let input = usage
+            .get("prompt_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         let output = usage
             .get("completion_tokens")
             .and_then(Value::as_i64)
@@ -469,10 +490,7 @@ pub async fn v1beta_action(
     match verb {
         GeminiAction::Generate | GeminiAction::StreamGenerate => {
             if !parsed.get("contents").map(Value::is_array).unwrap_or(false) {
-                return json_status(
-                    StatusCode::BAD_REQUEST,
-                    v1beta::contents_not_specified(),
-                );
+                return json_status(StatusCode::BAD_REQUEST, v1beta::contents_not_specified());
             }
             let mut chat = parsed.clone();
             if let Some(obj) = chat.as_object_mut() {
@@ -546,8 +564,12 @@ mod tests {
 
     #[test]
     fn multipart_model_is_extracted_from_the_part_body() {
-        let text = "--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ngpt-image-2\r\n--B--\r\n";
-        assert_eq!(multipart_field(text, "model"), Some("gpt-image-2".to_string()));
+        let text =
+            "--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ngpt-image-2\r\n--B--\r\n";
+        assert_eq!(
+            multipart_field(text, "model"),
+            Some("gpt-image-2".to_string())
+        );
     }
 
     #[test]

@@ -24,7 +24,10 @@ pub fn openai_to_kiro_with_profile(
     let mut system = Vec::new();
     let mut conversational = Vec::new();
     for message in messages {
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
         let content = text_content(message.get("content").unwrap_or(&Value::Null));
         if role == "system" || role == "developer" {
             if !content.is_empty() {
@@ -40,7 +43,10 @@ pub fn openai_to_kiro_with_profile(
 
     let mut tool_results = Vec::new();
     let mut current_images = Vec::new();
-    while conversational.last().is_some_and(|(role, _, _)| *role == "tool") {
+    while conversational
+        .last()
+        .is_some_and(|(role, _, _)| *role == "tool")
+    {
         let (_, content, message) = conversational.pop().unwrap();
         let id = message
             .get("tool_call_id")
@@ -51,7 +57,9 @@ pub fn openai_to_kiro_with_profile(
         } else {
             content
         };
-        current_images.extend(images_content(message.get("content").unwrap_or(&Value::Null)));
+        current_images.extend(images_content(
+            message.get("content").unwrap_or(&Value::Null),
+        ));
         tool_results.push(json!({
             "toolUseId": normalize_tool_id(id),
             "content": [{"text": text}],
@@ -133,7 +141,10 @@ pub fn openai_to_kiro_with_profile(
             .iter()
             .filter_map(|tool| tool.get("function"))
             .map(|function| {
-                let mut schema = function.get("parameters").cloned().unwrap_or_else(|| json!({}));
+                let mut schema = function
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 sanitize_schema(&mut schema);
                 json!({
                     "toolSpecification": {
@@ -210,9 +221,8 @@ fn images_content(value: &Value) -> Vec<Value> {
             let encoded = url.strip_prefix("data:image/")?;
             let (format, bytes) = encoded.split_once(";base64,")?;
             let format = if format == "jpg" { "jpeg" } else { format };
-            matches!(format, "jpeg" | "png" | "gif" | "webp").then(|| {
-                json!({"format": format, "source": {"bytes": bytes}})
-            })
+            matches!(format, "jpeg" | "png" | "gif" | "webp")
+                .then(|| json!({"format": format, "source": {"bytes": bytes}}))
         })
         .collect()
 }
@@ -221,7 +231,11 @@ fn sanitize_schema(value: &mut Value) {
     match value {
         Value::Object(map) => {
             map.remove("additionalProperties");
-            if map.get("required").and_then(Value::as_array).is_some_and(Vec::is_empty) {
+            if map
+                .get("required")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            {
                 map.remove("required");
             }
             for child in map.values_mut() {
@@ -269,7 +283,10 @@ impl KiroDecoder {
                 if let Some(input) = value.get("input") {
                     out.push(CodexEvent::ToolArgsDelta {
                         output_index: index,
-                        delta: input.as_str().map(str::to_string).unwrap_or_else(|| input.to_string()),
+                        delta: input
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| input.to_string()),
                     });
                 }
             } else if let Some(input) = value.get("input").and_then(Value::as_str) {
@@ -342,7 +359,9 @@ mod tests {
             &mut events,
         );
         assert!(events.iter().any(|event| matches!(event, CodexEvent::ToolCallBegin { call_id, name, .. } if call_id == "call_1" && name == "lookup")));
-        assert!(events.iter().any(|event| matches!(event, CodexEvent::ToolArgsDelta { delta, .. } if delta.contains("q"))));
+        assert!(events.iter().any(
+            |event| matches!(event, CodexEvent::ToolArgsDelta { delta, .. } if delta.contains("q"))
+        ));
     }
 
     #[test]
@@ -376,7 +395,10 @@ mod tests {
             current["userInputMessageContext"]["toolResults"][0]["toolUseId"],
             "call_1"
         );
-        assert_eq!(current["userInputMessageContext"]["toolResults"][0]["content"][0]["text"], "done");
+        assert_eq!(
+            current["userInputMessageContext"]["toolResults"][0]["content"][0]["text"],
+            "done"
+        );
         assert_eq!(current["images"][0]["format"], "jpeg");
         assert_eq!(current["images"][0]["source"]["bytes"], "abc");
     }
@@ -402,7 +424,11 @@ mod tests {
             br#"{"text":"internal"}{"name":"bash","toolUseId":"call_1","input":{"cmd":"ls"}}"#,
             &mut events,
         );
-        assert!(!events.iter().any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
-        assert!(events.iter().any(|event| matches!(event, CodexEvent::ToolArgsDelta { delta, .. } if delta.contains("ls"))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, CodexEvent::TextDelta(text) if text == "internal")));
+        assert!(events.iter().any(
+            |event| matches!(event, CodexEvent::ToolArgsDelta { delta, .. } if delta.contains("ls"))
+        ));
     }
 }

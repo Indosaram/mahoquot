@@ -1,3 +1,5 @@
+mod common;
+
 use mahoquot_gateway::monitor::{MonitorState, PromAccount};
 use std::sync::Arc;
 
@@ -13,10 +15,8 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
-    let auth_dir = std::env::temp_dir().join(format!(
-        "mahoquot-monitor-restart-{}",
-        std::process::id()
-    ));
+    let auth_dir =
+        std::env::temp_dir().join(format!("mahoquot-monitor-restart-{}", std::process::id()));
     std::fs::create_dir_all(&auth_dir).expect("auth dir");
     let config = GatewayConfig {
         auth_dir: auth_dir.clone(),
@@ -25,9 +25,12 @@ async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
         ..GatewayConfig::default()
     };
     let first = AppState::new(&config).expect("first state");
-    first.telemetry.record(1_800, "codex", true);
+    first.telemetry.record_with_account(1_800, "codex", Some("codex"), true);
     first.telemetry.flush().expect("flush history");
-    append_log_line(&first.settings.current(), r#"{"provider":"codex","status":200}"#);
+    append_log_line(
+        &first.settings.current(),
+        r#"{"provider":"codex","status":200}"#,
+    );
 
     let restored = Arc::new(AppState::new(&config).expect("restored state"));
     let app = create_app(restored);
@@ -60,8 +63,212 @@ async fn persisted_history_and_logs_are_exposed_after_state_recreation() {
     assert_eq!(logs.status(), StatusCode::OK);
     let logs_body = logs.into_body().collect().await.unwrap().to_bytes();
     let logs_json: serde_json::Value = serde_json::from_slice(&logs_body).unwrap();
-    assert!(logs_json["lines"][0].as_str().unwrap().contains("codex"));
+    let records = logs_json["records"].as_array().expect("records array");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "proxy");
+    assert!(records[0]["message"].as_str().unwrap().contains("codex"));
     std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn logs_endpoint_serves_the_live_tail_while_file_logging_is_off() {
+    let auth_dir =
+        std::env::temp_dir().join(format!("mahoquot-live-tail-{}", std::process::id()));
+    std::fs::create_dir_all(&auth_dir).expect("auth dir");
+    std::fs::write(auth_dir.join("config.yaml"), "logging-to-file: false\n").expect("config");
+    let config = GatewayConfig {
+        auth_dir: auth_dir.clone(),
+        api_keys: ApiKeys::new(vec!["tail-key".to_string()]),
+        config_path: auth_dir.join("config.yaml"),
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).expect("state")));
+
+    // A management edit lands in the live tail even with file logging off.
+    let edit = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v0/management/logs-max-total-size-mb")
+                .header("authorization", "Bearer tail-key")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"value": 5}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(edit.status(), StatusCode::OK);
+
+    let logs = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/logs")
+                .header("authorization", "Bearer tail-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs_json: serde_json::Value =
+        serde_json::from_slice(&logs.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let records = logs_json["records"].as_array().expect("records array");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "proxy");
+    assert!(records[0]["message"].as_str().unwrap().contains("management: config updated"));
+    assert!(!auth_dir.join("logs").exists(), "no file should be written");
+
+    // File-backed error-log routes still refuse while logging is disabled.
+    let error_logs = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/request-error-logs")
+                .header("authorization", "Bearer tail-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(error_logs.status(), StatusCode::BAD_REQUEST);
+
+    // And clearing empties the live tail too.
+    let cleared = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v0/management/logs")
+                .header("authorization", "Bearer tail-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.status(), StatusCode::OK);
+    let after = app
+        .oneshot(
+            Request::builder()
+                .uri("/v0/management/logs")
+                .header("authorization", "Bearer tail-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let after_json: serde_json::Value =
+        serde_json::from_slice(&after.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(after_json["records"].as_array().expect("records").len(), 0);
+    assert_eq!(after_json["request-count"], 0);
+    assert_eq!(after_json["proxy-count"], 0);
+    std::fs::remove_dir_all(auth_dir).ok();
+}
+
+#[tokio::test]
+async fn streamed_requests_record_bytes_and_tokens_at_stream_end() {
+    use axum::response::Response;
+    use axum::routing::post;
+    use axum::Router;
+    use common::{create_auth_file_json, unique_temp_dir};
+
+    // Given: an upstream that streams frames ending with a usage frame
+    let mut frames: Vec<String> = (0..3)
+        .map(|i| format!("data: {{\"chunk\":{i}}}\n\n"))
+        .collect();
+    frames.push("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n".to_string());
+    frames.push("data: [DONE]\n\n".to_string());
+    let expected_bytes_out: usize = frames.iter().map(|f| f.len()).sum();
+
+    let frames_for_mock = frames.clone();
+    let mock_app = Router::new().route(
+        "/backend-api/codex/responses",
+        post(move || {
+            let frames = frames_for_mock.clone();
+            async move {
+                let stream = futures::stream::iter(
+                    frames.into_iter().map(|c| Ok::<_, std::io::Error>(bytes::Bytes::from(c))),
+                );
+                Response::builder()
+                    .status(axum::http::StatusCode::OK)
+                    .header("Content-Type", "text/event-stream")
+                    .body(Body::from_stream(stream))
+                    .unwrap()
+            }
+        }),
+    );
+    let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_port = upstream_listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(upstream_listener, mock_app).await.unwrap();
+    });
+    let upstream_uri = format!("http://127.0.0.1:{upstream_port}");
+
+    let temp_dir = unique_temp_dir("qgw-test-t5-stream-record");
+    let json_a = create_auth_file_json("a", "acc_a", "token_a", Some(&upstream_uri));
+    std::fs::write(temp_dir.join("codex-a-plus.json"), json_a).unwrap();
+    std::fs::write(temp_dir.join("config.yaml"), "logging-to-file: false\n").unwrap();
+
+    let config = GatewayConfig {
+        auth_dir: temp_dir.clone(),
+        api_keys: ApiKeys::new(vec!["stream-key".to_string()]),
+        config_path: temp_dir.join("config.yaml"),
+        max_failover: 3,
+        ..GatewayConfig::default()
+    };
+    let app = create_app(Arc::new(AppState::new(&config).expect("state")));
+    let gw_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gw_port = gw_listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(gw_listener, app).await.unwrap();
+    });
+
+    // When: a client streams the request to completion
+    let request_body = r#"{"prompt":"write rust"}"#;
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://127.0.0.1:{gw_port}/backend-api/codex/responses"))
+        .header("Authorization", "Bearer stream-key")
+        .header("Content-Type", "application/json")
+        .body(request_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    let delivered = res.text().await.unwrap();
+    assert_eq!(delivered.len(), expected_bytes_out);
+
+    // Then: the finalized record carries bytes and tokens; the record is
+    // written by a spawned task, so poll the endpoint with a bounded timeout.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let record = loop {
+        assert!(std::time::Instant::now() < deadline, "record never appeared");
+        let logs = client
+            .get(format!("http://127.0.0.1:{gw_port}/v0/management/logs"))
+            .header("Authorization", "Bearer stream-key")
+            .send()
+            .await
+            .unwrap();
+        let logs_json: serde_json::Value = logs.json().await.unwrap();
+        let records = logs_json["records"].as_array().cloned().unwrap_or_default();
+        if let Some(record) = records
+            .iter()
+            .find(|r| r["kind"] == "request")
+        {
+            break record.clone();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+
+    assert_eq!(record["provider"], "codex");
+    assert_eq!(record["account"], "a");
+    assert_eq!(record["success"], true);
+    assert_eq!(record["bytes-in"], request_body.len() as u64);
+    assert_eq!(record["bytes-out"], expected_bytes_out as u64);
+    assert_eq!(record["tokens"], 15);
+    assert!(record["latency-ms"].as_u64().is_some());
+    std::fs::remove_dir_all(&temp_dir).ok();
 }
 
 #[test]

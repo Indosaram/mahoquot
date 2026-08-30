@@ -163,9 +163,11 @@ pub const SCALARS: &[Scalar] = &[
     Scalar {
         path: "/routing/strategy",
         key: "strategy",
-        read: |s| json!(normalize_routing_strategy(&s.routing.strategy)
-            .map(str::to_string)
-            .unwrap_or_else(|| s.routing.strategy.trim().to_string())),
+        read: |s| {
+            json!(normalize_routing_strategy(&s.routing.strategy)
+                .map(str::to_string)
+                .unwrap_or_else(|| s.routing.strategy.trim().to_string()))
+        },
         write: |s, b| {
             let raw = valued::<String>(b)?;
             match normalize_routing_strategy(&raw) {
@@ -205,7 +207,8 @@ pub const SCALARS: &[Scalar] = &[
         },
         clear: Some(|s, provider| match provider {
             Some(p) if !p.trim().is_empty() => {
-                s.oauth_excluded_models.remove(&p.trim().to_ascii_lowercase());
+                s.oauth_excluded_models
+                    .remove(&p.trim().to_ascii_lowercase());
                 Ok(())
             }
             _ => Err(Refusal::Message("missing provider")),
