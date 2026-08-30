@@ -9,6 +9,24 @@ export const DOCS_URL = "https://github.com/indosaram/mahoquot/blob/main/README.
 export const CONTRACTS_URL =
   "https://github.com/indosaram/mahoquot/blob/main/docs/CONTRACTS.md";
 
+
+/** Benchmark facts sourced from the repository's measured comparison against
+ * CLIProxyAPI (docs: fair translation benchmark, paired deltas). */
+export const MEASURED_FACTS = [
+  { value: "~58 us", label: "per-chunk relay cost vs ~378 us" },
+  { value: "+0.7-2.8 ms", label: "p50 overhead vs direct upstream" },
+  { value: "6/6", label: "fair benchmark rounds won on every metric" },
+  { value: "129", label: "management routes at parity" },
+] as const;
+
+
+/** Real per-minute request totals from the 26-minute shaped run (persisted
+ * gateway minute buckets). Rendered by the Request rate chart. */
+export const RATE_TOTALS: readonly number[] = [
+  1600, 400, 700, 200, 1400, 300, 500, 150, 1100, 250, 800, 200, 1500, 300, 600,
+  150, 1300, 250, 900, 200, 1000, 150, 1200, 200, 1000, 200, 400,
+];
+
 export const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Console", href: "#console" },
@@ -115,22 +133,8 @@ export const FEATURES: readonly Feature[] = [
   },
 ] as const;
 
-export const LIVE_RUN = {
-  requests: "16,950",
-  success: "100%",
-  failedOver: "0",
-  accounts: "3",
-  p50: "41.8",
-  p90: "42.6",
-  p99: "42.9",
-  rps: "1,127",
-  concurrency: "20-50",
-  samples: "400",
-} as const;
 
-
-
-type BenchRow = {
+export type BenchRow = {
   load: string;
   tier: string;
   p50: string;

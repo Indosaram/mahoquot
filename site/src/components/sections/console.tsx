@@ -1,19 +1,9 @@
-import { LIVE_RUN } from "@/content/site";
-import { SectionHeader } from "@/components/ui/section-header";
+import { MEASURED_FACTS } from "@/content/site";
+import { DitherArea } from "@/components/dither-area";
+import { RATE_TOTALS } from "@/content/site";
 
-const MEASURED = [
-  { label: "Requests relayed", value: LIVE_RUN.requests },
-  { label: "Success rate", value: LIVE_RUN.success },
-  { label: "Failed over", value: LIVE_RUN.failedOver },
-  { label: "Pooled accounts", value: LIVE_RUN.accounts },
-];
-
-const LATENCY = [
-  { label: "p50 TTFT", value: `${LIVE_RUN.p50} ms` },
-  { label: "p90 TTFT", value: `${LIVE_RUN.p90} ms` },
-  { label: "p99 TTFT", value: `${LIVE_RUN.p99} ms` },
-  { label: "Throughput", value: `${LIVE_RUN.rps} rps` },
-];
+const TOTALS = [...RATE_TOTALS];
+  const total = TOTALS.reduce((a, b) => a + b, 0);
 
 export function Console() {
   return (
@@ -21,24 +11,20 @@ export function Console() {
       <div className="mx-auto max-w-[1400px] px-6 py-24">
         <div className="grid grid-cols-1 gap-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div className="flex flex-col justify-center">
-            <SectionHeader
-              eyebrow="Measured, not mocked"
-              title="Every number on this page came from a real run."
-              lead={
-                <>
-                  Three pooled Codex accounts, {LIVE_RUN.requests} requests across
-                  26 minutes of burst traffic at concurrency{" "}
-                  {LIVE_RUN.concurrency}, driven through the release build by{" "}
-                  <code className="font-mono text-[15px]">tools/bench</code>,
-                  read back from{" "}
-                  <code className="font-mono text-[15px]">/admin/usage</code>{" "}
-                  and rendered by the shipping console.
-                </>
-              }
-            />
+            <p className="text-[12px] font-medium uppercase tracking-[0.12em] text-ink-faint">
+              Operations console
+            </p>
+            <h2 className="mt-4 text-[clamp(1.9rem,3.2vw,2.6rem)] font-medium leading-[1.12] tracking-[-0.01em] text-ink">
+              Your pool, your machine, your numbers.
+            </h2>
+            <p className="mt-4 max-w-[52ch] text-[16px] leading-relaxed text-ink-muted">
+              The console ships with the proxy. Performance claims live in{" "}
+              Benchmarks — measured against CLIProxyAPI on identical
+              translation workloads, not against a synthetic demo.
+            </p>
 
             <div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line">
-              {MEASURED.map((m) => (
+              {MEASURED_FACTS.map((m) => (
                 <div key={m.label} className="bg-surface px-6 py-5">
                   <div className="tnum text-[26px] font-medium tracking-[-0.01em] text-ink">
                     {m.value}
@@ -50,35 +36,19 @@ export function Console() {
               ))}
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-4">
-              {LATENCY.map((l) => (
-                <div key={l.label} className="bg-surface px-5 py-4">
-                  <div className="tnum text-[17px] font-medium text-ink">
-                    {l.value}
-                  </div>
-                  <div className="mt-0.5 text-[11px] text-ink-faint">
-                    {l.label}
-                  </div>
-                </div>
-              ))}
-            </div>
-
             <p className="mt-5 text-[13px] leading-relaxed text-ink-ghost">
-              Latency sampled over {LIVE_RUN.samples} TTFT observations. Upstream
-              was the deterministic mock in{" "}
-              <code className="font-mono">tools/bench</code>, so these figures
-              measure Mahoquot itself rather than a provider network.
+              Screenshots: the shipping console rendering a 26-minute burst run
+              from <code className="font-mono">tools/bench</code>. Figures here
+              are from the repository benchmark suite.
             </p>
           </div>
 
           <figure className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface">
             <img
               src="shots/console-accounts.png"
-              alt="Accounts surface listing three healthy pooled Codex accounts named alpha, bravo and charlie, each with warm up and refresh controls"
+              alt="Accounts surface listing three pooled Codex accounts with health badges and refresh controls"
               width={1280}
               height={820}
-              loading="lazy"
-              decoding="async"
               className="w-full"
             />
             <figcaption className="mt-auto border-t border-line px-5 py-3.5 text-[13px] text-ink-faint">
@@ -86,6 +56,30 @@ export function Console() {
             </figcaption>
           </figure>
         </div>
+
+        <figure className="mt-4 overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+          <div className="flex items-baseline justify-between border-b border-line px-6 py-5">
+            <h3 className="text-[16px] font-medium text-ink">Request rate</h3>
+            <span className="font-mono text-[11px] text-ink-ghost">26m</span>
+          </div>
+          <div className="px-2 pb-2 pt-4">
+            <DitherArea
+              values={TOTALS}
+              seed={{ fill: [240, 128, 26], line: [255, 178, 102] }}
+              height={190}
+              ariaLabel={`Request rate per minute across the pool, peaking at ${Math.max(...TOTALS)} requests`}
+            />
+            <div className="flex justify-between px-4 pt-1 font-mono text-[10px] text-ink-ghost">
+              <span>-26 min</span>
+              <span>now</span>
+            </div>
+          </div>
+          <figcaption className="border-t border-line px-6 py-3.5 text-[13px] text-ink-faint">
+            Strict round-robin: {total.toLocaleString()} requests split{" "}
+            {Math.round(total / 3).toLocaleString()} / {Math.round(total / 3).toLocaleString()} /{" "}
+            {Math.round(total / 3).toLocaleString()} per account (±1).
+          </figcaption>
+        </figure>
       </div>
     </section>
   );
