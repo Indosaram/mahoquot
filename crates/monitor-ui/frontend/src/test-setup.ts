@@ -28,6 +28,19 @@ if (typeof HTMLCanvasElement !== "undefined") {
   } as unknown as typeof HTMLCanvasElement.prototype.getContext;
 }
 
+// The dither-kit charts measure themselves through ResizeObserver, which jsdom
+// also does not implement; without a stub every effect that mounts a chart
+// throws ReferenceError before the test can assert anything.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver =
+    ResizeObserverStub as unknown as typeof globalThis.ResizeObserver;
+}
+
 // Mock localStorage if missing or incomplete
 const storageMock = (() => {
   let store: Record<string, string> = {};
