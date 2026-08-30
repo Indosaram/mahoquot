@@ -525,3 +525,81 @@ async fn test_t7_concurrent_single_flight_refresh() {
 
     std::fs::remove_dir_all(&temp_dir).ok();
 }
+
+#[tokio::test]
+async fn generic_oauth_accounts_refresh_with_provider_contracts() {
+    // Given: expired xAI and Kimi credentials created by the onboarding routes.
+    let seen = Arc::new(tokio::sync::Mutex::new(Vec::<(String, String)>::new()));
+    let seen_for_server = Arc::clone(&seen);
+    let oauth_app = Router::new().route(
+        "/token",
+        post(move |body: String| {
+            let seen = Arc::clone(&seen_for_server);
+            async move {
+                seen.lock().await.push(("token".to_string(), body));
+                (
+                    StatusCode::OK,
+                    [("content-type", "application/json")],
+                    r#"{"access_token":"fresh-generic","refresh_token":"fresh-refresh","expires_in":3600}"#,
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+    let oauth_task = tokio::spawn(async move { axum::serve(listener, oauth_app).await.unwrap() });
+
+    for (provider, client_id) in [
+        ("xai", "b1a00492-073a-47ea-816f-4c329264a828"),
+        ("kimi", "17e5f671-d194-4dfb-9706-5516cb48c098"),
+    ] {
+        let temp_dir = unique_temp_dir(&format!("qgw-test-t7-{provider}"));
+        let file_path = temp_dir.join(format!("generic-{provider}-oauth.json"));
+        std::fs::write(
+            &file_path,
+            serde_json::json!({
+                "type": "generic",
+                "provider": provider,
+                "label": provider,
+                "adapter": "openai-chat",
+                "base_url": "http://127.0.0.1:9",
+                "api_key": "stale-generic",
+                "auth_mode": "oauth",
+                "refresh_token": "generic-refresh",
+                "expired": "2020-01-01T00:00:00Z",
+                "token_url": token_url,
+                "client_id": client_id,
+                "models": [format!("{provider}-model")]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let members = mahoquot_gateway::account::load_account_members(&temp_dir).unwrap();
+        assert_eq!(members.len(), 1);
+        let member = &members[0];
+        assert!(member.is_expired(2_000_000_000));
+        assert_eq!(member.refresh_token(), "generic-refresh");
+
+        let refreshed = member
+            .refresh(&reqwest::Client::new(), "unused", None)
+            .await
+            .unwrap();
+        assert!(refreshed);
+        assert_eq!(member.access_token(), "fresh-generic");
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file_path).unwrap()).unwrap();
+        assert_eq!(saved["api_key"], "fresh-generic");
+        assert_eq!(saved["refresh_token"], "fresh-refresh");
+        std::fs::remove_dir_all(temp_dir).ok();
+    }
+
+    let requests = seen.lock().await;
+    assert_eq!(requests.len(), 2);
+    for (_, body) in requests.iter() {
+        assert!(body.contains("grant_type=refresh_token"));
+        assert!(body.contains("refresh_token=generic-refresh"));
+    }
+    oauth_task.abort();
+}

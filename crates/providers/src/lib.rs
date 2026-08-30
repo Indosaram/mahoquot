@@ -53,6 +53,7 @@ pub use refresh::{
     build_kiro_social_refresh_request, build_refresh_request, parse_refresh_response,
     RefreshRequest, Tokens, REFRESH_CLIENT_ID, REFRESH_TOKEN_URL,
 };
+pub use refresh_exec::format_expired_rfc3339;
 
 #[cfg(test)]
 mod red_tests {

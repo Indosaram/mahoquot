@@ -8,6 +8,12 @@ use crate::refresh::Tokens;
 
 static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
 
+pub fn format_expired_rfc3339(unix: i64) -> String {
+    DateTime::<Utc>::from_timestamp(unix, 0)
+        .unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+        .to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RefreshError {
     #[error("http: {0}")]
@@ -174,8 +180,13 @@ pub fn apply_refresh_to_file(
         .as_object_mut()
         .ok_or_else(|| RefreshError::Parse("root is not a JSON object".to_string()))?;
 
+    let access_token_field = if obj.get("type").and_then(Value::as_str) == Some("generic") {
+        "api_key"
+    } else {
+        "access_token"
+    };
     obj.insert(
-        "access_token".to_string(),
+        access_token_field.to_string(),
         Value::String(tokens.access_token.clone()),
     );
 

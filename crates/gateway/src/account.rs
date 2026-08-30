@@ -45,6 +45,14 @@ pub struct GenericAccount {
     #[serde(default)]
     pub auth_mode: String,
     #[serde(default)]
+    pub refresh_token: String,
+    #[serde(default)]
+    pub expired: String,
+    #[serde(default)]
+    pub token_url: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
     pub project_id: String,
     #[serde(default)]
     pub models: Vec<String>,
@@ -168,7 +176,7 @@ impl ProviderAccount {
             Self::Cursor(a) => a.refresh_token.clone(),
             Self::Kiro(a) => a.refresh_token.clone(),
             Self::Zcode(a) => a.refresh_token.clone(),
-            Self::Generic(_) => String::new(),
+            Self::Generic(a) => a.refresh_token.clone(),
         }
     }
 
@@ -186,7 +194,9 @@ impl ProviderAccount {
                 !mahoquot_providers::zcode::is_provisioned_api_key(&a.access_token)
                     && expired_at_is_past(&a.expired, now_unix)
             }
-            Self::Generic(_) => false,
+            Self::Generic(a) => {
+                a.auth_mode == "oauth" && expired_at_is_past(&a.expired, now_unix)
+            }
         }
     }
 
@@ -311,6 +321,18 @@ impl ProviderAccount {
                     )
                 }
             },
+            Self::Generic(a) if matches!(a.provider.as_str(), "xai" | "kimi") => {
+                mahoquot_providers::RefreshRequest {
+                    url: a.token_url.clone(),
+                    form_fields: vec![
+                        ("grant_type".to_string(), "refresh_token".to_string()),
+                        ("refresh_token".to_string(), a.refresh_token.clone()),
+                        ("client_id".to_string(), a.client_id.clone()),
+                    ],
+                    json_body: None,
+                    headers: Vec::new(),
+                }
+            }
             Self::Generic(_) => mahoquot_providers::build_refresh_request(""),
             other => mahoquot_providers::build_refresh_request(&other.refresh_token()),
         }

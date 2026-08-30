@@ -546,8 +546,10 @@ async fn exchange_xai_code(
         .unwrap_or("xai-account");
     let credential = json!({
         "type":"generic", "provider":"xai", "label":email, "adapter":"openai-chat",
-        "base_url":"https://api.x.ai/v1", "api_key":access_token,
-        "refresh_token":body.get("refresh_token"), "models":session.uuid.split(',').collect::<Vec<_>>(), "disabled":false
+        "base_url":"https://api.x.ai/v1", "api_key":access_token, "auth_mode":"oauth",
+        "refresh_token":body.get("refresh_token"), "expired":expiry_from_token_body(&body),
+        "token_url":session.token_url, "client_id":session.challenge,
+        "models":session.uuid.split(',').collect::<Vec<_>>(), "disabled":false
     });
     let auth_dir = std::path::PathBuf::from(state.settings.current().auth_dir.clone());
     let rendered = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
@@ -1101,7 +1103,11 @@ async fn poll_device_session(
         "adapter": "openai-chat",
         "base_url": upstream_base,
         "api_key": access_token,
+        "auth_mode": if matches!(session.provider.as_str(), "kimi") { "oauth" } else { "" },
         "refresh_token": body.get("refresh_token").or_else(|| body.get("refreshToken")),
+        "expired": expiry_from_token_body(&body),
+        "token_url": session.token_url,
+        "client_id": session.challenge,
         "models": session.uuid.split(',').collect::<Vec<_>>(),
         "disabled": false,
     });
@@ -1117,6 +1123,22 @@ async fn poll_device_session(
     session.saved_account_email = Some(email.to_string());
     session.status = SessionStatus::Completed;
     Ok(Some(credential))
+}
+
+fn expiry_from_token_body(body: &Value) -> String {
+    let expires_in = body
+        .get("expires_in")
+        .or_else(|| body.get("expiresIn"))
+        .and_then(Value::as_i64)
+        .unwrap_or(3600);
+    let expires_at = std::time::SystemTime::now()
+        .checked_add(std::time::Duration::from_secs(expires_in.max(0) as u64))
+        .unwrap_or(std::time::SystemTime::now());
+    let unix = expires_at
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    mahoquot_providers::format_expired_rfc3339(unix)
 }
 
 pub async fn exchange_anthropic_code(
