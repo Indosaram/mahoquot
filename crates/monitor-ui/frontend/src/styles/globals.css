@@ -2725,3 +2725,38 @@ h2 {
   grid-column: 1 / -1;
   justify-content: end;
 }
+
+.tray-totals {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #a8a8ad;
+}
+.tray-totals span:first-child {
+  color: #d8d8dc;
+}
+.tray-windows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 10px;
+  color: #6e6e73;
+}
+
+.usage-totals {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(64, 156, 255, 0.08);
+  font-size: 12px;
+  color: #a8a8ad;
+}
+.usage-totals strong {
+  color: #6ea8ff;
+  font-variant-numeric: tabular-nums;
+}

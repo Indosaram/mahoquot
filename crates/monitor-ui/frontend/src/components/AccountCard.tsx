@@ -210,6 +210,25 @@ export const AccountCard = ({
         </div>
       </div>
       <div className="usage-section">
+        {account.usage?.totals ? (
+          <div className="usage-totals" data-testid="account-usage-totals">
+            <strong>{account.usage.totals.requests.toLocaleString("en")}</strong> req
+            <span>·</span>
+            <strong>
+              {new Intl.NumberFormat("en", {
+                notation: "compact",
+                maximumFractionDigits: 2,
+              }).format(account.usage.totals.tokens)}
+            </strong>{" "}
+            tok
+            {account.usage.totals.total_cost_usd != null ? (
+              <>
+                <span>·</span>
+                <strong>${account.usage.totals.total_cost_usd.toFixed(2)}</strong>
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {rows.length ? (
           <div className="quota-list">
             {rows.map((row, index, list) => {

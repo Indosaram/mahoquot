@@ -10,6 +10,8 @@ const account = (overrides: {
   primary: number | null;
   secondary?: number | null;
   limitName?: string;
+  totals?: { requests: number; tokens: number; total_cost_usd: number };
+  windows?: { label: string; requests: number }[];
 }): NormalizedAccount =>
   ({
     id: `${overrides.provider}-${overrides.email}`,
@@ -29,6 +31,8 @@ const account = (overrides: {
     p50Ms: null,
     lastError: null,
     usage: {
+      totals: overrides.totals ?? null,
+      windows: overrides.windows ?? null,
       plan_type: overrides.plan,
       primary: {
         used_percent: overrides.primary,
@@ -63,6 +67,11 @@ describe("TrayPanel", () => {
             plan: "plus",
             primary: 46,
             secondary: 82,
+            totals: { requests: 7005, tokens: 1_184_368_836, total_cost_usd: 3990.364061 },
+            windows: [
+              { label: "3h", requests: 350 },
+              { label: "24h", requests: 550 },
+            ],
           }),
           account({
             provider: "antigravity",
@@ -92,6 +101,11 @@ describe("TrayPanel", () => {
     expect(screen.getByText("Pro 5x")).toBeTruthy();
     expect(screen.getAllByText("Session").length).toBe(2);
     expect(screen.getByText("54% left")).toBeTruthy();
+    expect(screen.getByTestId("tray-totals").textContent).toContain("7,005 req");
+    expect(screen.getByTestId("tray-totals").textContent).toContain("1.18B tok");
+    expect(screen.getByTestId("tray-totals").textContent).toContain("$3,990.36");
+    expect(screen.getByTestId("tray-windows").textContent).toContain("3h: 350 req");
+    expect(screen.getByTestId("tray-windows").textContent).toContain("24h: 550 req");
     expect(screen.getByText("Weekly")).toBeTruthy();
     expect(screen.getByText("0% left")).toBeTruthy();
     expect(screen.getAllByText("12 seconds ago").length).toBe(2);

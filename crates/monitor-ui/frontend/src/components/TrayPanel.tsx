@@ -97,6 +97,12 @@ const tilesOf = (account: NormalizedAccount): readonly TrayTile[] => {
   return [...core, ...grouped];
 };
 
+const formatCompact = (value: number): string =>
+  new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+
+const formatUsd = (value: number): string =>
+  `$${value.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 const providerChipLabel = (provider: string): string =>
   provider.charAt(0).toUpperCase() + provider.slice(1);
 
@@ -228,6 +234,24 @@ export const TrayPanel = ({
                 <span className="tray-plan">{planBadge(account.usage?.plan_type)}</span>
               )}
             </div>
+            {account.usage?.totals && (
+              <div className="tray-totals" data-testid="tray-totals">
+                <span>{account.usage.totals.requests.toLocaleString("en")} req</span>
+                <span>{formatCompact(account.usage.totals.tokens)} tok</span>
+                {account.usage.totals.total_cost_usd != null ? (
+                  <span>{formatUsd(account.usage.totals.total_cost_usd)}</span>
+                ) : null}
+              </div>
+            )}
+            {account.usage?.windows?.length ? (
+              <div className="tray-windows" data-testid="tray-windows">
+                {account.usage.windows.map((window) => (
+                  <span key={window.label}>
+                    {window.label}: {window.requests.toLocaleString("en")} req
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="tray-tiles">
               {tiles.map((tile) => {
                 const display = Math.round(
