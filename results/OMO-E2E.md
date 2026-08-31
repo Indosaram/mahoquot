@@ -180,9 +180,9 @@ quotio_account_cooldown_until_seconds{account="account-b@example.com"} 0
 All 5 accounts in `/Users/indo/.cli-proxy-api/codex-*.json` were probed against `gpt-5.6-sol`:
 - `codex-ab53e014-account-a@example.com-pro.json` (`acc***`): **HTTP 200 OK**, SSE stream served.
 - `codex-account-b@example.com-plus.json` (`acc***`): **HTTP 200 OK**, SSE stream served.
-- `codex-account-g@example.com-plus.json` (`6yh***`): **HTTP 429 Too Many Requests** (`usage_limit_reached`, resets_in_seconds: 426985).
-- `codex-a9d2af16-account-h@example.com-plus.json` (`7d7***`): **HTTP 429 Too Many Requests** (`usage_limit_reached`, resets_in_seconds: 222).
-- `codex-565c2911-account-f@example.com-plus.json` (`mon***`): **HTTP 400 Bad Request** (`detail: The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.`).
+- `codex-6yhgthy7@nf3721.com-plus.json` (`6yh***`): **HTTP 429 Too Many Requests** (`usage_limit_reached`, resets_in_seconds: 426985).
+- `codex-a9d2af16-7d7bgzw@nf3721.com-plus.json` (`7d7***`): **HTTP 429 Too Many Requests** (`usage_limit_reached`, resets_in_seconds: 222).
+- `codex-565c2911-monadawne6@amanvip.com-plus.json` (`mon***`): **HTTP 400 Bad Request** (`detail: The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.`).
 
 ---
 

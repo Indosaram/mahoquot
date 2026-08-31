@@ -23,11 +23,11 @@ code path, exposed as `POST /admin/warmup` and
 `POST /admin/accounts/{id}/warmup`. Live run:
 
 ```
-codex        account-g@example.com            ok=True  http=200
-codex        a9d2af16-account-h@example.com    ok=True  http=200
+codex        6yhgthy7@nf3721.com            ok=True  http=200
+codex        a9d2af16-7d7bgzw@nf3721.com    ok=True  http=200
 codex        ab53e014-account-a@example.com ok=True  http=200
 codex        account-b@example.com           ok=True  http=200
-codex        565c2911-account-f@example.com ok=False http=400  (free plan, 100% used)
+codex        565c2911-monadawne6@amanvip.com ok=False http=400  (free plan, 100% used)
 antigravity  (3 accounts)                   ok=False http=429  (pre-existing cooldown)
 ```
 
@@ -39,7 +39,7 @@ Two bugs found only by running it live:
   is a real upstream cooldown, not a credential fault.
 
 The two non-200s are genuine account states, both independently confirmed by the
-quota poll: `account-f` is `plan=free` at 100% of a 30d window.
+quota poll: `monadawne6` is `plan=free` at 100% of a 30d window.
 
 ## 2. Round-robin evenness and account hopping
 
@@ -65,9 +65,9 @@ Verified live against the real pool, since both halves of this pain point must
 hold at the same time — unit tests alone would not prove it:
 
 ```
-6 requests, one session_id      -> account-e 6            (sticky, no hopping)
+6 requests, one session_id      -> indoyoon93 6            (sticky, no hopping)
 9 requests, 9 distinct sessions -> augustine 3, buzzi 3,
-                                   account-e 3            (even, all accounts)
+                                   indoyoon93 3            (even, all accounts)
 ```
 
 ## 3. Codex reset from the app
@@ -113,11 +113,11 @@ Served at `GET /admin/usage`, forced via `POST /admin/usage/refresh`, and polled
 every `USAGE_POLL_SECS` (default 120). Live, with zero traffic sent:
 
 ```
-account-g@example.com     plus     5h 18%   weekly 27%
-a9d2af16-account-h        plus     5h  0%   weekly 16%
+6yhgthy7@nf3721.com     plus     5h 18%   weekly 27%
+a9d2af16-7d7bgzw        plus     5h  0%   weekly 16%
 ab53e014-account-a    prolite  weekly 16%          reset_credits=1
 account-b@example.com    plus     5h  3%   weekly  0%
-565c2911-account-f     free     30d 100%
+565c2911-monadawne6     free     30d 100%
 ```
 
 Antigravity exposes no comparable quota API and is reported as "exposes no quota
@@ -206,7 +206,7 @@ against the migrated 8-credential pool:
 - per account — plan badge (`free` / `plus` / `prolite`), provider, health pill,
   and one bar per reported window with percentage and reset countdown.
 - windows are labelled from `window_minutes`, not from slot order, which is why
-  `565c2911-account-f` correctly renders **30d 100%** instead of mislabelling a
+  `565c2911-monadawne6` correctly renders **30d 100%** instead of mislabelling a
   30-day window as "5h". Bars go green/amber/red at 50% and 80%.
 - `reset 5h (n)` is enabled only where a reset credit exists — in the screenshot
   only `ab53e014-account-a` shows `(1)`, every other account shows `(0)` and is
@@ -244,7 +244,7 @@ returns HTTP 200 with per-model-group quota:
     groups[].buckets[]          bucketId, displayName, window (5h|weekly),
                                 resetTime (RFC3339 Z), remainingFraction (0..1)
 
-Live-captured example (`account-e`): Gemini Models at 7.72% weekly and 0.73%
+Live-captured example (`indoyoon93`): Gemini Models at 7.72% weekly and 0.73%
 5h consumed. Antigravity is the majority of the pool, so most accounts were
 being shown as "quota unknown" for no reason. This was a functional defect,
 not a display gap.
@@ -296,7 +296,7 @@ return real model-group quota **through the gateway**, not just from a direct
 probe:
 
     accounts with live model-group quota: 3/3 antigravity
-    account-e: Gemini Models 92.13% weekly / 97.06% 5h remaining
+    indoyoon93: Gemini Models 92.13% weekly / 97.06% 5h remaining
 
 The remaining 5 accounts are Codex, which reports flat windows rather than
 groups, so 3/8 carrying `groups` is correct rather than a shortfall.

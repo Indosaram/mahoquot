@@ -17,7 +17,7 @@ data: {"type":"response.created","response":{"id":"resp_0e2e0bc0a9bd1104016a9046
 ## Additional live observations (bonus evidence for failover semantics)
 
 - `codex-a9d2af16-...` (usage_limit_reached 429, resets ~104min): gateway classified 429→RateLimited, marked account `cooldown` with upstream `retry_after` (failed_over=1, exposed_errors=1 on 1-account pool, 429 relayed verbatim). Exactly CONTRACTS.md behavior — and receiving a *quota* 429 (not 401) proves upstream auth headers are correct.
-- `codex-account-g@...` same 429 classification.
+- `codex-6yhgthy7@...` same 429 classification.
 - 400 unsupported-model / unsupported-parameter cases surfaced immediately as `exposed_client_errors` with account health untouched (client-fault path).
 - Account health endpoints: `/admin/stats` JSON verified each step.
 
