@@ -58,9 +58,19 @@ pub fn claude_messages_url(upstream_base: &str) -> String {
 pub struct ClaudeAccount {
     #[serde(default)]
     pub identity_slug: String,
+    /// Relay deployments authenticate with a static x-api-key instead of the
+    /// Anthropic OAuth token pair; when present, refresh and expiry are inert.
+    #[serde(default)]
     pub access_token: String,
+    #[serde(default)]
     pub refresh_token: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub upstream_override: Option<String>,
+    #[serde(default)]
     pub email: String,
+    #[serde(default)]
     pub expired: String,
     /// Present on Anthropic OAuth grants; absent on manually provisioned keys.
     #[serde(default)]
@@ -76,6 +86,7 @@ impl std::fmt::Debug for ClaudeAccount {
         f.debug_struct("ClaudeAccount")
             .field("identity_slug", &self.identity_slug)
             .field("access_token", &"[REDACTED]")
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("refresh_token", &"[REDACTED]")
             .field("email", &self.email)
             .field("expired", &self.expired)

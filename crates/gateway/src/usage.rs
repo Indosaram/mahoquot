@@ -68,6 +68,12 @@ pub struct AccountUsage {
     pub reset_credits_available: Option<i64>,
     /// Unix seconds when these headers were observed; `None` means never seen.
     pub observed_at_unix: Option<i64>,
+    /// Cumulative relay counters (claude relay deployments).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totals: Option<crate::usage::RelayUsageTotals>,
+    /// Rolling 3h/24h deltas derived from locally sampled counters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<crate::usage::UsageWindowDelta>,
 }
 
 impl AccountUsage {
@@ -299,6 +305,7 @@ pub fn parse_codex_headers(headers: &HashMap<String, String>, now_unix: i64) -> 
         reset_credits_available: None,
         groups: Vec::new(),
         observed_at_unix: observed,
+        ..Default::default()
     }
 }
 
@@ -354,6 +361,7 @@ pub fn parse_claude_headers(headers: &HashMap<String, String>, now_unix: i64) ->
         reset_credits_available: None,
         groups: Vec::new(),
         observed_at_unix: observed,
+        ..Default::default()
     }
 }
 
@@ -411,6 +419,7 @@ pub fn parse_claude_usage_summary(body: &serde_json::Value, now_unix: i64) -> Ac
         reset_credits_available: None,
         groups: Vec::new(),
         observed_at_unix: observed,
+        ..Default::default()
     }
 }
 
@@ -671,6 +680,7 @@ impl WhamUsage {
                 .and_then(|r| r.available_count),
             groups: Vec::new(),
             observed_at_unix: Some(now_unix),
+            ..Default::default()
         }
     }
 }
@@ -857,6 +867,134 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .windows(needle.len())
         .position(|window| window == needle)
 }
+
+/// Cumulative counters reported by relay deployments' `/v1/usage/self`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct RelayUsageTotals {
+    #[serde(default, alias = "request_count")]
+    pub requests: u64,
+    #[serde(default, alias = "total_tokens")]
+    pub tokens: u64,
+    #[serde(default, alias = "cached_input_tokens")]
+    pub cached_input_tokens: Option<u64>,
+    #[serde(default, alias = "total_cost_usd")]
+    pub total_cost_usd: Option<f64>,
+}
+
+/// One point-in-time snapshot of the cumulative counters, kept so rolling
+/// window deltas (3h/24h) can be derived locally when the relay publishes no
+/// windows of its own.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct UsageSample {
+    pub unix: i64,
+    pub requests: u64,
+    pub tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct UsageWindowDelta {
+    pub label: String,
+    pub requests: u64,
+    pub tokens: u64,
+}
+
+const WINDOW_LABELS: [(&str, i64); 2] = [("3h", 3 * 3600), ("24h", 24 * 3600)];
+
+/// Deltas over rolling windows from monotone counter samples. Counter resets
+/// (relay restarts) treat the last sample as the new baseline.
+pub fn window_deltas(samples: &[UsageSample], now_unix: i64) -> Vec<UsageWindowDelta> {
+    let last = samples.last().copied();
+    let Some(last) = last else {
+        return Vec::new();
+    };
+    WINDOW_LABELS
+        .iter()
+        .map(|(label, span)| {
+            let cutoff = now_unix - span;
+            let baseline = samples
+                .iter()
+                .take_while(|sample| sample.unix <= cutoff)
+                .last()
+                .copied()
+                .unwrap_or(UsageSample {
+                    unix: cutoff,
+                    requests: 0,
+                    tokens: 0,
+                });
+            // a collapsing counter means the relay restarted; the new counter
+            // value is already the fresh usage, never a negative delta
+            let delta = |baseline: u64, last: u64| {
+                if last >= baseline {
+                    last - baseline
+                } else {
+                    last
+                }
+            };
+            UsageWindowDelta {
+                label: (*label).to_string(),
+                requests: delta(baseline.requests, last.requests),
+                tokens: delta(baseline.tokens, last.tokens),
+            }
+        })
+        .collect()
+}
+
+/// In-memory sample ring persisted next to the gateway config so the 24h
+/// window survives restarts.
+#[derive(Debug, Default)]
+pub struct UsageSampleStore {
+    path: std::path::PathBuf,
+    entries: std::sync::Mutex<std::collections::BTreeMap<String, Vec<UsageSample>>>,
+}
+
+impl UsageSampleStore {
+    pub fn load(path: std::path::PathBuf) -> Self {
+        let entries = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        Self {
+            path,
+            entries: std::sync::Mutex::new(entries),
+        }
+    }
+
+    /// Appends a sample, prunes anything older than 25 hours, persists, and
+    /// returns the retained window for delta computation.
+    pub fn push(&self, account_id: &str, sample: UsageSample) -> Vec<UsageSample> {
+        const SPAN_SECS: i64 = 25 * 3600;
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let window = entries.entry(account_id.to_string()).or_default();
+        window.push(sample);
+        let cutoff = window
+            .last()
+            .map(|last| last.unix - SPAN_SECS)
+            .unwrap_or(i64::MIN);
+        window.retain(|sample| sample.unix >= cutoff);
+        window.truncate(600);
+        let retained = window.clone();
+        if let Ok(raw) = serde_json::to_string_pretty(&*entries) {
+            let _ = std::fs::write(&self.path, raw);
+        }
+        retained
+    }
+}
+
+/// Maps the relay usage/self payload onto the cumulative totals.
+pub fn parse_relay_usage(payload: &serde_json::Value) -> Option<RelayUsageTotals> {
+    Some(RelayUsageTotals {
+        requests: payload.get("request_count")?.as_u64()?,
+        tokens: payload.get("total_tokens")?.as_u64()?,
+        cached_input_tokens: payload
+            .get("cached_input_tokens")
+            .and_then(serde_json::Value::as_u64),
+        total_cost_usd: payload
+            .get("total_cost_usd")
+            .and_then(serde_json::Value::as_f64),
+    })
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1237,4 +1375,79 @@ mod tests {
         assert!(usage.primary.is_empty());
         assert!(usage.secondary.is_empty());
     }
+
+    #[test]
+    fn window_deltas_cover_three_and_twenty_four_hour_spans() {
+        // given samples spread across a day: counters at t0, t+2h, t+5h, t+20h
+        let now = 1_800_000;
+        let samples = vec![
+            UsageSample { unix: now - 30 * 3600, requests: 100, tokens: 1_000 },
+            UsageSample { unix: now - 5 * 3600, requests: 300, tokens: 3_000 },
+            UsageSample { unix: now - 2 * 3600, requests: 500, tokens: 5_000 },
+            UsageSample { unix: now - 60, requests: 650, tokens: 6_000 },
+        ];
+        // when the rolling deltas are computed
+        let deltas = window_deltas(&samples, now);
+        // then 3h counts everything after the 2h-old sample and 24h spans all
+        assert_eq!(deltas.len(), 2);
+        assert_eq!(deltas[0].label, "3h");
+        assert_eq!(deltas[0].requests, 350);
+        assert_eq!(deltas[0].tokens, 3_000);
+        assert_eq!(deltas[1].label, "24h");
+        assert_eq!(deltas[1].requests, 550);
+        assert_eq!(deltas[1].tokens, 5_000);
+    }
+
+    #[test]
+    fn counter_resets_do_not_underflow_and_restart_the_baseline() {
+        // given counters that collapsed (relay restarted)
+        let now = 1_800_000;
+        let samples = vec![
+            UsageSample { unix: now - 5 * 3600, requests: 7_000, tokens: 900_000 },
+            UsageSample { unix: now - 60, requests: 5, tokens: 800 },
+        ];
+        // when deltas are computed
+        let deltas = window_deltas(&samples, now);
+        // then the new baseline is treated as fresh usage, never negative
+        assert_eq!(deltas[0].requests, 5);
+        assert_eq!(deltas[0].tokens, 800);
+    }
+
+    #[test]
+    fn the_relay_usage_payload_maps_to_cumulative_totals() {
+        // given the payload captured from claude.nekos.me /v1/usage/self
+        let payload: serde_json::Value = serde_json::from_str(
+            r#"{"request_count":7005,"total_tokens":1184368836,"cached_input_tokens":1177706909,"total_cost_usd":3990.364061}"#,
+        )
+        .unwrap();
+        // when it is parsed
+        let totals = parse_relay_usage(&payload).expect("totals");
+        // then every cumulative counter survives
+        assert_eq!(totals.requests, 7005);
+        assert_eq!(totals.tokens, 1_184_368_836);
+        assert_eq!(totals.cached_input_tokens, Some(1_177_706_909));
+        assert_eq!(totals.total_cost_usd, Some(3990.364061));
+    }
+
+    #[test]
+    fn the_sample_store_round_trips_across_restart() {
+        // given a store with one recorded sample
+        let dir = std::env::temp_dir().join(format!("quotio-samples-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("usage-samples.json");
+        {
+            let store = UsageSampleStore::load(path.clone());
+            store.push(
+                "claude-relay",
+                UsageSample { unix: 1_800_000, requests: 7005, tokens: 1_184_368_836 },
+            );
+        }
+        // when a fresh store loads the same file
+        let store = UsageSampleStore::load(path.clone());
+        let sample = store.push("claude-relay", UsageSample { unix: 1_800_060, requests: 7010, tokens: 1_184_400_000 });
+        // then the pre-restart sample survives inside the window
+        assert_eq!(sample.first().map(|s| s.requests), Some(7005));
+        std::fs::remove_dir_all(dir).ok();
+    }
 }
+

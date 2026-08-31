@@ -163,6 +163,54 @@ async fn refresh_claude_usage(
 }
 
 async fn try_claude_usage(state: &AppState, member: &Arc<AccountMember>) -> Result<(), QuotaError> {
+    // Relay deployments authenticate with a static key and publish cumulative
+    // counters from /v1/usage/self instead of subscription windows.
+    if let Some(key) = member.relay_api_key() {
+        let base = member
+            .upstream_override
+            .as_deref()
+            .unwrap_or_default()
+            .trim_end_matches('/');
+        if base.is_empty() {
+            return Err(QuotaError::Upstream("relay account has no upstream_override".into()));
+        }
+        let resp = state
+            .http_client
+            .get(format!("{base}/v1/usage/self"))
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Accept", "application/json")
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|e| QuotaError::Upstream(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(QuotaError::Unauthorized);
+        }
+        if !status.is_success() {
+            return Err(QuotaError::Upstream(format!("usage http {status}")));
+        }
+        let payload: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| QuotaError::Upstream(e.to_string()))?;
+        let totals = crate::usage::parse_relay_usage(&payload).ok_or_else(|| {
+            QuotaError::Upstream("usage payload had no cumulative counters".into())
+        })?;
+        let now = now_unix();
+        let samples = state.usage_samples.push(
+            &member.id,
+            crate::usage::UsageSample { unix: now, requests: totals.requests, tokens: totals.tokens },
+        );
+        member.set_usage(crate::usage::AccountUsage {
+            plan_type: Some("relay".into()),
+            totals: Some(totals),
+            windows: crate::usage::window_deltas(&samples, now),
+            ..crate::usage::AccountUsage::default()
+        });
+        return Ok(());
+    }
     let token = member.access_token();
     if token.is_empty() {
         return Err(QuotaError::Unauthorized);

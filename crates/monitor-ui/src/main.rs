@@ -893,15 +893,79 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     }
 
     let _ = notch.show();
+    eprintln!("diag: notch shown");
     apply_menu_bar_level(&notch);
+    eprintln!("diag: menu level applied");
     position_notch_window(app.handle(), &notch)?;
-    // WKWebView paints its default (30,30,30) gray over any area exposed by a
-    // resize until the first web frame lands, which flashed a black strip at
-    // the old strip position on every expand. Pre-paint the whole expanded
-    // frame with the webview's own background so new pixels are never gray.
+    eprintln!("diag: positioned, entering clear block");
+    // WKWebView paints its own opaque gray over any area exposed by a resize
+    // until its first web frame lands, which flashed a strip at the old strip
+    // position on every expand. Kill the gray at the source: the webview must
+    // not draw a background at all, and the window must composite clear, so
+    // not-yet-painted pixels are simply transparent instead of gray.
     {
-        use tauri::window::Color;
-        let _ = notch.set_background_color(Some(Color(11, 11, 13, 255)));
+        use objc::{class, msg_send, sel, sel_impl};
+        if let Ok(ns_window) = notch.ns_window() {
+            let ns_window = ns_window as *mut objc::runtime::Object;
+            unsafe {
+                let clear: *mut objc::runtime::Object =
+                    msg_send![class!(NSColor), clearColor];
+                let _: () = msg_send![ns_window, setBackgroundColor: clear];
+                let _: () = msg_send![ns_window, setOpaque: false];
+                eprintln!("diag: window clear set");
+                // Walk the view tree in Rust (KVC valueForKeyPath hung here)
+                // and strip WKWebView's own opaque background so resize-exposed
+                // pixels stay transparent instead of flashing gray.
+                let mut frontier: Vec<*mut objc::runtime::Object> =
+                    vec![msg_send![ns_window, contentView]];
+                eprintln!("diag: walk start");
+                let mut depth = 0;
+                while depth < 8 {
+                    depth += 1;
+                    let mut next: Vec<*mut objc::runtime::Object> = Vec::new();
+                    for view in frontier.iter().copied() {
+                        if view.is_null() {
+                            continue;
+                        }
+                        let is_webview: bool =
+                            msg_send![view, isKindOfClass: class!(WKWebView)];
+                        if is_webview {
+                            eprintln!("diag: webview found at depth {depth}");
+                            // Modern WebKit removed the drawsBackground KVC key
+                            // (setValue:forKey: throws). The exposed-area gray is
+                            // the under-page background instead; clear it via the
+                            // public setter, guarded by respondsToSelector.
+                            let responds: bool = msg_send![view,
+                                respondsToSelector: sel!(setUnderPageBackgroundColor:)
+                            ];
+                            eprintln!("diag: underPageBackground responds={responds}");
+                            if responds {
+                                let _: () = msg_send![view,
+                                    setUnderPageBackgroundColor: clear
+                                ];
+                                eprintln!("diag: underPageBackground cleared");
+                            }
+                            continue;
+                        }
+                        let subs: *mut objc::runtime::Object = msg_send![view, subviews];
+                        if subs.is_null() {
+                            continue;
+                        }
+                        let count: usize = msg_send![subs, count];
+                        for index in 0..count {
+                            let sub: *mut objc::runtime::Object =
+                                msg_send![subs, objectAtIndex: index];
+                            next.push(sub);
+                        }
+                    }
+                    if next.is_empty() {
+                        break;
+                    }
+                    frontier = next;
+                }
+                eprintln!("diag: walk done");
+            }
+        }
     }
     let handle = app.handle().clone();
     let notch_clone = notch.clone();

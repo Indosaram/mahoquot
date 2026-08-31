@@ -37,6 +37,7 @@ pub struct AppState {
     pub telemetry: Arc<TelemetryStore>,
     /// Live in-memory log tail, always fed regardless of `logging-to-file`.
     pub log_tail: LogTail,
+    pub usage_samples: crate::usage::UsageSampleStore,
 }
 
 fn adopt_runtime_state(target: &AccountMember, previous: &Arc<AccountMember>) {
@@ -98,6 +99,11 @@ impl AppState {
             settings,
             telemetry,
             log_tail: LogTail::default(),
+            usage_samples: crate::usage::UsageSampleStore::load(
+                config
+                    .config_path
+                    .with_file_name("usage-samples.json"),
+            ),
             router,
             pool: arc_swap::ArcSwap::from_pointee(PoolSnapshot { members, models }),
             models_env: config.models_env.clone(),

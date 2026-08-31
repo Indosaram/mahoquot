@@ -173,7 +173,10 @@ impl ProviderAccount {
         match self {
             Self::Codex(a) => a.access_token.clone(),
             Self::Antigravity(a) => a.access_token.clone(),
-            Self::Claude(a) => a.access_token.clone(),
+            Self::Claude(a) => match &a.api_key {
+                Some(key) => key.clone(),
+                None => a.access_token.clone(),
+            },
             Self::Cursor(a) => a.access_token.clone(),
             Self::Kiro(a) => a.access_token.clone(),
             Self::Zcode(a) => a.access_token.clone(),
@@ -182,11 +185,25 @@ impl ProviderAccount {
         }
     }
 
+    /// The static relay key for x-api-key deployments, if this is one.
+    pub fn relay_api_key(&self) -> Option<String> {
+        match self {
+            Self::Claude(a) => a.api_key.clone(),
+            _ => None,
+        }
+    }
+
     fn refresh_token(&self) -> String {
         match self {
             Self::Codex(a) => a.refresh_token.clone(),
             Self::Antigravity(a) => a.refresh_token.clone(),
-            Self::Claude(a) => a.refresh_token.clone(),
+            Self::Claude(a) => {
+                if a.api_key.is_none() {
+                    a.refresh_token.clone()
+                } else {
+                    Default::default()
+                }
+            }
             Self::Cursor(a) => a.refresh_token.clone(),
             Self::Kiro(a) => a.refresh_token.clone(),
             Self::Zcode(a) => a.refresh_token.clone(),
@@ -199,7 +216,13 @@ impl ProviderAccount {
         match self {
             Self::Codex(a) => a.is_expired(now_unix),
             Self::Antigravity(a) => a.is_expired(now_unix),
-            Self::Claude(a) => expired_at_is_past(&a.expired, now_unix),
+            Self::Claude(a) => {
+                if a.api_key.is_some() {
+                    false
+                } else {
+                    expired_at_is_past(&a.expired, now_unix)
+                }
+            }
             Self::Cursor(a) => expired_at_is_past(&a.expired, now_unix),
             Self::Kiro(a) => expired_at_is_past(&a.expired, now_unix),
             // A provisioned {id}.{secret} key carries no expiry and cannot be
@@ -223,18 +246,24 @@ impl ProviderAccount {
         match self {
             Self::Codex(a) => a.build_upstream_headers(),
             Self::Antigravity(a) => a.build_upstream_headers(),
-            Self::Claude(a) => vec![
-                (
-                    "authorization".to_string(),
-                    format!("Bearer {}", a.access_token),
-                ),
-                (
-                    "anthropic-beta".to_string(),
-                    mahoquot_providers::CLAUDE_BETA_HEADER.to_string(),
-                ),
-                ("anthropic-version".to_string(), "2023-06-01".to_string()),
-                ("content-type".to_string(), "application/json".to_string()),
-            ],
+            Self::Claude(a) => {
+                let mut headers = match &a.api_key {
+                    Some(key) => vec![("x-api-key".to_string(), key.clone())],
+                    None => vec![(
+                        "authorization".to_string(),
+                        format!("Bearer {}", a.access_token),
+                    )],
+                };
+                headers.extend(vec![
+                    (
+                        "anthropic-beta".to_string(),
+                        mahoquot_providers::CLAUDE_BETA_HEADER.to_string(),
+                    ),
+                    ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                    ("content-type".to_string(), "application/json".to_string()),
+                ]);
+                headers
+            }
             Self::Cursor(a) => vec![
                 (
                     "authorization".to_string(),
@@ -469,6 +498,14 @@ impl AccountMember {
 
     pub fn usage_snapshot(&self) -> crate::usage::AccountUsage {
         self.usage.read().map(|u| u.clone()).unwrap_or_default()
+    }
+
+    /// The static relay key for x-api-key deployments, if this is one.
+    pub fn relay_api_key(&self) -> Option<String> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .relay_api_key()
     }
 
     pub fn set_usage(&self, usage: crate::usage::AccountUsage) {
@@ -746,6 +783,11 @@ impl AccountMember {
         refresh_url: &str,
         presented_token: Option<&str>,
     ) -> Result<bool, RefreshError> {
+        // Relay keys are static; there is nothing to refresh and the token
+        // endpoint would only reject the empty grant.
+        if self.relay_api_key().is_some() {
+            return Ok(false);
+        }
         let _guard = self.refresh_lock.lock().await;
 
         let now_unix = SystemTime::now()

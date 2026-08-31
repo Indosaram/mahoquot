@@ -51,6 +51,18 @@ export const UsageSchema = z.object({
   reset_credits_available: z.number().nullable().optional(),
   observed_at_unix: z.number().nullable().optional(),
   groups: z.array(QuotaGroupSchema).optional(),
+  totals: z
+    .object({
+      requests: z.number(),
+      tokens: z.number(),
+      cached_input_tokens: z.number().nullable().optional(),
+      total_cost_usd: z.number().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  windows: z
+    .array(z.object({ label: z.string(), requests: z.number(), tokens: z.number() }))
+    .optional(),
 });
 export type Usage = z.infer<typeof UsageSchema>;
 

@@ -25,7 +25,11 @@ pub fn build_provider_url(
     let base = match kind {
         ProviderKind::Codex => return build_target_url(upstream_override, req_path),
         ProviderKind::Antigravity => return build_antigravity_url(upstream_override),
-        ProviderKind::Claude => mahoquot_providers::CLAUDE_UPSTREAM_BASE.to_string(),
+        // relay deployments (e.g. claude.nekos.me) steer the whole claude
+        // surface through upstream_override
+        ProviderKind::Claude => upstream_override
+            .map(|base| base.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| mahoquot_providers::CLAUDE_UPSTREAM_BASE.to_string()),
         ProviderKind::Cursor => mahoquot_providers::CURSOR_UPSTREAM_BASE.to_string(),
         ProviderKind::Zcode => mahoquot_providers::ZCODE_ANTHROPIC_BASE.to_string(),
         // Kiro's host is region-templated; the default region is correct for
