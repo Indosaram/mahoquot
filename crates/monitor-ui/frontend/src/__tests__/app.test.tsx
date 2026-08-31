@@ -161,10 +161,12 @@ describe("operations console", () => {
 
   it("completes ZCode OAuth by pasting the redirect URL", async () => {
     const callbackBodies: Array<Record<string, unknown>> = [];
+    const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        calls.push(url);
         if (url.includes("/admin/stats")) {
           return new Response(JSON.stringify(stats));
         }
@@ -212,15 +214,23 @@ describe("operations console", () => {
       ]),
     );
     expect(await screen.findByText("ZCode authorization completed.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(calls.some((url) => url.endsWith("/admin/usage/refresh"))).toBe(true),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
   });
 
   it("detects provider approval without a manual status click", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusCalls = 0;
+    const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
+        calls.push(url);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
         if (url.includes("/logs"))
@@ -257,6 +267,12 @@ describe("operations console", () => {
       await vi.advanceTimersByTimeAsync(6500);
     });
     expect(await screen.findByText(/Codex authorization completed/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(calls.some((url) => url.endsWith("/admin/usage/refresh"))).toBe(true),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
@@ -377,6 +393,12 @@ describe("operations console", () => {
       name: "zcode-me@example.com.json",
       content: { type: "zcode", access_token: "keyid.keysecret", email: "me@example.com" },
     });
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/admin/usage/refresh"))).toBe(true),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows Claude subscription usage windows", async () => {
@@ -921,6 +943,28 @@ describe("operations console", () => {
     expect(screen.getByText("API key copied.")).toBeInTheDocument();
   });
 
+  it("opens Add Account directly without consulting migration state", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "gateway_status") return "running";
+      return { importable_count: 2 };
+    });
+    Object.assign(window, { __TAURI_INTERNALS__: { invoke } });
+
+    try {
+      render(<App />);
+      fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+      fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+
+      expect(
+        await screen.findByRole("complementary", { name: "Provider onboarding" }),
+      ).toBeInTheDocument();
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenCalledWith("gateway_status");
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    }
+  });
+
   it("keeps credential onboarding and lifecycle inside Accounts", async () => {
     render(<App />);
     const accounts = screen.getAllByText("Accounts").at(0);
@@ -1013,10 +1057,12 @@ describe("operations console", () => {
 
   it("allows a reference key-optional provider to save without an API key", async () => {
     const requests: Array<{ url: string; body: string }> = [];
+    const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        calls.push(url);
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
         if (url.includes("auth-files") && init?.method === "POST") {
           requests.push({ url, body: String(init.body ?? "") });
@@ -1046,6 +1092,60 @@ describe("operations console", () => {
     fireEvent.click(save);
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(JSON.parse(requests[0]?.body ?? "{}").content.api_key).toBe("");
+    await waitFor(() =>
+      expect(calls.some((url) => url.endsWith("/admin/usage/refresh"))).toBe(true),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("refreshes usage after saving an imported provider key", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files") && !init?.method) {
+          return new Response(JSON.stringify({ files: [] }));
+        }
+        if (url.includes("/logs")) {
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        }
+        return new Response(JSON.stringify({ status: "ok" }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "iFlow" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add iFlow key" }));
+    fireEvent.change(screen.getByLabelText("Imported provider API key"), {
+      target: { value: "iflow-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save account" }));
+
+    await waitFor(() => {
+      const importIndex = calls.indexOf("POST http://127.0.0.1:18801/v0/management/auth-files");
+      const usageIndex = calls.findIndex(
+        (call, index) =>
+          index > importIndex && call === "POST http://127.0.0.1:18801/admin/usage/refresh",
+      );
+      const refreshIndex = calls.findIndex(
+        (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+      );
+      expect(importIndex).toBeGreaterThanOrEqual(0);
+      expect(usageIndex).toBeGreaterThan(importIndex);
+      expect(refreshIndex).toBeGreaterThan(usageIndex);
+    });
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders bundled official logos for every onboarding provider", async () => {
@@ -1199,20 +1299,30 @@ describe("operations console", () => {
     expect(screen.queryByText("gravity@example.com")).not.toBeInTheDocument();
   });
 
-  it("imports the local Claude subscription through the real management action", async () => {
+  it("closes onboarding as soon as a local import starts quota discovery", async () => {
     const calls: string[] = [];
+    let resolveUsage: ((response: Response) => void) | undefined;
+    const usageResponse = new Promise<Response>((resolve) => {
+      resolveUsage = resolve;
+    });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        calls.push(url);
-        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
-        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs"))
-          return new Response(
-            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (url.endsWith("/admin/usage/refresh")) return usageResponse;
+        if (url.includes("/admin/stats")) {
+          return Promise.resolve(new Response(JSON.stringify(stats)));
+        }
+        if (url.includes("auth-files")) {
+          return Promise.resolve(new Response(JSON.stringify({ files: [] })));
+        }
+        if (url.includes("/logs")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 })),
           );
-        return new Response(JSON.stringify({ status: "ok" }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ status: "ok" })));
       }),
     );
     render(<App />);
@@ -1220,16 +1330,152 @@ describe("operations console", () => {
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
-    // Claude offers two ways in, so its tile opens a method list first.
     fireEvent.click(await screen.findByRole("button", { name: "Claude" }));
     fireEvent.click(
       await screen.findByRole("button", { name: /Import Claude Code subscription/i }),
     );
+
     await waitFor(() =>
-      expect(calls.some((url) => url.endsWith("/v0/management/claude/import-local"))).toBe(true),
+      expect(calls).toContain("POST http://127.0.0.1:18801/v0/management/claude/import-local"),
     );
+    await waitFor(() => expect(calls).toContain("POST http://127.0.0.1:18801/admin/usage/refresh"));
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveUsage?.(new Response(JSON.stringify({ status: "ok" })));
+      await usageResponse;
+    });
+    await waitFor(() => {
+      const usageIndex = calls.indexOf("POST http://127.0.0.1:18801/admin/usage/refresh");
+      const refreshedStats = calls.findIndex(
+        (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+      );
+      expect(refreshedStats).toBeGreaterThan(usageIndex);
+    });
     expect(await screen.findByText(/Claude Code subscription imported/i)).toBeInTheDocument();
   });
+
+  it.each([
+    {
+      provider: "Z.ai",
+      method: "Import ZCode session",
+      endpoint: "/v0/management/zcode/import-local",
+    },
+    {
+      provider: "Trae",
+      method: "Import Trae session",
+      endpoint: "/v0/management/trae/import-local",
+    },
+  ])(
+    "refreshes usage after importing a local $provider session",
+    async ({ provider, method, endpoint }) => {
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          calls.push(`${init?.method ?? "GET"} ${url}`);
+          if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+          if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+          if (url.includes("/logs")) {
+            return new Response(
+              JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+            );
+          }
+          return new Response(JSON.stringify({ status: "ok" }));
+        }),
+      );
+
+      render(<App />);
+      fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+      fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+      fireEvent.click(await screen.findByRole("button", { name: provider }));
+      fireEvent.click(await screen.findByRole("button", { name: method }));
+
+      await waitFor(() => {
+        const importIndex = calls.indexOf(`POST http://127.0.0.1:18801${endpoint}`);
+        const usageIndex = calls.findIndex(
+          (call, index) =>
+            index > importIndex && call === "POST http://127.0.0.1:18801/admin/usage/refresh",
+        );
+        const refreshIndex = calls.findIndex(
+          (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+        );
+        expect(importIndex).toBeGreaterThanOrEqual(0);
+        expect(usageIndex).toBeGreaterThan(importIndex);
+        expect(refreshIndex).toBeGreaterThan(usageIndex);
+      });
+      expect(
+        screen.queryByRole("complementary", { name: "Provider onboarding" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    {
+      provider: "Kiro",
+      method: "Import Kiro credential",
+      document: '{"refresh_token":"kiro-token"}',
+      endpoint: "/v0/management/auth-files",
+    },
+    {
+      provider: "Vertex AI",
+      method: "Import service account",
+      document: '{"type":"service_account","private_key":"key"}',
+      endpoint: "/v0/management/vertex/import",
+    },
+  ])(
+    "refreshes usage after importing $provider JSON",
+    async ({ provider, method, document, endpoint }) => {
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          calls.push(`${init?.method ?? "GET"} ${url}`);
+          if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+          if (url.includes("auth-files") && !init?.method) {
+            return new Response(JSON.stringify({ files: [] }));
+          }
+          if (url.includes("/logs")) {
+            return new Response(
+              JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+            );
+          }
+          return new Response(JSON.stringify({ status: "ok" }));
+        }),
+      );
+
+      render(<App />);
+      fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+      fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+      fireEvent.click(await screen.findByRole("button", { name: provider }));
+      fireEvent.click(await screen.findByRole("button", { name: method }));
+      fireEvent.change(await screen.findByLabelText("Credential JSON"), {
+        target: { value: document },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Import credential" }));
+
+      await waitFor(() => {
+        const importIndex = calls.indexOf(`POST http://127.0.0.1:18801${endpoint}`);
+        const usageIndex = calls.findIndex(
+          (call, index) =>
+            index > importIndex && call === "POST http://127.0.0.1:18801/admin/usage/refresh",
+        );
+        const refreshIndex = calls.findIndex(
+          (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+        );
+        expect(importIndex).toBeGreaterThanOrEqual(0);
+        expect(usageIndex).toBeGreaterThan(importIndex);
+        expect(refreshIndex).toBeGreaterThan(usageIndex);
+      });
+      expect(
+        screen.queryByRole("complementary", { name: "Provider onboarding" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("tracks provider authorization until the gateway reports completion", async () => {
     const calls: string[] = [];
@@ -1267,6 +1513,12 @@ describe("operations console", () => {
 
     expect(await screen.findByText(/Codex authorization completed/i)).toBeInTheDocument();
     expect(calls.some((url) => url.endsWith("get-auth-status?state=auth-42"))).toBe(true);
+    await waitFor(() =>
+      expect(calls.some((url) => url.endsWith("/admin/usage/refresh"))).toBe(true),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Provider onboarding" }),
+    ).not.toBeInTheDocument();
   });
 
   it("edits proxy routing retry and logging without raw YAML", async () => {

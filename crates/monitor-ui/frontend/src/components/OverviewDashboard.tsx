@@ -129,7 +129,6 @@ export const OverviewDashboard = ({
                 <i
                   className="provider-mix-dot"
                   style={{ background: providerColor(provider.provider) }}
-                  aria-hidden="true"
                 />
                 <strong>{providerName(provider.provider)}</strong>
                 {Math.round((provider.requests / totalProviderRequests) * 100)}%

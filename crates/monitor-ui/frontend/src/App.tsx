@@ -19,7 +19,6 @@ import {
   quotaRows,
 } from "./components/AccountsSurface";
 import { ContextMenu, useContextMenu } from "./components/ContextMenu";
-import { LegacyMigrationDialog } from "./components/LegacyMigrationPrompt";
 import { LogsSurface } from "./components/LogsSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import {
@@ -44,7 +43,6 @@ import { wantsNativeMenu } from "./lib/context-menu";
 import {
   type GatewayLifecycleStatus,
   getGatewayLifecycle,
-  getLegacyMigrationStatus,
   openExternalUrl,
   startManagedGateway,
   stopManagedGateway,
@@ -147,13 +145,6 @@ const ONBOARDING_PROVIDERS: readonly {
         name: "Sign in with Google",
         hint: "Opens the Antigravity consent page.",
       },
-    ],
-  },
-  {
-    glyph: "gemini-cli",
-    name: "Gemini CLI",
-    methods: [
-      { id: "gemini-cli", name: "Sign in with Google", hint: "Uses Gemini CLI OAuth credentials." },
     ],
   },
   {
@@ -371,14 +362,11 @@ export default function App() {
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
   const { toasts, pushToast, dismissToast } = useToasts();
-  const setNotice = (message: string) => {
-    pushToast(message);
-  };
+  const setNotice = useCallback((message: string) => pushToast(message), [pushToast]);
   const [pending, setPending] = useState("");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [confirmRemove, setConfirmRemove] = useState("");
-  const [migrationPromptOpen, setMigrationPromptOpen] = useState(false);
   const [openMethods, setOpenMethods] = useState<(typeof ONBOARDING_PROVIDERS)[number] | null>(
     null,
   );
@@ -440,13 +428,8 @@ export default function App() {
     setZcodeForm(null);
   }, []);
 
-  const openOnboarding = useCallback(async () => {
+  const openOnboarding = useCallback(() => {
     resetOnboarding();
-    const migration = await getLegacyMigrationStatus();
-    if (migration) {
-      setMigrationPromptOpen(true);
-      return;
-    }
     setOnboardingOpen(true);
   }, [resetOnboarding]);
 
@@ -729,7 +712,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [clients, loadState, settingsLoaded, surface]);
+  }, [clients, loadState, setNotice, settingsLoaded, surface]);
 
   const accounts = useMemo(
     () => mergeAccountsAndCredentials(stats.accounts, credentials),
@@ -839,22 +822,25 @@ export default function App() {
       if (nextProvider === "claude-local") {
         await clients.management.importLocalClaude();
         setNotice("Claude Code subscription imported and live in the runtime pool.");
-        await refresh();
         finishOnboarding("claude");
+        await refreshUsage(true);
+        await refresh();
         return;
       }
       if (nextProvider === "zcode-local") {
         await clients.management.importLocalZcode();
         setNotice("ZCode session imported and live in the runtime pool.");
-        await refresh();
         finishOnboarding("zcode");
+        await refreshUsage(true);
+        await refresh();
         return;
       }
       if (nextProvider === "trae-local") {
         await clients.management.importLocalTrae();
         setNotice("Trae session imported for local quota monitoring.");
-        await refresh();
         finishOnboarding("trae");
+        await refreshUsage(true);
+        await refresh();
         return;
       }
       if (nextProvider === "kiro-import") {
@@ -920,9 +906,10 @@ export default function App() {
         });
       }
       setRawCredentialForm(null);
-      await refresh();
       finishOnboarding(rawCredentialForm.provider === "vertex" ? "vertex" : "kiro");
       setNotice("Credential imported and live in the runtime pool.");
+      await refreshUsage(true);
+      await refresh();
     } catch (error) {
       setNotice(`Action failed: ${errorMessage(error)}`);
     } finally {
@@ -950,9 +937,10 @@ export default function App() {
         });
       }
       setKeyImportForm(null);
-      await refresh();
       finishOnboarding(keyImportForm.provider);
       setNotice(`${keyImportForm.label} account saved and live in the runtime pool.`);
+      await refreshUsage(true);
+      await refresh();
     } catch (error) {
       setNotice(`Action failed: ${errorMessage(error)}`);
     } finally {
@@ -978,8 +966,9 @@ export default function App() {
       });
       setGenericForm(null);
       setNotice(`${genericForm.provider.label} account saved and live in the runtime pool.`);
-      await refresh();
       finishOnboarding(genericForm.provider.id);
+      await refreshUsage(true);
+      await refresh();
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
@@ -996,8 +985,9 @@ export default function App() {
       setZcodeForm(null);
       setOpenMethods(null);
       setNotice("Z.ai key saved and live in the runtime pool.");
-      await refresh();
       finishOnboarding("zcode");
+      await refreshUsage(true);
+      await refresh();
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
@@ -1016,8 +1006,9 @@ export default function App() {
       setAuthorization({ ...authorization, status: "ok" });
       setZcodeCallbackUrl("");
       setNotice("ZCode authorization completed.");
-      await refresh();
       finishOnboarding("zcode");
+      await refreshUsage(true);
+      await refresh();
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
@@ -1054,8 +1045,9 @@ export default function App() {
         });
         if (result.status === "ok") {
           setNotice(`${providerLabel(provider)} authorization completed.`);
-          await refresh();
           finishOnboarding(provider);
+          await refreshUsage(true);
+          await refresh();
         } else {
           setNotice(`Action failed: ${result.error ?? "authorization failed"}`);
         }
@@ -1068,7 +1060,16 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [authPending, authProvider, authState, clients, refresh, finishOnboarding]);
+  }, [
+    authPending,
+    authProvider,
+    authState,
+    clients,
+    finishOnboarding,
+    refresh,
+    refreshUsage,
+    setNotice,
+  ]);
 
   const checkAuthorization = async () => {
     if (!authorization) return;
@@ -1083,8 +1084,9 @@ export default function App() {
       });
       if (result.status === "ok") {
         setNotice(`${providerLabel(authorization.provider)} authorization completed.`);
-        await refresh();
         finishOnboarding(authorization.provider);
+        await refreshUsage(true);
+        await refresh();
       } else if (result.status === "error") {
         setNotice(`Action failed: ${result.error ?? "authorization failed"}`);
       } else {
@@ -1402,14 +1404,6 @@ export default function App() {
 
   return (
     <AppShell className="app" data-mahoquot-app="operations-console">
-      <LegacyMigrationDialog
-        open={migrationPromptOpen}
-        onResolved={() => {
-          setMigrationPromptOpen(false);
-          resetOnboarding();
-          setOnboardingOpen(true);
-        }}
-      />
       <aside className="sidebar">
         <div className="titlebar-drag" data-tauri-drag-region />
         <div className="brand" data-tauri-drag-region>
