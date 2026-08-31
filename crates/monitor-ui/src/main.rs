@@ -142,11 +142,8 @@ fn spawn_gateway() -> Option<std::process::Child> {
     let exe = std::env::current_exe().ok();
     let bin =
         tray::resolve_gateway_binary(std::env::var("MAHOQUOT_GATEWAY_BIN").ok(), exe.as_deref())?;
-    let auth_dir = std::env::var("AUTH_DIR").unwrap_or_else(|_| {
-        tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
-            .display()
-            .to_string()
-    });
+    let auth_dir =
+        tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     match std::process::Command::new(&bin)
         .env("AUTH_DIR", auth_dir)
         .spawn()
@@ -173,33 +170,6 @@ fn gateway_status() -> GatewayLifecycleStatus {
     }
 }
 
-#[derive(serde::Serialize)]
-struct LegacyMigrationStatus {
-    importable_count: usize,
-    legacy_dir: String,
-    app_dir: String,
-}
-
-#[tauri::command]
-fn legacy_migration_status() -> Option<LegacyMigrationStatus> {
-    tray::detect_legacy_migration(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).map(
-        |migration| LegacyMigrationStatus {
-            importable_count: migration.importable_count,
-            legacy_dir: migration.legacy_dir.display().to_string(),
-            app_dir: migration.app_dir.display().to_string(),
-        },
-    )
-}
-
-#[tauri::command]
-fn resolve_legacy_migration(import: bool) -> Result<String, String> {
-    Ok(tray::resolve_auth_dir(
-        &std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-        import,
-    )
-    .display()
-    .to_string())
-}
 
 #[tauri::command]
 fn start_gateway(
@@ -1047,8 +1017,6 @@ fn main() {
             warm_account,
             warm_all,
             refresh_usage,
-            legacy_migration_status,
-            resolve_legacy_migration,
             expand_notch,
             collapse_notch
         ])
