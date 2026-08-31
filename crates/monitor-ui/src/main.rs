@@ -293,64 +293,34 @@ fn set_notch_window_frame<R: Runtime>(
         return Ok(());
     }
 
-    let Some(monitor) = notched_monitor(app)? else {
-        return Ok(());
+    let Ok(ns_window) = window.ns_window() else {
+        return Err(tauri::Error::WindowNotFound);
     };
-    let scale_factor = monitor.scale_factor();
-    let monitor_position = monitor.position();
-    let monitor_size = monitor.size();
-    let display = tray::DisplayBounds {
-        origin_x: f64::from(monitor_position.x) / scale_factor,
-        origin_y: f64::from(monitor_position.y) / scale_factor,
-        width: f64::from(monitor_size.width) / scale_factor,
-        height: f64::from(monitor_size.height) / scale_factor,
-    };
-    let logical_pos = tray::calculate_notch_window_position(
-        &display,
-        &logical,
-        &tray::NotchInsets {
-            vertical_offset: NOTCH_VERTICAL_OFFSET,
-        },
-    );
-
-    if let Ok(ns_window) = window.ns_window() {
-        let ns_window = ns_window as *mut objc::runtime::Object;
-        unsafe {
-            let screens: *mut objc::runtime::Object = msg_send![class!(NSScreen), screens];
-            let count: usize = msg_send![screens, count];
-            if count > 0 {
-                let primary: *mut objc::runtime::Object = msg_send![screens, objectAtIndex: 0];
-                let primary_frame: CgRect = msg_send![primary, frame];
-                let cocoa_y = primary_frame.size.height - (logical_pos.y + logical.height);
-                let frame = CgRect {
-                    origin: CgPoint {
-                        x: logical_pos.x,
-                        y: cocoa_y,
-                    },
-                    size: CgSize {
-                        width: logical.width,
-                        height: logical.height,
-                    },
-                };
-                let _: () = msg_send![ns_window, setFrame: frame display: true animate: false];
-                return Ok(());
-            }
-        }
+    let ns_window = ns_window as *mut objc::runtime::Object;
+    unsafe {
+        // Relative-only frame change: read the window's own Cocoa frame and
+        // slide it so the right edge stays glued to the screen edge and the
+        // vertical center stays put. No coordinate-space conversion is ever
+        // involved, so the move cannot misplace the window across displays,
+        // and a single setFrame makes the grow/shrink atomic — no frame is
+        // ever composited with the strip at the expanded anchor position
+        // (the old black-line flash).
+        let frame: CgRect = msg_send![ns_window, frame];
+        let dw = logical.width - frame.size.width;
+        let dh = logical.height - frame.size.height;
+        let new_frame = CgRect {
+            origin: CgPoint {
+                x: frame.origin.x - dw,
+                y: frame.origin.y - dh / 2.0,
+            },
+            size: CgSize {
+                width: frame.size.width + dw,
+                height: frame.size.height + dh,
+            },
+        };
+        let _: () = msg_send![ns_window, setFrame: new_frame display: false];
     }
-
-    let position = tray::calculate_notch_window_physical_position(
-        &display,
-        &logical,
-        &tray::NotchInsets {
-            vertical_offset: NOTCH_VERTICAL_OFFSET,
-        },
-        scale_factor,
-    );
-    let _ = window.set_size(LogicalSize::new(logical.width, logical.height));
-    window.set_position(PhysicalPosition::new(
-        position.x.round() as i32,
-        position.y.round() as i32,
-    ))
+    Ok(())
 }
 
 /// Placement must be derived from the size the window is *becoming*: querying
@@ -893,80 +863,8 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     }
 
     let _ = notch.show();
-    eprintln!("diag: notch shown");
     apply_menu_bar_level(&notch);
-    eprintln!("diag: menu level applied");
     position_notch_window(app.handle(), &notch)?;
-    eprintln!("diag: positioned, entering clear block");
-    // WKWebView paints its own opaque gray over any area exposed by a resize
-    // until its first web frame lands, which flashed a strip at the old strip
-    // position on every expand. Kill the gray at the source: the webview must
-    // not draw a background at all, and the window must composite clear, so
-    // not-yet-painted pixels are simply transparent instead of gray.
-    {
-        use objc::{class, msg_send, sel, sel_impl};
-        if let Ok(ns_window) = notch.ns_window() {
-            let ns_window = ns_window as *mut objc::runtime::Object;
-            unsafe {
-                let clear: *mut objc::runtime::Object =
-                    msg_send![class!(NSColor), clearColor];
-                let _: () = msg_send![ns_window, setBackgroundColor: clear];
-                let _: () = msg_send![ns_window, setOpaque: false];
-                eprintln!("diag: window clear set");
-                // Walk the view tree in Rust (KVC valueForKeyPath hung here)
-                // and strip WKWebView's own opaque background so resize-exposed
-                // pixels stay transparent instead of flashing gray.
-                let mut frontier: Vec<*mut objc::runtime::Object> =
-                    vec![msg_send![ns_window, contentView]];
-                eprintln!("diag: walk start");
-                let mut depth = 0;
-                while depth < 8 {
-                    depth += 1;
-                    let mut next: Vec<*mut objc::runtime::Object> = Vec::new();
-                    for view in frontier.iter().copied() {
-                        if view.is_null() {
-                            continue;
-                        }
-                        let is_webview: bool =
-                            msg_send![view, isKindOfClass: class!(WKWebView)];
-                        if is_webview {
-                            eprintln!("diag: webview found at depth {depth}");
-                            // Modern WebKit removed the drawsBackground KVC key
-                            // (setValue:forKey: throws). The exposed-area gray is
-                            // the under-page background instead; clear it via the
-                            // public setter, guarded by respondsToSelector.
-                            let responds: bool = msg_send![view,
-                                respondsToSelector: sel!(setUnderPageBackgroundColor:)
-                            ];
-                            eprintln!("diag: underPageBackground responds={responds}");
-                            if responds {
-                                let _: () = msg_send![view,
-                                    setUnderPageBackgroundColor: clear
-                                ];
-                                eprintln!("diag: underPageBackground cleared");
-                            }
-                            continue;
-                        }
-                        let subs: *mut objc::runtime::Object = msg_send![view, subviews];
-                        if subs.is_null() {
-                            continue;
-                        }
-                        let count: usize = msg_send![subs, count];
-                        for index in 0..count {
-                            let sub: *mut objc::runtime::Object =
-                                msg_send![subs, objectAtIndex: index];
-                            next.push(sub);
-                        }
-                    }
-                    if next.is_empty() {
-                        break;
-                    }
-                    frontier = next;
-                }
-                eprintln!("diag: walk done");
-            }
-        }
-    }
     let handle = app.handle().clone();
     let notch_clone = notch.clone();
     std::thread::spawn(move || {
@@ -989,6 +887,32 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
 
     #[cfg(target_os = "macos")]
     start_notch_hover_watch(app.handle(), &app.state::<NotchHoverState>());
+
+    // TEMPORARY flash-verification hook: drive one expand/collapse cycle
+    // through resize_notch so the transition frames can be captured without
+    // depending on synthetic hover-event delivery. Enabled only when
+    // MAHOQUOT_FLASH_TEST is set; remove once the flash fix is proven.
+    if std::env::var("MAHOQUOT_FLASH_TEST").is_ok() {
+        let flash_handle = app.handle().clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(4_000));
+            resize_notch(&flash_handle, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
+            eprintln!("flash-test: expanded");
+            let _ = flash_handle
+                .get_webview_window(NOTCH_WINDOW_LABEL)
+                .map(|w| {
+                    w.eval("window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));")
+                });
+            std::thread::sleep(std::time::Duration::from_millis(3_000));
+            resize_notch(&flash_handle, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
+            eprintln!("flash-test: collapsed");
+            let _ = flash_handle
+                .get_webview_window(NOTCH_WINDOW_LABEL)
+                .map(|w| {
+                    w.eval("window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:false}));")
+                });
+        });
+    }
 
     println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
     Ok(())

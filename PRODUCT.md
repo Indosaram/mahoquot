@@ -8,11 +8,11 @@ web
 
 ## Stack
 
-**Backend (settled by the existing codebase):** Rust workspace, edition 2021, resolver 2. Axum 0.8 + Hyper 1 + Tokio. Crates: `mahoquot-types` (zero-dependency domain traits), `mahoquot-router` (pure routing algorithms, no async runtime), `mahoquot-providers` (credential loaders + OAuth refresh), `mahoquot-gateway` (HTTP proxy, protocol translation, management API), `mahoquot-monitor-ui` (Tauri v2 desktop shell), `tools/bench`.
+**Backend:** The proxy core (`mahoquot-types`, `mahoquot-router`, `mahoquot-providers`, `mahoquot-gateway`, `bench`) lives in `../mahoquot-proxy`. The desktop app (`mahoquot-monitor-ui`) lives in this repository and communicates with the gateway over HTTP.
 
 **UI (decided this session):** the incumbent single-file, no-toolchain constraint is **not binding**. The user wants a real design system in the shadcn mold — token-driven, componentized, consistency enforced by the system rather than by hand-written CSS in one file.
 
-Undecided: whether that means literally adopting shadcn/ui (React + Tailwind + Radix, with a bundler) or building a shadcn-caliber token/component layer without React. Either path must still produce something the gateway can embed — today the entire UI ships as one string via `include_str!("../../monitor-ui/ui/index.html")` in `crates/gateway/src/static_pages.rs`, so any build output must either stay a single self-contained HTML file or the embed mechanism has to change with it. No `package.json` exists anywhere in the repo today.
+Undecided: whether that means literally adopting shadcn/ui (React + Tailwind + Radix, with a bundler) or building a shadcn-caliber token/component layer without React. Either path must still produce something the gateway can embed — today the entire UI ships as one string via `include_str!("../../../ui/index.html")` in `mahoquot-proxy/crates/gateway/src/static_pages.rs`, so any build output must either stay a single self-contained HTML file or the embed mechanism has to change with it. No `package.json` exists anywhere in the repo today.
 
 ## Users
 
@@ -51,7 +51,7 @@ What a neighboring proxy could not truthfully copy:
 
 **Confirmed capabilities**
 
-- Relay routes for three protocol families: OpenAI (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`, images, videos, realtime), Anthropic (`/v1/messages`, `/v1/messages/count_tokens`), Gemini (`v1beta`). Bidirectional request and SSE stream translation lives in `crates/gateway/src/compat/`.
+- Relay routes for three protocol families: OpenAI (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`, images, videos, realtime), Anthropic (`/v1/messages`, `/v1/messages/count_tokens`), Gemini (`v1beta`). Bidirectional request and SSE stream translation lives in `mahoquot-proxy/crates/gateway/src/compat/`.
 - OAuth login flows for `anthropic`, `codex`, `antigravity`, `kimi`, `xai`.
 - Management API under `/v0/management`: config read/write (including raw `config.yaml`), scalar settings, credential lifecycle, API-key collections, logs and request-error logs, plugins and a plugin store, quota reset, OAuth sessions.
 - Admin API: `/admin/usage`, `/admin/stats`, `/admin/warmup`, per-account warmup and reset, usage refresh. Prometheus-style `/metrics`.
@@ -90,7 +90,7 @@ Real, and unusually thorough — `results/` holds measured benchmark and parity 
 - `results/BENCHMARK.md` — A/B/C tiers (direct upstream / Go CLIProxyAPI v7.2.140 / Rust gateway), partially superseded as above.
 - `results/CP-ROUTE-PARITY.md`, `results/CP-MGMT-PARITY.md`, `results/CP-COMPAT-EXPANSION.md` — route-for-route management parity captured against a live upstream instance.
 - `results/FAIR-TRANSLATION-BENCH.md`, `results/CODEX-P50-RECHECK.md`, `results/SMOKE.md`, `results/OMO-E2E.md`, `results/PAINPOINT-AUDIT.md`.
-- Integration tests `t1_..`–`t10_..` in `crates/gateway/tests/` covering round-robin fairness, churn, failover, passthrough integrity, monitoring, inbound auth, refresh, and all three compat families.
+- Integration tests `t1_..`–`t20_..` in `mahoquot-proxy/crates/gateway/tests/` covering round-robin fairness, churn, failover, passthrough integrity, monitoring, inbound auth, refresh, and all compat families.
 
 Absent, and not to be invented: no customers, no testimonials, no pricing, no public launch, no user counts. There is no README and no public documentation site.
 

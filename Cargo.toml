@@ -1,12 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/types",
-    "crates/router",
-    "crates/providers",
-    "crates/gateway",
     "crates/monitor-ui",
-    "tools/bench",
 ]
 
 [workspace.package]
@@ -14,9 +9,6 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-mahoquot-types = { path = "crates/types" }
-mahoquot-router = { path = "crates/router" }
-mahoquot-providers = { path = "crates/providers" }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 rand = "0.8"

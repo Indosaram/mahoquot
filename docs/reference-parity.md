@@ -3,7 +3,7 @@
 What Quotio actually implements from its two references, and what it does not.
 
 - Reference implementations: `../opencodex` and the vendored CLIProxyAPI sources under `.omo/upstream`.
-- Executable coverage map: `crates/gateway/tests/data/reference-parity.json`, enforced by `crates/gateway/tests/t20_reference_parity.rs`.
+- Executable coverage map: `mahoquot-proxy/crates/gateway/tests/data/reference-parity.json`, enforced by `mahoquot-proxy/crates/gateway/tests/t20_reference_parity.rs`.
 - Frozen reference registry: `docs/reference/opencodex-registry-snapshot.json`, regenerated with `bun scripts/sync-provider-snapshot.mjs`.
 - Declared differences: `docs/reference/provider-parity-deviations.json`, enforced by `provider-catalog.test.ts`.
 

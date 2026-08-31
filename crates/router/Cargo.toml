@@ -1,7 +1,0 @@
-[package]
-name = "mahoquot-router"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-mahoquot-types.workspace = true

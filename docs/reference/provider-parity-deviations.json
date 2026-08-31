@@ -6,7 +6,7 @@
       "field": "authKind",
       "reference": "oauth",
       "current": "key",
-      "reason": "Quotio onboards Kiro by importing an existing credential (crates/gateway/src/management/creds.rs) instead of driving a browser OAuth round trip. The reference flow (opencodex/src/oauth/kiro.ts) also reads a local credential file, so the imported shape is identical; only the entry point differs."
+      "reason": "Quotio onboards Kiro by importing an existing credential (mahoquot-proxy/crates/gateway/src/management/creds.rs) instead of driving a browser OAuth round trip. The reference flow (opencodex/src/oauth/kiro.ts) also reads a local credential file, so the imported shape is identical; only the entry point differs."
     },
     {
       "id": "command-code",

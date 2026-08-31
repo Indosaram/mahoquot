@@ -12,6 +12,17 @@ operations console.
 - Protocol and failover contracts: [`docs/CONTRACTS.md`](./docs/CONTRACTS.md)
 - Reference parity and provider coverage: [`docs/reference-parity.md`](./docs/reference-parity.md)
 
+## Standalone Proxy
+
+The proxy core is maintained in its own repository: [`mahoquot-proxy`](../mahoquot-proxy). It can be installed and run as a standalone CLI tool or release binary.
+
+To build and run the proxy:
+```bash
+cd ../mahoquot-proxy
+cargo build --release --bin mahoquot-gateway
+./target/release/mahoquot-gateway serve --auth-dir ~/.mahoquot/auth
+```
+
 ## Verification
 
 ```bash
