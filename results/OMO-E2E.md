@@ -11,10 +11,10 @@ Assigned Port Range: `18870-18879`
 
 ### Account Files Copied
 Cached CLIProxyAPI credentials copied from read-only `/Users/indo/.cli-proxy-api/` to isolated `/tmp/omo-e2e/auth`:
-- `codex-ab53e014-account-a@gmail.com-pro.json` -> `soo***` (Pro plan)
-- `codex-account-b@example.com-plus.json` -> `uom***` (Plus plan)
+- `codex-ab53e014-account-a@example.com-pro.json` -> `acc***` (Pro plan)
+- `codex-account-b@example.com-plus.json` -> `acc***` (Plus plan)
 
-*(Full pool probe results: `mon***` returned 400 unsupported model on Codex path; `6yh***` and `7d7***` returned 429 usage_limit_reached; `soo***` and `uom***` returned 200 OK).*
+*(Full pool probe results: `mon***` returned 400 unsupported model on Codex path; `6yh***` and `7d7***` returned 429 usage_limit_reached; `acc***` and `acc***` returned 200 OK).*
 
 ### Gateway Start Command
 ```bash
@@ -116,7 +116,7 @@ data: {"type":"response.in_progress","response":{"id":"resp_023032463687c536016a
   },
   "accounts": [
     {
-      "id": "ab53e014-account-a@gmail.com",
+      "id": "ab53e014-account-a@example.com",
       "health": {
         "status": "available"
       },
@@ -163,13 +163,13 @@ quotio_ttft_milliseconds{quantile="0.9"} 653.0616413
 quotio_ttft_milliseconds{quantile="0.99"} 680.46985133
 # HELP quotio_account_requests_total Total request count per account.
 # TYPE quotio_account_requests_total counter
-quotio_account_requests_total{account="ab53e014-account-a@gmail.com",outcome="ok"} 2
-quotio_account_requests_total{account="ab53e014-account-a@gmail.com",outcome="fail"} 0
+quotio_account_requests_total{account="ab53e014-account-a@example.com",outcome="ok"} 2
+quotio_account_requests_total{account="ab53e014-account-a@example.com",outcome="fail"} 0
 quotio_account_requests_total{account="account-b@example.com",outcome="ok"} 0
 quotio_account_requests_total{account="account-b@example.com",outcome="fail"} 0
 # HELP quotio_account_cooldown_until_seconds Cooldown target timestamp in seconds.
 # TYPE quotio_account_cooldown_until_seconds gauge
-quotio_account_cooldown_until_seconds{account="ab53e014-account-a@gmail.com"} 0
+quotio_account_cooldown_until_seconds{account="ab53e014-account-a@example.com"} 0
 quotio_account_cooldown_until_seconds{account="account-b@example.com"} 0
 ```
 
@@ -178,8 +178,8 @@ quotio_account_cooldown_until_seconds{account="account-b@example.com"} 0
 ## 7. Account Inventory & Failover Summary
 
 All 5 accounts in `/Users/indo/.cli-proxy-api/codex-*.json` were probed against `gpt-5.6-sol`:
-- `codex-ab53e014-account-a@gmail.com-pro.json` (`soo***`): **HTTP 200 OK**, SSE stream served.
-- `codex-account-b@example.com-plus.json` (`uom***`): **HTTP 200 OK**, SSE stream served.
+- `codex-ab53e014-account-a@example.com-pro.json` (`acc***`): **HTTP 200 OK**, SSE stream served.
+- `codex-account-b@example.com-plus.json` (`acc***`): **HTTP 200 OK**, SSE stream served.
 - `codex-account-g@example.com-plus.json` (`6yh***`): **HTTP 429 Too Many Requests** (`usage_limit_reached`, resets_in_seconds: 426985).
 - `codex-a9d2af16-account-h@example.com-plus.json` (`7d7***`): **HTTP 429 Too Many Requests** (`usage_limit_reached`, resets_in_seconds: 222).
 - `codex-565c2911-account-f@example.com-plus.json` (`mon***`): **HTTP 400 Bad Request** (`detail: The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.`).

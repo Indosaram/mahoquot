@@ -11,3 +11,12 @@ site/dist/
 site/test-results/
 site/playwright-report/
 *.tsbuildinfo
+
+# agent/internal artifacts (keep only the route contract used by tests)
+.omo/*
+!.omo/upstream/
+.omo/upstream/*
+!.omo/upstream/route-groups.json
+# generated evidence screenshots may contain real account identifiers
+results/**/*.png
+crates/monitor-ui/icons/proposals/

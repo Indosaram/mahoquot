@@ -25,7 +25,7 @@ code path, exposed as `POST /admin/warmup` and
 ```
 codex        account-g@example.com            ok=True  http=200
 codex        a9d2af16-account-h@example.com    ok=True  http=200
-codex        ab53e014-account-a@gmail.com ok=True  http=200
+codex        ab53e014-account-a@example.com ok=True  http=200
 codex        account-b@example.com           ok=True  http=200
 codex        565c2911-account-f@example.com ok=False http=400  (free plan, 100% used)
 antigravity  (3 accounts)                   ok=False http=429  (pre-existing cooldown)
@@ -79,7 +79,7 @@ requires the Codex CLI user agent.
 
 Exposed as `POST /admin/accounts/{id}/reset` and wired to a per-account
 `reset 5h (n)` button, disabled unless a credit exists and confirmed before
-spending. Verified live end-to-end on `ab53e014-account-a@gmail.com`:
+spending. Verified live end-to-end on `ab53e014-account-a@example.com`:
 
 ```
 before  credits=1  primary=16.0%
