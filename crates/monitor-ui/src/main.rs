@@ -673,7 +673,11 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
         }
     }
     let target = tray::WindowDimensions { width, height };
-    if let Err(error) = position_notch_window_sized(app, &window, target) {
+    // Hover expand/collapse must be atomic: a position call sized for the
+    // target followed by a resize composited the small strip at the expanded
+    // anchor for a frame (the black-line flash). The relative setFrame slides
+    // the window in one transaction instead.
+    if let Err(error) = set_notch_window_frame(app, &window, target) {
         eprintln!("failed to resize notch window: {error}");
     }
     println!("notch resized width={width} height={height} scale={scale}");
@@ -854,32 +858,6 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
 
     #[cfg(target_os = "macos")]
     start_notch_hover_watch(app.handle(), &app.state::<NotchHoverState>());
-
-    // TEMPORARY flash-verification hook: drive one expand/collapse cycle
-    // through resize_notch so the transition frames can be captured without
-    // depending on synthetic hover-event delivery. Enabled only when
-    // MAHOQUOT_FLASH_TEST is set; remove once the flash fix is proven.
-    if std::env::var("MAHOQUOT_FLASH_TEST").is_ok() {
-        let flash_handle = app.handle().clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(4_000));
-            resize_notch(&flash_handle, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
-            eprintln!("flash-test: expanded");
-            let _ = flash_handle
-                .get_webview_window(NOTCH_WINDOW_LABEL)
-                .map(|w| {
-                    w.eval("window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));")
-                });
-            std::thread::sleep(std::time::Duration::from_millis(3_000));
-            resize_notch(&flash_handle, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
-            eprintln!("flash-test: collapsed");
-            let _ = flash_handle
-                .get_webview_window(NOTCH_WINDOW_LABEL)
-                .map(|w| {
-                    w.eval("window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:false}));")
-                });
-        });
-    }
 
     println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
     Ok(())

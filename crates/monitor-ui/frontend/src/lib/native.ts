@@ -26,28 +26,6 @@ export const startManagedGateway = (): Promise<GatewayLifecycleStatus> =>
 export const stopManagedGateway = (): Promise<GatewayLifecycleStatus> =>
   invokeLifecycle("stop_gateway");
 
-export interface LegacyMigrationStatus {
-  readonly importable_count: number;
-  readonly legacy_dir: string;
-  readonly app_dir: string;
-}
-
-export const getLegacyMigrationStatus = (): Promise<LegacyMigrationStatus | null> => {
-  const native = internals();
-  if (!native) return Promise.resolve(null);
-  return native.invoke<LegacyMigrationStatus | null>("legacy_migration_status");
-};
-
-export const resolveLegacyMigration = (
-  importAccounts: boolean,
-): Promise<GatewayLifecycleStatus> => {
-  const native = internals();
-  if (!native) return Promise.resolve("running");
-  return native.invoke<GatewayLifecycleStatus>("resolve_legacy_migration", {
-    import: importAccounts,
-  });
-};
-
 export const openExternalUrl = async (url: string): Promise<void> => {
   const native = internals();
   if (native) {
