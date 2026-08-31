@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-**Backend:** The proxy core (`mahoquot-types`, `mahoquot-router`, `mahoquot-providers`, `mahoquot-gateway`, `bench`) lives in `../mahoquot-proxy`. The desktop app (`mahoquot-monitor-ui`) lives in this repository and communicates with the gateway over HTTP.
+**Backend:** The proxy core (`mahoquot-types`, `mahoquot-router`, `mahoquot-providers`, `mahoquot-gateway`, `bench`) lives in [`mahoquot-proxy`](https://github.com/Indosaram/mahoquot-proxy) (local checkout: `../mahoquot-proxy`). The desktop app (`mahoquot-monitor-ui`) lives in this repository and communicates with the gateway over HTTP.
 
 **UI (decided this session):** the incumbent single-file, no-toolchain constraint is **not binding**. The user wants a real design system in the shadcn mold — token-driven, componentized, consistency enforced by the system rather than by hand-written CSS in one file.
 

@@ -14,7 +14,7 @@ operations console.
 
 ## Standalone Proxy
 
-The proxy core is maintained in its own repository: [`mahoquot-proxy`](../mahoquot-proxy). It can be installed and run as a standalone CLI tool or release binary.
+The proxy core is maintained in its own repository: [`mahoquot-proxy`](https://github.com/Indosaram/mahoquot-proxy) (local checkout: `../mahoquot-proxy`). It can be installed and run as a standalone CLI tool or release binary.
 
 To build and run the proxy:
 ```bash
