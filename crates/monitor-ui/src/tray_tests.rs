@@ -1,11 +1,10 @@
 use crate::tray::{
     calculate_notch_window_physical_position, calculate_notch_window_position,
     cursor_to_window_local, cursor_within, cursor_within_edge_corridor, default_auth_dir,
-    detect_legacy_migration, gateway_startup_action, hover_cursor_inside,
-    pick_notched_monitor_index, resolve_auth_dir, resolve_gateway_binary,
-    screen_rect_touches_display, CursorPoint, DisplayBounds, GatewayStartup, LocalPoint,
-    MonitorSummary, NotchInsets, ScreenRect, WindowDimensions, WindowPosition, MENU_ID_GATEWAY,
-    MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE,
+    gateway_startup_action, hover_cursor_inside, pick_notched_monitor_index,
+    resolve_gateway_binary, screen_rect_touches_display, CursorPoint, DisplayBounds,
+    GatewayStartup, LocalPoint, MonitorSummary, NotchInsets, ScreenRect, WindowDimensions,
+    WindowPosition, MENU_ID_GATEWAY, MENU_ID_QUIT, MENU_ID_REFRESH, MENU_ID_TOGGLE,
 };
 
 #[test]
@@ -424,11 +423,28 @@ fn notched_monitor_prefers_retina_panel_for_island_placement() {
 }
 
 #[test]
-fn default_auth_dir_returns_mahoquot_auth_unconditionally() {
+fn default_auth_dir_creates_mahoquot_auth_when_missing() {
     let home = std::env::temp_dir().join(format!("mahoquot-auth-dir-fresh-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("home dir");
+
     let resolved = default_auth_dir(&home.display().to_string());
+
+    assert_eq!(resolved, home.join(".mahoquot/auth"));
+    assert!(resolved.is_dir());
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn default_auth_dir_ignores_existing_legacy_auth_dir() {
+    let home =
+        std::env::temp_dir().join(format!("mahoquot-auth-dir-legacy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let legacy = home.join(format!(".{}-{}-{}", "cli", "proxy", "api"));
+    std::fs::create_dir_all(&legacy).expect("legacy auth dir");
+
+    let resolved = default_auth_dir(&home.display().to_string());
+
     assert_eq!(resolved, home.join(".mahoquot/auth"));
     std::fs::remove_dir_all(&home).ok();
 }
@@ -481,95 +497,4 @@ fn an_open_panel_holds_while_the_pointer_roams_the_corridor_toward_its_card() {
         true
     ));
     assert!(!hover_cursor_inside(&panel, None, &toward_card, true));
-}
-
-#[test]
-fn a_pending_legacy_store_stays_untouched_until_the_user_chooses() {
-    let home =
-        std::env::temp_dir().join(format!("mahoquot-auth-dir-pending-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    let legacy = home.join(".cli-proxy-api");
-    std::fs::create_dir_all(&legacy).expect("legacy dir");
-    std::fs::write(
-        legacy.join("codex-user@example.com.json"),
-        r#"{"type":"codex","access_token":"t"}"#,
-    )
-    .expect("credential");
-    std::fs::write(
-        legacy.join("config.yaml"),
-        "port: 18801\nauth-dir: /old/cli-proxy-api\n",
-    )
-    .expect("config");
-
-    // Startup resolves to the incumbent folder without importing anything.
-    assert_eq!(default_auth_dir(&home.display().to_string()), legacy);
-    assert!(!home.join(".mahoquot/auth").exists());
-    assert!(detect_legacy_migration(&home.display().to_string()).is_some());
-    std::fs::remove_dir_all(&home).ok();
-}
-
-#[test]
-fn importing_takes_ownership_of_the_app_store() {
-    let home =
-        std::env::temp_dir().join(format!("mahoquot-auth-dir-import-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    let legacy = home.join(".cli-proxy-api");
-    std::fs::create_dir_all(&legacy).expect("legacy dir");
-    std::fs::write(
-        legacy.join("codex-user@example.com.json"),
-        r#"{"type":"codex","access_token":"t"}"#,
-    )
-    .expect("credential");
-    std::fs::write(legacy.join("telemetry.json"), r#"{}"#).expect("telemetry");
-    std::fs::write(legacy.join("kimi-device-id"), "device-id").expect("device id");
-    std::fs::write(
-        legacy.join("config.yaml"),
-        "port: 18801\nauth-dir: /old/cli-proxy-api\n",
-    )
-    .expect("config");
-
-    let resolved = resolve_auth_dir(&home.display().to_string(), true);
-
-    assert_eq!(resolved, home.join(".mahoquot/auth"));
-    assert!(resolved.join("codex-user@example.com.json").is_file());
-    assert!(resolved.join("kimi-device-id").is_file());
-    assert!(!resolved.join("telemetry.json").exists());
-    let config = std::fs::read_to_string(resolved.join("config.yaml")).unwrap();
-    assert!(config.contains(&format!("auth-dir: {}", resolved.display())));
-    assert!(!config.contains("/old/cli-proxy-api"));
-    assert!(legacy.join("codex-user@example.com.json").is_file());
-
-    // Ownership is final: the startup resolver serves the app store and newer
-    // legacy files stay out of it.
-    assert_eq!(default_auth_dir(&home.display().to_string()), resolved);
-    std::fs::write(
-        legacy.join("codex-added-later.json"),
-        r#"{"type":"codex","access_token":"late"}"#,
-    )
-    .expect("late credential");
-    assert_eq!(default_auth_dir(&home.display().to_string()), resolved);
-    assert!(!resolved.join("codex-added-later.json").exists());
-    assert!(detect_legacy_migration(&home.display().to_string()).is_none());
-    std::fs::remove_dir_all(&home).ok();
-}
-
-#[test]
-fn declining_keeps_the_legacy_folder_and_silences_the_prompt() {
-    let home =
-        std::env::temp_dir().join(format!("mahoquot-auth-dir-decline-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    let legacy = home.join(".cli-proxy-api");
-    std::fs::create_dir_all(&legacy).expect("legacy dir");
-    std::fs::write(
-        legacy.join("codex-user@example.com.json"),
-        r#"{"type":"codex","access_token":"t"}"#,
-    )
-    .expect("credential");
-
-    let resolved = resolve_auth_dir(&home.display().to_string(), false);
-
-    assert_eq!(resolved, legacy);
-    assert!(!home.join(".mahoquot/auth").exists());
-    assert!(detect_legacy_migration(&home.display().to_string()).is_none());
-    std::fs::remove_dir_all(&home).ok();
 }

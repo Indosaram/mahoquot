@@ -170,34 +170,6 @@ fn gateway_status() -> GatewayLifecycleStatus {
     }
 }
 
-#[derive(serde::Serialize)]
-struct LegacyMigrationStatus {
-    importable_count: usize,
-    legacy_dir: String,
-    app_dir: String,
-}
-
-#[tauri::command]
-fn legacy_migration_status() -> Option<LegacyMigrationStatus> {
-    tray::detect_legacy_migration(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).map(
-        |migration| LegacyMigrationStatus {
-            importable_count: migration.importable_count,
-            legacy_dir: migration.legacy_dir.display().to_string(),
-            app_dir: migration.app_dir.display().to_string(),
-        },
-    )
-}
-
-#[tauri::command]
-fn resolve_legacy_migration(import: bool) -> Result<String, String> {
-    Ok(tray::resolve_auth_dir(
-        &std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-        import,
-    )
-    .display()
-    .to_string())
-}
-
 #[tauri::command]
 fn start_gateway(
     process: tauri::State<'_, GatewayProcess>,
@@ -1023,9 +995,7 @@ fn main() {
             warm_all,
             refresh_usage,
             expand_notch,
-            collapse_notch,
-            legacy_migration_status,
-            resolve_legacy_migration
+            collapse_notch
         ])
         .setup(initialize_native_ui)
         .on_window_event(|window, event| {
