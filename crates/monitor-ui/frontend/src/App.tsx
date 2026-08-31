@@ -19,10 +19,12 @@ import {
   quotaRows,
 } from "./components/AccountsSurface";
 import { ContextMenu, useContextMenu } from "./components/ContextMenu";
+import { LegacyMigrationDialog } from "./components/LegacyMigrationPrompt";
 import { LogsSurface } from "./components/LogsSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel, providerLogos } from "./components/ProviderGlyph";
 import { SettingsSurface } from "./components/SettingsSurface";
+import { ToastStack, useToasts } from "./components/Toasts";
 import { TrayPanel } from "./components/TrayPanel";
 import { AppShell, OverlayLayer } from "./components/layout";
 import { Button } from "./components/ui";
@@ -37,6 +39,7 @@ import { wantsNativeMenu } from "./lib/context-menu";
 import {
   type GatewayLifecycleStatus,
   getGatewayLifecycle,
+  getLegacyMigrationStatus,
   openExternalUrl,
   startManagedGateway,
   stopManagedGateway,
@@ -348,11 +351,15 @@ export default function App() {
   const [provider, setProvider] = useState(
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
-  const [notice, setNotice] = useState("");
+  const { toasts, pushToast, dismissToast } = useToasts();
+  const setNotice = (message: string) => {
+    pushToast(message);
+  };
   const [pending, setPending] = useState("");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [confirmRemove, setConfirmRemove] = useState("");
+  const [migrationPromptOpen, setMigrationPromptOpen] = useState(false);
   const [openMethods, setOpenMethods] = useState<(typeof ONBOARDING_PROVIDERS)[number] | null>(
     null,
   );
@@ -412,8 +419,13 @@ export default function App() {
     setZcodeForm(null);
   }, []);
 
-  const openOnboarding = useCallback(() => {
+  const openOnboarding = useCallback(async () => {
     resetOnboarding();
+    const migration = await getLegacyMigrationStatus();
+    if (migration) {
+      setMigrationPromptOpen(true);
+      return;
+    }
     setOnboardingOpen(true);
   }, [resetOnboarding]);
 
@@ -1333,6 +1345,14 @@ export default function App() {
 
   return (
     <AppShell className="app" data-mahoquot-app="operations-console">
+      <LegacyMigrationDialog
+        open={migrationPromptOpen}
+        onResolved={() => {
+          setMigrationPromptOpen(false);
+          resetOnboarding();
+          setOnboardingOpen(true);
+        }}
+      />
       <aside className="sidebar">
         <div className="titlebar-drag" data-tauri-drag-region />
         <div className="brand" data-tauri-drag-region>
@@ -1411,7 +1431,6 @@ export default function App() {
             selectedProvider={selectedProvider}
             visibleAccounts={visibleAccounts}
             pending={pending}
-            notice={notice}
             credentialsError={credentialsError}
             dragging={dragging}
             confirmRemove={confirmRemove}
@@ -1435,7 +1454,6 @@ export default function App() {
 
         {surface === "settings" ? (
           <SettingsSurface
-            notice={notice}
             gatewayLifecycle={gatewayLifecycle}
             pending={pending}
             loadState={loadState}
@@ -1821,6 +1839,7 @@ export default function App() {
           </aside>
         </OverlayLayer>
       ) : null}
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <ContextMenu menu={menu} onClose={closeMenu} />
     </AppShell>
   );
