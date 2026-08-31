@@ -352,8 +352,7 @@ h2 {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 .caveat,
-.state-panel,
-.notice {
+.state-panel {
   border: 1px solid var(--line);
   background: var(--panel-2);
   border-radius: 9px;
@@ -368,15 +367,61 @@ h2 {
 .caveat .badge {
   margin-left: auto;
 }
-.state-panel.warning,
-.notice.warning {
+.state-panel.warning {
   border-color: var(--warn);
   background: var(--warn-dim);
 }
-.state-panel.danger,
-.notice.danger {
+.state-panel.danger {
   border-color: var(--bad);
   background: var(--bad-dim);
+}
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 36px));
+}
+.toast {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 11px 14px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  animation: toast-in 0.22s cubic-bezier(0.32, 0.9, 0.35, 1);
+}
+.toast:hover {
+  border-color: color-mix(in srgb, var(--fg) 22%, var(--line));
+}
+.toast-error {
+  border-color: var(--bad);
+  background: var(--bad-dim);
+  color: var(--fg);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
 }
 .metric-grid {
   display: grid;
@@ -901,7 +946,13 @@ h2 {
 .provider-mix-track i {
   min-width: 2px;
   height: 100%;
-  background: var(--accent);
+}
+.provider-mix-labels .provider-mix-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
 }
 .provider-mix-labels {
   display: flex;

@@ -1,6 +1,7 @@
 import { DitherArea } from "@/components/dither-area";
 import { useMemo, useState } from "react";
 import type { AdminStats } from "../lib/schemas";
+import { providerColor } from "../lib/provider-colors";
 import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
 import {
   type TelemetryRange,
@@ -111,12 +112,12 @@ export const OverviewDashboard = ({
           <span>{range}</span>
         </header>
         <div className="provider-mix-track" aria-hidden="true">
-          {summary.providers.map((provider, index) => (
+          {summary.providers.map((provider) => (
             <i
               key={provider.provider}
               style={{
                 width: `${(provider.requests / totalProviderRequests) * 100}%`,
-                opacity: Math.max(0.38, 1 - index * 0.17),
+                background: providerColor(provider.provider),
               }}
             />
           ))}
@@ -125,6 +126,11 @@ export const OverviewDashboard = ({
           {summary.providers.length ? (
             summary.providers.map((provider) => (
               <span key={provider.provider}>
+                <i
+                  className="provider-mix-dot"
+                  style={{ background: providerColor(provider.provider) }}
+                  aria-hidden="true"
+                />
                 <strong>{providerName(provider.provider)}</strong>
                 {Math.round((provider.requests / totalProviderRequests) * 100)}%
               </span>
