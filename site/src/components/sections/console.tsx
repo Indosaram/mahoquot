@@ -23,9 +23,8 @@ export function Console() {
             </p>
 
             <p className="mt-5 text-[13px] leading-relaxed text-ink-ghost">
-              Screenshots: the shipping console rendering a 26-minute burst run
-              from <code className="font-mono">tools/bench</code>. Figures here
-              are from the repository benchmark suite.
+              Screenshots: the shipping console showing live pool activity and
+              account-level routing distribution.
             </p>
           </div>
 

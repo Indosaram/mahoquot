@@ -76,7 +76,6 @@ export const FEATURES: readonly Feature[] = [
     description:
       "No body parsing on matched-family routes. Raw byte streams over a pooled hyper client per upstream host with TCP_NODELAY, so a stream you did not need to touch stays untouched.",
     points: [
-      "~58 us per relayed chunk",
       "Pooled client per upstream host",
       "No full-response buffering",
     ],

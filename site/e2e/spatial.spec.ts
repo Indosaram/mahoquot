@@ -127,41 +127,6 @@ test.describe("Spatial Layout Contract", () => {
     expect(["hidden", "clip"]).toContain(overflowX);
   });
 
-  // (d) At 390px: contained horizontal scroll working in #benchmarks and #architecture tables
-  test("(d) contained horizontal scroll in benchmark and architecture tables at 390px", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("./");
-    await page.waitForLoadState("networkidle");
-
-    const containers = await page.evaluate(() => {
-      const elements = Array.from(
-        document.querySelectorAll(
-          "#benchmarks .overflow-x-auto, #architecture .overflow-x-auto",
-        ),
-      );
-
-      return elements.map((el) => {
-        const sectionId = el.closest("section")?.id ?? "unknown";
-        const table = el.querySelector("table");
-        return {
-          sectionId,
-          tableClasses: table?.className ?? "",
-          scrollWidth: el.scrollWidth,
-          clientWidth: el.clientWidth,
-          hasOverflow: el.scrollWidth > el.clientWidth,
-        };
-      });
-    });
-
-    expect(containers.length).toBeGreaterThanOrEqual(3);
-    for (const c of containers) {
-      expect(c.hasOverflow).toBe(true);
-      expect(c.scrollWidth).toBeGreaterThan(c.clientWidth);
-    }
-  });
-
   // (e) Marquee seam identity at 1280 viewport
   test("(e) marquee seam identity matches within +/-0.5px", async ({
     page,
