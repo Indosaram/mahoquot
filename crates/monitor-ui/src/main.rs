@@ -4,12 +4,14 @@
 )]
 
 mod bootstrap;
+#[cfg(test)]
+mod lifecycle_tests;
 mod stats;
 mod tray;
 #[cfg(test)]
 mod tray_tests;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use stats::{build_view, fetch_stats, MonitorView};
 use tauri::{
@@ -38,7 +40,71 @@ const NS_STATUS_WINDOW_LEVEL: i64 = 25;
 #[cfg(target_os = "macos")]
 const NS_WINDOW_BEHAVIOR_ALL_SPACES_STATIONARY: i64 = (1 << 0) | (1 << 8);
 
-struct GatewayProcess(std::sync::Mutex<Option<std::process::Child>>);
+const LOCAL_GATEWAY_URL: &str = "http://127.0.0.1:18801";
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const GATEWAY_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const GATEWAY_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Default)]
+struct GatewayProcess {
+    pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
+}
+
+impl GatewayProcess {
+    fn pid(&self) -> i32 {
+        self.pid.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayTargetPolicy {
+    ManageLocal,
+    UseConfigured,
+}
+
+fn gateway_target_policy(base_url: &str) -> GatewayTargetPolicy {
+    if base_url == LOCAL_GATEWAY_URL {
+        GatewayTargetPolicy::ManageLocal
+    } else {
+        GatewayTargetPolicy::UseConfigured
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReclaimListenerPolicy {
+    Terminate,
+    Skip,
+}
+
+fn reclaim_listener_policy(
+    listener_executable: &std::path::Path,
+    own_gateway_binary: &std::path::Path,
+) -> ReclaimListenerPolicy {
+    if listener_executable == own_gateway_binary {
+        ReclaimListenerPolicy::Terminate
+    } else {
+        ReclaimListenerPolicy::Skip
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopSignal {
+    Terminate,
+    Kill,
+}
+
+fn stop_signal_order() -> [StopSignal; 2] {
+    [StopSignal::Terminate, StopSignal::Kill]
+}
+
+impl StopSignal {
+    fn raw(self) -> i32 {
+        match self {
+            Self::Terminate => 15,
+            Self::Kill => 9,
+        }
+    }
+}
 
 /// Mirrors the gateway child's pid for the signal path. A SIGTERM/SIGINT never
 /// reaches `RunEvent::ExitRequested`, so without this the gateway would outlive
@@ -49,7 +115,7 @@ extern "C" fn terminate_gateway_on_signal(signal: i32) {
     let pid = GATEWAY_CHILD_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
     if pid > 0 {
         unsafe {
-            libc_kill(pid, 15);
+            libc_kill(pid, StopSignal::Terminate.raw());
         }
     }
     unsafe {
@@ -108,57 +174,207 @@ fn gateway_listening() -> bool {
     std::net::TcpStream::connect(("127.0.0.1", GATEWAY_PORT)).is_ok()
 }
 
-/// Frees the gateway port by terminating the orphan bound to it, so the app can
-/// own the gateway it talks to.
-fn reclaim_gateway_port() {
+fn wait_until(timeout: Duration, mut finished: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if finished() {
+            return true;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        std::thread::sleep(PROCESS_POLL_INTERVAL.min(deadline - now));
+    }
+}
+
+fn process_is_running(pid: i32) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    let result = unsafe { libc_kill(pid, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(3)
+}
+
+fn signal_process(pid: i32, signal: StopSignal) -> Result<(), String> {
+    if unsafe { libc_kill(pid, signal.raw()) } == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(3) {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to send signal {} to gateway pid={pid}: {error}",
+            signal.raw()
+        ))
+    }
+}
+
+fn terminate_process(
+    pid: i32,
+    timeout: Duration,
+    mut stopped: impl FnMut() -> bool,
+) -> Result<(), String> {
+    for signal in stop_signal_order() {
+        signal_process(pid, signal)?;
+        if wait_until(timeout, &mut stopped) {
+            return Ok(());
+        }
+    }
+    Err(format!("gateway pid={pid} did not exit after SIGKILL"))
+}
+
+fn listener_pids() -> Vec<i32> {
     let Ok(output) = std::process::Command::new("lsof")
         .args(["-tnP", &format!("-iTCP:{GATEWAY_PORT}"), "-sTCP:LISTEN"])
         .output()
     else {
-        return;
+        return Vec::new();
     };
-    for pid in String::from_utf8_lossy(&output.stdout)
+    String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| line.trim().parse::<i32>().ok())
         .filter(|pid| *pid > 1)
-    {
-        println!("reclaiming gateway port from orphan pid={pid}");
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
+        .collect()
+}
+
+fn listener_executable_path(pid: i32) -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("lsof")
+        .args(["-a", "-p", &pid.to_string(), "-d", "txt", "-Fn"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('n'))
+        .map(std::path::PathBuf::from)
+}
+
+fn gateway_binary_launchable(path: &std::path::Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
     }
-    for _ in 0..40 {
-        if !gateway_listening() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 
-fn spawn_gateway() -> Option<std::process::Child> {
-    if tray::gateway_startup_action(gateway_listening()) == tray::GatewayStartup::ReclaimThenSpawn {
-        reclaim_gateway_port();
+/// Frees the gateway port only when the listener is an orphan of the exact
+/// gateway binary this app is about to launch. Foreign listeners are never
+/// signalled.
+fn reclaim_gateway_port(own_gateway_binary: &std::path::Path) -> bool {
+    for pid in listener_pids() {
+        let Some(listener_binary) = listener_executable_path(pid) else {
+            eprintln!("skipping gateway port listener with unknown executable pid={pid}");
+            continue;
+        };
+        let listener_binary = std::fs::canonicalize(&listener_binary).unwrap_or(listener_binary);
+        if reclaim_listener_policy(&listener_binary, own_gateway_binary)
+            == ReclaimListenerPolicy::Skip
+        {
+            eprintln!(
+                "skipping foreign gateway port listener pid={pid} executable={}",
+                listener_binary.display()
+            );
+            continue;
+        }
+        println!("reclaiming gateway port from orphan pid={pid}");
+        if let Err(error) =
+            terminate_process(pid, GATEWAY_STOP_TIMEOUT, || !process_is_running(pid))
+        {
+            eprintln!("failed to reclaim gateway port from pid={pid}: {error}");
+        }
+    }
+    !gateway_listening()
+}
+
+fn clear_gateway_pid(process_pid: &std::sync::atomic::AtomicI32, pid: i32) {
+    let _ = process_pid.compare_exchange(
+        pid,
+        0,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    let _ = GATEWAY_CHILD_PID.compare_exchange(
+        pid,
+        0,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
+
+fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
+    if gateway_target_policy(base_url) == GatewayTargetPolicy::UseConfigured {
+        return None;
     }
     let exe = std::env::current_exe().ok();
     let bin =
         tray::resolve_gateway_binary(std::env::var("MAHOQUOT_GATEWAY_BIN").ok(), exe.as_deref())?;
+    if !gateway_binary_launchable(&bin) {
+        eprintln!("gateway binary unavailable: {}", bin.display());
+        return None;
+    }
+    let own_gateway_binary = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
+    if gateway_listening() && !reclaim_gateway_port(&own_gateway_binary) {
+        eprintln!("gateway port is occupied by a listener this app does not own");
+        return None;
+    }
+
     let auth_dir =
         tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     match std::process::Command::new(&bin)
         .env("AUTH_DIR", auth_dir)
         .spawn()
     {
-        Ok(child) => {
-            println!("mahoquot-gateway spawned pid={}", child.id());
-            GATEWAY_CHILD_PID.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+        Ok(mut child) => {
+            let pid = child.id() as i32;
+            println!("mahoquot-gateway spawned pid={pid}");
+            process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
+            GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
             install_gateway_signal_guard();
-            Some(child)
+            let process_pid = std::sync::Arc::clone(&process.pid);
+            std::thread::spawn(move || {
+                let result = child.wait();
+                clear_gateway_pid(&process_pid, pid);
+                match result {
+                    Ok(status) => println!("mahoquot-gateway exited pid={pid} status={status}"),
+                    Err(error) => {
+                        eprintln!("failed to harvest mahoquot-gateway pid={pid}: {error}")
+                    }
+                }
+            });
+            Some(pid)
         }
         Err(error) => {
             eprintln!("failed to spawn mahoquot-gateway: {error}");
             None
         }
     }
+}
+
+fn wait_for_gateway_ready(process: &GatewayProcess) -> bool {
+    wait_until(GATEWAY_READY_TIMEOUT, || {
+        gateway_listening() || process.pid() <= 1
+    }) && gateway_listening()
+}
+
+fn stop_owned_gateway(process: &GatewayProcess) -> Result<bool, String> {
+    let pid = process.pid();
+    if pid <= 1 {
+        return Ok(false);
+    }
+    terminate_process(pid, GATEWAY_STOP_TIMEOUT, || process.pid() != pid)?;
+    clear_gateway_pid(&process.pid, pid);
+    Ok(true)
 }
 
 #[tauri::command]
@@ -173,33 +389,32 @@ fn gateway_status() -> GatewayLifecycleStatus {
 #[tauri::command]
 fn start_gateway(
     process: tauri::State<'_, GatewayProcess>,
+    config: tauri::State<'_, Config>,
 ) -> Result<GatewayLifecycleStatus, String> {
+    if gateway_target_policy(&config.base_url) == GatewayTargetPolicy::UseConfigured {
+        return Err("gateway lifecycle is unavailable for a configured remote URL".to_string());
+    }
     if gateway_listening() {
         return Ok(GatewayLifecycleStatus::Running);
     }
-    let child = spawn_gateway().ok_or_else(|| "gateway binary unavailable".to_string())?;
-    let mut owned = process
-        .0
-        .lock()
-        .map_err(|_| "gateway process state unavailable".to_string())?;
-    *owned = Some(child);
-    Ok(GatewayLifecycleStatus::Running)
+    if process.pid() <= 1 {
+        spawn_gateway(&process, &config.base_url)
+            .ok_or_else(|| "gateway binary unavailable or local port occupied".to_string())?;
+    }
+    if wait_for_gateway_ready(&process) {
+        Ok(GatewayLifecycleStatus::Running)
+    } else {
+        let _ = stop_owned_gateway(&process);
+        Err("gateway did not begin listening within 5 seconds".to_string())
+    }
 }
 
 #[tauri::command]
 fn stop_gateway(
     process: tauri::State<'_, GatewayProcess>,
 ) -> Result<GatewayLifecycleStatus, String> {
-    let mut owned = process
-        .0
-        .lock()
-        .map_err(|_| "gateway process state unavailable".to_string())?;
-    if let Some(mut child) = owned.take() {
-        GATEWAY_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
-        child
-            .kill()
-            .map_err(|error| format!("failed to stop gateway: {error}"))?;
-        let _ = child.wait();
+    if stop_owned_gateway(&process)? {
+        println!("mahoquot-gateway terminated");
     } else if gateway_listening() {
         return Ok(GatewayLifecycleStatus::Running);
     }
@@ -961,9 +1176,9 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 }
 
 fn main() {
-    let gateway = GatewayProcess(std::sync::Mutex::new(spawn_gateway()));
-    let base_url =
-        std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
+    let base_url = std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| LOCAL_GATEWAY_URL.to_string());
+    let gateway = GatewayProcess::default();
+    let _ = spawn_gateway(&gateway, &base_url);
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();
     let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
 
@@ -1035,15 +1250,10 @@ fn main() {
                 };
             }
             let gateway = app.state::<GatewayProcess>();
-            let mut child_guard = match gateway.0.lock() {
-                Ok(guard) => guard,
-                Err(_) => return,
-            };
-            if let Some(child) = child_guard.as_mut() {
-                GATEWAY_CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
-                let _ = child.kill();
-                let _ = child.wait();
-                println!("mahoquot-gateway terminated");
+            match stop_owned_gateway(&gateway) {
+                Ok(true) => println!("mahoquot-gateway terminated"),
+                Ok(false) => {}
+                Err(error) => eprintln!("failed to stop mahoquot-gateway on exit: {error}"),
             }
         }
     });
