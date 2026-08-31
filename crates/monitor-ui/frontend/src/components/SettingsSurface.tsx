@@ -3,7 +3,6 @@ import type { GatewayLifecycleStatus } from "../lib/native";
 import { Badge, Button, Card, Field, Input } from "./ui";
 
 export interface SettingsSurfaceProps {
-  readonly notice?: string | undefined;
   readonly gatewayLifecycle: GatewayLifecycleStatus;
   readonly pending: string;
   readonly loadState: "loading" | "online" | "starting" | "stopped" | "relay-locked";
@@ -33,7 +32,6 @@ export interface SettingsSurfaceProps {
 }
 
 export function SettingsSurface({
-  notice,
   gatewayLifecycle,
   pending,
   loadState,
@@ -63,11 +61,6 @@ export function SettingsSurface({
 }: SettingsSurfaceProps) {
   return (
     <div className="content settings">
-      {notice ? (
-        <output className={notice.startsWith("Action failed") ? "notice danger" : "notice"}>
-          {notice}
-        </output>
-      ) : null}
       <Card className="gateway-process-card">
         <div>
           <h2>Gateway process</h2>

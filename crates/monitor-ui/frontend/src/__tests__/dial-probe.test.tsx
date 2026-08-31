@@ -1,44 +1,62 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 
+const stats = {
+  uptime_secs: 1,
+  in_flight: 0,
+  served: 0,
+  failed_over: 0,
+  refreshed: 0,
+  ttft: { p50_ms: 0, p90_ms: 0, p99_ms: 0, samples: 0 },
+  accounts: [
+    {
+      id: "a@x.com",
+      provider: "codex",
+      health: { status: "available" },
+      ok: 1,
+      fails: 0,
+      usage: {
+        primary: { used_percent: 71, reset_after_seconds: 100 },
+        secondary: { used_percent: 61 },
+      },
+    },
+  ],
+};
+
+const stubFetch = () =>
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+      if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+      if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
+      return new Response(JSON.stringify({ ok: true }));
+    }),
+  );
+
 describe("dial probe", () => {
-  it("shows worst-case percent under rings", async () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+    localStorage.removeItem("mahoquot.show-remaining");
+  });
+
+  it("shows remaining percent under rings when showRemaining is on", async () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
-    const stats = {
-      uptime_secs: 1,
-      in_flight: 0,
-      served: 0,
-      failed_over: 0,
-      refreshed: 0,
-      ttft: { p50_ms: 0, p90_ms: 0, p99_ms: 0, samples: 0 },
-      accounts: [
-        {
-          id: "a@x.com",
-          provider: "codex",
-          health: { status: "available" },
-          ok: 1,
-          fails: 0,
-          usage: {
-            primary: { used_percent: 71, reset_after_seconds: 100 },
-            secondary: { used_percent: 61 },
-          },
-        },
-      ],
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
-        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
-        if (url.includes("/logs")) return new Response(JSON.stringify({ lines: [] }));
-        return new Response(JSON.stringify({ ok: true }));
-      }),
-    );
+    localStorage.setItem("mahoquot.show-remaining", "1");
+    stubFetch();
     render(<App />);
     fireEvent.mouseEnter(await screen.findByTestId("notch-ring-codex"));
-    expect(screen.getByTestId("notch-ring-codex").textContent).toMatch(/\d+%/);
-    window.history.pushState({}, "", "/");
+    expect(screen.getByTestId("notch-ring-codex").textContent).toContain("29%");
+  });
+
+  it("shows used percent under rings when showRemaining is off", async () => {
+    window.history.pushState({}, "", "/management.html?surface=notch");
+    localStorage.setItem("mahoquot.show-remaining", "0");
+    stubFetch();
+    render(<App />);
+    fireEvent.mouseEnter(await screen.findByTestId("notch-ring-codex"));
+    expect(screen.getByTestId("notch-ring-codex").textContent).toContain("71%");
   });
 });

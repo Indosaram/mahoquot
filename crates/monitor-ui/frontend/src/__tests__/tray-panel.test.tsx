@@ -63,7 +63,7 @@ describe("TrayPanel", () => {
         accounts={[
           account({
             provider: "codex",
-            email: "user@example.com-plus",
+            email: "user@nf3721.com-plus",
             plan: "plus",
             primary: 46,
             secondary: 82,

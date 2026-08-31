@@ -284,7 +284,7 @@ test.describe("Task 16 - Production Single-File Artifact and Server Contract", (
     const warmBtn = page.locator('button:has-text("Warm"), button[title*="Warm"]').first();
     if (await warmBtn.isVisible()) {
       await warmBtn.click();
-      await expect(page.locator("output.notice, .notice")).toBeVisible();
+      await expect(page.locator(".toast-stack .toast")).toBeVisible();
     }
     await page.screenshot({ path: resolve(happyDir, "05-accounts-warm-and-reorder.png") });
 

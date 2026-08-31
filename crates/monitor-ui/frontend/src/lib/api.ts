@@ -46,6 +46,7 @@ export interface GatewayClients {
     removeCredential(name: string): Promise<void>;
     setCredentialDisabled(name: string, disabled: boolean): Promise<void>;
     createZcodeCredential(email: string, apiKey: string): Promise<void>;
+    completeZcodeAuth(state: string, callbackUrl: string): Promise<void>;
     createGenericCredential(input: {
       readonly provider: string;
       readonly label: string;
@@ -61,12 +62,29 @@ export interface GatewayClients {
     importVertexServiceAccount(document: string): Promise<void>;
     saveCredentialOrder(names: readonly string[]): Promise<void>;
     importLocalClaude(): Promise<void>;
+    importLocalZcode(): Promise<void>;
+
     beginProviderAuth(provider: string): Promise<{ readonly url: string; readonly state: string }>;
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
     scalar(path: string): Promise<Record<string, unknown>>;
     saveScalar(path: string, value: ScalarValue): Promise<void>;
   };
 }
+
+/** Gateway failures arrive as `{"error": "..."}`; surfaces show the message,
+ * not the envelope. Empty bodies fall back to the status code. */
+const describeFailure = async (response: Response): Promise<string> => {
+  const body = (await response.text()).trim();
+  if (body === "") return `HTTP ${response.status}`;
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim() !== "") return parsed.error;
+    if (typeof parsed.message === "string" && parsed.message.trim() !== "") return parsed.message;
+  } catch {
+    // Plain-text body: surface it as-is.
+  }
+  return body;
+};
 
 const requestJson = async (
   url: string,
@@ -75,7 +93,7 @@ const requestJson = async (
 ): Promise<unknown> => {
   const response = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
   if (!response.ok) {
-    throw new GatewayError(await response.text(), response.status);
+    throw new GatewayError(await describeFailure(response), response.status);
   }
   if (response.status === 204) return null;
   return response.json();
@@ -106,7 +124,9 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         const response = await fetch(`${base}/v0/management/config.yaml`, {
           headers: authHeaders,
         });
-        if (!response.ok) throw new GatewayError(await response.text(), response.status);
+        if (!response.ok) {
+          throw new GatewayError(await describeFailure(response), response.status);
+        }
         return response.text();
       },
       saveConfigYaml: async (yaml) => {
@@ -202,6 +222,12 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           method: "POST",
         });
       },
+      importLocalZcode: async () => {
+        await requestJson(`${base}/v0/management/zcode/import-local`, authHeaders, {
+          method: "POST",
+        });
+      },
+
       beginProviderAuth: async (provider) => {
         const endpoint: Record<string, string> = {
           codex: "codex-auth-url",
@@ -215,12 +241,20 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           "github-copilot": "github-copilot-auth-url",
           "command-code": "command-code-auth-url",
           xai: "xai-auth-url",
+          zcode: "zcode-auth-url",
         };
         const route = endpoint[provider];
         if (!route) throw new GatewayError(`Unsupported provider: ${provider}`, 400);
         return providerAuthStartSchema.parse(
           await requestJson(`${base}/v0/management/${route}`, authHeaders),
         );
+      },
+      completeZcodeAuth: async (state, callbackUrl) => {
+        await requestJson(`${base}/v0/management/zcode-callback`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state, callback_url: callbackUrl }),
+        });
       },
       providerAuthStatus: async (state) =>
         providerAuthStatusSchema.parse(

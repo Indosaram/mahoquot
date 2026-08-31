@@ -159,6 +159,61 @@ describe("operations console", () => {
     expect(localStorage.getItem("mahoquot.theme")).toBe("light");
   });
 
+  it("completes ZCode OAuth by pasting the redirect URL", async () => {
+    const callbackBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) {
+          return new Response(JSON.stringify(stats));
+        }
+        if (url.includes("auth-files")) {
+          return new Response(JSON.stringify({ files: [] }));
+        }
+        if (url.includes("/logs")) {
+          return new Response(JSON.stringify({ lines: [] }));
+        }
+        if (url.includes("get-auth-status")) {
+          return new Response(JSON.stringify({ status: "pending" }));
+        }
+        if (url.includes("zcode-auth-url")) {
+          return new Response(
+            JSON.stringify({
+              url: "https://chat.z.ai/api/oauth/authorize?response_type=code",
+              state: "s1",
+            }),
+          );
+        }
+        if (url.includes("zcode-callback")) {
+          callbackBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+          return new Response(JSON.stringify({ status: "ok" }));
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with ZCode" }));
+
+    const field = await screen.findByLabelText("ZCode redirect URL");
+    fireEvent.change(field, {
+      target: { value: "zcode://oauth/callback?code=zc&state=s1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
+
+    await waitFor(() =>
+      expect(callbackBodies).toEqual([
+        { state: "s1", callback_url: "zcode://oauth/callback?code=zc&state=s1" },
+      ]),
+    );
+    expect(await screen.findByText("ZCode authorization completed.")).toBeInTheDocument();
+  });
+
   it("detects provider approval without a manual status click", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusCalls = 0;

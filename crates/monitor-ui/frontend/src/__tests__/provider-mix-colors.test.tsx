@@ -39,9 +39,7 @@ const samples = [
 describe("provider mix colors", () => {
   it("renders each mix segment with its provider accent color", () => {
     render(<OverviewDashboard stats={stats} samples={samples} />);
-    const segments = document.querySelectorAll<HTMLIFrameElement>(
-      ".provider-mix-track i",
-    );
+    const segments = document.querySelectorAll<HTMLIFrameElement>(".provider-mix-track i");
     expect(segments.length).toBe(3);
     const backgrounds = [...segments].map((segment) => segment.style.background);
     expect(backgrounds[0]).toBe("rgb(16, 163, 127)");
@@ -51,7 +49,9 @@ describe("provider mix colors", () => {
 
   it("colors the label dots to match their segments", () => {
     render(<OverviewDashboard stats={stats} samples={samples} />);
-    const dots = document.querySelectorAll<HTMLIFrameElement>(".provider-mix-labels .provider-mix-dot");
+    const dots = document.querySelectorAll<HTMLIFrameElement>(
+      ".provider-mix-labels .provider-mix-dot",
+    );
     expect(dots.length).toBe(3);
     expect(dots[0].style.background).toBe("rgb(16, 163, 127)");
   });

@@ -99,7 +99,6 @@ export interface AccountsSurfaceProps {
   readonly selectedProvider?: string | undefined;
   readonly visibleAccounts: readonly NormalizedAccount[];
   readonly pending: string;
-  readonly notice?: string | undefined;
   readonly credentialsError?: string | undefined;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
@@ -131,7 +130,6 @@ export const AccountsSurface = ({
   selectedProvider,
   visibleAccounts,
   pending,
-  notice,
   credentialsError,
   dragging,
   confirmRemove,
@@ -181,11 +179,6 @@ export const AccountsSurface = ({
           </label>
         ))}
       </div>
-      {notice ? (
-        <output className={notice.startsWith("Action failed") ? "notice danger" : "notice"}>
-          {notice}
-        </output>
-      ) : null}
       {credentialsError ? (
         <div className="state-panel warning">
           <AlertTriangle /> Credential inventory unavailable, so adding, removing, and

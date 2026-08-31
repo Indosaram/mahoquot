@@ -22,7 +22,12 @@ import { ContextMenu, useContextMenu } from "./components/ContextMenu";
 import { LegacyMigrationDialog } from "./components/LegacyMigrationPrompt";
 import { LogsSurface } from "./components/LogsSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
-import { ProviderGlyph, providerLabel, providerLogos } from "./components/ProviderGlyph";
+import {
+  MONOCHROME_LOGOS,
+  ProviderGlyph,
+  providerLabel,
+  providerLogos,
+} from "./components/ProviderGlyph";
 import { SettingsSurface } from "./components/SettingsSurface";
 import { ToastStack, useToasts } from "./components/Toasts";
 import { TrayPanel } from "./components/TrayPanel";
@@ -249,11 +254,22 @@ const ONBOARDING_PROVIDERS: readonly {
     name: "Z.ai",
     methods: [
       {
+        id: "zcode-local",
+        name: "Import ZCode session",
+        hint: "Uses the ZCode desktop app's saved sign-in on this Mac.",
+      },
+      {
+        id: "zcode",
+        name: "Sign in with ZCode",
+        hint: "Opens Z.AI sign-in; paste the final zcode:// redirect URL back here.",
+      },
+
+      {
         id: "zcode-key",
         name: "Paste a provisioned API key",
         // Z.ai's OAuth redirects to zcode://oauth/callback, a scheme no server
         // can receive, so the key is entered rather than captured.
-        hint: "Z.ai issues an {id}.{secret} key; OAuth cannot be captured by this console.",
+        hint: "Z.ai issues an {id}.{secret} key; paste it directly without signing in.",
       },
     ],
   },
@@ -286,10 +302,13 @@ const worstUsedPercent = (rows: readonly { usedPercent: number }[]): number | nu
 const NotchGlyph = ({ provider }: { provider: string }) => {
   const normalized = provider.trim().toLowerCase();
   const logo = providerLogos[normalized] ?? providerLogos.generic;
+  const tone = MONOCHROME_LOGOS.has(normalized)
+    ? "notch-provider-logo-mono"
+    : "notch-provider-logo-color";
   return logo ? (
     <img
       src={logo}
-      className={`provider-logo notch-provider-logo notch-provider-logo-color notch-provider-logo-${normalized}`}
+      className={`provider-logo notch-provider-logo ${tone} notch-provider-logo-${normalized}`}
       alt=""
       aria-hidden="true"
       data-testid={`provider-logo-${normalized}`}
@@ -365,6 +384,7 @@ export default function App() {
   );
   const [dragging, setDragging] = useState("");
   const [zcodeForm, setZcodeForm] = useState<{ email: string; key: string } | null>(null);
+
   const [genericForm, setGenericForm] = useState<{
     readonly provider: ProviderCatalogEntry;
     readonly label: string;
@@ -386,6 +406,7 @@ export default function App() {
   const [configYaml, setConfigYaml] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
+  const [zcodeCallbackUrl, setZcodeCallbackUrl] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
   const [routingStrategy, setRoutingStrategy] = useState("round-robin");
   const [requestRetry, setRequestRetry] = useState("3");
@@ -819,12 +840,21 @@ export default function App() {
         await clients.management.importLocalClaude();
         setNotice("Claude Code subscription imported and live in the runtime pool.");
         await refresh();
+        finishOnboarding("claude");
+        return;
+      }
+      if (nextProvider === "zcode-local") {
+        await clients.management.importLocalZcode();
+        setNotice("ZCode session imported and live in the runtime pool.");
+        await refresh();
+        finishOnboarding("zcode");
         return;
       }
       if (nextProvider === "trae-local") {
         await clients.management.importLocalTrae();
         setNotice("Trae session imported for local quota monitoring.");
         await refresh();
+        finishOnboarding("trae");
         return;
       }
       if (nextProvider === "kiro-import") {
@@ -966,6 +996,26 @@ export default function App() {
       setZcodeForm(null);
       setOpenMethods(null);
       setNotice("Z.ai key saved and live in the runtime pool.");
+      await refresh();
+      finishOnboarding("zcode");
+    } catch (error) {
+      setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setPending("");
+    }
+  };
+
+  const submitZcodeCallback = async () => {
+    if (!authorization) return;
+    const callbackUrl = zcodeCallbackUrl.trim();
+    if (!callbackUrl) return;
+    setPending("auth:zcode-callback");
+    setNotice("");
+    try {
+      await clients.management.completeZcodeAuth(authorization.state, callbackUrl);
+      setAuthorization({ ...authorization, status: "ok" });
+      setZcodeCallbackUrl("");
+      setNotice("ZCode authorization completed.");
       await refresh();
       finishOnboarding("zcode");
     } catch (error) {
@@ -1253,10 +1303,17 @@ export default function App() {
             <path d={NOTCH_ISLAND_PATH} />
           </svg>
         </div>
-        <div className={`notch-surface${notchExpanded ? " expanded" : ""}`}>
+        <div
+          className={`notch-surface${notchExpanded ? " expanded" : ""}`}
+          data-count={Math.min(notchGroups.length, 7)}
+        >
           {notchGroups.length ? (
             notchGroups.map((group) => {
-              const dial = worstUsedPercent(group.rows);
+              const worst = worstUsedPercent(group.rows);
+              // The dial must speak the same language as the tooltip and the
+              // console: the showRemaining preference flips it between used
+              // and left. Worst-case usage maps to minimum remaining.
+              const dial = worst === null ? null : showRemaining ? 100 - worst : worst;
               const circumference = 2 * Math.PI * 24;
               const used =
                 dial === null ? 0 : (Math.min(100, Math.max(0, dial)) / 100) * circumference;
@@ -1746,6 +1803,28 @@ export default function App() {
                           : "Check authorization status"}
                       </Button>
                     ) : null}
+                  </div>
+                ) : null}
+                {authorization &&
+                authorization.provider === "zcode" &&
+                authorization.status === "pending" ? (
+                  <div className="zcode-field">
+                    <span>
+                      The browser lands on a zcode:// address. Paste that full address here to
+                      finish sign-in.
+                    </span>
+                    <input
+                      aria-label="ZCode redirect URL"
+                      placeholder="zcode://oauth/callback?code=…&state=…"
+                      value={zcodeCallbackUrl}
+                      onChange={(event) => setZcodeCallbackUrl(event.target.value)}
+                    />
+                    <Button
+                      disabled={pending !== "" || !zcodeCallbackUrl.trim()}
+                      onClick={() => void submitZcodeCallback()}
+                    >
+                      {pending === "auth:zcode-callback" ? "Completing…" : "Complete sign-in"}
+                    </Button>
                   </div>
                 ) : null}
               </div>

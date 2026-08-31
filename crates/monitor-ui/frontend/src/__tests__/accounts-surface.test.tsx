@@ -176,7 +176,6 @@ describe("AccountsSurface component", () => {
           accounts: [errorAccount],
           visibleAccounts: [errorAccount],
           credentialsError: "Keychain locked",
-          notice: "Action failed: Network timeout",
         })}
       />,
     );
@@ -184,7 +183,6 @@ describe("AccountsSurface component", () => {
     expect(screen.getByText(/Token expired/)).toBeInTheDocument();
     expect(screen.getByText(/could not load it into the runtime pool/)).toBeInTheDocument();
     expect(screen.getByText(/Credential inventory unavailable/)).toBeInTheDocument();
-    expect(screen.getByText("Action failed: Network timeout")).toBeInTheDocument();
   });
 
   it("renders empty state messages for filtered vs empty inventory", () => {

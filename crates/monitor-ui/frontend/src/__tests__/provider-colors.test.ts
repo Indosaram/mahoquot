@@ -9,7 +9,11 @@ describe("provider colors", () => {
   });
 
   it("keeps codex, antigravity and claude visually distinct", () => {
-    const set = new Set([providerColor("codex"), providerColor("antigravity"), providerColor("claude")]);
+    const set = new Set([
+      providerColor("codex"),
+      providerColor("antigravity"),
+      providerColor("claude"),
+    ]);
     expect(set.size).toBe(3);
   });
 

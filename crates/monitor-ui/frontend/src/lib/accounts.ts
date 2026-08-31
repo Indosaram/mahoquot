@@ -42,7 +42,7 @@ export interface NormalizedAccount {
 
 export const extractEmail = (idOrEmail: string): string => {
   const clean = idOrEmail.trim();
-  // e.g. "565c2911-account-f@example.com" -> extract the email part
+  // e.g. "565c2911-monadawne6@amanvip.com" -> extract the email part
   const atIndex = clean.lastIndexOf("@");
   if (atIndex > 0) {
     const prefix = clean.slice(0, atIndex);
@@ -200,6 +200,13 @@ const pairAccountsWithCredentials = (
   return pairing;
 };
 
+// Gateway runtime caches live beside credentials in the auth dir; they are
+// state the app regenerates, never loadable accounts.
+const RUNTIME_CACHE_CREDENTIAL_FILES: ReadonlySet<string> = new Set([
+  "telemetry.json",
+  "usage-samples.json",
+]);
+
 export const mergeAccountsAndCredentials = (
   runtimeAccounts: readonly AccountStats[],
   credentialFiles: readonly AuthFileItem[],
@@ -270,6 +277,7 @@ export const mergeAccountsAndCredentials = (
   // Unmatched credential files (failed to load into runtime pool)
   for (const c of credentialFiles) {
     if (matchedCreds.has(c.name)) continue;
+    if (RUNTIME_CACHE_CREDENTIAL_FILES.has(c.name)) continue;
 
     const cEmail = extractEmail(c.email || c.account || c.name);
     result.push({
