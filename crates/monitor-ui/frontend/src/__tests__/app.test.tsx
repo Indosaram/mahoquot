@@ -872,7 +872,9 @@ describe("operations console", () => {
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
-    expect(screen.getByRole("complementary", { name: "Provider onboarding" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("complementary", { name: "Provider onboarding" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Add Account")).toBeInTheDocument();
     // The gateway rescans its pool on every credential write, so the console
     // must not tell anyone to restart it.
@@ -884,7 +886,9 @@ describe("operations console", () => {
 
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
-    expect(screen.getByRole("complementary", { name: "Provider onboarding" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("complementary", { name: "Provider onboarding" }),
+    ).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(
       screen.queryByRole("complementary", { name: "Provider onboarding" }),
@@ -975,8 +979,8 @@ describe("operations console", () => {
     render(<App />);
     (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
-    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
-    fireEvent.change(screen.getByLabelText("Search providers"), {
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.change(await screen.findByLabelText("Search providers"), {
       target: { value: "OpenCode Free" },
     });
     fireEvent.click(await screen.findByRole("button", { name: /OpenCode Free/ }));
@@ -997,6 +1001,7 @@ describe("operations console", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
 
     for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
+      await screen.findByRole("complementary", { name: "Provider onboarding" });
       expect(screen.getAllByTestId(`provider-logo-${provider}`).length).toBeGreaterThan(0);
     }
   });

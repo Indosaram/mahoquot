@@ -19,7 +19,7 @@ import {
   quotaRows,
 } from "./components/AccountsSurface";
 import { ContextMenu, useContextMenu } from "./components/ContextMenu";
-import { LegacyMigrationPrompt } from "./components/LegacyMigrationPrompt";
+import { LegacyMigrationDialog } from "./components/LegacyMigrationPrompt";
 import { LogsSurface } from "./components/LogsSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel, providerLogos } from "./components/ProviderGlyph";
@@ -35,6 +35,7 @@ import {
 import { GatewayError, createGatewayClients } from "./lib/api";
 import type { ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
+import { getLegacyMigrationStatus } from "./lib/native";
 import {
   type GatewayLifecycleStatus,
   getGatewayLifecycle,
@@ -354,6 +355,7 @@ export default function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [confirmRemove, setConfirmRemove] = useState("");
+  const [migrationPromptOpen, setMigrationPromptOpen] = useState(false);
   const [openMethods, setOpenMethods] = useState<(typeof ONBOARDING_PROVIDERS)[number] | null>(
     null,
   );
@@ -413,8 +415,15 @@ export default function App() {
     setZcodeForm(null);
   }, []);
 
-  const openOnboarding = useCallback(() => {
+  const openOnboarding = useCallback(async () => {
+    // The import decision belongs to the add-account flow: ask only when the
+    // user is about to create a credential, then carry on into the picker.
     resetOnboarding();
+    const migration = await getLegacyMigrationStatus();
+    if (migration) {
+      setMigrationPromptOpen(true);
+      return;
+    }
     setOnboardingOpen(true);
   }, [resetOnboarding]);
 
@@ -529,14 +538,6 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refresh, refreshUsage]);
-
-  useEffect(() => {
-    // the migration prompt holds the gateway until the user chooses; this is
-    // the signal that the choice landed and accounts can load immediately
-    const onGatewayReady = () => void refreshUsage().finally(() => void refresh());
-    window.addEventListener("mahoquot:gateway-ready", onGatewayReady);
-    return () => window.removeEventListener("mahoquot:gateway-ready", onGatewayReady);
   }, [refresh, refreshUsage]);
 
   useEffect(() => {
@@ -1342,7 +1343,14 @@ export default function App() {
 
   return (
     <AppShell className="app" data-mahoquot-app="operations-console">
-      <LegacyMigrationPrompt />
+      <LegacyMigrationDialog
+        open={migrationPromptOpen}
+        onResolved={() => {
+          setMigrationPromptOpen(false);
+          resetOnboarding();
+          setOnboardingOpen(true);
+        }}
+      />
       <aside className="sidebar">
         <div className="titlebar-drag" data-tauri-drag-region />
         <div className="brand" data-tauri-drag-region>
@@ -1386,7 +1394,7 @@ export default function App() {
               >
                 <RefreshCw size={15} /> Refresh
               </Button>
-              <Button aria-label="Add account" onClick={openOnboarding}>
+              <Button aria-label="Add account" onClick={() => void openOnboarding()}>
                 <Plus size={16} />
               </Button>
             </div>

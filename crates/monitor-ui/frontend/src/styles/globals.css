@@ -2690,3 +2690,38 @@ h2 {
   align-items: center;
   gap: 8px;
 }
+
+.migration-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.45);
+}
+
+.migration-dialog {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  max-width: 480px;
+  margin: 0 16px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--fg);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.4);
+}
+
+.migration-dialog p {
+  color: var(--fg-dim);
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.migration-dialog .onboarding-actions {
+  grid-column: 1 / -1;
+  justify-content: end;
+}

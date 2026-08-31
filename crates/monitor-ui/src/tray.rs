@@ -254,23 +254,24 @@ pub fn detect_legacy_migration(home: &str) -> Option<LegacyMigration> {
 /// does not return on every launch.
 pub fn resolve_auth_dir(home: &str, import: bool) -> std::path::PathBuf {
     let home_path = std::path::Path::new(home);
-    if !import && detect_legacy_migration(home).is_some() {
-        let _ = std::fs::create_dir_all(
-            migration_decline_marker(home_path)
-                .parent()
-                .unwrap_or(home_path),
-        );
-        let _ = std::fs::write(migration_decline_marker(home_path), "");
-        return home_path.join(".cli-proxy-api");
+    let app_dir = home_path.join(".mahoquot/auth");
+    if !import {
+        let marker = migration_decline_marker(home_path);
+        let _ = std::fs::create_dir_all(marker.parent().unwrap_or(home_path));
+        let _ = std::fs::write(marker, "");
+        return default_auth_dir(home);
     }
-    default_auth_dir(home)
+    let legacy = home_path.join(".cli-proxy-api");
+    if legacy.is_dir() && std::fs::create_dir_all(&app_dir).is_ok() {
+        import_legacy_store(&legacy, &app_dir);
+    }
+    app_dir
 }
 
-/// The app owns its credential store at `~/.mahoquot/auth`. A home carrying the
-/// incumbent CLIProxyAPI store gets a one-time import: credential files are
-/// copied into the app-owned directory and the app never reads or writes the
-/// legacy directory again, so removing the incumbent tool cannot take the
-/// app's accounts with it. Logs and telemetry stay behind.
+/// The app owns its credential store at `~/.mahoquot/auth`. While a legacy
+/// CLIProxyAPI store exists and the user has not chosen yet, the legacy
+/// directory stays in use untouched; ownership moves only through
+/// [`resolve_auth_dir`] once the user accepts the import.
 pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
     let home_path = std::path::Path::new(home);
     let app_dir = home_path.join(".mahoquot/auth");
@@ -278,11 +279,8 @@ pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
         return app_dir;
     }
     let legacy = home_path.join(".cli-proxy-api");
-    if legacy.is_dir() && migration_decline_marker(home_path).exists() {
+    if legacy.is_dir() {
         return legacy;
-    }
-    if legacy.is_dir() && std::fs::create_dir_all(&app_dir).is_ok() {
-        import_legacy_store(&legacy, &app_dir);
     }
     app_dir
 }

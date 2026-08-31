@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LegacyMigrationPrompt } from "../components/LegacyMigrationPrompt";
+import { LegacyMigrationDialog } from "../components/LegacyMigrationPrompt";
 import type { LegacyMigrationStatus } from "../lib/native";
 
 const status = vi.fn<() => Promise<LegacyMigrationStatus | null>>();
-const resolve = vi.fn<(importAccounts: boolean) => Promise<"running" | "stopped">>();
+const resolve = vi.fn<(importAccounts: boolean) => Promise<string>>();
 
 vi.mock("../lib/native", () => ({
   getLegacyMigrationStatus: () => status(),
@@ -17,24 +17,31 @@ const pendingStatus = (count: number): LegacyMigrationStatus => ({
   app_dir: "/home/u/.mahoquot/auth",
 });
 
-describe("LegacyMigrationPrompt", () => {
+describe("LegacyMigrationDialog", () => {
   beforeEach(() => {
     status.mockReset();
     resolve.mockReset();
-    resolve.mockResolvedValue("running");
+    resolve.mockResolvedValue("/home/u/.mahoquot/auth");
   });
 
-  it("stays out of the way when there is nothing to migrate", async () => {
+  it("renders nothing while closed or when nothing is pending", async () => {
     status.mockResolvedValue(null);
-    render(<LegacyMigrationPrompt />);
+    const onResolved = vi.fn();
+    const { rerender } = render(<LegacyMigrationDialog open onResolved={onResolved} />);
     await waitFor(() => expect(status).toHaveBeenCalled());
-    expect(screen.queryByTestId("legacy-migration-prompt")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("legacy-migration-dialog")).not.toBeInTheDocument();
+
+    rerender(<LegacyMigrationDialog open={false} onResolved={onResolved} />);
+    status.mockResolvedValue(pendingStatus(9));
+    rerender(<LegacyMigrationDialog open onResolved={onResolved} />);
+    await waitFor(() => expect(screen.queryByTestId("legacy-migration-dialog")).not.toBeNull());
+    expect(screen.queryByTestId("legacy-migration-dialog")).toBeInTheDocument();
   });
 
   it("offers the choice with the discovered credential count", async () => {
     status.mockResolvedValue(pendingStatus(9));
-    render(<LegacyMigrationPrompt />);
-    expect(await screen.findByTestId("legacy-migration-prompt")).toBeInTheDocument();
+    render(<LegacyMigrationDialog open onResolved={vi.fn()} />);
+    expect(await screen.findByTestId("legacy-migration-dialog")).toBeInTheDocument();
     expect(screen.getByText(/9 credential files/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import accounts" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Keep legacy folder" })).toBeInTheDocument();
@@ -42,24 +49,25 @@ describe("LegacyMigrationPrompt", () => {
 
   it("uses the singular when one credential was found", async () => {
     status.mockResolvedValue(pendingStatus(1));
-    render(<LegacyMigrationPrompt />);
+    render(<LegacyMigrationDialog open onResolved={vi.fn()} />);
     expect(await screen.findByText(/1 credential file /)).toBeInTheDocument();
   });
 
-  it("imports and disappears once the gateway comes up", async () => {
+  it("imports and hands control back", async () => {
     status.mockResolvedValue(pendingStatus(9));
-    render(<LegacyMigrationPrompt />);
+    const onResolved = vi.fn();
+    render(<LegacyMigrationDialog open onResolved={onResolved} />);
     fireEvent.click(await screen.findByRole("button", { name: "Import accounts" }));
     await waitFor(() => expect(resolve).toHaveBeenCalledWith(true));
-    await waitFor(() =>
-      expect(screen.queryByTestId("legacy-migration-prompt")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
   });
 
   it("passes a decline through without importing", async () => {
     status.mockResolvedValue(pendingStatus(9));
-    render(<LegacyMigrationPrompt />);
+    const onResolved = vi.fn();
+    render(<LegacyMigrationDialog open onResolved={onResolved} />);
     fireEvent.click(await screen.findByRole("button", { name: "Keep legacy folder" }));
     await waitFor(() => expect(resolve).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
   });
 });

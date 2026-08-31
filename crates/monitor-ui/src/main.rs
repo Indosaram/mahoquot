@@ -192,15 +192,13 @@ fn legacy_migration_status() -> Option<LegacyMigrationStatus> {
 }
 
 #[tauri::command]
-fn resolve_legacy_migration(
-    import: bool,
-    process: tauri::State<'_, GatewayProcess>,
-) -> Result<GatewayLifecycleStatus, String> {
-    tray::resolve_auth_dir(
+fn resolve_legacy_migration(import: bool) -> Result<String, String> {
+    Ok(tray::resolve_auth_dir(
         &std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
         import,
-    );
-    start_gateway(process)
+    )
+    .display()
+    .to_string())
 }
 
 #[tauri::command]
@@ -897,6 +895,14 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     let _ = notch.show();
     apply_menu_bar_level(&notch);
     position_notch_window(app.handle(), &notch)?;
+    // WKWebView paints its default (30,30,30) gray over any area exposed by a
+    // resize until the first web frame lands, which flashed a black strip at
+    // the old strip position on every expand. Pre-paint the whole expanded
+    // frame with the webview's own background so new pixels are never gray.
+    {
+        use tauri::window::Color;
+        let _ = notch.set_background_color(Some(Color(11, 11, 13, 255)));
+    }
     let handle = app.handle().clone();
     let notch_clone = notch.clone();
     std::thread::spawn(move || {
@@ -1023,16 +1029,7 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 }
 
 fn main() {
-    // A pending first-run migration holds the gateway back until the user
-    // chooses: the dialog in the webview resolves it through the commands
-    // below, because spawning first would lock the answer in.
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let pending_migration = tray::detect_legacy_migration(&home);
-    let gateway = if pending_migration.is_some() {
-        GatewayProcess(std::sync::Mutex::new(None))
-    } else {
-        GatewayProcess(std::sync::Mutex::new(spawn_gateway()))
-    };
+    let gateway = GatewayProcess(std::sync::Mutex::new(spawn_gateway()));
     let base_url =
         std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| "http://127.0.0.1:18801".to_string());
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();

@@ -1,84 +1,94 @@
 import { HardDriveDownload } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  type GatewayLifecycleStatus,
   type LegacyMigrationStatus,
   getLegacyMigrationStatus,
   resolveLegacyMigration,
 } from "../lib/native";
 
-type Resolution = "import" | "keep-legacy";
-
-const LABELS: Record<Resolution, string> = {
+const RESOLVE_LABELS = {
   import: "Import accounts",
-  "keep-legacy": "Keep legacy folder",
-};
+  keepLegacy: "Keep legacy folder",
+} as const;
+
+type Resolution = keyof typeof RESOLVE_LABELS;
 
 /**
- * First-run consent for adopting the incumbent CLIProxyAPI store. The gateway
- * is intentionally not started until this is resolved, so the choice lands
- * before any credential directory is locked in.
+ * Shown from the Add-account flow while the incumbent CLIProxyAPI store is
+ * still in use. Either answer unblocks adding an account; the choice decides
+ * which directory owns credentials from the next launch on.
  */
-export function LegacyMigrationPrompt() {
+export function LegacyMigrationDialog({
+  open,
+  onResolved,
+}: {
+  open: boolean;
+  onResolved: () => void;
+}) {
   const [status, setStatus] = useState<LegacyMigrationStatus | null>(null);
   const [pending, setPending] = useState<Resolution | null>(null);
 
   useEffect(() => {
+    if (!open) return;
     let alive = true;
-    void getLegacyMigrationStatus().then((status) => {
-      if (alive) setStatus(status);
+    void getLegacyMigrationStatus().then((found) => {
+      if (alive) setStatus(found);
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [open]);
 
-  const resolve = useCallback(async (resolution: Resolution) => {
+  const choose = async (resolution: Resolution) => {
     setPending(resolution);
     try {
-      const lifecycle: GatewayLifecycleStatus = await resolveLegacyMigration(
-        resolution === "import",
-      );
-      setStatus(null);
-      if (lifecycle === "running") {
-        window.dispatchEvent(new CustomEvent("mahoquot:gateway-ready"));
-      }
+      await resolveLegacyMigration(resolution === "import");
+      onResolved();
     } finally {
       setPending(null);
     }
-  }, []);
+  };
 
-  if (!status) return null;
+  if (!open || !status) return null;
   return (
-    <div className="onboarding" data-testid="legacy-migration-prompt">
-      <HardDriveDownload size={16} aria-hidden />
-      <div>
-        <strong>Import your CLIProxyAPI accounts?</strong>
-        <p>
-          Found {status.importable_count} credential file
-          {status.importable_count === 1 ? "" : "s"} in the legacy folder. Importing copies them
-          into the app&apos;s own storage ({status.app_dir}) and keeps the original folder
-          untouched. Skipping keeps using the legacy folder instead.
-        </p>
-      </div>
-      <div className="onboarding-actions">
-        <button
-          type="button"
-          className="button"
-          disabled={pending !== null}
-          onClick={() => void resolve("import")}
-        >
-          {pending === "import" ? "Importing…" : LABELS.import}
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={pending !== null}
-          onClick={() => void resolve("keep-legacy")}
-        >
-          {LABELS["keep-legacy"]}
-        </button>
-      </div>
+    <div className="migration-overlay" role="presentation">
+      <dialog
+        open
+        className="migration-dialog"
+        aria-label="Import CLIProxyAPI accounts"
+        data-testid="legacy-migration-dialog"
+      >
+        <span className="provider-option-icon" aria-hidden>
+          <HardDriveDownload size={16} />
+        </span>
+        <div>
+          <strong>Import your CLIProxyAPI accounts?</strong>
+          <p>
+            Found {status.importable_count} credential file
+            {status.importable_count === 1 ? "" : "s"} in the legacy folder. Importing copies them
+            into the app&apos;s own storage and keeps the original folder untouched. Skipping keeps
+            using the legacy folder instead.
+          </p>
+        </div>
+        <div className="onboarding-actions">
+          <button
+            type="button"
+            className="button"
+            disabled={pending !== null}
+            onClick={() => void choose("import")}
+          >
+            {pending === "import" ? "Importing…" : RESOLVE_LABELS.import}
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={pending !== null}
+            onClick={() => void choose("keepLegacy")}
+          >
+            {pending === "keepLegacy" ? "…" : RESOLVE_LABELS.keepLegacy}
+          </button>
+        </div>
+      </dialog>
     </div>
   );
 }
