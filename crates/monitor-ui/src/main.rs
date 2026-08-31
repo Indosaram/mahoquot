@@ -331,39 +331,36 @@ fn position_notch_window_sized<R: Runtime>(
     window: &WebviewWindow<R>,
     logical: tray::WindowDimensions,
 ) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        set_notch_window_frame(app, window, logical)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let Some(monitor) = notched_monitor(app)? else {
-            return Ok(());
-        };
-        let scale_factor = monitor.scale_factor();
-        let monitor_position = monitor.position();
-        let monitor_size = monitor.size();
-        let display = tray::DisplayBounds {
-            origin_x: f64::from(monitor_position.x) / scale_factor,
-            origin_y: f64::from(monitor_position.y) / scale_factor,
-            width: f64::from(monitor_size.width) / scale_factor,
-            height: f64::from(monitor_size.height) / scale_factor,
-        };
-        let position = tray::calculate_notch_window_physical_position(
-            &display,
-            &logical,
-            &tray::NotchInsets {
-                vertical_offset: NOTCH_VERTICAL_OFFSET,
-            },
-            scale_factor,
-        );
+    // Absolute placement — used only at startup, re-anchor, and display-change
+    // paths where the window is hidden or fresh, so the two-step position+size
+    // cannot flash. Hover transitions go through set_notch_window_frame instead
+    // (single atomic relative setFrame).
+    let Some(monitor) = notched_monitor(app)? else {
+        return Ok(());
+    };
+    let scale_factor = monitor.scale_factor();
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let display = tray::DisplayBounds {
+        origin_x: f64::from(monitor_position.x) / scale_factor,
+        origin_y: f64::from(monitor_position.y) / scale_factor,
+        width: f64::from(monitor_size.width) / scale_factor,
+        height: f64::from(monitor_size.height) / scale_factor,
+    };
+    let position = tray::calculate_notch_window_physical_position(
+        &display,
+        &logical,
+        &tray::NotchInsets {
+            vertical_offset: NOTCH_VERTICAL_OFFSET,
+        },
+        scale_factor,
+    );
 
-        let _ = window.set_size(LogicalSize::new(logical.width, logical.height));
-        window.set_position(PhysicalPosition::new(
-            position.x.round() as i32,
-            position.y.round() as i32,
-        ))
-    }
+    window.set_position(PhysicalPosition::new(
+        position.x.round() as i32,
+        position.y.round() as i32,
+    ))?;
+    window.set_size(LogicalSize::new(logical.width, logical.height))
 }
 
 fn toggle_operations_console<R: Runtime>(app: &AppHandle<R>) {
