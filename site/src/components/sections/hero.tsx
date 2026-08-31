@@ -1,7 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
 import { GithubMark } from "@/components/github-mark";
 import { ButtonLink } from "@/components/ui/button";
-import { HERO_STATS, PRODUCT, PROVIDERS, REPO_URL, DOCS_URL } from "@/content/site";
+import { PRODUCT, PROVIDERS, REPO_URL, DOCS_URL } from "@/content/site";
 
 export function Hero() {
   return (
@@ -50,18 +50,7 @@ export function Hero() {
             <span className="text-ink-ghost">:{PRODUCT.port}</span>
           </div>
 
-          <dl className="mt-12 grid grid-cols-3 gap-6 border-t border-line pt-8">
-            {HERO_STATS.map((stat) => (
-              <div key={stat.label}>
-                <dt className="tnum text-[24px] font-medium tracking-[-0.01em] text-ink">
-                  {stat.value}
-                </dt>
-                <dd className="mt-1 text-[12px] leading-snug text-ink-faint">
-                  {stat.label}
-                </dd>
-              </div>
-            ))}
-          </dl>
+
         </div>
 
         <div className="relative flex items-center overflow-hidden border-line px-6 pb-20 lg:border-l lg:py-28 lg:pl-14 lg:pr-0">

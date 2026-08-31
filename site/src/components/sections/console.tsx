@@ -1,4 +1,3 @@
-import { MEASURED_FACTS } from "@/content/site";
 import { DitherArea } from "@/components/dither-area";
 import { RATE_TOTALS } from "@/content/site";
 
@@ -18,23 +17,10 @@ export function Console() {
               Your pool, your machine, your numbers.
             </h2>
             <p className="mt-4 max-w-[52ch] text-[16px] leading-relaxed text-ink-muted">
-              The console ships with the proxy. Performance claims live in{" "}
-              Benchmarks — measured against CLIProxyAPI on identical
-              translation workloads, not against a synthetic demo.
+              The console ships with the proxy — live pool health, per-minute
+              request rates and credential lifecycle, rendered straight from
+              the gateway as it runs.
             </p>
-
-            <div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line">
-              {MEASURED_FACTS.map((m) => (
-                <div key={m.label} className="bg-surface px-6 py-5">
-                  <div className="tnum text-[26px] font-medium tracking-[-0.01em] text-ink">
-                    {m.value}
-                  </div>
-                  <div className="mt-1 text-[12px] text-ink-faint">
-                    {m.label}
-                  </div>
-                </div>
-              ))}
-            </div>
 
             <p className="mt-5 text-[13px] leading-relaxed text-ink-ghost">
               Screenshots: the shipping console rendering a 26-minute burst run

@@ -10,14 +10,6 @@ export const CONTRACTS_URL =
   "https://github.com/indosaram/mahoquot/blob/main/docs/CONTRACTS.md";
 
 
-/** Benchmark facts sourced from the repository's measured comparison against
- * CLIProxyAPI (docs: fair translation benchmark, paired deltas). */
-export const MEASURED_FACTS = [
-  { value: "~58 us", label: "per-chunk relay cost vs ~378 us" },
-  { value: "+0.7-2.8 ms", label: "p50 overhead vs direct upstream" },
-  { value: "6/6", label: "fair benchmark rounds won on every metric" },
-  { value: "129", label: "management routes at parity" },
-] as const;
 
 
 /** Real per-minute request totals from the 26-minute shaped run (persisted
@@ -30,15 +22,9 @@ export const RATE_TOTALS: readonly number[] = [
 export const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Console", href: "#console" },
-  { label: "Benchmarks", href: "#benchmarks" },
   { label: "Architecture", href: "#architecture" },
 ] as const;
 
-export const HERO_STATS = [
-  { value: "6.5x", label: "lower cost per relayed chunk" },
-  { value: "1-3 ms", label: "median overhead vs direct" },
-  { value: "129", label: "management routes at parity" },
-] as const;
 
 type Provider = { name: string; file: string };
 
@@ -133,32 +119,6 @@ export const FEATURES: readonly Feature[] = [
   },
 ] as const;
 
-
-export type BenchRow = {
-  load: string;
-  tier: string;
-  p50: string;
-  p99: string;
-  rps: string;
-  best?: boolean;
-};
-
-export const BENCH_CAPTION =
-  "Both proxies performing identical two-way OpenAI to Codex Responses translation against the same deterministic mock. Median of 6 kept rounds at 500 concurrent, Apple M4 Max, warmup round discarded.";
-
-export const BENCH_ROWS: readonly BenchRow[] = [
-  { load: "20 chunks", tier: "A · direct mock (floor)", p50: "42.1", p99: "83.3", rps: "9,004" },
-  { load: "20 chunks", tier: "B · CLIProxyAPI (Go)", p50: "54.1", p99: "130.7", rps: "6,998" },
-  { load: "20 chunks", tier: "C · Mahoquot (Rust)", p50: "44.1", p99: "78.4", rps: "8,622", best: true },
-  { load: "200 chunks", tier: "A · direct mock (floor)", p50: "43.7", p99: "94.3", rps: "8,697" },
-  { load: "200 chunks", tier: "B · CLIProxyAPI (Go)", p50: "107.7", p99: "467.0", rps: "1,314" },
-  { load: "200 chunks", tier: "C · Mahoquot (Rust)", p50: "57.2", p99: "139.1", rps: "4,747", best: true },
-] as const;
-
-export const OVERHEAD_ROWS = [
-  { metric: "p50 overhead vs direct", c100: "+0.72 ms", c500: "+1.31 ms", c1000: "+2.80 ms" },
-  { metric: "p99 overhead vs direct", c100: "+2.51 ms", c500: "+18.59 ms", c1000: "+21.96 ms" },
-] as const;
 
 type MatrixRow = { capability: string; mahoquot: boolean; incumbent: boolean };
 

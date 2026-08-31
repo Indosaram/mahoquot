@@ -203,7 +203,7 @@ function ShowcaseApp() {
                 Eyebrow + Title Only (Lead Omitted)
               </span>
               <SectionHeader
-                eyebrow="BENCHMARK MEASUREMENTS"
+                eyebrow="MEASUREMENTS"
                 title="Sub-millisecond routing overhead across all proxy models."
               />
             </div>
