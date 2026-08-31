@@ -1,6 +1,6 @@
-"use client"
+"use client";
 
-import { useChartPart } from "./chart-context"
+import { useChartPart } from "./chart-context";
 
 /**
  * A horizontal marker line at a value on the y-axis — most useful as the zero
@@ -14,18 +14,18 @@ export function ReferenceLine({
   strokeDasharray = "4 4",
   className = "stroke-muted-foreground/60",
 }: {
-  y?: number
-  label?: string
-  strokeDasharray?: string
-  className?: string
+  y?: number;
+  label?: string;
+  strokeDasharray?: string;
+  className?: string;
 }) {
-  const ctx = useChartPart("ReferenceLine")
-  if (!ctx.ready) return null
+  const ctx = useChartPart("ReferenceLine");
+  if (!ctx.ready) return null;
 
-  const { width, height } = ctx.plot
-  const py = ctx.y(y)
-  const labelY = Math.max(10, py - 3)
-  const showLabel = label && py < height - 12
+  const { width, height } = ctx.plot;
+  const py = ctx.y(y);
+  const labelY = Math.max(10, py - 3);
+  const showLabel = label && py < height - 12;
 
   return (
     <g>
@@ -48,5 +48,5 @@ export function ReferenceLine({
         </text>
       ) : null}
     </g>
-  )
+  );
 }

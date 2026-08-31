@@ -19,21 +19,6 @@
     "lineWidth": 100
   },
   "files": {
-    "ignore": [
-      "node_modules",
-      "dist",
-      "../ui",
-      "src/components/dither-kit",
-      "src/features/dashboard/dither-series.ts",
-      "src/features/dashboard/types.ts",
-      "src/features/dashboard/routing-state.ts",
-      "src/features/dashboard/request-rate-totals.ts",
-      "src/features/dashboard/panel-metrics.ts",
-      "src/features/dashboard/token-slices.ts",
-      "src/features/dashboard/format.ts",
-      "src/features/dashboard/components/request-rate-chart.tsx",
-      "src/features/dashboard/components/total-rate-chart.tsx",
-      "src/features/dashboard/components/skeletons.tsx"
-    ]
+    "ignore": ["node_modules", "dist", "../ui"]
   }
 }

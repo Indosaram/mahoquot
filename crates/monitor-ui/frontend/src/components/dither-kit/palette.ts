@@ -2,18 +2,11 @@
 // `dither-chart.tsx` so a series rendered through the composable engine reads
 // with the exact same fill / line / star hues as the legacy sparkline.
 
-export type Rgb = [number, number, number]
+export type Rgb = [number, number, number];
 
-export type DitherColor =
-  | "green"
-  | "blue"
-  | "purple"
-  | "pink"
-  | "orange"
-  | "red"
-  | "grey"
+export type DitherColor = "green" | "blue" | "purple" | "pink" | "orange" | "red" | "grey";
 
-export type Seed = { fill: Rgb; line: Rgb; star: Rgb }
+export type Seed = { fill: Rgb; line: Rgb; star: Rgb };
 
 // Each seed: the area-fill hue, the bright series line, and the star sparkle.
 export const PALETTE: Record<DitherColor, Seed> = {
@@ -33,12 +26,12 @@ export const PALETTE: Record<DitherColor, Seed> = {
   red: { fill: [240, 70, 70], line: [255, 150, 140], star: [255, 195, 185] },
   // No-data: a muted grey so empty metrics read as "nothing here".
   grey: { fill: [92, 92, 100], line: [140, 140, 150], star: [165, 165, 175] },
-}
+};
 
 export const rgb = ([r, g, b]: Rgb, k = 1, a = 1) =>
-  `rgba(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)},${a})`
+  `rgba(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)},${a})`;
 
-export const seedOfColor = (color: DitherColor): Seed => PALETTE[color]
+export const seedOfColor = (color: DitherColor): Seed => PALETTE[color];
 
 export const isDitherColor = (value: unknown): value is DitherColor =>
-  typeof value === "string" && value in PALETTE
+  typeof value === "string" && value in PALETTE;
