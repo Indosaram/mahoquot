@@ -79,9 +79,9 @@ account conditions, not gateway defects, and CP behaves identically on them:
 
 | Account | Condition |
 | --- | --- |
-| `565c2911-monadawne6@amanvip.com` | 400 model not supported by account |
-| `6yhgthy7@nf3721.com` | 429 usage_limit_reached (cooldown) |
-| `a9d2af16-7d7bgzw@nf3721.com` | 429 usage_limit_reached (cooldown) |
+| `565c2911-account-f@example.com` | 400 model not supported by account |
+| `account-g@example.com` | 429 usage_limit_reached (cooldown) |
+| `a9d2af16-7d7bgzw@example-plus.test` | 429 usage_limit_reached (cooldown) |
 
 Failover correctly routes past all three.
 

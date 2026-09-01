@@ -10,6 +10,17 @@ export const RawCredentialDocumentSchema = z
     message: "credential document must not be empty",
   });
 
+/** `GET /healthz` - public liveness probe carrying the build + wire version. */
+export const GatewayHealthSchema = z.object({
+  status: z.string(),
+  version: z.string(),
+  api_schema: z.number(),
+});
+export type GatewayHealth = z.infer<typeof GatewayHealthSchema>;
+
+/** Management wire schema this console build speaks; gateway `api_schema` must match. */
+export const EXPECTED_API_SCHEMA = 1;
+
 export const TtftSnapshotSchema = z.object({
   p50_ms: z.number().default(0),
   p90_ms: z.number().default(0),

@@ -35,7 +35,7 @@ describe("context menu policy", () => {
 
   it("keeps the native menu when text is selected", () => {
     const paragraph = document.createElement("p");
-    paragraph.textContent = "565c2911-monadawne6@amanvip.com";
+    paragraph.textContent = "565c2911-account-f@example.com";
     document.body.append(paragraph);
     selectTextIn(paragraph);
     expect(wantsNativeMenu(paragraph)).toBe(true);

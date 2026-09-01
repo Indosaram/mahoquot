@@ -2874,3 +2874,23 @@ h2 {
   color: #6ea8ff;
   font-variant-numeric: tabular-nums;
 }
+
+/* App↔gateway version handshake banner (D8): shown only on a real mismatch. */
+.schema-banner {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #ffd9d9;
+  background: #7f1d1d;
+  border-bottom: 1px solid #b91c1c;
+  text-align: center;
+}
+
+:root[data-theme="light"] .schema-banner {
+  color: #7f1d1d;
+  background: #fee2e2;
+  border-bottom-color: #fca5a5;
+}

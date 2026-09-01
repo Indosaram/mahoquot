@@ -125,7 +125,7 @@ POST /backend-api/codex/responses -> HTTP/1.1 400
 /admin/stats: failed_over=0
 ```
 
-Fill-first picked `565c2911-monadawne6@amanvip.com`, which cannot serve that model, and the
+Fill-first picked `565c2911-account-f@example.com`, which cannot serve that model, and the
 gateway surfaced the account-specific 400 to the client instead of moving to a capable account.
 CLIProxyAPI, given the same five credentials, routed around it and returned 200 in 3.62 s;
 it keeps a model catalog per auth entry (`model_updater` / `re-registered models for 5 auth(s)`).

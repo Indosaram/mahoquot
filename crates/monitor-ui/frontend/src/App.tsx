@@ -48,6 +48,7 @@ import {
   stopManagedGateway,
 } from "./lib/native";
 import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/notch";
+import { EXPECTED_API_SCHEMA } from "./lib/schemas";
 import { GENERIC_PROVIDER_OPTIONS, type ProviderCatalogEntry } from "./lib/provider-catalog";
 import type { LogRecord } from "./lib/schemas";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
@@ -419,6 +420,28 @@ export default function App() {
   }, [onboardingOpen, configOpen]);
 
   const clients = useMemo(() => createGatewayClients(baseUrl, relayKey), [baseUrl, relayKey]);
+
+  // The gateway publishes its management wire version on the public /healthz
+  // probe; a mismatch means IPC calls may silently misbehave, so the console
+  // says so instead of failing feature-by-feature.
+  const [schemaMismatch, setSchemaMismatch] = useState<string | null>(null);
+  const checkGatewayVersion = useCallback(async () => {
+    try {
+      const health = await clients.admin.health();
+      if (health.api_schema !== EXPECTED_API_SCHEMA) {
+        setSchemaMismatch(
+          `Gateway ${health.version} speaks management schema ${health.api_schema}, this console expects ${EXPECTED_API_SCHEMA}. Update the gateway or the app.`,
+        );
+      } else {
+        setSchemaMismatch(null);
+      }
+    } catch {
+      // An unreachable gateway is already surfaced through the load state.
+    }
+  }, [clients]);
+  useEffect(() => {
+    void checkGatewayVersion();
+  }, [checkGatewayVersion]);
 
   const resetOnboarding = useCallback(() => {
     setProviderSearch("");
@@ -1440,6 +1463,11 @@ export default function App() {
 
   return (
     <AppShell className="app" data-mahoquot-app="operations-console">
+      {schemaMismatch && (
+        <div role="alert" className="schema-banner" data-testid="schema-banner">
+          {schemaMismatch}
+        </div>
+      )}
       <aside className="sidebar">
         <div className="titlebar-drag" data-tauri-drag-region />
         <div className="brand" data-tauri-drag-region>

@@ -2,7 +2,9 @@ import { z } from "zod";
 import {
   type AdminStats,
   type AuthFileItem,
+  type GatewayHealth,
   type LogsResponse,
+  GatewayHealthSchema,
   parseAdminStats,
   parseAuthFiles,
   parseLogs,
@@ -34,6 +36,7 @@ export class GatewayError extends Error {
 export interface GatewayClients {
   readonly admin: {
     stats(): Promise<AdminStats>;
+    health(): Promise<GatewayHealth>;
     warm(id: string): Promise<void>;
     reset(id: string): Promise<void>;
   };
@@ -105,6 +108,10 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
   return {
     admin: {
       stats: async () => parseAdminStats(await requestJson(`${base}/admin/stats`, authHeaders)),
+      health: async () => {
+        const result = (await requestJson(`${base}/healthz`, authHeaders)) as Record<string, unknown>;
+        return GatewayHealthSchema.parse(result);
+      },
       warm: async (id) => {
         await requestJson(`${base}/admin/accounts/${encodeURIComponent(id)}/warmup`, authHeaders, {
           method: "POST",

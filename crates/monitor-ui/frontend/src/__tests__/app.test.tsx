@@ -1649,3 +1649,26 @@ describe("operations console", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+it("warns when the gateway speaks a different management schema", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/healthz")) {
+        return new Response(
+          JSON.stringify({ status: "ok", version: "9.9.9", api_schema: 99 }),
+        );
+      }
+      if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+      if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+      if (url.includes("/logs"))
+        return new Response(JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }));
+      return new Response(JSON.stringify({ ok: true }));
+    }),
+  );
+  render(<App />);
+  const banner = await screen.findByRole("alert");
+  expect(banner).toHaveTextContent("management schema 99");
+  expect(banner).toHaveTextContent("expects 1");
+});

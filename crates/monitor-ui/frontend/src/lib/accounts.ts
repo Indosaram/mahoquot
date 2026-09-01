@@ -42,7 +42,7 @@ export interface NormalizedAccount {
 
 export const extractEmail = (idOrEmail: string): string => {
   const clean = idOrEmail.trim();
-  // e.g. "565c2911-monadawne6@amanvip.com" -> extract the email part
+  // e.g. "565c2911-account-f@example.com" -> extract the email part
   const atIndex = clean.lastIndexOf("@");
   if (atIndex > 0) {
     const prefix = clean.slice(0, atIndex);
