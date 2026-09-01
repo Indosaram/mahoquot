@@ -422,7 +422,7 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await expect(page.getByRole("heading", { name: "Provider mix" })).toBeVisible();
   await page.getByRole("button", { name: "Logs" }).click();
   await expect(
-    page.getByText("Raw server output, not a reconstructed request history."),
+    page.getByText("Parsed request outcomes, not a reconstructed request history."),
   ).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/desktop-dark-overview.png`, fullPage: true });
 
@@ -617,16 +617,22 @@ const installStressMocks = async (page: Page, options?: { empty?: boolean; logCo
 
   const activeCreds = options?.empty ? { files: [] } : stressCredentialsPayload;
 
-  const logLines =
+  const logRecords =
     options?.logCount !== undefined
-      ? Array.from(
-          { length: options.logCount },
-          (_, i) =>
-            `[${i.toString().padStart(6, "0")}] gateway event ${i} request_id=req_${i} payload=${unbrokenToken.slice(0, 48)}`,
-        )
+      ? Array.from({ length: options.logCount }, (_, i) => ({
+          kind: "request",
+          provider: "codex",
+          account: `account-${i % 7}@example.com`,
+          model: "deepseek-chat",
+          status: 200,
+          success: true,
+          "latency-ms": 100 + (i % 50),
+          "bytes-in": 1024,
+          "bytes-out": 2048,
+        }))
       : options?.empty
         ? []
-        : ["gateway ready", "pool snapshot refreshed"];
+        : [{ kind: "proxy", message: "gateway ready" }];
 
   await page.route("**/admin/stats", (route) => route.fulfill({ json: activeStats }));
   await page.route("**/admin/accounts/**", (route) => route.fulfill({ json: { ok: true } }));
@@ -634,7 +640,7 @@ const installStressMocks = async (page: Page, options?: { empty?: boolean; logCo
     route.fulfill({ json: activeCreds }),
   );
   await page.route(/\/v0\/management\/logs(?:\?.*)?$/, (route) =>
-    route.fulfill({ json: { lines: logLines } }),
+    route.fulfill({ json: { records: logRecords, "request-count": logRecords.length, "proxy-count": 0 } }),
   );
   await page.route(/\/v0\/management\/config\.yaml$/, (route) =>
     route.fulfill({
@@ -703,16 +709,16 @@ test("shell scroll ownership on desktop workspace", async ({ page }) => {
 
   // 4. Logs destination uses dedicated bounded inner scroll container
   await page.getByRole("button", { name: "Logs" }).click();
-  const logPre = page.locator(".logs-surface pre");
-  await expect(logPre).toBeVisible();
+  const logWrap = page.locator(".logs-table-wrap");
+  await expect(logWrap).toBeVisible();
 
   const logsScrollContract = await page.evaluate(() => {
     const doc = document.documentElement;
-    const pre = document.querySelector(".logs-surface pre");
+    const wrap = document.querySelector(".logs-table-wrap");
     return {
       docScrollHeight: doc.scrollHeight,
       docClientHeight: doc.clientHeight,
-      preOverflowY: pre ? window.getComputedStyle(pre).overflowY : "",
+      wrapOverflowY: wrap ? window.getComputedStyle(wrap).overflowY : "",
     };
   });
 
@@ -721,8 +727,8 @@ test("shell scroll ownership on desktop workspace", async ({ page }) => {
     "Logs destination must not cause root document vertical scrolling",
   ).toBeLessThanOrEqual(logsScrollContract.docClientHeight);
   expect(
-    ["auto", "scroll"].includes(logsScrollContract.preOverflowY),
-    "Logs pre element must manage its own inner scroll region",
+    ["auto", "scroll"].includes(logsScrollContract.wrapOverflowY),
+    "Logs table wrap must manage its own inner scroll region",
   ).toBe(true);
 });
 
@@ -813,9 +819,9 @@ test("content stress under 10,000 high-volume log lines and logs containment", a
   await page.goto("/management.html");
   await page.getByRole("button", { name: "Logs" }).click();
 
-  const logPre = page.locator(".logs-surface pre");
-  await expect(logPre).toBeVisible();
-  await expect(page.getByText("[009999] gateway event 9999")).toBeVisible();
+  const logWrap = page.locator(".logs-table-wrap");
+  await expect(logWrap).toBeVisible();
+  await expect(page.locator(".logs-table tbody tr").first()).toBeVisible();
 
   const logsStressGeometry = await page.evaluate(() => {
     const doc = document.documentElement;
@@ -1106,4 +1112,46 @@ test("overlay containment under responsive 390x844 viewport and long content str
 
   await closeConfigBtn.click();
   await expect(configDrawer).toHaveCount(0);
+});
+
+// Ported from the deleted zcode-methods.spec.ts (plan D3): the Z.ai tile must
+// offer the desktop-session and OAuth methods and accept the zcode:// redirect.
+test("z.ai tile exposes zcode methods and captures the redirect url", async ({ page }) => {
+  await installMocks(page);
+  await page.route(/zcode-auth-url$/, (route) =>
+    route.fulfill({
+      json: { url: "https://chat.z.ai/api/oauth/authorize?a=1", state: "s1" },
+    }),
+  );
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.goto("/management.html");
+  await page.getByRole("button", { name: /Accounts/ }).first().click();
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByRole("button", { name: "Z.ai", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in with ZCode" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign in with ZCode" }).click();
+  await expect(page.getByLabel("ZCode redirect URL")).toBeVisible();
+});
+
+// Ported from the deleted task18 WCAG audit (plan D3/TEST-1): axe-core now
+// resolves from node_modules instead of a machine-local cache path.
+test("console surface passes the axe WCAG audit", async ({ page }) => {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const axePath = require.resolve("axe-core/axe.min.js");
+  await installMocks(page);
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await page.goto("/management.html");
+  await page.addScriptTag({ path: axePath });
+  const result = await page.evaluate(async () => {
+    const axe = (window as unknown as { axe: { run: () => Promise<{ violations: Array<{ impact: string | null; help: string }> }> } }).axe;
+    return axe.run();
+  });
+  const blocking = result.violations.filter(
+    (violation) => violation.impact === "critical" || violation.impact === "serious",
+  );
+  expect(
+    blocking,
+    `critical/serious axe violations: ${JSON.stringify(blocking.map((v) => v.help))}`,
+  ).toEqual([]);
 });
