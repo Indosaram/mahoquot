@@ -119,7 +119,9 @@ test.beforeAll(async () => {
 test("keeps an empty thin right-edge strip until hovered with complete isolation from app shell", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 480, height: 560 });
+  // The notch webview window is created at the island design width (island
+  // bleeds off the physical screen edge), so the browser emulation matches it.
+  await page.setViewportSize({ width: 580, height: 560 });
   await installMocks(page);
   await page.goto("/management.html?surface=notch");
 
@@ -173,12 +175,14 @@ test("keeps an empty thin right-edge strip until hovered with complete isolation
   await expect(page.locator(".metric-card")).toHaveCount(0);
 
   // 3. Compact / idle geometry and visual state
-  const notchSurface = surface.locator(".notch-surface");
-  const compactBox = await notchSurface.boundingBox();
-  expect(compactBox?.width ?? 999).toBeLessThanOrEqual(10);
-  expect(compactBox?.height ?? 0).toBeGreaterThanOrEqual(160);
+  // Only the 8px trigger sliver is visible; the island artwork bleeds off the
+  // right edge by design (clipped by the physical screen edge in the app).
+  const compactStrip = await surface.locator(".notch-trigger-strip").boundingBox();
   const viewportWidth = await page.evaluate(() => document.documentElement.clientWidth);
-  expect((compactBox?.x ?? 0) + (compactBox?.width ?? 0)).toBe(viewportWidth);
+  expect((compactStrip?.x ?? 0) + (compactStrip?.width ?? 0)).toBe(viewportWidth);
+  expect(viewportWidth - (compactStrip?.x ?? 0)).toBe(8);
+  const notchSurface = surface.locator(".notch-surface");
+  expect((await notchSurface.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(160);
   const shell = surface;
   await expect(shell).toHaveCSS("width", "8px");
   await expect(shell).toHaveCSS("height", "180px");
@@ -211,11 +215,9 @@ test("keeps an empty thin right-edge strip until hovered with complete isolation
   await expect(surface.getByTestId("notch-ring-codex")).toBeVisible();
   await expect(surface.getByTestId("notch-ring-claude")).toBeVisible();
   await expect(surface.getByTestId("notch-ring-antigravity")).toBeVisible();
-  // Two antigravity accounts must still collapse into exactly one icon with badge count 2
+  // Two antigravity accounts must still collapse into exactly one icon; the
+  // per-provider badge was replaced by the pooled tooltip account rows.
   await expect(surface.getByTestId("notch-ring-antigravity")).toHaveCount(1);
-  await expect(
-    surface.getByTestId("notch-ring-antigravity").locator(".notch-ring-count"),
-  ).toHaveText("2");
   await expect(surface.locator(".notch-ring-item")).toHaveCount(3);
 
   for (const provider of ["codex", "claude", "antigravity"]) {
@@ -231,7 +233,7 @@ test("keeps an empty thin right-edge strip until hovered with complete isolation
   await page.getByTestId("notch-ring-codex").hover();
   const tooltip = surface.getByTestId("notch-tooltip-codex");
   await expect(tooltip).toBeVisible();
-  await expect(tooltip).toContainText("35% Used");
+  await expect(tooltip).toContainText("65% Left");
   await expect(tooltip).toContainText("Resets");
   await expect(surface.getByTestId("notch-tooltip-claude")).toBeHidden();
 
@@ -241,8 +243,8 @@ test("keeps an empty thin right-edge strip until hovered with complete isolation
   await expect(pooled).toContainText("2 accounts");
   // Both pooled accounts stay individually visible, each with its own usage.
   await expect(pooled.locator(".notch-tooltip-account")).toHaveCount(2);
-  await expect(pooled).toContainText("88% Used");
-  await expect(pooled).toContainText("12% Used");
+  await expect(pooled).toContainText("12% Left");
+  await expect(pooled).toContainText("88% Left");
 
   // The account list must survive the pointer travelling onto it, and scroll.
   const pooledBox = await pooled.boundingBox();

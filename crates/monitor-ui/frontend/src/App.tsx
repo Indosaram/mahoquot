@@ -71,8 +71,6 @@ import {
 } from "./lib/telemetry";
 
 type Surface = "overview" | "accounts" | "logs" | "settings" | "notch" | "tray";
-type LoadState = "loading" | "online" | "starting" | "stopped" | "relay-locked";
-
 const getInitialSurface = (): Surface => {
   if (typeof window !== "undefined") {
     const param = new URLSearchParams(window.location.search).get("surface");
@@ -90,17 +88,6 @@ type AuthorizationSession = {
   readonly state: string;
   readonly status: ProviderAuthStatus["status"];
   readonly error?: string;
-};
-
-const emptyStats: AdminStats = {
-  uptime_secs: 0,
-  in_flight: 0,
-  served: 0,
-  failed_over: 0,
-  refreshed: 0,
-  ttft: null,
-  accounts: [],
-  history: [],
 };
 
 type OnboardingMethod = {
@@ -341,11 +328,6 @@ export default function App() {
   const [theme, setTheme] = useState(getTheme);
   const [baseUrl, setBaseUrlState] = useState(getGatewayBaseUrl);
   const [relayKey, setRelayKeyState] = useState(getRelayKey);
-  const [stats, setStats] = useState<AdminStats>(emptyStats);
-  const [credentials, setCredentials] = useState<readonly AuthFileItem[]>([]);
-  const [logs, setLogs] = useState<readonly LogRecord[]>([]);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [showRemaining, setShowRemainingState] = useState(getQuotaShowRemaining());
 
   const setShowRemaining = useCallback((value: boolean) => {
@@ -358,8 +340,6 @@ export default function App() {
     ).__TAURI__;
     api?.event?.emit("mahoquot-quota-mode", value);
   }, []);
-  const [refreshing, setRefreshing] = useState(false);
-  const [gatewayLifecycle, setGatewayLifecycle] = useState<GatewayLifecycleStatus>("running");
   const [provider, setProvider] = useState(
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
@@ -390,8 +370,6 @@ export default function App() {
     readonly label: string;
     readonly apiKey: string;
   } | null>(null);
-  const [credentialsError, setCredentialsError] = useState("");
-  const [logsError, setLogsError] = useState("");
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
   const [configYaml, setConfigYaml] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
@@ -402,9 +380,6 @@ export default function App() {
   const [requestRetry, setRequestRetry] = useState("3");
   const [loggingToFile, setLoggingToFile] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [telemetry, setTelemetry] = useState<readonly TelemetrySample[]>([]);
-  const firstLoad = useRef(true);
-  const POLL_INTERVAL_MS = 10_000;
 
   useEffect(() => {
     if (!onboardingOpen && !configOpen) return;
@@ -420,6 +395,26 @@ export default function App() {
   }, [onboardingOpen, configOpen]);
 
   const clients = useMemo(() => createGatewayClients(baseUrl, relayKey), [baseUrl, relayKey]);
+
+  const {
+    stats,
+    credentials,
+    logs,
+    loadState,
+    fetchedAt,
+    refreshing,
+    gatewayLifecycle,
+    setGatewayLifecycle,
+    telemetry,
+    schemaMismatch,
+    credentialsError,
+    logsError,
+    refresh,
+    refreshUsage,
+    refreshNow,
+    setCredentials,
+    setLogs,
+  } = useGatewayPolling(clients);
 
   // The gateway publishes its management wire version on the public /healthz
   // probe; a mismatch means IPC calls may silently misbehave, so the console

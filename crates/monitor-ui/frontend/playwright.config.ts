@@ -1,6 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
+  // primitive-showcase.spec.ts targets the QA harness artifact; run it with
+  // `bunx playwright test -c playwright.qa.config.ts` (serves qa.html on :4188).
+  testIgnore: ["**/primitive-showcase.spec.ts"],
   testDir: "./e2e",
   timeout: 30_000,
   expect: { timeout: 5_000 },

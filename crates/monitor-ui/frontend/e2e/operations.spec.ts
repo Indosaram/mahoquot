@@ -430,8 +430,9 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
     .getByRole("button", { name: /Accounts/ })
     .first()
     .click();
+  await page.getByText("Codex", { exact: true }).click();
   await expect(page.getByText("Total tokens")).toBeVisible();
-  await expect(page.getByText("1.2M")).toBeVisible();
+  await expect(page.getByText("1.2M").first()).toBeVisible();
   await page.getByText("Claude", { exact: true }).click();
   await expect(page.getByText("Not reported by provider").first()).toBeVisible();
   await expect(
