@@ -677,8 +677,12 @@ fn sync_notch_hover(
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_millis() as u64);
-        let previous_ms = last_hit_test_ms.swap(now_ms, Ordering::Relaxed);
+        // Only advance the throttle when a hit test is actually forwarded.
+        // Updating it on every sample would reset the window each time the
+        // pointer moves, keeping the gate closed forever during motion.
+        let previous_ms = last_hit_test_ms.load(Ordering::Relaxed);
         if now_ms.saturating_sub(previous_ms) >= 16 {
+            last_hit_test_ms.store(now_ms, Ordering::Relaxed);
             // wry's WKWebView builds its own tracking areas, which stay silent while
             // another app is frontmost, so the webview can never hit-test the icons
             // itself. Forward the pointer the global monitor can still see.

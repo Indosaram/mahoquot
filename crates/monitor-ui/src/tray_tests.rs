@@ -72,35 +72,65 @@ fn hover_region_keeps_the_panel_open_within_the_edge_corridor() {
         width: 3840.0,
         height: 1600.0,
     };
+    let panel = ScreenRect {
+        x: 3420.0,
+        y: 560.0,
+        width: 420.0,
+        height: 480.0,
+    };
 
     // when the pointer leaves the panel but stays inside the edge corridor
-    // then the panel must remain open: the detail card lives out here
+    // beside the panel's own height, the panel must remain open: the detail
+    // card lives out here
     assert!(cursor_within_edge_corridor(
         &display,
         &CursorPoint {
             x: 3400.0,
-            y: 800.0
-        }
+            y: 560.0
+        },
+        &panel
     ));
     assert!(cursor_within_edge_corridor(
         &display,
         &CursorPoint {
-            x: 3361.0,
-            y: 100.0
-        }
+            x: 3400.0,
+            y: 560.0 + 480.0 + 40.0
+        },
+        &panel
     ));
 
-    // and once it wanders past the corridor the panel may fold away
+    // but the corridor no longer spans the display height: leaving towards
+    // the top or bottom folds the panel immediately
+    assert!(!cursor_within_edge_corridor(
+        &display,
+        &CursorPoint {
+            x: 3400.0,
+            y: 100.0
+        },
+        &panel
+    ));
+    assert!(!cursor_within_edge_corridor(
+        &display,
+        &CursorPoint {
+            x: 3400.0,
+            y: 1500.0
+        },
+        &panel
+    ));
+
+    // and once it wanders past the corridor horizontally the panel may fold
     assert!(!cursor_within_edge_corridor(
         &display,
         &CursorPoint {
             x: 3359.0,
             y: 800.0
-        }
+        },
+        &panel
     ));
     assert!(!cursor_within_edge_corridor(
         &display,
-        &CursorPoint { x: 100.0, y: 800.0 }
+        &CursorPoint { x: 100.0, y: 800.0 },
+        &panel
     ));
 
     // and another display beside or above this one must not inherit its corridor
@@ -109,14 +139,16 @@ fn hover_region_keeps_the_panel_open_within_the_edge_corridor() {
         &CursorPoint {
             x: 3900.0,
             y: 800.0
-        }
+        },
+        &panel
     ));
     assert!(!cursor_within_edge_corridor(
         &display,
         &CursorPoint {
             x: 3800.0,
             y: 1700.0
-        }
+        },
+        &panel
     ));
 }
 
@@ -465,9 +497,9 @@ fn an_open_panel_holds_while_the_pointer_roams_the_corridor_toward_its_card() {
     };
     let toward_card = CursorPoint {
         x: 1500.0,
-        y: 800.0,
+        y: 950.0,
     };
-    let far_left = CursorPoint { x: 400.0, y: 800.0 };
+    let far_left = CursorPoint { x: 400.0, y: 950.0 };
 
     assert!(hover_cursor_inside(
         &panel,

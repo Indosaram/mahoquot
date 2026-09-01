@@ -88,7 +88,8 @@ pub fn hover_cursor_inside(
     if cursor_within(panel, cursor) {
         return true;
     }
-    panel_open && panel_display.is_some_and(|display| cursor_within_edge_corridor(display, cursor))
+    panel_open
+        && panel_display.is_some_and(|display| cursor_within_edge_corridor(display, cursor, panel))
 }
 
 /// How far left of the screen edge the pointer may roam before the panel folds.
@@ -96,11 +97,24 @@ pub fn hover_cursor_inside(
 /// the moment the pointer travelled toward the card.
 pub const EDGE_CORRIDOR_WIDTH: f64 = 480.0;
 
-pub fn cursor_within_edge_corridor(display: &ScreenRect, cursor: &CursorPoint) -> bool {
+/// Vertical slack around the panel that still counts as "on the panel". The
+/// corridor holds only near the panel's own height, so leaving towards the
+/// top or bottom of the screen folds the panel immediately (the pointer-exit
+/// requirement) instead of holding it across the whole display height.
+pub const EDGE_CORRIDOR_VERTICAL_SLACK: f64 = 48.0;
+
+pub fn cursor_within_edge_corridor(
+    display: &ScreenRect,
+    cursor: &CursorPoint,
+    panel: &ScreenRect,
+) -> bool {
+    let top = (panel.y - EDGE_CORRIDOR_VERTICAL_SLACK).max(display.y);
+    let bottom =
+        (panel.y + panel.height + EDGE_CORRIDOR_VERTICAL_SLACK).min(display.y + display.height);
     cursor.x >= display.x + display.width - EDGE_CORRIDOR_WIDTH
         && cursor.x <= display.x + display.width
-        && cursor.y >= display.y
-        && cursor.y <= display.y + display.height
+        && cursor.y >= top
+        && cursor.y <= bottom
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
@@ -185,6 +199,7 @@ pub fn calculate_notch_window_physical_position(
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GatewayStartup {
     Spawn,
@@ -195,6 +210,7 @@ pub enum GatewayStartup {
 /// it talks to and kills it on exit. A listener already on the port therefore
 /// cannot belong to a running app, and adopting it would silently bind the UI to
 /// a foreign credential store.
+#[cfg(test)]
 pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
     if port_listening {
         GatewayStartup::ReclaimThenSpawn
