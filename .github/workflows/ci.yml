@@ -1,0 +1,48 @@
+name: CI
+
+"on":
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Lint Rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+      - name: Install frontend dependencies
+        working-directory: crates/monitor-ui/frontend
+        run: bun install
+
+      - name: Typecheck frontend
+        working-directory: crates/monitor-ui/frontend
+        run: bun run typecheck
+
+      - name: Lint frontend
+        working-directory: crates/monitor-ui/frontend
+        run: bun run lint
+
+      - name: Test frontend
+        working-directory: crates/monitor-ui/frontend
+        run: bun run test
