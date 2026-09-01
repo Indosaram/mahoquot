@@ -443,7 +443,7 @@ export default function App() {
 
   useEffect(() => {
     void getGatewayLifecycle().then(setGatewayLifecycle);
-  }, []);
+  }, [setGatewayLifecycle]);
 
   useEffect(() => {
     // the quota display mode is flipped in the console settings; the tray and
