@@ -3,7 +3,50 @@ use std::process::Command;
 
 fn main() {
     sync_dev_gateway();
+    stage_bundle_sidecar();
     tauri_build::build()
+}
+
+/// `tauri build` bundles `gateways/mahoquot-gateway-<target triple>` as a
+/// sidecar next to the app binary (tauri.conf externalBin). Stage the same
+/// sibling artifact the dev sync uses so a local bundle build works without
+/// hand-copying binaries; the release workflow stages the release build
+/// before invoking tauri, which overwrites this file's copy in CI checkouts
+/// that never had one.
+fn stage_bundle_sidecar() {
+    let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") else {
+        return;
+    };
+    let Ok(target_triple) = std::env::var("TARGET") else {
+        return;
+    };
+    let Some(target_dir) = Path::new(&manifest_dir)
+        .ancestors()
+        .nth(2)
+        .map(|dir| dir.join("target"))
+        .filter(|dir| dir.is_dir())
+    else {
+        return;
+    };
+    let Some(source) = sibling_gateway(&target_dir) else {
+        return;
+    };
+    let sidecar_dir = Path::new(&manifest_dir).join("gateways");
+    if std::fs::create_dir_all(&sidecar_dir).is_err() {
+        return;
+    }
+    let sidecar = sidecar_dir.join(format!("mahoquot-gateway-{target_triple}"));
+    if Command::new("cp")
+        .args([source.as_os_str(), sidecar.as_os_str()])
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        let _ = Command::new("codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&sidecar)
+            .status();
+        println!("cargo:rerun-if-changed={}", source.display());
+    }
 }
 
 /// Necessary context: the app spawns `mahoquot-gateway` from beside its own

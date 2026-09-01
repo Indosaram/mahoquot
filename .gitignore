@@ -20,3 +20,6 @@ site/playwright-report/
 # generated evidence screenshots may contain real account identifiers
 results/**/*.png
 crates/monitor-ui/icons/proposals/
+
+# staged gateway sidecar binaries for tauri bundling (staged by build.rs/release ci)
+crates/monitor-ui/gateways/

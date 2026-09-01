@@ -1,0 +1,81 @@
+name: release
+
+"on":
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout the app
+        uses: actions/checkout@v4
+
+      - name: Checkout the gateway at the same ref name
+        id: gateway_tagged
+        uses: actions/checkout@v4
+        with:
+          repository: Indosaram/mahoquot-proxy
+          ref: ${{ github.ref_name }}
+          path: mahoquot-proxy
+        continue-on-error: true
+
+      - name: Fall back to the gateway default branch
+        if: steps.gateway_tagged.outcome != 'success'
+        uses: actions/checkout@v4
+        with:
+          repository: Indosaram/mahoquot-proxy
+          path: mahoquot-proxy
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build the gateway (release)
+        working-directory: mahoquot-proxy
+        run: cargo build --release -p mahoquot-gateway
+
+      - name: Stage the gateway sidecar
+        run: |
+          mkdir -p gateways
+          cp mahoquot-proxy/target/release/mahoquot-gateway \
+            "gateways/mahoquot-gateway-aarch64-apple-darwin"
+          codesign --force --sign - "gateways/mahoquot-gateway-aarch64-apple-darwin"
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the frontend bundle
+        working-directory: crates/monitor-ui/frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run build
+
+      - name: Bundle the app
+        run: bun run tauri build
+
+      - name: Verify the sidecar shipped inside the bundle
+        run: |
+          app="target/release/bundle/macos/mahoquot.app"
+          test -d "$app" || app=$(find target -name "mahoquot.app" -maxdepth 6 | head -1)
+          test -d "$app" || { echo "app bundle missing"; exit 1; }
+          test -x "$app/Contents/MacOS/mahoquot-gateway" || {
+            echo "gateway sidecar missing from $app"; exit 1;
+          }
+          echo "sidecar present: $app/Contents/MacOS/mahoquot-gateway"
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: mahoquot-macos
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app
+          if-no-files-found: error
