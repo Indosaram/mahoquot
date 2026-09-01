@@ -21,7 +21,8 @@
         "backgroundColor": "#0B0B0D",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       },
       {
         "label": "notch",
@@ -61,7 +62,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["gateways/mahoquot-gateway"],
+    "externalBin": [
+      "gateways/mahoquot-gateway"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
