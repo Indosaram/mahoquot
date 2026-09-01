@@ -96,6 +96,8 @@ export function useConnectionSettings({
     setRequestRetry,
     loggingToFile,
     setLoggingToFile,
+    settingsLoaded,
+    setSettingsLoaded,
     saveProxySettings,
   };
 }

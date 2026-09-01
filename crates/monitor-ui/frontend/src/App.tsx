@@ -413,6 +413,7 @@ export default function App() {
     setRequestRetry,
     loggingToFile,
     setLoggingToFile,
+    setSettingsLoaded,
     saveProxySettings,
   } = useConnectionSettings({ clients, loadState, surface, setNotice, setPending });
 
