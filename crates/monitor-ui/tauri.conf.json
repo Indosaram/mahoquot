@@ -20,7 +20,8 @@
         "resizable": true,
         "backgroundColor": "#0B0B0D",
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false
       },
       {
         "label": "notch",

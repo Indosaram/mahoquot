@@ -53,9 +53,15 @@ fn sync_dev_gateway() {
     if synced {
         // A cp'd Mach-O can carry a provenance xattr that makes macOS SIGKILL
         // it on launch; re-signing ad-hoc clears that.
-        let _ = Command::new("codesign").args(["--force", "--sign", "-"]).arg(&dest).status();
+        let _ = Command::new("codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&dest)
+            .status();
         println!("cargo:rerun-if-changed={}", source.display());
-        println!("cargo:warning=synced mahoquot-gateway from {}", source.display());
+        println!(
+            "cargo:warning=synced mahoquot-gateway from {}",
+            source.display()
+        );
     }
 }
 
