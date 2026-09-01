@@ -1120,7 +1120,6 @@ export const ONBOARDING_PROVIDER_GLYPHS: readonly string[] = Object.freeze([
   "claude",
   "codex",
   "antigravity",
-  "gemini-cli",
   "cursor",
   "kiro",
   "kimi",

@@ -119,7 +119,6 @@ export const providerLogos: Readonly<Record<string, string>> = {
   "cloudflare-workers-ai": logo("cloudflare"),
   "github-copilot": logo("github-copilot"),
   "gitlab-duo": logo("gitlab"),
-  "gemini-cli": logo("gemini-cli"),
   iflow: logo("iflow"),
   trae: logo("trae"),
 };
@@ -128,7 +127,6 @@ const COLOR_LOGOS: ReadonlySet<string> = new Set([
   "antigravity",
   "claude",
   "codex",
-  "gemini-cli",
   "kiro",
   "qwen",
   "trae",

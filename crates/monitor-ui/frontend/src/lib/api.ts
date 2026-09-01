@@ -237,7 +237,6 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           kimi: "kimi-auth-url",
           qwen: "qwen-auth-url",
           nous: "nous-auth-url",
-          "gemini-cli": "gemini-cli-auth-url",
           "github-copilot": "github-copilot-auth-url",
           "command-code": "command-code-auth-url",
           xai: "xai-auth-url",

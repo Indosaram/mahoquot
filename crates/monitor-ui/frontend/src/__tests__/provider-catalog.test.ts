@@ -34,7 +34,6 @@ describe("provider-catalog", () => {
       "codex",
       "claude",
       "antigravity",
-      "gemini-cli",
       "qwen",
       "github-copilot",
       "command-code",
@@ -266,7 +265,6 @@ describe("provider-catalog", () => {
         "github-copilot",
         "openai",
         "codex",
-        "gemini-cli",
         "qwen",
         "command-code",
       ]);
