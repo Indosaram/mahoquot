@@ -80,6 +80,30 @@ pub struct QuotaWindow {
     pub limit_name: Option<String>,
 }
 
+/// Model-family quota group the gateway forwards for providers that report
+/// per-model-bucket usage (e.g. Antigravity). Native views surface these so
+/// grouped providers do not collapse to a single misleading pair of windows.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct QuotaGroup {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub display_name: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub models: Option<String>,
+    #[serde(default)]
+    pub buckets: Vec<QuotaBucket>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct QuotaBucket {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub display_name: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub window: Option<String>,
+    pub used_percent: Option<f64>,
+    pub reset_at_unix: Option<i64>,
+    pub reset_after_seconds: Option<i64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct Usage {
     pub plan_type: Option<String>,
@@ -88,6 +112,8 @@ pub struct Usage {
     pub primary: QuotaWindow,
     #[serde(default, deserialize_with = "null_as_default")]
     pub secondary: QuotaWindow,
+    #[serde(default)]
+    pub groups: Vec<QuotaGroup>,
     pub credits_balance: Option<f64>,
     pub credits_unlimited: Option<bool>,
     pub has_credits: Option<bool>,
@@ -99,6 +125,21 @@ pub struct Usage {
 pub struct WindowView {
     pub used_percent: Option<f64>,
     pub window_minutes: Option<i64>,
+    pub reset_in_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+pub struct GroupView {
+    pub name: Option<String>,
+    pub models: Option<String>,
+    pub buckets: Vec<BucketView>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+pub struct BucketView {
+    pub name: Option<String>,
+    pub window: Option<String>,
+    pub used_percent: Option<f64>,
     pub reset_in_secs: Option<i64>,
 }
 
@@ -115,6 +156,8 @@ pub struct AccountView {
     pub can_reset: bool,
     pub primary: WindowView,
     pub secondary: WindowView,
+    #[serde(default)]
+    pub groups: Vec<GroupView>,
     pub ok: u64,
     pub fails: u64,
     pub failure_rate: f64,
@@ -204,6 +247,28 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
                 a.usage.observed_at_unix,
                 now_unix_ms / 1000,
             ),
+            groups: a
+                .usage
+                .groups
+                .iter()
+                .map(|group| GroupView {
+                    name: group.display_name.clone(),
+                    models: group.models.clone(),
+                    buckets: group
+                        .buckets
+                        .iter()
+                        .map(|bucket| BucketView {
+                            name: bucket.display_name.clone(),
+                            window: bucket.window.clone(),
+                            used_percent: bucket.used_percent,
+                            reset_in_secs: bucket
+                                .reset_at_unix
+                                .filter(|v| *v > 0)
+                                .map(|at| (at - now_unix_ms / 1000).max(0)),
+                        })
+                        .collect(),
+                })
+                .collect(),
             p50_ms: a.ttft.p50_ms,
             p99_ms: a.ttft.p99_ms,
             samples: a.ttft.samples,
@@ -411,5 +476,31 @@ mod tests {
         assert_eq!(v.accounts[1].p50_ms, 50.0);
         assert_eq!(v.accounts[1].p99_ms, 70.0);
         assert_eq!(v.accounts[1].samples, 5);
+    }
+
+    #[test]
+    fn quota_groups_reach_the_native_view() {
+        // Live shape: an Antigravity account whose usage carries per-model
+        // quota groups alongside the primary/secondary pair.
+        let s: AdminStats = serde_json::from_str(
+            r#"{"accounts":[{"id":"ag","provider":"antigravity",
+                "health":{"status":"available"},"ok":1,"fails":0,
+                "usage":{"observed_at_unix":1000,
+                  "primary":{"used_percent":10.0,"window_minutes":300},
+                  "secondary":{"used_percent":40.0,"window_minutes":10080},
+                  "groups":[{"display_name":"GLM Coding Plan","models":null,
+                    "buckets":[{"display_name":"GLM-5.3","window":null,
+                                "used_percent":55.0,"reset_at_unix":4000}]}]}}]}"#,
+        )
+        .expect("parse");
+        let v = build_view(&s, 2_000_000);
+        let account = &v.accounts[0];
+        assert_eq!(account.groups.len(), 1);
+        assert_eq!(account.groups[0].name.as_deref(), Some("GLM Coding Plan"));
+        assert!(account.groups[0].models.is_none());
+        let bucket = &account.groups[0].buckets[0];
+        assert_eq!(bucket.name.as_deref(), Some("GLM-5.3"));
+        assert_eq!(bucket.used_percent, Some(55.0));
+        assert_eq!(bucket.reset_in_secs, Some(2000));
     }
 }
