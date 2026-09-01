@@ -2695,13 +2695,14 @@ h2 {
 
 .tray-tiles {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 .tray-tile {
   background: #17171a;
   border-radius: 10px;
   padding: 8px 10px;
+  min-width: 0;
 }
 .tray-tile-row {
   display: flex;
@@ -2710,6 +2711,8 @@ h2 {
   margin-bottom: 6px;
 }
 .tray-tile-name {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: #d8d8dc;
   overflow: hidden;
@@ -2717,9 +2720,9 @@ h2 {
   white-space: nowrap;
 }
 .tray-tile-reset {
+  flex: none;
   font-size: 10px;
   color: #6e6e73;
-  margin-left: auto;
 }
 .tray-tile-percent {
   font-size: 11px;

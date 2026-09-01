@@ -8,8 +8,8 @@ import {
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { NormalizedAccount } from "../lib/accounts";
-import type { QuotaWindow } from "../lib/schemas";
+import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
+import { quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 
 interface TrayTile {
@@ -32,70 +32,12 @@ const planBadge = (plan: string | null | undefined): string | null => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
-const windowName = (window: QuotaWindow): string => {
-  if (window.limit_name) return window.limit_name;
-  const minutes = window.window_minutes ?? null;
-  if (minutes === 300) return "Session";
-  if (minutes === 10080) return "Weekly";
-  if (minutes) return `${minutes}m`;
-  return "Quota";
-};
-
-const formatCountdown = (seconds: number): string => {
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.max(0, Math.floor((seconds % 3_600) / 60));
-  if (days > 0) return `${days}d${hours}h`;
-  if (hours > 0) return `${hours}h${minutes}m`;
-  return `${minutes}m`;
-};
-
-const secondsUntilReset = (window: QuotaWindow, nowUnixSecs: number): number | null => {
-  if (typeof window.reset_after_seconds === "number") return window.reset_after_seconds;
-  if (typeof window.reset_at_unix === "number") {
-    const delta = window.reset_at_unix - nowUnixSecs;
-    return delta > 0 ? delta : null;
-  }
-  return null;
-};
-
-const tileOf = (window: QuotaWindow | null | undefined, nowUnixSecs: number): TrayTile | null => {
-  if (!window) return null;
-  const used = window.used_percent;
-  if (typeof used !== "number") return null;
-  const remaining = secondsUntilReset(window, nowUnixSecs);
-  return {
-    label: windowName(window),
-    usedPercent: used,
-    resetIn: remaining !== null ? formatCountdown(remaining) : null,
-  };
-};
-
-const tilesOf = (account: NormalizedAccount): readonly TrayTile[] => {
-  const usage = account.usage;
-  if (!usage) return [];
-  const nowUnixSecs = Math.floor(Date.now() / 1000);
-  const core = [usage.primary, usage.secondary]
-    .map((window) => tileOf(window, nowUnixSecs))
-    .filter((tile): tile is TrayTile => tile !== null);
-  const grouped = (usage.groups ?? []).flatMap((group) =>
-    group.buckets
-      .map((bucket) =>
-        tileOf(
-          {
-            limit_name: bucket.display_name || group.display_name || null,
-            used_percent: bucket.used_percent ?? null,
-            reset_after_seconds: bucket.reset_after_seconds ?? null,
-            reset_at_unix: bucket.reset_at_unix ?? null,
-            window_minutes: null,
-          },
-          nowUnixSecs,
-        ),
-      )
-      .filter((tile): tile is TrayTile => tile !== null),
-  );
-  return [...core, ...grouped];
-};
+const tilesOf = (account: NormalizedAccount): readonly TrayTile[] =>
+  quotaRows(account).map((row) => ({
+    label: row.name,
+    usedPercent: row.usedPercent,
+    resetIn: row.resetSeconds !== null ? formatResetTime(row.resetSeconds) : null,
+  }));
 
 const formatCompact = (value: number): string =>
   new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);

@@ -17,7 +17,7 @@ export type LastError = z.infer<typeof LastErrorSchema>;
 
 export const QuotaBucketSchema = z.object({
   display_name: z.string().optional(),
-  window: z.string().optional(),
+  window: z.string().nullable().optional(),
   used_percent: z.number().nullable().optional(),
   reset_at_unix: z.number().nullable().optional(),
   reset_after_seconds: z.number().nullable().optional(),
@@ -26,7 +26,7 @@ export type QuotaBucket = z.infer<typeof QuotaBucketSchema>;
 
 export const QuotaGroupSchema = z.object({
   display_name: z.string().optional(),
-  models: z.string().optional(),
+  models: z.string().nullable().optional(),
   buckets: z.array(QuotaBucketSchema).default([]),
 });
 export type QuotaGroup = z.infer<typeof QuotaGroupSchema>;

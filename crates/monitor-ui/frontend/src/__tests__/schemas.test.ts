@@ -117,6 +117,45 @@ describe("Gateway API Zod Schemas", () => {
     expect(parsed.accounts[0]?.usage?.groups?.[0]?.buckets?.[0]?.used_percent).toBe(20.0);
   });
 
+  it("parses nullable quota labels from a restarted gateway snapshot", () => {
+    // Given: a live-shaped account whose provider has no model or quota-window labels
+    const raw = {
+      uptime_secs: 10,
+      accounts: [
+        {
+          id: "zcode",
+          provider: "zcode",
+          health: { status: "available" },
+          ok: 0,
+          fails: 0,
+          usage: {
+            groups: [
+              {
+                display_name: "GLM Coding Plan",
+                models: null,
+                buckets: [
+                  {
+                    display_name: "GLM-5.3",
+                    window: null,
+                    used_percent: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    // When: parsing the startup stats snapshot
+    const parsed = parseAdminStats(raw);
+
+    // Then: the account remains available to the GUI instead of rejecting all stats
+    expect(parsed.accounts).toHaveLength(1);
+    expect(parsed.accounts[0]?.usage?.groups?.[0]?.models).toBeNull();
+    expect(parsed.accounts[0]?.usage?.groups?.[0]?.buckets[0]?.window).toBeNull();
+  });
+
   it("parses /v0/management/auth-files response", () => {
     const raw = {
       files: [

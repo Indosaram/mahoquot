@@ -38,7 +38,7 @@ const account = (overrides: {
         used_percent: overrides.primary,
         window_minutes: 300,
         reset_after_seconds: 15_120,
-        limit_name: overrides.limitName ?? null,
+        limit_name: overrides.limitName ?? "Session",
       },
       secondary:
         overrides.secondary === undefined

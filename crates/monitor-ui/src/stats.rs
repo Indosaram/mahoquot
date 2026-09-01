@@ -268,11 +268,11 @@ mod tests {
             r#"{"uptime_secs":31,"in_flight":0,"served":10,"failed_over":4,"refreshed":1,
                 "ttft":{"p50_ms":100.0,"p90_ms":200.0,"p99_ms":300.0,"samples":10},
                 "accounts":[
-                  {"id":"565c2911-account-f@example.com","health":{"status":"available"},
+                  {"id":"565c2911-monadawne6@amanvip.com","health":{"status":"available"},
                    "ok":0,"fails":1,"reset_at_unix_ms":null,
                    "last_error":{"unix_ms":1,"status":400,"message":"model not supported by account"},
                    "ttft":{"p50_ms":426.0,"p90_ms":426.0,"p99_ms":426.0,"samples":1}},
-                  {"id":"account-e@gmail.com","health":{"status":"available"},
+                  {"id":"indoyoon93@gmail.com","health":{"status":"available"},
                    "ok":5,"fails":0,"reset_at_unix_ms":null,"last_error":null,
                    "ttft":{"p50_ms":50.0,"p90_ms":60.0,"p99_ms":70.0,"samples":5}},
                   {"id":"cooling@x.io","health":{"status":"cooldown"},
@@ -385,7 +385,7 @@ mod tests {
     fn degraded_flags_cooldown_and_high_failure_accounts() {
         let v = build_view(&stats_json(), 4000);
         assert!(v.degraded.contains(&"cooling@x.io".to_string()));
-        assert!(!v.degraded.contains(&"account-e@gmail.com".to_string()));
+        assert!(!v.degraded.contains(&"indoyoon93@gmail.com".to_string()));
     }
 
     #[test]
@@ -394,9 +394,9 @@ mod tests {
         // misclassified by any id-shape guess; the gateway reports the truth.
         let s: AdminStats = serde_json::from_str(
             r#"{"accounts":[
-                {"id":"account-g@example.com","provider":"codex",
+                {"id":"6yhgthy7@nf3721.com","provider":"codex",
                  "health":{"status":"available"},"ok":1,"fails":0,"ttft":null},
-                {"id":"account-e@gmail.com","provider":"antigravity",
+                {"id":"indoyoon93@gmail.com","provider":"antigravity",
                  "health":{"status":"available"},"ok":1,"fails":0,"ttft":null}]}"#,
         )
         .expect("parse");
