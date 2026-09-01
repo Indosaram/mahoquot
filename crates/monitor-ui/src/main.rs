@@ -1232,6 +1232,16 @@ fn main() {
                 }
             }
         })
+        .on_page_load(|webview, payload| {
+            if webview.label() == MAIN_WINDOW_LABEL
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+            {
+                let window = webview.window();
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
         .build(tauri::generate_context!())
         .expect("failed to build mahoquot monitor");
     // Re-arm after Tauri/AppKit finish installing their own handlers, otherwise
