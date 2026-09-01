@@ -1,3 +1,4 @@
+import { useConnectionSettings } from "@/hooks/useConnectionSettings";
 import {
   AlertTriangle,
   ChevronLeft,
@@ -32,16 +33,16 @@ import { ToastStack, useToasts } from "./components/Toasts";
 import { TrayPanel } from "./components/TrayPanel";
 import { AppShell, OverlayLayer } from "./components/layout";
 import { Button } from "./components/ui";
+import { useGatewayPolling } from "./hooks/useGatewayPolling";
 import {
   type NormalizedAccount,
   formatResetTime,
   mergeAccountsAndCredentials,
 } from "./lib/accounts";
-import { GatewayError, createGatewayClients } from "./lib/api";
+import { createGatewayClients } from "./lib/api";
 import type { ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
 import {
-  type GatewayLifecycleStatus,
   getGatewayLifecycle,
   openExternalUrl,
   startManagedGateway,
@@ -49,9 +50,6 @@ import {
 } from "./lib/native";
 import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/notch";
 import { GENERIC_PROVIDER_OPTIONS, type ProviderCatalogEntry } from "./lib/provider-catalog";
-import { EXPECTED_API_SCHEMA } from "./lib/schemas";
-import type { LogRecord } from "./lib/schemas";
-import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import { RawCredentialDocumentSchema } from "./lib/schemas";
 import {
   getGatewayBaseUrl,
@@ -64,11 +62,6 @@ import {
   setRelayKey,
   validateGatewayBaseUrl,
 } from "./lib/storage";
-import {
-  type TelemetrySample,
-  appendTelemetrySample,
-  persistedTelemetrySamples,
-} from "./lib/telemetry";
 
 type Surface = "overview" | "accounts" | "logs" | "settings" | "notch" | "tray";
 const getInitialSurface = (): Surface => {
@@ -375,11 +368,6 @@ export default function App() {
   const [configOpen, setConfigOpen] = useState(false);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
   const [zcodeCallbackUrl, setZcodeCallbackUrl] = useState("");
-  const [proxyUrl, setProxyUrl] = useState("");
-  const [routingStrategy, setRoutingStrategy] = useState("round-robin");
-  const [requestRetry, setRequestRetry] = useState("3");
-  const [loggingToFile, setLoggingToFile] = useState(false);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     if (!onboardingOpen && !configOpen) return;
@@ -413,30 +401,20 @@ export default function App() {
     refreshUsage,
     refreshNow,
     setCredentials,
-    setLogs,
+    setLoadState,
   } = useGatewayPolling(clients);
 
-  // The gateway publishes its management wire version on the public /healthz
-  // probe; a mismatch means IPC calls may silently misbehave, so the console
-  // says so instead of failing feature-by-feature.
-  const [schemaMismatch, setSchemaMismatch] = useState<string | null>(null);
-  const checkGatewayVersion = useCallback(async () => {
-    try {
-      const health = await clients.admin.health();
-      if (health.api_schema !== EXPECTED_API_SCHEMA) {
-        setSchemaMismatch(
-          `Gateway ${health.version} speaks management schema ${health.api_schema}, this console expects ${EXPECTED_API_SCHEMA}. Update the gateway or the app.`,
-        );
-      } else {
-        setSchemaMismatch(null);
-      }
-    } catch {
-      // An unreachable gateway is already surfaced through the load state.
-    }
-  }, [clients]);
-  useEffect(() => {
-    void checkGatewayVersion();
-  }, [checkGatewayVersion]);
+  const {
+    proxyUrl,
+    setProxyUrl,
+    routingStrategy,
+    setRoutingStrategy,
+    requestRetry,
+    setRequestRetry,
+    loggingToFile,
+    setLoggingToFile,
+    saveProxySettings,
+  } = useConnectionSettings({ clients, loadState, surface, setNotice, setPending });
 
   const resetOnboarding = useCallback(() => {
     setProviderSearch("");
@@ -462,135 +440,9 @@ export default function App() {
     [resetOnboarding],
   );
 
-  const usageRefreshAt = useRef(0);
-  const refreshUsage = useCallback(
-    async (force = false) => {
-      const now = Date.now();
-      if (!force && now - usageRefreshAt.current < 30_000) return;
-      usageRefreshAt.current = now;
-      const api = (
-        window as {
-          __TAURI__?: {
-            core?: { invoke: (command: string) => Promise<unknown> };
-          };
-        }
-      ).__TAURI__;
-      try {
-        if (api?.core) await api.core.invoke("refresh_usage");
-        else await clients.management.usageRefresh();
-      } catch {
-        // the 120s poller is the fallback when the on-demand pass fails
-      }
-    },
-    [clients],
-  );
-
-  const refresh = useCallback(async (): Promise<boolean> => {
-    if (firstLoad.current) setLoadState("loading");
-    let succeeded = true;
-    try {
-      const nextStats = await clients.admin.stats();
-      setStats(nextStats);
-      const now = Date.now();
-      setTelemetry((samples) => {
-        const persisted = persistedTelemetrySamples(nextStats.history ?? []);
-        return persisted.length ? persisted : appendTelemetrySample(samples, nextStats, now);
-      });
-      setLoadState("online");
-      setFetchedAt(Date.now());
-      setGatewayLifecycle("running");
-      firstLoad.current = false;
-    } catch (error) {
-      succeeded = false;
-      setLoadState(
-        error instanceof GatewayError && error.status === 401
-          ? "relay-locked"
-          : gatewayLifecycleRef.current === "stopped"
-            ? "stopped"
-            : "starting",
-      );
-      firstLoad.current = false;
-      return false;
-    }
-    // These two are independent: the gateway rejects /logs outright while file
-    // logging is disabled, and folding both into one Promise.all used to wipe the
-    // credential inventory on every poll, silently stripping account management.
-    const [credentialResult, logResult] = await Promise.allSettled([
-      clients.management.credentials(),
-      clients.management.logs(),
-    ]);
-    if (credentialResult.status === "fulfilled") {
-      setCredentials(credentialResult.value);
-      setCredentialsError("");
-    } else {
-      setCredentials([]);
-      setCredentialsError(errorMessage(credentialResult.reason));
-    }
-    if (logResult.status === "fulfilled") {
-      setLogs(logResult.value.records);
-      setLogsError("");
-    } else {
-      setLogs([]);
-      setLogsError(errorMessage(logResult.reason));
-    }
-    return succeeded;
-  }, [clients]);
-
-  // Mirrors gatewayLifecycle so refresh can read it without becoming a new
-  // callback on every lifecycle flip, which remounted the poll effect and
-  // duplicated in-flight polls.
-  const gatewayLifecycleRef = useRef(gatewayLifecycle);
-  useEffect(() => {
-    gatewayLifecycleRef.current = gatewayLifecycle;
-  }, [gatewayLifecycle]);
-
-  // Only a refresh the user asked for spins the tray icon; the 10s poll must
-  // not make it spin on its own.
-  const refreshNow = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refresh();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [refresh]);
-
   useEffect(() => {
     void getGatewayLifecycle().then(setGatewayLifecycle);
   }, []);
-
-  useEffect(() => {
-    // Polls every 10s on a healthy gateway; each failed round doubles the
-    // delay (capped at 60s) so a down gateway is not hammered while hidden
-    // tabs stay paused.
-    let timer = 0;
-    let delay = POLL_INTERVAL_MS;
-    let cancelled = false;
-    const tick = async () => {
-      if (document.hidden) {
-        timer = window.setTimeout(tick, delay);
-        return;
-      }
-      const ok = await refresh();
-      delay = ok ? POLL_INTERVAL_MS : Math.min(delay * 2, 60_000);
-      if (!cancelled) timer = window.setTimeout(tick, delay);
-    };
-    void tick();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [refresh]);
-
-  useEffect(() => {
-    // hidden tray/notch windows skip the poll; the moment one becomes visible
-    // it must show fresh quota instead of waiting for the next tick
-    const onVisibility = () => {
-      if (!document.hidden) void refreshUsage().finally(() => void refresh());
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refresh, refreshUsage]);
 
   useEffect(() => {
     // the quota display mode is flipped in the console settings; the tray and
@@ -728,37 +580,6 @@ export default function App() {
   useEffect(() => {
     window.sessionStorage.setItem("mahoquot.provider", provider);
   }, [provider]);
-
-  useEffect(() => {
-    if (surface !== "settings" || settingsLoaded || loadState !== "online") return;
-    let active = true;
-    void Promise.all([
-      clients.management.scalar("proxy-url"),
-      clients.management.scalar("routing/strategy"),
-      clients.management.scalar("request-retry"),
-      clients.management.scalar("logging-to-file"),
-    ])
-      .then(([proxy, routing, retry, logging]) => {
-        if (!active) return;
-        if (typeof proxy["proxy-url"] === "string") setProxyUrl(proxy["proxy-url"]);
-        if (typeof routing.strategy === "string") setRoutingStrategy(routing.strategy);
-        if (typeof retry["request-retry"] === "number") {
-          setRequestRetry(String(retry["request-retry"]));
-        }
-        if (typeof logging["logging-to-file"] === "boolean") {
-          setLoggingToFile(logging["logging-to-file"]);
-        }
-        setSettingsLoaded(true);
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [clients, loadState, setNotice, settingsLoaded, surface]);
 
   const accounts = useMemo(
     () => mergeAccountsAndCredentials(stats.accounts, credentials),
@@ -1146,32 +967,6 @@ export default function App() {
       } else {
         setNotice("Authorization still pending. Approve in the provider window.");
       }
-    } catch (error) {
-      setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
-    } finally {
-      setPending("");
-    }
-  };
-
-  const saveProxySettings = async () => {
-    const retry = Number(requestRetry);
-    if (!Number.isInteger(retry) || retry < 0) {
-      setNotice("Request retry count must be a non-negative integer.");
-      return;
-    }
-    setPending("settings:save");
-    setNotice("");
-    try {
-      await Promise.all([
-        clients.management.saveScalar("proxy-url", proxyUrl.trim()),
-        clients.management.saveScalar("routing/strategy", routingStrategy),
-        clients.management.saveScalar("request-retry", retry),
-        clients.management.saveScalar("logging-to-file", loggingToFile),
-      ]);
-      setNotice("Proxy settings saved and applied.");
-      // The save may have repointed the console at a different gateway
-      // instance; drop the loaded-settings latch so its scalars re-read.
-      setSettingsLoaded(false);
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {

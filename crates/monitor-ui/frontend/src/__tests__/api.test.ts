@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { RawCredentialDocumentSchema } from "../lib/schemas";
 import { createGatewayClients } from "../lib/api";
+import { RawCredentialDocumentSchema } from "../lib/schemas";
 
 describe("credential order resync and raw import guard", () => {
   it("returns the server's saved order so a stale capture cannot resurrect a reverted order", async () => {
@@ -16,7 +16,10 @@ describe("credential order resync and raw import guard", () => {
   });
 
   it("falls back to an empty order when the server omits names", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: "ok" }))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ status: "ok" }))),
+    );
     const clients = createGatewayClients("http://127.0.0.1:18801", "k");
     expect(await clients.management.saveCredentialOrder(["a.json"])).toEqual([]);
   });
