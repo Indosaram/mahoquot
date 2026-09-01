@@ -1174,6 +1174,9 @@ export default function App() {
         clients.management.saveScalar("logging-to-file", loggingToFile),
       ]);
       setNotice("Proxy settings saved and applied.");
+      // The save may have repointed the console at a different gateway
+      // instance; drop the loaded-settings latch so its scalars re-read.
+      setSettingsLoaded(false);
     } catch (error) {
       setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {

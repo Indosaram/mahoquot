@@ -89,17 +89,35 @@ const describeFailure = async (response: Response): Promise<string> => {
   return body;
 };
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
 const requestJson = async (
   url: string,
   headers: HeadersInit,
   init?: RequestInit,
 ): Promise<unknown> => {
-  const response = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
-  if (!response.ok) {
-    throw new GatewayError(await describeFailure(response), response.status);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const signal = init?.signal ?? controller.signal;
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal,
+      headers: { ...headers, ...init?.headers },
+    });
+    if (!response.ok) {
+      throw new GatewayError(await describeFailure(response), response.status);
+    }
+    if (response.status === 204) return null;
+    return await response.json();
+  } catch (error) {
+    if (controller.signal.aborted && !(init?.signal?.aborted ?? false)) {
+      throw new GatewayError(`gateway request timed out after ${REQUEST_TIMEOUT_MS}ms`, 0);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  if (response.status === 204) return null;
-  return response.json();
 };
 
 export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayClients => {
