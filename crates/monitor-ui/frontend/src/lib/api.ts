@@ -3,8 +3,8 @@ import {
   type AdminStats,
   type AuthFileItem,
   type GatewayHealth,
-  type LogsResponse,
   GatewayHealthSchema,
+  type LogsResponse,
   parseAdminStats,
   parseAuthFiles,
   parseLogs,
@@ -109,7 +109,10 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
     admin: {
       stats: async () => parseAdminStats(await requestJson(`${base}/admin/stats`, authHeaders)),
       health: async () => {
-        const result = (await requestJson(`${base}/healthz`, authHeaders)) as Record<string, unknown>;
+        const result = (await requestJson(`${base}/healthz`, authHeaders)) as Record<
+          string,
+          unknown
+        >;
         return GatewayHealthSchema.parse(result);
       },
       warm: async (id) => {

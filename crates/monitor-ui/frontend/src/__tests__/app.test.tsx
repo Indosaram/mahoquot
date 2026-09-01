@@ -1656,9 +1656,7 @@ it("warns when the gateway speaks a different management schema", async () => {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/healthz")) {
-        return new Response(
-          JSON.stringify({ status: "ok", version: "9.9.9", api_schema: 99 }),
-        );
+        return new Response(JSON.stringify({ status: "ok", version: "9.9.9", api_schema: 99 }));
       }
       if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
       if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));

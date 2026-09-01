@@ -48,8 +48,8 @@ import {
   stopManagedGateway,
 } from "./lib/native";
 import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/notch";
-import { EXPECTED_API_SCHEMA } from "./lib/schemas";
 import { GENERIC_PROVIDER_OPTIONS, type ProviderCatalogEntry } from "./lib/provider-catalog";
+import { EXPECTED_API_SCHEMA } from "./lib/schemas";
 import type { LogRecord } from "./lib/schemas";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
 import { RawCredentialDocumentSchema } from "./lib/schemas";
