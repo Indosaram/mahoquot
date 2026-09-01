@@ -51,6 +51,7 @@ import { type LocalPoint, groupNotchProviders, providerAtPoint } from "./lib/not
 import { GENERIC_PROVIDER_OPTIONS, type ProviderCatalogEntry } from "./lib/provider-catalog";
 import type { LogRecord } from "./lib/schemas";
 import type { AdminStats, AuthFileItem } from "./lib/schemas";
+import { RawCredentialDocumentSchema } from "./lib/schemas";
 import {
   getGatewayBaseUrl,
   getQuotaShowRemaining,
@@ -402,6 +403,7 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [telemetry, setTelemetry] = useState<readonly TelemetrySample[]>([]);
   const firstLoad = useRef(true);
+  const POLL_INTERVAL_MS = 10_000;
 
   useEffect(() => {
     if (!onboardingOpen && !configOpen) return;
@@ -465,8 +467,9 @@ export default function App() {
     [clients],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean> => {
     if (firstLoad.current) setLoadState("loading");
+    let succeeded = true;
     try {
       const nextStats = await clients.admin.stats();
       setStats(nextStats);
@@ -480,15 +483,16 @@ export default function App() {
       setGatewayLifecycle("running");
       firstLoad.current = false;
     } catch (error) {
+      succeeded = false;
       setLoadState(
         error instanceof GatewayError && error.status === 401
           ? "relay-locked"
-          : gatewayLifecycle === "stopped"
+          : gatewayLifecycleRef.current === "stopped"
             ? "stopped"
             : "starting",
       );
       firstLoad.current = false;
-      return;
+      return false;
     }
     // These two are independent: the gateway rejects /logs outright while file
     // logging is disabled, and folding both into one Promise.all used to wipe the
@@ -511,7 +515,16 @@ export default function App() {
       setLogs([]);
       setLogsError(errorMessage(logResult.reason));
     }
-  }, [clients, gatewayLifecycle]);
+    return succeeded;
+  }, [clients]);
+
+  // Mirrors gatewayLifecycle so refresh can read it without becoming a new
+  // callback on every lifecycle flip, which remounted the poll effect and
+  // duplicated in-flight polls.
+  const gatewayLifecycleRef = useRef(gatewayLifecycle);
+  useEffect(() => {
+    gatewayLifecycleRef.current = gatewayLifecycle;
+  }, [gatewayLifecycle]);
 
   // Only a refresh the user asked for spins the tray icon; the 10s poll must
   // not make it spin on its own.
@@ -529,11 +542,26 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 10_000);
-    return () => window.clearInterval(timer);
+    // Polls every 10s on a healthy gateway; each failed round doubles the
+    // delay (capped at 60s) so a down gateway is not hammered while hidden
+    // tabs stay paused.
+    let timer = 0;
+    let delay = POLL_INTERVAL_MS;
+    let cancelled = false;
+    const tick = async () => {
+      if (document.hidden) {
+        timer = window.setTimeout(tick, delay);
+        return;
+      }
+      const ok = await refresh();
+      delay = ok ? POLL_INTERVAL_MS : Math.min(delay * 2, 60_000);
+      if (!cancelled) timer = window.setTimeout(tick, delay);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -803,9 +831,12 @@ export default function App() {
     setPending(`order:${accountId}`);
     setNotice("");
     try {
-      await clients.management.saveCredentialOrder(names);
-      setCredentials(
-        [...credentials].sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name)),
+      const saved = await clients.management.saveCredentialOrder(names);
+      // Re-sync from the server's saved order: a render-stale capture or an
+      // interleaved poll must not be able to resurrect a reverted order.
+      const order = saved.length ? saved : names;
+      setCredentials((prev) =>
+        [...prev].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)),
       );
       setNotice("Account order saved. This is a display order and does not change routing.");
     } catch (error) {
@@ -899,9 +930,14 @@ export default function App() {
       if (rawCredentialForm.provider === "vertex") {
         await clients.management.importVertexServiceAccount(rawCredentialForm.document);
       } else {
-        const content = JSON.parse(rawCredentialForm.document) as Record<string, unknown>;
+        const parsed = RawCredentialDocumentSchema.safeParse(
+          JSON.parse(rawCredentialForm.document) as unknown,
+        );
+        if (!parsed.success) {
+          throw new Error("credential document must be a non-empty JSON object");
+        }
         await clients.management.importCredential(`kiro-import-${Date.now()}.json`, {
-          ...content,
+          ...parsed.data,
           type: "kiro",
         });
       }
@@ -1487,7 +1523,7 @@ export default function App() {
             confirmRemove={confirmRemove}
             onSelectProvider={setProvider}
             onRunAccountAction={runAccountAction}
-            onRefresh={refresh}
+            onRefresh={() => void refresh()}
             onSetCredentialDisabled={setCredentialDisabled}
             onReauthenticate={reauthenticate}
             onRemoveCredential={removeCredential}
@@ -1540,6 +1576,9 @@ export default function App() {
               }
               setGatewayBaseUrl(baseUrl);
               setRelayKey(relayKey);
+              // The saved scalars belong to the previous instance; force the
+              // settings surface to reload them from the new connection.
+              setSettingsLoaded(false);
               setNotice("Connection saved — active now for this console.");
               void refresh();
             }}

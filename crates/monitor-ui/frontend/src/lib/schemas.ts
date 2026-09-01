@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+/**
+ * Raw credential documents arrive as pasted JSON of provider-specific shape;
+ * only the structural minimum is enforced here before the document is stored.
+ */
+export const RawCredentialDocumentSchema = z
+  .record(z.unknown())
+  .refine((doc) => Object.keys(doc).length > 0, {
+    message: "credential document must not be empty",
+  });
+
 export const TtftSnapshotSchema = z.object({
   p50_ms: z.number().default(0),
   p90_ms: z.number().default(0),

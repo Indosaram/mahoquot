@@ -60,7 +60,7 @@ export interface GatewayClients {
     importLocalTrae(): Promise<void>;
     importCredential(name: string, content: Record<string, unknown>): Promise<void>;
     importVertexServiceAccount(document: string): Promise<void>;
-    saveCredentialOrder(names: readonly string[]): Promise<void>;
+    saveCredentialOrder(names: readonly string[]): Promise<readonly string[]>;
     importLocalClaude(): Promise<void>;
     importLocalZcode(): Promise<void>;
 
@@ -211,11 +211,12 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         });
       },
       saveCredentialOrder: async (names) => {
-        await requestJson(`${base}/v0/management/auth-files/order`, authHeaders, {
+        const result = (await requestJson(`${base}/v0/management/auth-files/order`, authHeaders, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ names }),
-        });
+        })) as { names?: string[] } | null;
+        return result?.names ?? [];
       },
       importLocalClaude: async () => {
         await requestJson(`${base}/v0/management/claude/import-local`, authHeaders, {
