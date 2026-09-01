@@ -55,13 +55,20 @@ const createProps = (overrides?: Partial<AccountsSurfaceProps>): AccountsSurface
 });
 
 describe("AccountsSurface component", () => {
-  it("renders persistent input, output, and total token usage", () => {
+  it("folds token usage and reveals input, output, and total on expand", () => {
     render(<AccountsSurface {...createProps()} />);
 
     const usage = screen.getByLabelText("Token usage");
+    expect(usage).toHaveTextContent("1.7K");
+    expect(usage).not.toHaveTextContent("1.3K");
+
+    fireEvent.click(screen.getByRole("button", { name: /Tokens/ }));
     expect(usage).toHaveTextContent("1.3K");
     expect(usage).toHaveTextContent("430");
     expect(usage).toHaveTextContent("1.7K");
+
+    fireEvent.click(screen.getByRole("button", { name: /Tokens/ }));
+    expect(usage).not.toHaveTextContent("1.3K");
   });
 
   it("renders provider tabs, count badges, and account cards", () => {

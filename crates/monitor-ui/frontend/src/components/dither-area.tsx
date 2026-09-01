@@ -1,5 +1,5 @@
 import { type DitherSeed, backingSize, paintColumn, resample } from "@/lib/dither";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 interface DitherAreaProps {
   readonly values: readonly number[];
@@ -10,12 +10,10 @@ interface DitherAreaProps {
   readonly className?: string;
 }
 
-const REFRESH_MS = 300;
-
 /** Canvas dithered area chart rendering the dither-kit look: a half-resolution
  * backing canvas painted with Bayer-ordered dithering, upscaled `pixelated`,
  * plus a blurred bloom layer blended additively. Repaints on resize and when
- * the series changes; hover lifts the fill brightness. */
+ * the series changes; the fill is static — no hover feedback. */
 export function DitherArea({
   values,
   seed,
@@ -27,18 +25,6 @@ export function DitherArea({
   const hostRef = useRef<HTMLDivElement>(null);
   const paintRef = useRef<HTMLCanvasElement>(null);
   const bloomRef = useRef<HTMLCanvasElement>(null);
-  const [hover, setHover] = useState(false);
-  const [intensity, setIntensity] = useState(0);
-
-  useEffect(() => {
-    if (!hover) {
-      setIntensity(0);
-      return;
-    }
-    setIntensity(1);
-    const timer = window.setTimeout(() => setIntensity(0.4), REFRESH_MS);
-    return () => window.clearTimeout(timer);
-  }, [hover]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -66,9 +52,9 @@ export function DitherArea({
       bloomSink.clearRect(0, 0, cols, rows);
       for (let col = 0; col < cols; col += 1) {
         const depth = Math.round(columns[col] * (floor - 1));
-        paintColumn(sink, col, floor - depth, floor, seed, { intensity });
+        paintColumn(sink, col, floor - depth, floor, seed, { intensity: 0.4 });
         paintColumn(bloomSink, col, floor - depth, floor, seed, {
-          intensity: Math.min(1, intensity + 0.3),
+          intensity: 0.7,
         });
       }
     };
@@ -77,7 +63,7 @@ export function DitherArea({
     const observer = new ResizeObserver(draw);
     observer.observe(host);
     return () => observer.disconnect();
-  }, [values, seed, height, intensity]);
+  }, [values, seed, height]);
 
   return (
     <div
@@ -86,8 +72,6 @@ export function DitherArea({
       style={{ position: "relative", height }}
       role="img"
       aria-label={ariaLabel}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
     >
       <canvas ref={paintRef} style={canvasStyle} />
       {bloom ? <canvas ref={bloomRef} style={{ ...canvasStyle, ...bloomStyle }} /> : null}

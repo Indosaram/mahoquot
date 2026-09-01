@@ -132,7 +132,9 @@ export const filterTelemetryRange = <T extends { readonly timestamp: number }>(
   now = Date.now(),
 ): readonly T[] => {
   const earliest = now - rangeDurationMs[range];
-  return samples.filter((sample) => sample.timestamp >= earliest && sample.timestamp <= now);
+  return samples.filter(
+    (sample) => sample.timestamp >= earliest && sample.timestamp <= now + 60_000,
+  );
 };
 
 export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
@@ -192,8 +194,12 @@ export const telemetrySeries = (
   now: number = Date.now(),
   points = 240,
 ): readonly TelemetryPoint[] => {
-  const bucketCount = Math.max(1, Math.floor(points));
   const windowMs = rangeDurationMs[range];
+  // Since telemetry is stored at 1-minute bucket resolution, the bucket count
+  // must not exceed 1 bucket per minute (e.g. 30 buckets for 30m, 60 for 1h),
+  // otherwise sub-minute buckets produce artificial zero gaps between minutes.
+  const maxBucketsForRange = Math.max(1, Math.floor(windowMs / 60_000));
+  const bucketCount = Math.max(1, Math.min(Math.floor(points), maxBucketsForRange));
   const bucketMs = windowMs / bucketCount;
   const start = now - windowMs;
 
@@ -206,9 +212,12 @@ export const telemetrySeries = (
   }));
 
   for (const sample of samples) {
-    if (sample.timestamp < start || sample.timestamp > now) continue;
+    if (sample.timestamp < start || sample.timestamp > now + 60_000) continue;
     // The final instant belongs to the last bucket rather than a phantom one.
-    const index = Math.min(bucketCount - 1, Math.floor((sample.timestamp - start) / bucketMs));
+    const index = Math.min(
+      bucketCount - 1,
+      Math.max(0, Math.floor((sample.timestamp - start) / bucketMs)),
+    );
     const bucket = series[index];
     if (!bucket) continue;
     series[index] = {

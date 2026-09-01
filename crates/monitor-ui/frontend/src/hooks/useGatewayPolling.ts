@@ -13,6 +13,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export type LoadState = "loading" | "online" | "starting" | "stopped" | "relay-locked";
 
 const POLL_INTERVAL_MS = 10_000;
+const STARTUP_RETRY_MS = 2_000;
+
+/** Next poll delay after a round: fast retries until the first success, then
+ * a 10s cadence with capped exponential backoff on later failures. Before
+ * the first successful stats fetch the freshly spawned gateway is still
+ * coming up, so failures retry fast instead of backing off for tens of
+ * seconds. */
+export function nextPollDelayMs(ok: boolean, hasSucceeded: boolean, delay: number): number {
+  if (ok) return POLL_INTERVAL_MS;
+  if (!hasSucceeded) return STARTUP_RETRY_MS;
+  return Math.min(delay * 2, 60_000);
+}
 
 const emptyStats: AdminStats = {
   uptime_secs: 0,
@@ -42,6 +54,7 @@ export function useGatewayPolling(clients: GatewayClients) {
   const [logsError, setLogsError] = useState("");
   const [schemaMismatch, setSchemaMismatch] = useState<string | null>(null);
   const firstLoad = useRef(true);
+  const hasSucceeded = useRef(false);
   const usageRefreshAt = useRef(0);
 
   // Mirrors gatewayLifecycle so refresh can read it without becoming a new
@@ -122,6 +135,7 @@ export function useGatewayPolling(clients: GatewayClients) {
       firstLoad.current = false;
       return false;
     }
+    hasSucceeded.current = true;
     // These two are independent: the gateway rejects /logs outright while file
     // logging is disabled, and folding both into one Promise.all used to wipe the
     // credential inventory on every poll, silently stripping account management.
@@ -174,7 +188,7 @@ export function useGatewayPolling(clients: GatewayClients) {
         return;
       }
       const ok = await refresh();
-      delay = ok ? POLL_INTERVAL_MS : Math.min(delay * 2, 60_000);
+      delay = nextPollDelayMs(ok, hasSucceeded.current, delay);
       if (!cancelled) timer = window.setTimeout(tick, delay);
     };
     void tick();
@@ -183,6 +197,38 @@ export function useGatewayPolling(clients: GatewayClients) {
       window.clearTimeout(timer);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    // The console window is created hidden; the moment the OS brings it to
+    // front (dock reopen, tray open) the visible data must load right then.
+    const tauriWindow = (
+      window as unknown as {
+        __TAURI__?: {
+          window?: {
+            getCurrentWindow?: () => {
+              onFocusChanged?: (
+                handler: (event: { payload: boolean }) => void,
+              ) => Promise<() => void>;
+            };
+          };
+        };
+      }
+    ).__TAURI__;
+    const onFocusChanged = tauriWindow?.window?.getCurrentWindow?.().onFocusChanged;
+    if (!onFocusChanged) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onFocusChanged((event) => {
+      if (event.payload && !document.hidden) void refreshNow();
+    }).then((fn) => {
+      if (disposed) fn?.();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refreshNow]);
 
   useEffect(() => {
     // hidden tray/notch windows skip the poll; the moment one becomes visible

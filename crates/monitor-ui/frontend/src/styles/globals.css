@@ -1283,6 +1283,11 @@ h2 {
   align-items: center;
   gap: 8px;
 }
+.account-id strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .account-id > span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1306,10 +1311,45 @@ h2 {
   padding-top: 11px;
   border-top: 1px solid var(--line-soft);
 }
+.token-usage {
+  border-block: 1px solid var(--line-soft);
+}
+.token-usage-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 2px;
+  border: 0;
+  background: none;
+  color: var(--fg-faint);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.token-usage-toggle:hover {
+  color: var(--fg-dim);
+}
+.token-usage-toggle svg {
+  transition: transform 120ms ease;
+}
+.token-usage-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.token-usage-toggle strong {
+  margin-left: auto;
+  color: var(--fg);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
 .token-usage-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-block: 1px solid var(--line-soft);
 }
 .token-usage-summary > div {
   min-width: 0;

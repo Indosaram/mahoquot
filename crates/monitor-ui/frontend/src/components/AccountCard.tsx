@@ -1,5 +1,13 @@
-import { AlertTriangle, GripVertical, RefreshCw, RotateCcw, Sparkles, Trash2 } from "lucide-react";
-import { Fragment, type MouseEvent } from "react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  GripVertical,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { Fragment, type MouseEvent, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
@@ -60,6 +68,12 @@ export const AccountCard = ({
 }: AccountCardProps) => {
   const isPending = pending !== "";
   const rows = quotaRows(account);
+  const [tokensOpen, setTokensOpen] = useState(false);
+  const detail = account.runtimeId ?? account.credentialName ?? "Credential only";
+  const detailRedundant =
+    detail === account.label ||
+    detail.toLowerCase().includes(account.label.toLowerCase()) ||
+    account.label.toLowerCase().includes(detail.toLowerCase());
 
   return (
     <Card
@@ -106,13 +120,10 @@ export const AccountCard = ({
           ) : null}
           <div className="account-id">
             <div>
-              <strong>{account.label}</strong>
+              <strong title={account.label}>{account.label}</strong>
               <HealthBadge account={account} />
             </div>
-            {(() => {
-              const detail = account.runtimeId ?? account.credentialName ?? "Credential only";
-              return detail === account.label ? null : <span title={detail}>{detail}</span>;
-            })()}
+            {detailRedundant ? null : <span title={detail}>{detail}</span>}
           </div>
         </div>
         <div className="account-actions">
@@ -189,25 +200,41 @@ export const AccountCard = ({
           ) : null}
         </div>
       </div>
-      <div className="token-usage-summary" aria-label="Token usage">
-        <div>
-          <span>Input</span>
-          <strong title={account.inputTokens.toLocaleString()}>
-            {formatTokenCount(account.inputTokens)}
-          </strong>
-        </div>
-        <div>
-          <span>Output</span>
-          <strong title={account.outputTokens.toLocaleString()}>
-            {formatTokenCount(account.outputTokens)}
-          </strong>
-        </div>
-        <div>
-          <span>Total tokens</span>
+      <div className="token-usage" aria-label="Token usage">
+        <button
+          type="button"
+          className="token-usage-toggle"
+          aria-expanded={tokensOpen}
+          onClick={() => setTokensOpen((open) => !open)}
+        >
+          <ChevronDown size={13} aria-hidden="true" />
+          <span>Tokens</span>
           <strong title={account.totalTokens.toLocaleString()}>
             {formatTokenCount(account.totalTokens)}
           </strong>
-        </div>
+        </button>
+        {tokensOpen ? (
+          <div className="token-usage-summary">
+            <div>
+              <span>Input</span>
+              <strong title={account.inputTokens.toLocaleString()}>
+                {formatTokenCount(account.inputTokens)}
+              </strong>
+            </div>
+            <div>
+              <span>Output</span>
+              <strong title={account.outputTokens.toLocaleString()}>
+                {formatTokenCount(account.outputTokens)}
+              </strong>
+            </div>
+            <div>
+              <span>Total tokens</span>
+              <strong title={account.totalTokens.toLocaleString()}>
+                {formatTokenCount(account.totalTokens)}
+              </strong>
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="usage-section">
         {account.usage?.totals ? (

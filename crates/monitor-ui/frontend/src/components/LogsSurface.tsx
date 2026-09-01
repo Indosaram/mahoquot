@@ -36,11 +36,15 @@ export function LogsSurface({ records, logsError, fromMemoryTail }: LogsSurfaceP
   );
   const visibleRequests = useMemo(
     () =>
-      requests.filter(
-        (record) => providerFilter === "all" || (record.provider ?? "unknown") === providerFilter,
-      ),
+      requests
+        .filter(
+          (record) => providerFilter === "all" || (record.provider ?? "unknown") === providerFilter,
+        )
+        .slice()
+        .reverse(),
     [requests, providerFilter],
   );
+  const visibleProxyEvents = useMemo(() => proxyEvents.slice().reverse(), [proxyEvents]);
   const kpi = useMemo(() => {
     const total = visibleRequests.length;
     const ok = visibleRequests.filter((record) => record.success).length;
@@ -185,7 +189,7 @@ export function LogsSurface({ records, logsError, fromMemoryTail }: LogsSurfaceP
               </tr>
             </thead>
             <tbody>
-              {proxyEvents.map((record, index) => (
+              {visibleProxyEvents.map((record, index) => (
                 <tr key={`${record.timestamp}-${index}`}>
                   <td className="dim">{timeOf(record)}</td>
                   <td>{record.message ?? "-"}</td>
@@ -193,7 +197,9 @@ export function LogsSurface({ records, logsError, fromMemoryTail }: LogsSurfaceP
               ))}
             </tbody>
           </table>
-          {proxyEvents.length === 0 ? <div className="logs-empty">No proxy events.</div> : null}
+          {visibleProxyEvents.length === 0 ? (
+            <div className="logs-empty">No proxy events.</div>
+          ) : null}
         </div>
       )}
     </div>
