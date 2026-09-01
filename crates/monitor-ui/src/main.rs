@@ -1238,6 +1238,14 @@ fn main() {
     // ours is overwritten during setup and SIGTERM strands the gateway.
     install_gateway_signal_guard();
     app.run(|app, event| {
+        // A macOS Dock click arrives as a Reopen event: reveal the hidden
+        // console window so clicking the icon feels like "open the app".
+        if let tauri::RunEvent::Reopen { .. } = event {
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
         if let tauri::RunEvent::ExitRequested { .. } = event {
             #[cfg(target_os = "macos")]
             {
