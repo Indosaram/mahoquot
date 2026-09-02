@@ -4,7 +4,6 @@ import { type Page, type Request, expect, test } from "@playwright/test";
 const evidenceDir = "/tmp/mahoquot-todo13-qa";
 
 const START_MS = Date.UTC(2026, 8, 1, 0, 0, 0);
-const END_MS = Date.UTC(2026, 8, 2, 0, 0, 0);
 
 const schedulerSettings = {
   enabled: true,
@@ -77,32 +76,43 @@ const historyEventsResponse = {
   events: [
     {
       "event-id": "evt-1",
-      "started-at-ms": START_MS + 1_000,
-      "duration-ms": 812,
+      "occurred-at-ms": START_MS + 1_000,
       account: "account-a",
       provider: "codex",
       model: "gpt-5.6-sol",
       "key-label": "key-prod",
       status: 200,
-      "estimated-cost-usd": 5.0,
+      succeeded: true,
       "input-tokens": 2_000_000,
       "output-tokens": 100_000,
+      "cached-input-tokens": 0,
+      "reasoning-tokens": 0,
+      "total-tokens": 2_100_000,
+      "latency-ms": 812,
+      "estimated-cost-usd": 5.0,
+      "price-version": "2026-09",
     },
     {
       "event-id": "evt-2",
-      "started-at-ms": START_MS + 2_000,
-      "duration-ms": 640,
+      "occurred-at-ms": START_MS + 2_000,
       account: "account-b",
       provider: "codex",
       model: "gpt-5.6-sol",
       "key-label": "key-prod",
       status: 429,
-      "estimated-cost-usd": 2.5,
+      succeeded: false,
       "input-tokens": 1_500_000,
       "output-tokens": 150_000,
+      "cached-input-tokens": 0,
+      "reasoning-tokens": 0,
+      "total-tokens": 1_650_000,
+      "latency-ms": 640,
+      "estimated-cost-usd": 2.5,
+      "price-version": "2026-09",
     },
   ],
   "next-cursor": null,
+  totals,
 };
 
 const historyHealthResponse = {
@@ -282,6 +292,11 @@ const installMocks = (page: Page, options: MockOptions = {}) => {
 const openAccounts = async (page: Page) => {
   await page.goto("/management.html");
   await page.getByRole("button", { name: "Accounts" }).click();
+};
+
+const openSettings = async (page: Page) => {
+  await page.goto("/management.html");
+  await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Account scheduling")).toBeVisible();
 };
 
@@ -290,11 +305,11 @@ test.beforeAll(async () => mkdir(evidenceDir, { recursive: true }));
 test("scheduler history cost reset flow", async ({ page }) => {
   const captured = installMocks(page);
 
-  await openAccounts(page);
+  await openSettings(page);
   const scheduler = page.getByLabel("Account scheduling");
   await expect(scheduler.getByText("Account A")).toBeVisible();
   await expect(scheduler.getByText("Account B")).toBeVisible();
-  await expect(scheduler.getByText("Selected")).toBeVisible();
+  await expect(scheduler.getByText("42% remaining")).toBeVisible();
   await expect(scheduler.getByText("Parked")).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/scheduler-order.png`, fullPage: true });
 
@@ -308,23 +323,9 @@ test("scheduler history cost reset flow", async ({ page }) => {
   await page.getByRole("button", { name: "Logs" }).click();
   const history = page.getByLabel("Request history", { exact: true });
   await expect(history).toBeVisible();
-  await page.getByLabel("History start").fill("2026-09-01T09:00");
-  await page.getByLabel("History end").fill("2026-09-01T18:00");
-  await page.getByRole("button", { name: "Apply history filters" }).click();
-  await expect
-    .poll(() => captured.filter((call) => call.url.includes("/history/stats")).length)
-    .toBeGreaterThan(1);
-  const statsUrl = captured
-    .map((call) => call.url)
-    .filter((url) => url.includes("/history/stats"))
-    .at(-1) as string;
-  const query = new URL(statsUrl).searchParams;
-  const expectedStartMs = await page.evaluate(() => new Date("2026-09-01T09:00").getTime());
-  expect(query.get("start-ms")).toBe(String(expectedStartMs));
-  expect(Number(query.get("end-ms"))).toBeGreaterThan(expectedStartMs);
-  await expect(page.getByLabel("Request history totals")).toContainText("$7.50");
-  await expect(page.getByLabel("Request history totals")).toContainText("3");
-  await page.screenshot({ path: `${evidenceDir}/history-range-cost.png`, fullPage: true });
+  await expect(page.getByLabel("Request totals")).toContainText("3");
+  await expect(page.getByLabel("Request totals")).toContainText("3,750,000");
+  await page.screenshot({ path: `${evidenceDir}/history-totals.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Settings" }).click();
   const priceInput = page.getByLabel("Input price for gpt-5.6-sol");
@@ -358,7 +359,7 @@ test("scheduler history cost reset flow", async ({ page }) => {
 
 test("unknown quota stays unknown for the scheduler", async ({ page }) => {
   installMocks(page, { schedulerStatus: schedulerStatusUnknownQuota });
-  await openAccounts(page);
+  await openSettings(page);
   const scheduler = page.getByLabel("Account scheduling");
   await expect(scheduler.getByText("Quota unknown")).toBeVisible();
   await expect(scheduler.getByText("0% remaining")).toHaveCount(0);

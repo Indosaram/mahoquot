@@ -183,7 +183,6 @@ export default function App() {
   const [historyStats, setHistoryStats] = useState<HistoryStatsResponse | null>(null);
   const [historyHealth, setHistoryHealth] = useState<HistoryHealth | null>(null);
   const [historyError, setHistoryError] = useState("");
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [schedulerSettings, setSchedulerSettings] = useState<SchedulerSettings | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   const [schedulerError, setSchedulerError] = useState("");
@@ -305,7 +304,6 @@ export default function App() {
 
   const queryHistory = useCallback(
     async (query: HistoryStatsQuery = {}) => {
-      setHistoryLoading(true);
       setHistoryError("");
       try {
         const [nextStats, nextHealth] = await Promise.all([
@@ -323,8 +321,6 @@ export default function App() {
             ? "request history worker is unavailable"
             : message,
         );
-      } finally {
-        setHistoryLoading(false);
       }
     },
     [clients],
@@ -341,7 +337,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (surface !== "accounts") return;
+    if (surface !== "settings") return;
     setSchedulerError("");
     void Promise.all([clients.management.schedulerSettings(), clients.management.schedulerStatus()])
       .then(([settings, status]) => {
@@ -1179,12 +1175,6 @@ export default function App() {
             onDropCredential={dropCredentialOn}
             onSetDragging={setDragging}
             onContextMenu={(event, account) => openMenu(event, accountMenuItems(account))}
-            schedulerSettings={schedulerSettings}
-            schedulerStatus={schedulerStatus}
-            schedulerError={schedulerError}
-            schedulerPending={schedulerPending}
-            onSaveSchedulerSettings={saveSchedulerSettings}
-            onSaveSchedulerOrder={saveSchedulerOrder}
           />
         ) : null}
 
@@ -1223,16 +1213,8 @@ export default function App() {
           <DurableLogs
             records={logs}
             fromMemoryTail={!loggingToFile}
-            historyStats={historyStats}
-            historyHealth={historyHealth}
-            historyError={historyError}
-            historyLoading={historyLoading}
-            onHistoryQuery={queryHistory}
             loadHistory={clients.management.historyEvents}
             loadHistoryDetail={clients.management.historyEvent}
-            countHistory={clients.management.historyCount}
-            clearHistory={clearHistory}
-            exportHistory={clients.management.exportHistory}
           />
         ) : null}
 
@@ -1340,6 +1322,22 @@ export default function App() {
             onOpenConfigEditor={openConfigEditor}
             historyHealth={historyHealth}
             historyStats={historyStats}
+            historyError={historyError}
+            countHistory={clients.management.historyCount}
+            clearHistory={clearHistory}
+            exportHistory={clients.management.exportHistory}
+            onHistoryCleared={(deleted) =>
+              setNotice(`Cleared ${deleted.toLocaleString("en-US")} request records.`)
+            }
+            schedulerSettings={schedulerSettings}
+            schedulerStatus={schedulerStatus}
+            schedulerAccountLabels={Object.fromEntries(
+              accounts.map((account) => [account.id, account.label]),
+            )}
+            schedulerError={schedulerError}
+            schedulerPending={schedulerPending}
+            onSaveSchedulerSettings={saveSchedulerSettings}
+            onSaveSchedulerOrder={saveSchedulerOrder}
             modelPrices={modelPrices}
             onSaveModelPrice={saveModelPrice}
             tunnelStatus={tunnelStatus}

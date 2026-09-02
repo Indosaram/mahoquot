@@ -1389,25 +1389,27 @@ test("logs pages and exports 10000 rows", async ({ page }) => {
   await page.getByRole("button", { name: "View history-50 details" }).click();
   await expect(page.getByRole("region", { name: "Request detail" })).toContainText("history-50");
 
-  await page.getByLabel("History provider").fill("codex");
-  await page.getByLabel("History status").fill("429");
-  await page.getByRole("button", { name: "Apply history filters" }).click();
-  await expect(page.getByText("1–50 of 1,000")).toBeVisible();
+  await page.getByLabel("Log provider filter").selectOption("claude");
+  await expect(page.getByText("1–50 of 5,000")).toBeVisible();
+  await expect(page.locator(".history-events-table tbody tr")).toHaveCount(50);
 
-  await page.getByRole("button", { name: "Clear history" }).click();
+  await page.getByRole("button", { name: "Settings" }).click();
+  const pricing = page.getByRole("region", { name: "History and pricing" });
+  await expect(pricing).toBeVisible();
+
+  await pricing.getByRole("button", { name: "Clear history" }).click();
   const clearDialog = page.getByRole("dialog", { name: "Clear request history" });
-  await expect(clearDialog).toContainText("1,000 request records");
+  await expect(clearDialog).toContainText("10,000 request records");
   await expect(clearDialog).toContainText("dashboard history");
   await expect(clearDialog).toContainText("Proxy file logs are not affected");
   await clearDialog.getByRole("button", { name: "Cancel" }).click();
 
-  await page.getByRole("button", { name: "Export CSV" }).click();
-  await page.getByRole("button", { name: "Export JSON" }).click();
+  await pricing.getByRole("button", { name: "Export CSV" }).click();
+  await pricing.getByRole("button", { name: "Export JSON" }).click();
   await expect.poll(() => downloads.length).toBe(2);
   const csv = downloads.find((item) => item.name.endsWith(".csv"));
   const json = downloads.find((item) => item.name.endsWith(".json"));
-  expect(csv?.body.split("\n")).toHaveLength(1_001);
-  expect(JSON.parse(json?.body ?? "{}").events).toHaveLength(1_000);
-  expect(JSON.parse(json?.body ?? "{}").count).toBe(1_000);
-  await expect(page.locator(".history-events-table tbody tr")).toHaveCount(50);
+  expect(csv?.body.split("\n")).toHaveLength(10_001);
+  expect(JSON.parse(json?.body ?? "{}").events).toHaveLength(10_000);
+  expect(JSON.parse(json?.body ?? "{}").count).toBe(10_000);
 });

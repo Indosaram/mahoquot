@@ -35,6 +35,17 @@ pub fn set_notch_window_frame<R: Runtime>(
 ) -> tauri::Result<()> {
     let handle = hwnd(window)?;
     let scale = window.scale_factor()?;
+    // Enforce the toolwindow/no-activate styles on every resize: other
+    // components (tao flag rewrites, webview init) can clear these bits
+    // after apply_menu_bar_level, and the notch must stay non-activating.
+    unsafe {
+        let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+        let _ = SetWindowLongPtrW(
+            handle,
+            GWL_EXSTYLE,
+            style | WS_EX_NOACTIVATE.0 as isize | WS_EX_TOOLWINDOW.0 as isize,
+        );
+    }
     let mut rect = RECT::default();
     unsafe { GetWindowRect(handle, &mut rect) }.map_err(|_| tauri::Error::WindowNotFound)?;
     let current_width = rect.right - rect.left;

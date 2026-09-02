@@ -1,5 +1,15 @@
-import { Copy, Network, Route, Settings2, TerminalSquare } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  ListOrdered,
+  Network,
+  Route,
+  Settings2,
+  TerminalSquare,
+} from "lucide-react";
 import { useEffect, useState } from "react";
+import type { HistoryStatsQuery } from "../lib/api";
 import type {
   GatewayLifecycleStatus,
   NativeSettingsState,
@@ -8,7 +18,13 @@ import type {
   UpdateStatus,
 } from "../lib/native";
 import { blocks } from "../lib/pending";
-import type { HistoryHealth, HistoryStatsResponse, ModelPrice } from "../lib/schemas";
+import type {
+  HistoryHealth,
+  HistoryStatsResponse,
+  ModelPrice,
+  SchedulerSettings,
+  SchedulerStatus,
+} from "../lib/schemas";
 import { TunnelCard } from "./TunnelCard";
 import { Badge, Button, Card, Field, Input } from "./ui";
 
@@ -51,6 +67,21 @@ export interface SettingsSurfaceProps {
   readonly onOpenConfigEditor: () => void | Promise<void>;
   readonly historyHealth: HistoryHealth | null;
   readonly historyStats: HistoryStatsResponse | null;
+  readonly historyError?: string | undefined;
+  readonly countHistory?: (query: HistoryStatsQuery) => Promise<number>;
+  readonly clearHistory?: (query: HistoryStatsQuery) => Promise<number>;
+  readonly exportHistory?: (
+    format: "csv" | "json",
+    query: HistoryStatsQuery,
+  ) => Promise<Blob | undefined>;
+  readonly onHistoryCleared?: (deleted: number) => void;
+  readonly schedulerSettings?: SchedulerSettings | null;
+  readonly schedulerStatus?: SchedulerStatus | null;
+  readonly schedulerAccountLabels?: Readonly<Record<string, string>>;
+  readonly schedulerError?: string | undefined;
+  readonly schedulerPending?: boolean;
+  readonly onSaveSchedulerSettings?: (patch: Partial<SchedulerSettings>) => void | Promise<void>;
+  readonly onSaveSchedulerOrder?: (order: readonly string[]) => void | Promise<void>;
   readonly modelPrices?: readonly ModelPrice[];
   readonly onSaveModelPrice: (price: ModelPrice) => void | Promise<void>;
   readonly tunnelStatus: TunnelStatus;
@@ -100,6 +131,18 @@ export function SettingsSurface({
   onShowRemainingChange,
   historyHealth,
   historyStats,
+  historyError,
+  countHistory,
+  clearHistory,
+  exportHistory,
+  onHistoryCleared = () => undefined,
+  schedulerSettings = null,
+  schedulerStatus = null,
+  schedulerAccountLabels = {},
+  schedulerError,
+  schedulerPending = false,
+  onSaveSchedulerSettings = () => undefined,
+  onSaveSchedulerOrder = () => undefined,
   modelPrices = [],
   onSaveModelPrice,
   tunnelStatus,
@@ -110,8 +153,70 @@ export function SettingsSurface({
   onCopyTunnelUrl,
 }: SettingsSurfaceProps) {
   const [draftPrices, setDraftPrices] = useState<readonly ModelPrice[]>(modelPrices);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearCount, setClearCount] = useState<number | null>(null);
+  const [historyBusy, setHistoryBusy] = useState<"" | "csv" | "json" | "clear">("");
+  const [historyActionError, setHistoryActionError] = useState("");
 
   useEffect(() => setDraftPrices(modelPrices), [modelPrices]);
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const runHistoryExport = async (format: "csv" | "json") => {
+    if (!exportHistory) return;
+    setHistoryBusy(format);
+    setHistoryActionError("");
+    try {
+      const blob = await exportHistory(format, {});
+      if (blob) downloadBlob(blob, `mahoquot-request-history.${format}`);
+    } catch (error) {
+      setHistoryActionError(error instanceof Error ? error.message : "History export failed");
+    } finally {
+      setHistoryBusy("");
+    }
+  };
+
+  const requestClearConfirmation = async () => {
+    if (!countHistory) return;
+    setHistoryActionError("");
+    try {
+      setClearCount(await countHistory({}));
+      setConfirmClear(true);
+    } catch (error) {
+      setHistoryActionError(error instanceof Error ? error.message : "History count unavailable");
+    }
+  };
+
+  const confirmHistoryClear = async () => {
+    if (!clearHistory) return;
+    setHistoryBusy("clear");
+    setHistoryActionError("");
+    try {
+      const deleted = await clearHistory({});
+      setConfirmClear(false);
+      onHistoryCleared(deleted);
+    } catch (error) {
+      setHistoryActionError(error instanceof Error ? error.message : "History could not be cleared");
+    } finally {
+      setHistoryBusy("");
+    }
+  };
+
+  const moveSchedulerEntry = (index: number, direction: -1 | 1) => {
+    const order = schedulerStatus?.order ?? [];
+    const target = index + direction;
+    if (target < 0 || target >= order.length) return;
+    const next = [...order];
+    [next[index], next[target]] = [next[target] as string, next[index] as string];
+    void onSaveSchedulerOrder(next);
+  };
 
   const estimatedSpend = (price: ModelPrice): number => {
     const totals = historyStats?.totals;
@@ -358,11 +463,95 @@ export function SettingsSurface({
           </Button>
         </div>
       </Card>
-      {historyHealth && draftPrices.length > 0 ? (
+      <Card className="settings-card" aria-label="Account scheduling">
+        <header className="settings-card-head">
+          <div className="settings-icon">
+            <ListOrdered size={17} />
+          </div>
+          <div>
+            <h2>Account scheduling</h2>
+            <p>Gateway-owned rotation with a manual order override.</p>
+          </div>
+          {schedulerStatus ? (
+            <Badge tone={schedulerStatus.fail_open ? "warn" : schedulerStatus.enabled ? "ok" : "neutral"}>
+              {schedulerStatus.fail_open ? "Fail open" : schedulerStatus.enabled ? "Active" : "Off"}
+            </Badge>
+          ) : null}
+        </header>
+        {schedulerError ? (
+          <div className="state-panel warning">Scheduler unavailable: {schedulerError}</div>
+        ) : schedulerSettings && schedulerStatus ? (
+          <label className="toggle-field">
+            <input
+              aria-label="Enable scheduler"
+              type="checkbox"
+              checked={schedulerSettings.enabled}
+              disabled={schedulerPending}
+              onChange={(event) => void onSaveSchedulerSettings({ enabled: event.target.checked })}
+            />
+            <span>
+              <strong>Enable scheduler</strong>
+              <small>
+                Ranks eligible quota by active reset time; exhausted accounts fall back to the base
+                routing strategy.
+              </small>
+            </span>
+          </label>
+        ) : null}
+        {!schedulerError && schedulerStatus ? (
+          schedulerStatus.order.length ? (
+            <div className="scheduler-order" aria-label="Scheduler order">
+              {schedulerStatus.order.map((id, index) => {
+                const account = schedulerStatus.accounts.find((item) => item.id === id);
+                const label = schedulerAccountLabels[id] ?? id;
+                return (
+                  <div className="scheduler-order-row" key={id}>
+                    <span className="scheduler-rank">{index + 1}</span>
+                    <div className="scheduler-order-name">
+                      <strong>{label}</strong>
+                      <small>{id}</small>
+                    </div>
+                    <span className="scheduler-remaining">
+                      {account?.parked ? (
+                        <small>Parked</small>
+                      ) : account?.remaining_percent === null ? (
+                        <small>Quota unknown</small>
+                      ) : account ? (
+                        `${account.remaining_percent}% remaining`
+                      ) : (
+                        <small>Unavailable</small>
+                      )}
+                    </span>
+                    <div className="scheduler-order-actions">
+                      <Button
+                        aria-label={`Move ${label} up`}
+                        disabled={schedulerPending || index === 0}
+                        onClick={() => moveSchedulerEntry(index, -1)}
+                      >
+                        <ArrowUp size={13} />
+                      </Button>
+                      <Button
+                        aria-label={`Move ${label} down`}
+                        disabled={schedulerPending || index === schedulerStatus.order.length - 1}
+                        onClick={() => moveSchedulerEntry(index, 1)}
+                      >
+                        <ArrowDown size={13} />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="state-panel">No accounts are currently ordered by the scheduler.</div>
+          )
+        ) : null}
+      </Card>
+      {historyHealth || draftPrices.length > 0 ? (
         <Card
           className="settings-card"
-          role={draftPrices.length ? "region" : undefined}
-          aria-label={draftPrices.length ? "History and pricing" : undefined}
+          role="region"
+          aria-label="History and pricing"
         >
           <header className="settings-card-head">
             <div className="settings-icon">
@@ -380,9 +569,38 @@ export function SettingsSurface({
           </header>
           {historyHealth ? (
             <p>
-              {30} days · {512} MB gateway policy
+              {historyHealth["written-events"].toLocaleString("en-US")} events written · queue{" "}
+              {historyHealth["queue-depth"]}/{historyHealth["queue-capacity"]}
+              {historyHealth["dropped-events"] > 0
+                ? ` · ${historyHealth["dropped-events"]} dropped`
+                : ""}
             </p>
           ) : null}
+          {historyError ? <div className="state-panel warning">{historyError}</div> : null}
+          {historyActionError ? (
+            <div className="state-panel warning">{historyActionError}</div>
+          ) : null}
+          <div className="settings-actions">
+            <Button
+              disabled={!exportHistory || historyBusy !== ""}
+              onClick={() => void runHistoryExport("csv")}
+            >
+              {historyBusy === "csv" ? "Exporting…" : "Export CSV"}
+            </Button>
+            <Button
+              disabled={!exportHistory || historyBusy !== ""}
+              onClick={() => void runHistoryExport("json")}
+            >
+              {historyBusy === "json" ? "Exporting…" : "Export JSON"}
+            </Button>
+            <Button
+              className="danger"
+              disabled={!clearHistory || historyBusy !== ""}
+              onClick={() => void requestClearConfirmation()}
+            >
+              {historyBusy === "clear" ? "Clearing…" : "Clear history"}
+            </Button>
+          </div>
           {draftPrices.map((price, index) => (
             <div className="proxy-settings-grid" key={price.model}>
               <Field label={`Input price for ${price.model}`} hint="USD per million input tokens.">
@@ -445,6 +663,25 @@ export function SettingsSurface({
           </Button>
         </header>
       </Card>
+
+      {confirmClear ? (
+        <div className="history-dialog-backdrop">
+          <dialog open className="history-dialog" aria-label="Clear request history">
+            <h2>Clear request history</h2>
+            <p>
+              This permanently removes {clearCount?.toLocaleString("en-US") ?? "all stored"} request
+              records and their dashboard history. It cannot be undone. Proxy file logs are not
+              affected.
+            </p>
+            <div className="settings-actions">
+              <Button onClick={() => setConfirmClear(false)}>Cancel</Button>
+              <Button className="danger" onClick={() => void confirmHistoryClear()}>
+                Clear history
+              </Button>
+            </div>
+          </dialog>
+        </div>
+      ) : null}
     </div>
   );
 }

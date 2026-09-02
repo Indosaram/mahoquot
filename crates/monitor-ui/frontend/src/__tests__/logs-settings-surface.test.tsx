@@ -12,6 +12,88 @@ const stats = {
   accounts: [],
 };
 
+const durableTotals = {
+  requests: 2,
+  "successful-requests": 1,
+  "failed-requests": 1,
+  "input-tokens": 0,
+  "output-tokens": 15,
+  "cached-input-tokens": 0,
+  "reasoning-tokens": 0,
+  "total-tokens": 15,
+  "average-latency-ms": 70,
+  "estimated-cost-usd": 0,
+};
+
+const durableEvents = [
+  {
+    "event-id": "req-429",
+    "occurred-at-ms": 1_756_548_000_000,
+    account: "codex-1",
+    provider: "codex",
+    model: "gpt-5.6",
+    "key-label": null,
+    status: 429,
+    succeeded: false,
+    "input-tokens": 0,
+    "output-tokens": 15,
+    "cached-input-tokens": 0,
+    "reasoning-tokens": 0,
+    "total-tokens": 15,
+    "latency-ms": 71,
+    "estimated-cost-usd": 0,
+    "price-version": null,
+  },
+  {
+    "event-id": "req-200",
+    "occurred-at-ms": 1_756_548_001_000,
+    account: "codex-1",
+    provider: "codex",
+    model: "gpt-5.6",
+    "key-label": null,
+    status: 200,
+    succeeded: true,
+    "input-tokens": 0,
+    "output-tokens": 0,
+    "cached-input-tokens": 0,
+    "reasoning-tokens": 0,
+    "total-tokens": 0,
+    "latency-ms": 69,
+    "estimated-cost-usd": 0,
+    "price-version": null,
+  },
+];
+
+const historyResponse = (url: string, empty = false): Response | null => {
+  if (url.includes("/v0/management/history/events/"))
+    return new Response(JSON.stringify({ event: durableEvents[0] }));
+  if (url.includes("/v0/management/history/events"))
+    return new Response(
+      JSON.stringify({
+        events: empty ? [] : durableEvents,
+        "next-cursor": null,
+        totals: durableTotals,
+      }),
+    );
+  if (url.includes("/v0/management/history/health"))
+    return new Response(
+      JSON.stringify({
+        ready: true,
+        degraded: false,
+        "queue-capacity": 16,
+        "queue-depth": 0,
+        "enqueued-events": 2,
+        "written-events": 2,
+        "dropped-events": 0,
+        "database-failures": 0,
+        "last-error": null,
+      }),
+    );
+  if (url.includes("/v0/management/history/stats"))
+    return new Response(JSON.stringify({ totals: durableTotals, groups: [] }));
+  return null;
+};
+
 describe("Logs and Settings characterization pin", () => {
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
@@ -67,6 +149,10 @@ describe("Logs and Settings characterization pin", () => {
               }),
             );
           }
+          {
+            const history = historyResponse(url);
+            if (history) return history;
+          }
           return new Response(JSON.stringify({ ok: true }));
         }),
       );
@@ -86,10 +172,10 @@ describe("Logs and Settings characterization pin", () => {
       ).toBeInTheDocument();
 
       expect(screen.getByText("Requests")).toBeInTheDocument();
-      expect(screen.getByText("Succeeded")).toBeInTheDocument();
+      expect(screen.getByText("Success")).toBeInTheDocument();
       expect(screen.getAllByText("gpt-5.6").length).toBe(2);
       expect(screen.getAllByText("codex-1").length).toBe(2);
-      expect(screen.getByText("15")).toBeInTheDocument();
+      expect(screen.getAllByText("15").length).toBeGreaterThan(0);
       expect(screen.getByText("429")).toBeInTheDocument();
       expect(screen.getByText("200")).toBeInTheDocument();
 
@@ -109,6 +195,10 @@ describe("Logs and Settings characterization pin", () => {
             return new Response(
               JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
             );
+          {
+            const history = historyResponse(url, true);
+            if (history) return history;
+          }
           return new Response(JSON.stringify({ ok: true }));
         }),
       );
@@ -129,6 +219,10 @@ describe("Logs and Settings characterization pin", () => {
           if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
           if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
           if (url.includes("/logs")) return new Response("server failure", { status: 500 });
+          {
+            const history = historyResponse(url, true);
+            if (history) return history;
+          }
           return new Response(JSON.stringify({ ok: true }));
         }),
       );
@@ -163,6 +257,10 @@ describe("Logs and Settings characterization pin", () => {
             return new Response(JSON.stringify({ "request-retry": 3 }));
           if (url.endsWith("/logging-to-file"))
             return new Response(JSON.stringify({ "logging-to-file": false }));
+          {
+            const history = historyResponse(url);
+            if (history) return history;
+          }
           return new Response(JSON.stringify({ ok: true }));
         }),
       );
@@ -191,6 +289,10 @@ describe("Logs and Settings characterization pin", () => {
             return new Response(
               JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
             );
+          {
+            const history = historyResponse(url);
+            if (history) return history;
+          }
           return new Response(JSON.stringify({ ok: true }));
         }),
       );
@@ -344,6 +446,10 @@ describe("Logs and Settings characterization pin", () => {
             return new Response("port: 18801\n", {
               headers: { "Content-Type": "application/yaml" },
             });
+          }
+          {
+            const history = historyResponse(url);
+            if (history) return history;
           }
           return new Response(JSON.stringify({ ok: true }));
         }),

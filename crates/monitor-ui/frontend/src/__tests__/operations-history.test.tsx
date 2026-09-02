@@ -78,6 +78,45 @@ const historyHealthResponse = {
   "last-error": null,
 };
 
+const historyEventFixtures = [
+  {
+    "event-id": "event-success",
+    "occurred-at-ms": START_MS,
+    account: "account-a",
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    "key-label": "key-prod",
+    status: 200,
+    succeeded: true,
+    "input-tokens": 3_000_000,
+    "output-tokens": 250_000,
+    "cached-input-tokens": 1_200_000,
+    "reasoning-tokens": 125_000,
+    "total-tokens": 3_250_000,
+    "latency-ms": 90,
+    "estimated-cost-usd": 5,
+    "price-version": "2026-09",
+  },
+  {
+    "event-id": "event-failed",
+    "occurred-at-ms": END_MS,
+    account: "account-b",
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    "key-label": "key-prod",
+    status: 429,
+    succeeded: false,
+    "input-tokens": 500_000,
+    "output-tokens": 0,
+    "cached-input-tokens": 0,
+    "reasoning-tokens": 0,
+    "total-tokens": 500_000,
+    "latency-ms": 210,
+    "estimated-cost-usd": 2.5,
+    "price-version": "2026-09",
+  },
+];
+
 const modelPrice = {
   model: "gpt-5.6-sol",
   version: "2026-09",
@@ -184,11 +223,6 @@ const operationsManagement = () =>
   createGatewayClients("http://127.0.0.1:18840", "history-test-key")
     .management as unknown as IntendedOperationsManagement;
 
-const localDateTime = (timestamp: number): string => {
-  const date = new Date(timestamp);
-  const part = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
-};
 
 const installAppMocks = (options?: { historyUnavailable?: boolean }) => {
   const calls: Array<{ readonly url: string; readonly method: string; readonly body: string }> = [];
@@ -265,6 +299,39 @@ const installAppMocks = (options?: { historyUnavailable?: boolean }) => {
               { status: 503 },
             )
           : new Response(JSON.stringify(historyHealthResponse));
+      }
+      if (url.pathname === "/v0/management/history/events" && method === "GET") {
+        if (options?.historyUnavailable) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: "history_unavailable",
+                message: "request history worker is unavailable",
+                retryable: true,
+              },
+            }),
+            { status: 503 },
+          );
+        }
+        return new Response(
+          JSON.stringify({ events: historyEventFixtures, "next-cursor": null, totals }),
+        );
+      }
+      if (url.pathname === "/v0/management/history/events" && method === "DELETE") {
+        return new Response(JSON.stringify({ deleted: 3 }));
+      }
+      if (url.pathname.startsWith("/v0/management/history/events/")) {
+        const id = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+        const event = historyEventFixtures.find((item) => item["event-id"] === id);
+        return new Response(JSON.stringify({ event: event ?? historyEventFixtures[0] }));
+      }
+      if (url.pathname === "/v0/management/history/count") {
+        return new Response(JSON.stringify({ count: 3 }));
+      }
+      if (url.pathname === "/v0/management/history/export") {
+        return new Response("event-id,provider\\nevent-success,codex\\n", {
+          headers: { "Content-Type": "text/csv" },
+        });
       }
       if (url.pathname === "/v0/management/prices") {
         return new Response(JSON.stringify({ prices: [currentPrice] }));
@@ -463,27 +530,22 @@ describe("Todo 8/9 frontend API contracts", () => {
 });
 
 describe("Todo 13 scheduling, history, and price UI states", () => {
-  it("keeps account details out of Overview and renders scheduler order/isolation in Accounts", async () => {
+  it("renders scheduler order and isolation in Settings without account detail leakage", async () => {
     const { calls } = installAppMocks();
     render(<App />);
 
     await screen.findByRole("heading", { name: "Request activity" });
     expect(screen.queryByText("Account A")).not.toBeInTheDocument();
     expect(screen.queryByText("account-a")).not.toBeInTheDocument();
-    expect(screen.queryByText("key-prod")).not.toBeInTheDocument();
-    expect(screen.queryByText("gpt-5.6-sol")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Accounts" })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0] as HTMLElement);
     const scheduler = await screen.findByRole("region", { name: "Account scheduling" });
     expect(within(scheduler).getByLabelText("Enable scheduler")).toBeChecked();
-    expect(within(scheduler).getByLabelText("Scheduling rule")).toHaveValue("reset-soonest");
-    expect(within(scheduler).getByText("Exhaust at 3% · recover above 5%")).toBeInTheDocument();
-    expect(within(scheduler).getByText("Minimum hold 10m · switch margin 15m")).toBeInTheDocument();
-    expect(within(scheduler).getByText("Auth failures isolate immediately")).toBeInTheDocument();
+    expect(within(scheduler).queryByLabelText("Scheduling rule")).not.toBeInTheDocument();
     expect(
-      within(scheduler).getByText("3 non-auth failures isolate an account"),
-    ).toBeInTheDocument();
-    expect(within(scheduler).getByText("Selected")).toBeInTheDocument();
+      within(scheduler).queryByText("Exhaust at 3% · recover above 5%"),
+    ).not.toBeInTheDocument();
+    expect(within(scheduler).getByText("42% remaining")).toBeInTheDocument();
     expect(within(scheduler).getByText("Parked")).toBeInTheDocument();
 
     fireEvent.click(within(scheduler).getByRole("button", { name: "Move Account B up" }));
@@ -500,57 +562,24 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
     expect(await screen.findByText("Scheduler order saved.")).toBeInTheDocument();
   });
 
-  it("queries an arbitrary history range and shows exact filtered totals and breakdowns in Logs", async () => {
+  it("renders durable request totals in Logs without the removed filter grid", async () => {
     const { calls } = installAppMocks();
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "Logs" })[0] as HTMLElement);
 
     const history = await screen.findByRole("region", { name: "Request history" });
-    fireEvent.change(within(history).getByLabelText("History start"), {
-      target: { value: localDateTime(START_MS) },
-    });
-    fireEvent.change(within(history).getByLabelText("History end"), {
-      target: { value: localDateTime(END_MS) },
-    });
-    fireEvent.change(within(history).getByLabelText("History account"), {
-      target: { value: "account-a" },
-    });
-    fireEvent.change(within(history).getByLabelText("History model"), {
-      target: { value: "gpt-5.6-sol" },
-    });
-    fireEvent.change(within(history).getByLabelText("History inbound key"), {
-      target: { value: "key-prod" },
-    });
-    fireEvent.change(within(history).getByLabelText("History status"), {
-      target: { value: "200" },
-    });
-    fireEvent.click(within(history).getByRole("button", { name: "Apply history filters" }));
+    expect(within(history).getByText("3", { selector: "strong" })).toBeInTheDocument();
+    expect(within(history).getByText("3,750,000")).toBeInTheDocument();
+    expect(within(history).getByText("event-success")).toBeInTheDocument();
+    expect(within(history).queryByLabelText("History start")).not.toBeInTheDocument();
+    expect(within(history).queryByLabelText("Apply history filters")).not.toBeInTheDocument();
+    expect(screen.queryByText(/REQUEST LEDGER/i)).not.toBeInTheDocument();
 
     await waitFor(() =>
       expect(
-        calls.some((call) => {
-          const url = new URL(call.url);
-          return (
-            url.pathname === "/v0/management/history/stats" &&
-            url.searchParams.get("start-ms") === String(START_MS) &&
-            url.searchParams.get("end-ms") === String(END_MS) &&
-            url.searchParams.get("account") === "account-a" &&
-            url.searchParams.get("model") === "gpt-5.6-sol" &&
-            url.searchParams.get("key-label") === "key-prod" &&
-            url.searchParams.get("status") === "200"
-          );
-        }),
+        calls.some((call) => new URL(call.url).pathname === "/v0/management/history/events"),
       ).toBe(true),
     );
-
-    expect(within(history).getByText("3", { selector: "strong" })).toBeInTheDocument();
-    expect(within(history).getByText("2", { selector: "strong" })).toBeInTheDocument();
-    expect(within(history).getByText("1", { selector: "strong" })).toBeInTheDocument();
-    expect(within(history).getByText("3,750,000")).toBeInTheDocument();
-    expect(within(history).getByText("$7.50")).toBeInTheDocument();
-    expect(within(history).getByText("account-a")).toBeInTheDocument();
-    expect(within(history).getByText("gpt-5.6-sol")).toBeInTheDocument();
-    expect(within(history).getByText("key-prod")).toBeInTheDocument();
   });
 
   it("edits a versioned model price, recomputes current-price spend, and rejects invalid rates", async () => {
@@ -560,7 +589,7 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
 
     const pricing = await screen.findByRole("region", { name: "History and pricing" });
     expect(within(pricing).getByText("Ready")).toBeInTheDocument();
-    expect(within(pricing).getByText("30 days · 512 MB gateway policy")).toBeInTheDocument();
+    expect(within(pricing).getByText("3 events written · queue 0/1024")).toBeInTheDocument();
     expect(within(pricing).getByText("$7.50")).toBeInTheDocument();
 
     const inputRate = within(pricing).getByLabelText("Input price for gpt-5.6-sol");
@@ -602,15 +631,50 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
     ).toHaveLength(putCount);
   });
 
-  it("shows history unavailable as degraded instead of zero-valued history", async () => {
+  it("clears and exports durable history from the Settings history card", async () => {
+    const { calls } = installAppMocks();
+    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("export-secret");
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0] as HTMLElement);
+
+    const pricing = await screen.findByRole("region", { name: "History and pricing" });
+    fireEvent.click(within(pricing).getByRole("button", { name: "Export CSV" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            new URL(call.url).pathname === "/v0/management/history/export" &&
+            call.url.includes("format=csv"),
+        ),
+      ).toBe(true),
+    );
+
+    fireEvent.click(within(pricing).getByRole("button", { name: "Clear history" }));
+    const dialog = await screen.findByRole("dialog", { name: "Clear request history" });
+    expect(within(dialog).getByText(/3 request records/i)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear history" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "DELETE" &&
+            new URL(call.url).pathname === "/v0/management/history/events" &&
+            call.url.includes("confirm=true"),
+        ),
+      ).toBe(true),
+    );
+    expect(await screen.findByText("Cleared 3 request records.")).toBeInTheDocument();
+    promptSpy.mockRestore();
+  });
+
+  it("shows history unavailable as an error instead of zero-valued history", async () => {
     installAppMocks({ historyUnavailable: true });
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "Logs" })[0] as HTMLElement);
 
     expect(await screen.findByText("Request history unavailable")).toBeInTheDocument();
     expect(screen.getByText("request history worker is unavailable")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Request history totals" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Request totals" })).not.toBeInTheDocument();
   });
 });

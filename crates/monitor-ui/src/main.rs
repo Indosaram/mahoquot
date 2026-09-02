@@ -1238,7 +1238,6 @@ fn toggle_tray_panel<R: Runtime>(
 
 /// Rebuilds the tray menu with one live quota line per reporting account.
 fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    eprintln!("CANARY setup-entered");
     let toggle = MenuItem::with_id(
         app,
         tray::MENU_ID_TOGGLE,
@@ -1577,8 +1576,6 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 }
 
 fn main() {
-
-    eprintln!("CANARY main-entered");
     let base_url = std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| LOCAL_GATEWAY_URL.to_string());
     let gateway = GatewayProcess::default();
     let _ = spawn_gateway(&gateway, &base_url);
@@ -1687,7 +1684,6 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("failed to build mahoquot monitor");
-    eprintln!("CANARY build-ok");
     // Re-arm after Tauri/AppKit finish installing their own handlers, otherwise
     // ours is overwritten during setup and SIGTERM strands the gateway.
     install_gateway_signal_guard();
@@ -1702,7 +1698,8 @@ fn main() {
             }
         }
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            if crate::self_certification::CERTIFY_IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst)
+            if crate::self_certification::CERTIFY_IN_FLIGHT
+                .load(std::sync::atomic::Ordering::SeqCst)
             {
                 // The certification harness is mid-sequence; a window-close
                 // exit in headless sessions must not race the report write.

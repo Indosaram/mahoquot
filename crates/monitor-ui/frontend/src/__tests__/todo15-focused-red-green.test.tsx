@@ -1,11 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DurableLogs } from "../components/DurableLogs";
 import type { HistoryStatsQuery } from "../lib/api";
 import type { HistoryEvent, HistoryEventsResponse } from "../lib/schemas";
 
 const START_MS = Date.UTC(2026, 8, 1, 0, 0, 0);
-const END_MS = Date.UTC(2026, 8, 2, 0, 0, 0);
 
 const totals = {
   requests: 120,
@@ -46,51 +45,22 @@ const page = (start: number, count: number, nextCursor: number | null): HistoryE
   totals,
 });
 
-const historyStats = { totals, groups: [] };
-const historyHealth = {
-  ready: true,
-  degraded: false,
-  "queue-capacity": 1_024,
-  "queue-depth": 0,
-  "enqueued-events": 120,
-  "written-events": 120,
-  "dropped-events": 0,
-  "database-failures": 0,
-  "last-error": null,
-};
-
-const localDateTime = (timestamp: number): string => {
-  const date = new Date(timestamp);
-  const part = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
-};
-
 const renderHistory = (options?: {
   loadHistory?: (query: HistoryStatsQuery) => Promise<HistoryEventsResponse>;
   loadHistoryDetail?: (eventId: string) => Promise<HistoryEvent>;
-  countHistory?: (query: HistoryStatsQuery) => Promise<number>;
-  clearHistory?: (query: HistoryStatsQuery) => Promise<number>;
-  exportHistory?: (format: "csv" | "json", query: HistoryStatsQuery) => Promise<Blob | undefined>;
-  onHistoryQuery?: (query: HistoryStatsQuery) => void | Promise<void>;
   records?: readonly Record<string, unknown>[];
   fromMemoryTail?: boolean;
 }) =>
   render(
     <DurableLogs
       records={(options?.records ?? []) as never}
-      historyStats={historyStats}
-      historyHealth={historyHealth}
       loadHistory={options?.loadHistory}
       loadHistoryDetail={options?.loadHistoryDetail}
-      countHistory={options?.countHistory}
-      clearHistory={options?.clearHistory}
-      exportHistory={options?.exportHistory}
-      onHistoryQuery={options?.onHistoryQuery}
       fromMemoryTail={options?.fromMemoryTail}
     />,
   );
 
-describe("Todo 15 focused durable Logs contract", () => {
+describe("Durable Logs presentation contract", () => {
   it("pages bounded history with exact cursor and limit and can return to the previous page", async () => {
     const loadHistory = vi
       .fn<(query: HistoryStatsQuery) => Promise<HistoryEventsResponse>>()
@@ -115,52 +85,6 @@ describe("Todo 15 focused durable Logs contract", () => {
     expect(await screen.findByText("todo15-0")).toBeInTheDocument();
   });
 
-  it("sends every exact intersecting history filter", async () => {
-    const onHistoryQuery = vi.fn();
-    const loadHistory = vi.fn(async () => page(0, 20, null));
-    renderHistory({ loadHistory, onHistoryQuery });
-    await screen.findByText("todo15-0");
-
-    fireEvent.change(screen.getByLabelText("History start"), {
-      target: { value: localDateTime(START_MS) },
-    });
-    fireEvent.change(screen.getByLabelText("History end"), {
-      target: { value: localDateTime(END_MS) },
-    });
-    fireEvent.change(screen.getByLabelText("History account"), {
-      target: { value: "account-alpha" },
-    });
-    fireEvent.change(screen.getByLabelText("History provider"), {
-      target: { value: "codex" },
-    });
-    fireEvent.change(screen.getByLabelText("History model"), {
-      target: { value: "gpt-5.6-focused" },
-    });
-    fireEvent.change(screen.getByLabelText("History inbound key"), {
-      target: { value: "key-focused" },
-    });
-    fireEvent.change(screen.getByLabelText("History status"), { target: { value: "429" } });
-    fireEvent.change(screen.getByLabelText("History outcome"), { target: { value: "failed" } });
-    fireEvent.change(screen.getByLabelText("Search"), { target: { value: "todo15-" } });
-    fireEvent.change(screen.getByLabelText("Page size"), { target: { value: "25" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply history filters" }));
-
-    const expected = {
-      startMs: START_MS,
-      endMs: END_MS,
-      accounts: ["account-alpha"],
-      providers: ["codex"],
-      models: ["gpt-5.6-focused"],
-      keyLabels: ["key-focused"],
-      statusCodes: [429],
-      outcomes: ["failed"],
-      search: "todo15-",
-      limit: 25,
-    };
-    await waitFor(() => expect(onHistoryQuery).toHaveBeenLastCalledWith(expected));
-    expect(loadHistory).toHaveBeenLastCalledWith(expected);
-  });
-
   it("loads a selectable request detail", async () => {
     const loadHistory = vi.fn(async () => page(0, 1, null));
     const loadHistoryDetail = vi.fn(async () => ({ ...event(0), "input-tokens": 777 }));
@@ -170,44 +94,7 @@ describe("Todo 15 focused durable Logs contract", () => {
     const detail = await screen.findByRole("region", { name: "Request detail" });
     expect(loadHistoryDetail).toHaveBeenCalledWith("todo15-0");
     expect(within(detail).getByText("777")).toBeInTheDocument();
-  });
-
-  it("requires explicit clear confirmation and reports a post-clear empty result", async () => {
-    const loadHistory = vi.fn(async () => page(0, 1, null));
-    const countHistory = vi.fn(async () => 1);
-    const clearHistory = vi.fn(async () => 1);
-    renderHistory({ loadHistory, countHistory, clearHistory });
-    await screen.findByText("todo15-0");
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
-    expect(clearHistory).not.toHaveBeenCalled();
-    const dialog = await screen.findByRole("dialog", { name: "Clear request history" });
-    expect(countHistory).toHaveBeenCalledWith(expect.objectContaining({ cursor: null, limit: 50 }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Clear history" }));
-
-    await waitFor(() => expect(clearHistory).toHaveBeenCalledTimes(1));
-    expect(document.querySelectorAll(".history-events-table tbody tr")).toHaveLength(0);
-    expect(document.querySelector('[data-history-clear-deleted="1"]')).not.toBeNull();
-  });
-
-  it("offers both CSV and JSON export actions for the selected scope", async () => {
-    const exportHistory = vi.fn(async () => undefined);
-    renderHistory({ exportHistory });
-
-    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
-    fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
-
-    await waitFor(() => expect(exportHistory).toHaveBeenCalledTimes(2));
-    expect(exportHistory).toHaveBeenNthCalledWith(
-      1,
-      "csv",
-      expect.objectContaining({ cursor: null, limit: 50 }),
-    );
-    expect(exportHistory).toHaveBeenNthCalledWith(
-      2,
-      "json",
-      expect.objectContaining({ cursor: null, limit: 50 }),
-    );
+    expect(within(detail).queryByText(/estimated cost/i)).toBeInTheDocument();
   });
 
   it("keeps operational memory-tail events visible when file logging is off", () => {
