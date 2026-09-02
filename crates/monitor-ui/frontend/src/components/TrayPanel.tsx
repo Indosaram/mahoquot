@@ -9,8 +9,11 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
+import type { GatewayLifecycleStatus } from "../lib/native";
+import type { TotpEntry } from "../lib/totp-vault";
 import { quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
+import { TotpQuickAccess } from "./TotpVaultSurface";
 
 interface TrayTile {
   readonly label: string;
@@ -22,8 +25,6 @@ interface TrayCard {
   readonly account: NormalizedAccount;
   readonly tiles: readonly TrayTile[];
 }
-
-export type GatewayLifecycle = "running" | "starting" | "stopped";
 
 const planBadge = (plan: string | null | undefined): string | null => {
   const normalized = plan?.trim().toLowerCase();
@@ -52,7 +53,7 @@ interface TrayPanelProps {
   readonly accounts: readonly NormalizedAccount[];
   readonly proxyUrl: string;
   readonly online: boolean;
-  readonly gatewayLifecycle: GatewayLifecycle;
+  readonly gatewayLifecycle: GatewayLifecycleStatus;
   readonly fetchedAgoSecs: number | null;
   readonly refreshing: boolean;
   readonly showRemaining: boolean;
@@ -61,6 +62,10 @@ interface TrayPanelProps {
   readonly onQuit: () => void;
   readonly onStartGateway: () => void;
   readonly onStopGateway: () => void;
+  readonly totpEntries?: readonly TotpEntry[];
+  readonly totpCodes?: Readonly<Record<string, string>>;
+  readonly totpRemaining?: number;
+  readonly onCopyTotpCode?: (entry: TotpEntry, code: string) => void;
 }
 
 export const TrayPanel = ({
@@ -76,6 +81,10 @@ export const TrayPanel = ({
   onQuit,
   onStartGateway,
   onStopGateway,
+  totpEntries = [],
+  totpCodes = {},
+  totpRemaining = 0,
+  onCopyTotpCode = () => undefined,
 }: TrayPanelProps) => {
   const [filter, setFilter] = useState<string>("all");
 
@@ -99,6 +108,16 @@ export const TrayPanel = ({
       <header className="tray-header">
         <strong>mahoquot</strong>
       </header>
+
+      <div className="tray-totp-access">
+        <TotpQuickAccess
+          entries={totpEntries}
+          codes={totpCodes}
+          remaining={totpRemaining}
+          onCopyCode={onCopyTotpCode}
+          compact
+        />
+      </div>
 
       <div className={`tray-proxy ${online ? "online" : "offline"}`}>
         <span className="tray-proxy-dot" aria-hidden />
@@ -190,6 +209,7 @@ export const TrayPanel = ({
                 {account.usage.windows.map((window) => (
                   <span key={window.label}>
                     {window.label}: {window.requests.toLocaleString("en")} req
+                    {window.cost_usd != null ? <> · {formatUsd(window.cost_usd)}</> : null}
                   </span>
                 ))}
               </div>

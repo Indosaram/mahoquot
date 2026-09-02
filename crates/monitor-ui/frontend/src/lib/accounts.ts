@@ -11,6 +11,7 @@ export interface NormalizedAccount {
   readonly disabled: boolean;
   readonly authIndex: string | null;
   readonly provider: string;
+  readonly plan: string | null;
   readonly email: string;
   readonly label: string;
   readonly health: AccountHealth;
@@ -58,19 +59,26 @@ export const extractEmail = (idOrEmail: string): string => {
   return clean.toLowerCase();
 };
 
+// Providers whose upstream reports a usable quota window on every account.
+// The catalog already folds `openai`->`codex` and `anthropic`->`claude`, so
+// matching canonical ids exactly beats substring tests that would also fire
+// on unrelated names such as an "openai-compatible" generic endpoint.
+const ALWAYS_QUOTA_PROVIDERS: ReadonlySet<string> = new Set(["codex", "claude"]);
+
+// Antigravity only reports quota once the gateway has observed its per-model
+// buckets; without them the account is unknown, never 0%.
+const GROUPED_QUOTA_PROVIDERS: ReadonlySet<string> = new Set(["antigravity"]);
+
 export const getQuotaCapability = (
   provider: string,
   usage: Usage | null | undefined,
 ): QuotaCapability => {
-  const p = (provider || "").toLowerCase();
-  if (p.includes("codex") || p.includes("openai")) {
+  const id = providerOf(provider);
+  if (ALWAYS_QUOTA_PROVIDERS.has(id)) {
     return "supported";
   }
-  if (p.includes("antigravity")) {
+  if (GROUPED_QUOTA_PROVIDERS.has(id)) {
     return usage && (usage.groups?.length ?? 0) > 0 ? "supported" : "unsupported";
-  }
-  if (p.includes("claude") || p.includes("anthropic")) {
-    return "supported";
   }
   return "unsupported";
 };
@@ -138,14 +146,14 @@ const credentialProvider = (credential: AuthFileItem): string =>
       : credential.type || credential.provider,
   );
 
+// Both sides are already canonical Quotio ids, so equality is the whole test.
+// Substring matching here used to pair a "claude" runtime account with a
+// "claude-code" credential (and vice versa) purely because one id is a prefix
+// of the other.
 const sharesProvider = (accountProvider: string, credential: AuthFileItem): boolean => {
   const credProvider = credentialProvider(credential);
   if (!credProvider || !accountProvider) return true;
-  return (
-    credProvider === accountProvider ||
-    accountProvider.includes(credProvider) ||
-    credProvider.includes(accountProvider)
-  );
+  return credProvider === accountProvider;
 };
 
 /**
@@ -244,6 +252,7 @@ export const mergeAccountsAndCredentials = (
       disabled: cred?.disabled ?? false,
       authIndex: cred ? cred.auth_index : null,
       provider: providerOf(r.provider || "unknown"),
+      plan: r.plan ?? null,
       email: rEmail,
       label: cred?.label || rEmail || r.id,
       health,
@@ -287,6 +296,7 @@ export const mergeAccountsAndCredentials = (
       disabled: c.disabled,
       authIndex: c.auth_index,
       provider: providerOf(c.type || c.provider || "unknown"),
+      plan: null,
       email: cEmail,
       label: c.label || c.name,
       health: "not_loaded",

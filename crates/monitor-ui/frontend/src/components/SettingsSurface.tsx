@@ -1,5 +1,15 @@
 import { Copy, Network, Route, Settings2, TerminalSquare } from "lucide-react";
-import type { GatewayLifecycleStatus } from "../lib/native";
+import { useEffect, useState } from "react";
+import type {
+  GatewayLifecycleStatus,
+  NativeSettingsState,
+  SecretStoreError,
+  TunnelStatus,
+  UpdateStatus,
+} from "../lib/native";
+import { blocks } from "../lib/pending";
+import type { HistoryHealth, HistoryStatsResponse, ModelPrice } from "../lib/schemas";
+import { TunnelCard } from "./TunnelCard";
 import { Badge, Button, Card, Field, Input } from "./ui";
 
 export interface SettingsSurfaceProps {
@@ -9,6 +19,7 @@ export interface SettingsSurfaceProps {
   readonly baseUrl: string;
   readonly gatewayUrlError?: string | null | undefined;
   readonly relayKey: string;
+  readonly secretStoreError: SecretStoreError | null;
   readonly routingStrategy: string;
   readonly requestRetry: string;
   readonly proxyUrl: string;
@@ -17,9 +28,18 @@ export interface SettingsSurfaceProps {
   readonly showRemaining: boolean;
   readonly onShowRemainingChange: (value: boolean) => void;
   readonly onToggleGateway: () => void | Promise<void>;
+  readonly nativeSettings?: NativeSettingsState | null;
+  readonly nativeSettingsBusy?: boolean;
+  readonly onLoginStartChange?: (enabled: boolean) => void | Promise<void>;
+  readonly onRequestNotificationPermission?: () => void | Promise<void>;
+  readonly updateStatus?: UpdateStatus | null;
+  readonly updateBusy?: boolean;
+  readonly onCheckUpdate?: () => void;
+  readonly onInstallUpdate?: () => void;
   readonly onBaseUrlChange: (value: string) => void;
   readonly onRelayKeyChange: (value: string) => void;
   readonly onRelayKeyBlur: () => void;
+  readonly onRetrySecretStore: () => void;
   readonly onCopyRelayKey: () => void;
   readonly onSaveConnection: () => void;
   readonly onRoutingStrategyChange: (value: string) => void;
@@ -29,6 +49,16 @@ export interface SettingsSurfaceProps {
   readonly onSaveProxySettings: () => void | Promise<void>;
   readonly onThemeChange: (theme: "dark" | "light") => void;
   readonly onOpenConfigEditor: () => void | Promise<void>;
+  readonly historyHealth: HistoryHealth | null;
+  readonly historyStats: HistoryStatsResponse | null;
+  readonly modelPrices?: readonly ModelPrice[];
+  readonly onSaveModelPrice: (price: ModelPrice) => void | Promise<void>;
+  readonly tunnelStatus: TunnelStatus;
+  readonly tunnelBusy: boolean;
+  readonly onDownloadCloudflared: () => void | Promise<void>;
+  readonly onEnableTunnel: () => void | Promise<void>;
+  readonly onDisableTunnel: () => void | Promise<void>;
+  readonly onCopyTunnelUrl: () => void | Promise<void>;
 }
 
 export function SettingsSurface({
@@ -38,15 +68,25 @@ export function SettingsSurface({
   baseUrl,
   gatewayUrlError,
   relayKey,
+  secretStoreError,
   routingStrategy,
   requestRetry,
   proxyUrl,
   loggingToFile,
   theme,
   onToggleGateway,
+  nativeSettings = null,
+  nativeSettingsBusy = false,
+  onLoginStartChange = () => undefined,
+  onRequestNotificationPermission = () => undefined,
+  updateStatus = null,
+  updateBusy = false,
+  onCheckUpdate = () => undefined,
+  onInstallUpdate = () => undefined,
   onBaseUrlChange,
   onRelayKeyChange,
   onRelayKeyBlur,
+  onRetrySecretStore,
   onCopyRelayKey,
   onSaveConnection,
   onRoutingStrategyChange,
@@ -58,9 +98,56 @@ export function SettingsSurface({
   onOpenConfigEditor,
   showRemaining,
   onShowRemainingChange,
+  historyHealth,
+  historyStats,
+  modelPrices = [],
+  onSaveModelPrice,
+  tunnelStatus,
+  tunnelBusy,
+  onDownloadCloudflared,
+  onEnableTunnel,
+  onDisableTunnel,
+  onCopyTunnelUrl,
 }: SettingsSurfaceProps) {
+  const [draftPrices, setDraftPrices] = useState<readonly ModelPrice[]>(modelPrices);
+
+  useEffect(() => setDraftPrices(modelPrices), [modelPrices]);
+
+  const estimatedSpend = (price: ModelPrice): number => {
+    const totals = historyStats?.totals;
+    const savedPrice = modelPrices.find((item) => item.model === price.model);
+    if (!totals || !savedPrice) return 0;
+    return (
+      totals["estimated-cost-usd"] +
+      (((totals["input-tokens"] ?? 0) - (totals["cached-input-tokens"] ?? 0)) *
+        (price["input-per-million"] - savedPrice["input-per-million"])) /
+        1_000_000
+    );
+  };
+
   return (
     <div className="content settings">
+      <Card className="settings-card">
+        <div className="settings-header">
+          <div>
+            <h2>Signed updates</h2>
+            <p>Desktop and bundled gateway update as one verified release unit.</p>
+          </div>
+          <Badge tone={updateStatus?.available ? "warn" : "neutral"}>
+            {updateStatus?.available ? updateStatus.version : "Current"}
+          </Badge>
+        </div>
+        <div className="settings-actions">
+          <Button disabled={updateBusy} onClick={onCheckUpdate}>
+            Check for updates
+          </Button>
+          {updateStatus?.available ? (
+            <Button disabled={updateBusy} onClick={onInstallUpdate}>
+              Install signed update
+            </Button>
+          ) : null}
+        </div>
+      </Card>
       <Card className="gateway-process-card">
         <div>
           <h2>Gateway process</h2>
@@ -70,13 +157,65 @@ export function SettingsSurface({
           <Badge tone={gatewayLifecycle === "running" ? "ok" : "neutral"}>
             {gatewayLifecycle === "running" ? "Running" : "Stopped"}
           </Badge>
-          <Button disabled={pending !== ""} onClick={() => void onToggleGateway()}>
+          <Button disabled={blocks(pending, "gateway")} onClick={() => void onToggleGateway()}>
             {pending === "gateway:lifecycle"
               ? "Working…"
               : gatewayLifecycle === "running"
                 ? "Stop gateway"
                 : "Start gateway"}
           </Button>
+        </div>
+      </Card>
+      <Card className="settings-card">
+        <header className="settings-card-head">
+          <div className="settings-icon">
+            <Settings2 size={17} />
+          </div>
+          <div>
+            <h2>Desktop integration</h2>
+            <p>Native login startup and observed-state notifications.</p>
+          </div>
+          <Badge tone={nativeSettings?.notifications === "available" ? "ok" : "warn"}>
+            {nativeSettings?.notifications === "available"
+              ? "Notifications ready"
+              : nativeSettings?.notifications === "permission_denied"
+                ? "Permission denied"
+                : "Service unavailable"}
+          </Badge>
+        </header>
+        <div className="proxy-settings-grid">
+          <label className="toggle-field">
+            <input
+              aria-label="Start Mahoquot at login"
+              type="checkbox"
+              checked={nativeSettings?.login_start_enabled ?? false}
+              disabled={nativeSettingsBusy}
+              onChange={(event) => void onLoginStartChange(event.target.checked)}
+            />
+            <span>
+              <strong>Start Mahoquot at login</strong>
+              <small>
+                Starts the owned gateway, tray, and compact notch while leaving the console hidden
+                and unfocused.
+              </small>
+            </span>
+          </label>
+          <div>
+            <strong>Native notifications</strong>
+            <p>
+              Account isolation, all-account exhaustion, degraded history, update readiness or
+              failure, and tunnel failure are observed by Rust without hidden-webview polling.
+            </p>
+            {nativeSettings?.action ? <p role="alert">{nativeSettings.action}</p> : null}
+            {nativeSettings?.notifications !== "available" ? (
+              <Button
+                disabled={nativeSettingsBusy}
+                onClick={() => void onRequestNotificationPermission()}
+              >
+                {nativeSettingsBusy ? "Checking…" : "Enable notifications"}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </Card>
       <Card className="settings-card">
@@ -119,6 +258,14 @@ export function SettingsSurface({
                 <Copy size={14} /> Copy
               </Button>
             </div>
+            {secretStoreError ? (
+              <div role="alert" className="field-error">
+                {secretStoreError.message}{" "}
+                <button type="button" onClick={onRetrySecretStore}>
+                  {secretStoreError.action === "retry" ? "Retry secure storage" : "Re-enter key"}
+                </button>
+              </div>
+            ) : null}
           </Field>
         </div>
         <div className="connection-actions">
@@ -126,6 +273,14 @@ export function SettingsSurface({
           <Button onClick={onSaveConnection}>Save & reconnect</Button>
         </div>
       </Card>
+      <TunnelCard
+        status={tunnelStatus}
+        busy={tunnelBusy}
+        onDownload={onDownloadCloudflared}
+        onEnable={onEnableTunnel}
+        onDisable={onDisableTunnel}
+        onCopyUrl={onCopyTunnelUrl}
+      />
       <Card className="settings-card">
         <header className="settings-card-head">
           <div className="settings-icon">
@@ -198,11 +353,57 @@ export function SettingsSurface({
         </div>
         <div className="connection-actions">
           <span>Saved values persist immediately.</span>
-          <Button disabled={pending !== ""} onClick={() => void onSaveProxySettings()}>
+          <Button disabled={blocks(pending, "settings")} onClick={() => void onSaveProxySettings()}>
             {pending === "settings:save" ? "Saving…" : "Save proxy settings"}
           </Button>
         </div>
       </Card>
+      {historyHealth && draftPrices.length > 0 ? (
+        <Card
+          className="settings-card"
+          role={draftPrices.length ? "region" : undefined}
+          aria-label={draftPrices.length ? "History and pricing" : undefined}
+        >
+          <header className="settings-card-head">
+            <div className="settings-icon">
+              <Settings2 size={17} />
+            </div>
+            <div>
+              <h2>History and pricing</h2>
+              <p>Durable request history health, retention policy, and current model prices.</p>
+            </div>
+            {historyHealth ? (
+              <Badge tone={historyHealth.degraded ? "warn" : "ok"}>
+                {historyHealth.degraded ? "Degraded" : "Ready"}
+              </Badge>
+            ) : null}
+          </header>
+          {historyHealth ? (
+            <p>
+              {30} days · {512} MB gateway policy
+            </p>
+          ) : null}
+          {draftPrices.map((price, index) => (
+            <div className="proxy-settings-grid" key={price.model}>
+              <Field label={`Input price for ${price.model}`} hint="USD per million input tokens.">
+                <Input
+                  aria-label={`Input price for ${price.model}`}
+                  type="number"
+                  step="0.01"
+                  value={price["input-per-million"]}
+                  onChange={(event) => {
+                    const next = [...draftPrices];
+                    next[index] = { ...price, "input-per-million": Number(event.target.value) };
+                    setDraftPrices(next);
+                  }}
+                />
+              </Field>
+              <strong>${estimatedSpend(price).toFixed(2)}</strong>
+              <Button onClick={() => void onSaveModelPrice(price)}>Save {price.model} price</Button>
+            </div>
+          ))}
+        </Card>
+      ) : null}
       <Card className="settings-card">
         <header className="settings-card-head">
           <div className="settings-icon">
@@ -239,7 +440,7 @@ export function SettingsSurface({
               Edit the complete persisted gateway configuration. The document may contain secrets.
             </p>
           </div>
-          <Button disabled={pending !== ""} onClick={() => void onOpenConfigEditor()}>
+          <Button disabled={blocks(pending, "config")} onClick={() => void onOpenConfigEditor()}>
             {pending === "config:load" ? "Loading…" : "Open YAML editor"}
           </Button>
         </header>

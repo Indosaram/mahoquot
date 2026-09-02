@@ -1,9 +1,11 @@
 import { AlertTriangle } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
+import type { SchedulerSettings, SchedulerStatus } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
+import { SchedulerPanel } from "./SchedulerPanel";
 import { Stack } from "./layout";
 
 export { HealthBadge, ProviderGlyph, providerLabel };
@@ -122,6 +124,12 @@ export interface AccountsSurfaceProps {
   readonly onDropCredential: (target: NormalizedAccount) => void | Promise<void>;
   readonly onSetDragging: (credentialName: string) => void;
   readonly onContextMenu: (event: MouseEvent, account: NormalizedAccount) => void;
+  readonly schedulerSettings?: SchedulerSettings | null;
+  readonly schedulerStatus?: SchedulerStatus | null;
+  readonly schedulerError?: string | undefined;
+  readonly schedulerPending?: boolean;
+  readonly onSaveSchedulerSettings?: (patch: Partial<SchedulerSettings>) => void | Promise<void>;
+  readonly onSaveSchedulerOrder?: (order: readonly string[]) => void | Promise<void>;
 }
 
 export const AccountsSurface = ({
@@ -144,9 +152,24 @@ export const AccountsSurface = ({
   onDropCredential,
   onSetDragging,
   onContextMenu,
+  schedulerSettings = null,
+  schedulerStatus = null,
+  schedulerError,
+  schedulerPending = false,
+  onSaveSchedulerSettings = () => undefined,
+  onSaveSchedulerOrder = () => undefined,
 }: AccountsSurfaceProps) => {
   return (
     <Stack className="content accounts">
+      <SchedulerPanel
+        settings={schedulerSettings}
+        status={schedulerStatus}
+        error={schedulerError}
+        pending={schedulerPending}
+        accountLabels={Object.fromEntries(accounts.map((account) => [account.id, account.label]))}
+        onSaveSettings={onSaveSchedulerSettings}
+        onSaveOrder={onSaveSchedulerOrder}
+      />
       <div className="provider-tabs" aria-label="Providers">
         {providers.map((item) => (
           <label className="provider-tab" key={item}>

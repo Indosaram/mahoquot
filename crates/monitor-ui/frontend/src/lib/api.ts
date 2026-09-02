@@ -4,7 +4,22 @@ import {
   type AuthFileItem,
   type GatewayHealth,
   GatewayHealthSchema,
+  type HistoryEvent,
+  HistoryEventDetailResponseSchema,
+  type HistoryEventsResponse,
+  HistoryEventsResponseSchema,
+  type HistoryHealth,
+  HistoryHealthSchema,
+  type HistoryStatsResponse,
+  HistoryStatsResponseSchema,
   type LogsResponse,
+  type ModelPrice,
+  ModelPriceSchema,
+  ModelPricesResponseSchema,
+  type SchedulerSettings,
+  SchedulerSettingsSchema,
+  type SchedulerStatus,
+  SchedulerStatusSchema,
   parseAdminStats,
   parseAuthFiles,
   parseLogs,
@@ -23,6 +38,55 @@ const providerAuthStatusSchema = z.object({
 
 export type ProviderAuthStatus = z.infer<typeof providerAuthStatusSchema>;
 export type ScalarValue = string | number | boolean;
+
+export interface HistoryStatsQuery {
+  readonly startMs?: number;
+  readonly endMs?: number;
+  readonly accounts?: readonly string[];
+  readonly providers?: readonly string[];
+  readonly models?: readonly string[];
+  readonly keyLabels?: readonly string[];
+  readonly statusCodes?: readonly number[];
+  readonly outcomes?: readonly ("succeeded" | "failed")[];
+  readonly search?: string;
+  readonly timeBucket?: "minute" | "hour" | "day";
+  readonly groupBy?: readonly ("account" | "provider" | "model" | "key" | "status")[];
+  readonly limit?: number;
+  readonly cursor?: number | null;
+}
+
+const schedulerUpdateResponseSchema = z.object({
+  status: z.string(),
+  scheduler: SchedulerStatusSchema,
+});
+
+const schedulerOrderResponseSchema = z.object({
+  status: z.string().optional(),
+  order: z.array(z.string()),
+});
+
+const historyQueryString = (query: HistoryStatsQuery = {}): string => {
+  const params = new URLSearchParams();
+  if (query.startMs !== undefined) params.set("start-ms", String(query.startMs));
+  if (query.endMs !== undefined) params.set("end-ms", String(query.endMs));
+  const setList = (name: string, values: readonly (string | number)[] | undefined) => {
+    if (values?.length) params.set(name, values.join(","));
+  };
+  setList("account", query.accounts);
+  setList("provider", query.providers);
+  setList("model", query.models);
+  setList("key-label", query.keyLabels);
+  setList("status", query.statusCodes);
+  setList("outcome", query.outcomes);
+  if (query.search) params.set("text", query.search);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.cursor !== undefined && query.cursor !== null)
+    params.set("cursor", String(query.cursor));
+  if (query.timeBucket) params.set("time-bucket", query.timeBucket);
+  setList("group-by", query.groupBy);
+  const rendered = params.toString();
+  return rendered ? `?${rendered}` : "";
+};
 
 export class GatewayError extends Error {
   constructor(
@@ -43,6 +107,19 @@ export interface GatewayClients {
   readonly management: {
     credentials(): Promise<readonly AuthFileItem[]>;
     logs(): Promise<LogsResponse>;
+    schedulerSettings(): Promise<SchedulerSettings>;
+    schedulerStatus(): Promise<SchedulerStatus>;
+    saveSchedulerSettings(patch: Partial<SchedulerSettings>): Promise<SchedulerStatus>;
+    saveSchedulerOrder(order: readonly string[]): Promise<readonly string[]>;
+    historyStats(query?: HistoryStatsQuery): Promise<HistoryStatsResponse>;
+    historyEvents(query?: HistoryStatsQuery): Promise<HistoryEventsResponse>;
+    historyEvent(eventId: string): Promise<HistoryEvent>;
+    historyCount(query?: HistoryStatsQuery): Promise<number>;
+    clearHistory(query?: HistoryStatsQuery): Promise<number>;
+    exportHistory(format: "csv" | "json", query?: HistoryStatsQuery): Promise<Blob | undefined>;
+    historyHealth(): Promise<HistoryHealth>;
+    modelPrices(): Promise<readonly ModelPrice[]>;
+    saveModelPrice(price: ModelPrice): Promise<ModelPrice>;
     configYaml(): Promise<string>;
     saveConfigYaml(yaml: string): Promise<void>;
     usageRefresh(): Promise<void>;
@@ -64,8 +141,6 @@ export interface GatewayClients {
     importCredential(name: string, content: Record<string, unknown>): Promise<void>;
     importVertexServiceAccount(document: string): Promise<void>;
     saveCredentialOrder(names: readonly string[]): Promise<readonly string[]>;
-    importLocalClaude(): Promise<void>;
-    importLocalZcode(): Promise<void>;
 
     beginProviderAuth(provider: string): Promise<{ readonly url: string; readonly state: string }>;
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
@@ -82,6 +157,12 @@ const describeFailure = async (response: Response): Promise<string> => {
   try {
     const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
     if (typeof parsed.error === "string" && parsed.error.trim() !== "") return parsed.error;
+    if (parsed.error && typeof parsed.error === "object") {
+      const nested = parsed.error as { message?: unknown };
+      if (typeof nested.message === "string" && nested.message.trim() !== "") {
+        return nested.message;
+      }
+    }
     if (typeof parsed.message === "string" && parsed.message.trim() !== "") return parsed.message;
   } catch {
     // Plain-text body: surface it as-is.
@@ -91,33 +172,51 @@ const describeFailure = async (response: Response): Promise<string> => {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
-const requestJson = async (
+const requestResponse = async (
   url: string,
   headers: HeadersInit,
   init?: RequestInit,
-): Promise<unknown> => {
+): Promise<Response> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  const signal = init?.signal ?? controller.signal;
+  // A caller-supplied signal must not displace the timeout: both have to be
+  // able to abort the request, so the caller's aborts are forwarded into the
+  // same controller the timer owns.
+  const callerSignal = init?.signal;
+  const forwardAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", forwardAbort, { once: true });
+  }
   try {
     const response = await fetch(url, {
       ...init,
-      signal,
+      signal: controller.signal,
       headers: { ...headers, ...init?.headers },
     });
     if (!response.ok) {
       throw new GatewayError(await describeFailure(response), response.status);
     }
-    if (response.status === 204) return null;
-    return await response.json();
+    return response;
   } catch (error) {
-    if (controller.signal.aborted && !(init?.signal?.aborted ?? false)) {
+    if (controller.signal.aborted && !(callerSignal?.aborted ?? false)) {
       throw new GatewayError(`gateway request timed out after ${REQUEST_TIMEOUT_MS}ms`, 0);
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", forwardAbort);
   }
+};
+
+const requestJson = async (
+  url: string,
+  headers: HeadersInit,
+  init?: RequestInit,
+): Promise<unknown> => {
+  const response = await requestResponse(url, headers, init);
+  if (response.status === 204) return null;
+  return response.json();
 };
 
 export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayClients => {
@@ -148,6 +247,118 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       credentials: async () =>
         parseAuthFiles(await requestJson(`${base}/v0/management/auth-files`, authHeaders)).files,
       logs: async () => parseLogs(await requestJson(`${base}/v0/management/logs`, authHeaders)),
+      schedulerSettings: async () =>
+        SchedulerSettingsSchema.parse(
+          await requestJson(`${base}/v0/management/scheduler/settings`, authHeaders),
+        ),
+      schedulerStatus: async () =>
+        SchedulerStatusSchema.parse(
+          await requestJson(`${base}/v0/management/scheduler/status`, authHeaders),
+        ),
+      saveSchedulerSettings: async (patch) =>
+        schedulerUpdateResponseSchema.parse(
+          await requestJson(`${base}/v0/management/scheduler/settings`, authHeaders, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          }),
+        ).scheduler,
+      saveSchedulerOrder: async (order) => {
+        const response = await requestJson(`${base}/v0/management/scheduler/order`, authHeaders, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ order }),
+        });
+        schedulerOrderResponseSchema.parse(response);
+        return order;
+      },
+      historyStats: async (query = {}) =>
+        HistoryStatsResponseSchema.parse(
+          await requestJson(
+            `${base}/v0/management/history/stats${historyQueryString(query)}`,
+            authHeaders,
+          ),
+        ),
+      historyEvents: async (query = {}) =>
+        HistoryEventsResponseSchema.parse(
+          await requestJson(
+            `${base}/v0/management/history/events${historyQueryString(query)}`,
+            authHeaders,
+          ),
+        ),
+      historyEvent: async (eventId) =>
+        HistoryEventDetailResponseSchema.parse(
+          await requestJson(
+            `${base}/v0/management/history/events/${encodeURIComponent(eventId)}`,
+            authHeaders,
+          ),
+        ).event,
+      historyCount: async (query = {}) =>
+        z
+          .object({ count: z.number().int().nonnegative() })
+          .parse(
+            await requestJson(
+              `${base}/v0/management/history/count${historyQueryString({ ...query, cursor: undefined, limit: undefined })}`,
+              authHeaders,
+            ),
+          ).count,
+      clearHistory: async (query = {}) => {
+        const queryString = historyQueryString({ ...query, cursor: undefined, limit: undefined });
+        const response = z
+          .object({ deleted: z.number().int().nonnegative() })
+          .parse(
+            await requestJson(
+              `${base}/v0/management/history/events${queryString}${queryString ? "&" : "?"}confirm=true`,
+              authHeaders,
+              { method: "DELETE" },
+            ),
+          );
+        return response.deleted;
+      },
+      exportHistory: async (format, query = {}) => {
+        const queryString = historyQueryString({ ...query, cursor: undefined, limit: undefined });
+        const exportAuthorization = window.prompt("Enter the gateway export authorization secret.");
+        if (exportAuthorization === null) return undefined;
+        const exportHeaders = {
+          ...authHeaders,
+          "x-mahoquot-export-authorization": exportAuthorization,
+        };
+        const response = await requestResponse(
+          `${base}/v0/management/history/export${queryString}${queryString ? "&" : "?"}format=${format}`,
+          exportHeaders,
+        );
+        if (format === "json") {
+          const document = await response.json();
+          return new Blob([JSON.stringify(document)], { type: "application/json" });
+        }
+        return response.blob();
+      },
+      historyHealth: async () =>
+        HistoryHealthSchema.parse(
+          await requestJson(`${base}/v0/management/history/health`, authHeaders),
+        ),
+      modelPrices: async () =>
+        ModelPricesResponseSchema.parse(
+          await requestJson(`${base}/v0/management/prices`, authHeaders),
+        ).prices,
+      saveModelPrice: async (price) =>
+        ModelPriceSchema.parse(
+          await requestJson(
+            `${base}/v0/management/prices/${encodeURIComponent(price.model)}`,
+            authHeaders,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                version: price.version,
+                "input-per-million": price["input-per-million"],
+                "output-per-million": price["output-per-million"],
+                "cached-input-per-million": price["cached-input-per-million"],
+                "effective-from-ms": price["effective-from-ms"],
+              }),
+            },
+          ),
+        ),
       configYaml: async () => {
         const response = await fetch(`${base}/v0/management/config.yaml`, {
           headers: authHeaders,
@@ -246,17 +457,6 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         })) as { names?: string[] } | null;
         return result?.names ?? [];
       },
-      importLocalClaude: async () => {
-        await requestJson(`${base}/v0/management/claude/import-local`, authHeaders, {
-          method: "POST",
-        });
-      },
-      importLocalZcode: async () => {
-        await requestJson(`${base}/v0/management/zcode/import-local`, authHeaders, {
-          method: "POST",
-        });
-      },
-
       beginProviderAuth: async (provider) => {
         const endpoint: Record<string, string> = {
           codex: "codex-auth-url",

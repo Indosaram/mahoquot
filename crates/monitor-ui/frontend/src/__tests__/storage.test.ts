@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   getGatewayBaseUrl,
-  getRelayKey,
+  getLegacyRelayKey,
   getTelemetryRange,
   getTheme,
   migrateStoredGatewayUrl,
+  removeLegacyRelayKey,
   setGatewayBaseUrl,
-  setRelayKey,
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "../lib/storage";
@@ -65,13 +65,23 @@ describe("Storage and Port Migration", () => {
     expect(localStorage.getItem("mahoquot.base")).toBe("http://127.0.0.1:9000");
   });
 
-  it("stores one API key slot", () => {
-    expect(getRelayKey()).toBe("qkey");
+  it("only exposes legacy API keys for one-time native migration", () => {
+    expect(getLegacyRelayKey()).toBeNull();
 
-    setRelayKey("custom-api-key");
+    localStorage.setItem("mahoquot.key", "legacy-api-key");
+    expect(getLegacyRelayKey()).toBe("legacy-api-key");
 
-    expect(getRelayKey()).toBe("custom-api-key");
-    expect(localStorage.getItem("mahoquot.key")).toBe("custom-api-key");
+    removeLegacyRelayKey();
+    expect(getLegacyRelayKey()).toBeNull();
+    expect(localStorage.getItem("mahoquot.key")).toBeNull();
+    expect(localStorage.getItem("mahoquot.mgmt")).toBeNull();
+  });
+
+  it("source does not provide any browser API-key persistence function", async () => {
+    const source = await import("../lib/storage?raw");
+    expect(source.default).not.toContain('setItem("mahoquot.key"');
+    expect(source.default).not.toContain('setItem("mahoquot.mgmt"');
+    expect(source.default).not.toContain("setRelayKey");
   });
 
   it("sets and normalizes gateway base url", () => {

@@ -1,5 +1,6 @@
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import type { GatewayClients } from "@/lib/api";
+import { pendingKey } from "@/lib/pending";
 import { useCallback, useEffect, useState } from "react";
 
 type SetText = (value: string) => void;
@@ -67,7 +68,7 @@ export function useConnectionSettings({
       setNotice("Request retry count must be a non-negative integer.");
       return;
     }
-    setPending("settings:save");
+    setPending(pendingKey.settingsSave);
     setNotice("");
     try {
       await Promise.all([

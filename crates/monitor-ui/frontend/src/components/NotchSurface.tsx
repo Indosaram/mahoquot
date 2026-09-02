@@ -3,19 +3,11 @@ import { MONOCHROME_LOGOS, ProviderGlyph, providerLogos } from "@/components/Pro
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import { type NormalizedAccount, formatResetTime } from "@/lib/accounts";
 import { type LocalPoint, groupNotchProviders, providerAtPoint } from "@/lib/notch";
+import { providerColor } from "@/lib/provider-colors";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const providerRingColors: Readonly<Record<string, string>> = {
-  claude: "#D97757",
-  codex: "#10A37F",
-  antigravity: "#3186FF",
-  kiro: "#993FF5",
-  cursor: "#8E8E93",
-};
-
-const providerRingColor = (provider: string): string =>
-  providerRingColors[provider.trim().toLowerCase()] ?? "#8E8E93";
+import type { TotpEntry } from "../lib/totp-vault";
+import { TotpQuickAccess } from "./TotpVaultSurface";
 
 // Island silhouette matching reference: smooth continuous S-curve flare (55px)
 // with vertical screen tangents, rounded convex shoulders, and straight vertical wall.
@@ -50,6 +42,10 @@ interface NotchSurfaceProps {
   accounts: readonly NormalizedAccount[];
   loadState: LoadState;
   showRemaining: boolean;
+  totpEntries?: readonly TotpEntry[];
+  totpCodes?: Readonly<Record<string, string>>;
+  totpRemaining?: number;
+  onCopyTotpCode?: (entry: TotpEntry, code: string) => void;
 }
 
 /**
@@ -57,7 +53,15 @@ interface NotchSurfaceProps {
  * and the native-event plumbing that drives them. The `surface` constant keeps
  * the moved effect guards meaningful in their new home.
  */
-export function NotchSurface({ accounts, loadState, showRemaining }: NotchSurfaceProps) {
+export function NotchSurface({
+  accounts,
+  loadState,
+  showRemaining,
+  totpEntries = [],
+  totpCodes = {},
+  totpRemaining = 0,
+  onCopyTotpCode = () => undefined,
+}: NotchSurfaceProps) {
   const surface = "notch" as const;
   const [notchExpanded, setNotchExpanded] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
@@ -215,7 +219,7 @@ export function NotchSurface({ accounts, loadState, showRemaining }: NotchSurfac
                           100,
                           Math.max(0, showRemaining ? 100 - row.usedPercent : row.usedPercent),
                         )}%`,
-                        background: index === 0 ? providerRingColor(group.provider) : "var(--ok)",
+                        background: index === 0 ? providerColor(group.provider) : "var(--ok)",
                       }}
                     />
                   </div>
@@ -238,123 +242,137 @@ export function NotchSurface({ accounts, loadState, showRemaining }: NotchSurfac
     </div>
   );
   return (
-    <div
-      className={`notch-shell${notchExpanded ? " expanded open" : ""}`}
-      data-mahoquot-surface="notch"
-    >
-      <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
-      <div className="notch-island-shape" aria-hidden="true">
-        <svg
-          className="notch-island-shadow"
-          viewBox="0 0 108 520"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <path d={NOTCH_ISLAND_PATH} />
-        </svg>
-        <div className="notch-island-glass" style={{ clipPath: `path("${NOTCH_ISLAND_PATH}")` }} />
-        <svg
-          className="notch-island-edge"
-          viewBox="0 0 108 520"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <path d={NOTCH_ISLAND_PATH} />
-        </svg>
+    <>
+      <div className="notch-totp-access">
+        <TotpQuickAccess
+          entries={totpEntries}
+          codes={totpCodes}
+          remaining={totpRemaining}
+          onCopyCode={onCopyTotpCode}
+          compact
+        />
       </div>
       <div
-        className={`notch-surface${notchExpanded ? " expanded" : ""}`}
-        data-count={Math.min(notchGroups.length, 7)}
+        className={`notch-shell${notchExpanded ? " expanded open" : ""}`}
+        data-mahoquot-surface="notch"
       >
-        {notchGroups.length ? (
-          notchGroups.map((group) => {
-            const worst = worstUsedPercent(group.rows);
-            // The dial must speak the same language as the tooltip and the
-            // console: the showRemaining preference flips it between used
-            // and left. Worst-case usage maps to minimum remaining.
-            const dial = worst === null ? null : showRemaining ? 100 - worst : worst;
-            const circumference = 2 * Math.PI * 24;
-            const used =
-              dial === null ? 0 : (Math.min(100, Math.max(0, dial)) / 100) * circumference;
-            return (
-              <button
-                type="button"
-                className="notch-ring-item"
-                key={group.provider}
-                data-provider={group.provider}
-                data-testid={`notch-ring-${group.provider}`}
-                data-hover-provider={group.provider}
-                onMouseEnter={() => openNotchTooltip(group.provider)}
-                onMouseLeave={scheduleNotchTooltipClose}
-                onClick={() => openNotchTooltip(group.provider)}
-              >
-                <span className="notch-dial">
-                  <svg className="notch-dial-ring" viewBox="0 0 58 58" aria-hidden="true">
-                    <circle className="notch-dial-track" cx="29" cy="29" r="24" />
-                    {dial !== null && (
-                      <circle
-                        className="notch-dial-arc"
-                        cx="29"
-                        cy="29"
-                        r="24"
-                        style={{
-                          stroke: providerRingColor(group.provider),
-                          strokeDasharray: `${used} ${circumference}`,
-                        }}
-                      />
-                    )}
-                  </svg>
-                  <span className="notch-ring-logo">
-                    <NotchGlyph provider={group.provider} />
-                  </span>
-                </span>
-                <span className="notch-dial-label">
-                  {dial === null ? "–" : `${Math.round(dial)}%`}
-                </span>
-                <div className={activeTooltip === group.provider ? "react-visible" : undefined}>
-                  {renderNotchTooltip(group)}
-                </div>
-              </button>
-            );
-          })
-        ) : (
-          <div
-            className="notch-empty-ring"
-            data-testid="notch-empty-ring"
-            data-hover-provider="__empty__"
-            onMouseEnter={() => openNotchTooltip("__empty__")}
-            onMouseLeave={scheduleNotchTooltipClose}
+        <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
+        <div className="notch-island-shape" aria-hidden="true">
+          <svg
+            className="notch-island-shadow"
+            viewBox="0 0 108 520"
+            preserveAspectRatio="none"
+            aria-hidden="true"
           >
-            <div className="notch-ring-wrap">
-              <span className="notch-ring-logo">
-                <strong>Q</strong>
-              </span>
-            </div>
+            <path d={NOTCH_ISLAND_PATH} />
+          </svg>
+          <div
+            className="notch-island-glass"
+            style={{ clipPath: `path("${NOTCH_ISLAND_PATH}")` }}
+          />
+          <svg
+            className="notch-island-edge"
+            viewBox="0 0 108 520"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path d={NOTCH_ISLAND_PATH} />
+          </svg>
+        </div>
+        <div
+          className={`notch-surface${notchExpanded ? " expanded" : ""}`}
+          data-count={Math.min(notchGroups.length, 7)}
+        >
+          {notchGroups.length ? (
+            notchGroups.map((group) => {
+              const worst = worstUsedPercent(group.rows);
+              // The dial must speak the same language as the tooltip and the
+              // console: the showRemaining preference flips it between used
+              // and left. Worst-case usage maps to minimum remaining.
+              const dial = worst === null ? null : showRemaining ? 100 - worst : worst;
+              const circumference = 2 * Math.PI * 24;
+              const used =
+                dial === null ? 0 : (Math.min(100, Math.max(0, dial)) / 100) * circumference;
+              return (
+                <button
+                  type="button"
+                  className="notch-ring-item"
+                  key={group.provider}
+                  data-provider={group.provider}
+                  data-testid={`notch-ring-${group.provider}`}
+                  data-hover-provider={group.provider}
+                  onMouseEnter={() => openNotchTooltip(group.provider)}
+                  onMouseLeave={scheduleNotchTooltipClose}
+                  onClick={() => openNotchTooltip(group.provider)}
+                >
+                  <span className="notch-dial">
+                    <svg className="notch-dial-ring" viewBox="0 0 58 58" aria-hidden="true">
+                      <circle className="notch-dial-track" cx="29" cy="29" r="24" />
+                      {dial !== null && (
+                        <circle
+                          className="notch-dial-arc"
+                          cx="29"
+                          cy="29"
+                          r="24"
+                          style={{
+                            stroke: providerColor(group.provider),
+                            strokeDasharray: `${used} ${circumference}`,
+                          }}
+                        />
+                      )}
+                    </svg>
+                    <span className="notch-ring-logo">
+                      <NotchGlyph provider={group.provider} />
+                    </span>
+                  </span>
+                  <span className="notch-dial-label">
+                    {dial === null ? "–" : `${Math.round(dial)}%`}
+                  </span>
+                  <div className={activeTooltip === group.provider ? "react-visible" : undefined}>
+                    {renderNotchTooltip(group)}
+                  </div>
+                </button>
+              );
+            })
+          ) : (
             <div
-              className={`notch-tooltip-anchor${activeTooltip === "__empty__" ? " react-visible" : ""}`}
+              className="notch-empty-ring"
+              data-testid="notch-empty-ring"
+              data-hover-provider="__empty__"
+              onMouseEnter={() => openNotchTooltip("__empty__")}
+              onMouseLeave={scheduleNotchTooltipClose}
             >
+              <div className="notch-ring-wrap">
+                <span className="notch-ring-logo">
+                  <strong>Q</strong>
+                </span>
+              </div>
               <div
-                className="notch-tooltip"
-                role="tooltip"
-                data-testid="notch-tooltip-empty"
-                data-hover-provider="__empty__"
-                onMouseEnter={() => openNotchTooltip("__empty__")}
-                onMouseLeave={scheduleNotchTooltipClose}
+                className={`notch-tooltip-anchor${activeTooltip === "__empty__" ? " react-visible" : ""}`}
               >
-                <div className="notch-tooltip-head">
-                  <strong>Mahoquot</strong>
-                </div>
-                <div className="notch-tooltip-row">
-                  <div className="notch-tooltip-label">No accounts connected</div>
-                  <div className="notch-tooltip-meta">
-                    <span>Onboard in Operations Console</span>
+                <div
+                  className="notch-tooltip"
+                  role="tooltip"
+                  data-testid="notch-tooltip-empty"
+                  data-hover-provider="__empty__"
+                  onMouseEnter={() => openNotchTooltip("__empty__")}
+                  onMouseLeave={scheduleNotchTooltipClose}
+                >
+                  <div className="notch-tooltip-head">
+                    <strong>Mahoquot</strong>
+                  </div>
+                  <div className="notch-tooltip-row">
+                    <div className="notch-tooltip-label">No accounts connected</div>
+                    <div className="notch-tooltip-meta">
+                      <span>Onboard in Operations Console</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

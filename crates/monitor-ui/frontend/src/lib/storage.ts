@@ -45,12 +45,18 @@ export const validateGatewayBaseUrl = (value: string): string | null => {
   }
 };
 
-export const getRelayKey = (): string => {
-  return localStorage.getItem("mahoquot.key") || "qkey";
+const LEGACY_RELAY_KEY_NAMES = ["mahoquot.key", "mahoquot.mgmt"] as const;
+
+export const getLegacyRelayKey = (): string | null => {
+  for (const name of LEGACY_RELAY_KEY_NAMES) {
+    const value = localStorage.getItem(name);
+    if (value !== null) return value;
+  }
+  return null;
 };
 
-export const setRelayKey = (key: string): void => {
-  localStorage.setItem("mahoquot.key", key.trim());
+export const removeLegacyRelayKey = (): void => {
+  for (const name of LEGACY_RELAY_KEY_NAMES) localStorage.removeItem(name);
 };
 
 export type StoredTelemetryRange = "30m" | "1h" | "1d" | "7d" | "30d";

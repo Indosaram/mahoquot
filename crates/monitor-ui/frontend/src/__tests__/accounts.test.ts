@@ -206,6 +206,19 @@ describe("Account Normalization and Quota Capability", () => {
     expect(getQuotaCapability("kiro", null)).toBe("unsupported");
   });
 
+  it("matches canonical provider ids instead of substrings", () => {
+    // given generic endpoints whose names merely contain a supported id,
+    // capability must stay unsupported: an "openai-compatible" relay does not
+    // report Codex quota headers, and claiming otherwise renders a fake window
+    expect(getQuotaCapability("openai-compatible", null)).toBe("unsupported");
+    expect(getQuotaCapability("claude-relay", null)).toBe("unsupported");
+    expect(getQuotaCapability("my-antigravity-proxy", { groups: [] })).toBe("unsupported");
+
+    // catalog aliases still resolve to the canonical id
+    expect(getQuotaCapability("openai", null)).toBe("supported");
+    expect(getQuotaCapability(" Anthropic ", null)).toBe("supported");
+  });
+
   it("orders the displayed list by the credential inventory, not the pool order", () => {
     const runtime = [
       { id: "a@example.com", provider: "codex", health: "available", ok: 1, fails: 0 },

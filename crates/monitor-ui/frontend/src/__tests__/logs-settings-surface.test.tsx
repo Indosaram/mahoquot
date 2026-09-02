@@ -85,13 +85,11 @@ describe("Logs and Settings characterization pin", () => {
         screen.getByText(/File logging is off — showing the in-memory tail\./),
       ).toBeInTheDocument();
 
-      expect(screen.getByText("Total")).toBeInTheDocument();
-      expect(screen.getByText("Success")).toBeInTheDocument();
-      expect(screen.getByText("Avg Time")).toBeInTheDocument();
+      expect(screen.getByText("Requests")).toBeInTheDocument();
+      expect(screen.getByText("Succeeded")).toBeInTheDocument();
       expect(screen.getAllByText("gpt-5.6").length).toBe(2);
       expect(screen.getAllByText("codex-1").length).toBe(2);
       expect(screen.getByText("15")).toBeInTheDocument();
-      expect(screen.getByText(/1,169,359B \u2192 744B/)).toBeInTheDocument();
       expect(screen.getByText("429")).toBeInTheDocument();
       expect(screen.getByText("200")).toBeInTheDocument();
 
@@ -140,7 +138,8 @@ describe("Logs and Settings characterization pin", () => {
       if (!logsNav) throw new Error("Logs navigation missing");
       fireEvent.click(logsNav);
 
-      expect(await screen.findByText(/HTTP 500|server failure|Action failed/i)).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
+      expect(screen.getByText("No request records.")).toBeInTheDocument();
     });
   });
 
@@ -223,6 +222,37 @@ describe("Logs and Settings characterization pin", () => {
       Object.assign(navigator, {
         clipboard: { writeText: writeTextMock },
       });
+      Object.assign(window, {
+        __TAURI_INTERNALS__: {
+          invoke: vi.fn(async (command: string) => {
+            if (command === "gateway_status") return "running";
+            if (command === "migrate_legacy_secret") {
+              return { value: "test-relay-key", remove_legacy: true };
+            }
+            if (command === "read_secret") return { value: null };
+            if (command === "tunnel_status") {
+              return {
+                installed: false,
+                enabled: false,
+                running: false,
+                public_url: null,
+                error: null,
+              };
+            }
+            if (command === "list_codex_instances") return [];
+            if (command === "native_settings_state") {
+              return {
+                login_start_enabled: false,
+                notifications: "available",
+                action: null,
+                gateway_running: true,
+                notch: "compact",
+              };
+            }
+            return null;
+          }),
+        },
+      });
 
       render(<App />);
       const settingsNav = (await screen.findAllByText("Settings")).at(0);
@@ -236,6 +266,7 @@ describe("Logs and Settings characterization pin", () => {
         expect(writeTextMock).toHaveBeenCalledWith("test-relay-key");
         expect(screen.getByText("API key copied.")).toBeInTheDocument();
       });
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     });
 
     it("saves proxy settings with retry validation", async () => {

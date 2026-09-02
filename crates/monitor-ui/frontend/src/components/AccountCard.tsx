@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { Fragment, type MouseEvent, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
+import { blocks } from "../lib/pending";
+import { relayPlanLabel } from "../lib/relay-plans";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { Badge, Button, Card } from "./ui";
@@ -66,7 +68,9 @@ export const AccountCard = ({
   onSetDragging,
   onContextMenu,
 }: AccountCardProps) => {
-  const isPending = pending !== "";
+  // Only work targeting this account disables this card; a mutation on a
+  // sibling card, or a settings save, leaves it interactive.
+  const isPending = blocks(pending, "account", account.id);
   const rows = quotaRows(account);
   const [tokensOpen, setTokensOpen] = useState(false);
   const detail = account.runtimeId ?? account.credentialName ?? "Credential only";
@@ -165,7 +169,7 @@ export const AccountCard = ({
               </Button>
               <Button
                 aria-label={`Re-authenticate ${account.label}`}
-                disabled={isPending}
+                disabled={isPending || blocks(pending, "onboarding")}
                 onClick={() => void onReauthenticate(account)}
               >
                 {pending === `auth:${account.provider}` ? "Starting…" : "Re-auth"}
@@ -239,6 +243,12 @@ export const AccountCard = ({
       <div className="usage-section">
         {account.usage?.totals ? (
           <div className="usage-totals" data-testid="account-usage-totals">
+            {account.plan ? (
+              <>
+                <strong data-testid="account-plan">{relayPlanLabel(account.plan)}</strong>
+                <span>·</span>
+              </>
+            ) : null}
             <strong>{account.usage.totals.requests.toLocaleString("en")}</strong> req
             <span>·</span>
             <strong>
@@ -254,6 +264,20 @@ export const AccountCard = ({
                 <strong>${account.usage.totals.total_cost_usd.toFixed(2)}</strong>
               </>
             ) : null}
+          </div>
+        ) : null}
+        {account.usage?.windows?.length ? (
+          <div className="usage-windows" data-testid="account-usage-windows">
+            {account.usage.windows.map((window) => (
+              <span key={window.label}>
+                {window.label}{" "}
+                <strong>
+                  {window.cost_usd != null
+                    ? `$${window.cost_usd.toFixed(2)}`
+                    : `${window.tokens.toLocaleString("en")} tok`}
+                </strong>
+              </span>
+            ))}
           </div>
         ) : null}
         {rows.length ? (

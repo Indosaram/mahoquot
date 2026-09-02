@@ -10,6 +10,7 @@ const mockAccount: NormalizedAccount = {
   disabled: false,
   authIndex: "codex-1.json",
   provider: "codex",
+  plan: null,
   email: "dev@example.com",
   label: "dev@example.com",
   health: "healthy",
@@ -27,6 +28,7 @@ const mockAccount: NormalizedAccount = {
   usage: {
     plan_type: "Pro",
     primary: { limit_name: "5 hour", used_percent: 25, reset_after_seconds: 3600 },
+    windows: [{ label: "7d", requests: 4340, tokens: 300_901_557, cost_usd: 522.39 }],
   },
   quotaCapability: "supported",
   isCredentialOnly: false,
@@ -69,6 +71,27 @@ describe("AccountsSurface component", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Tokens/ }));
     expect(usage).not.toHaveTextContent("1.3K");
+  });
+
+  it("renders relay window deltas and the plan chip only for accounts that carry them", () => {
+    const relayAccount = {
+      ...mockAccount,
+      plan: "standard",
+      usage: {
+        ...mockAccount.usage,
+        totals: { requests: 4340, tokens: 1_394_236_595, total_cost_usd: 3673.01 },
+      },
+    } as NormalizedAccount;
+    render(
+      <AccountsSurface
+        {...createProps({ accounts: [relayAccount], visibleAccounts: [relayAccount] })}
+      />,
+    );
+
+    const deltas = screen.getByTestId("account-usage-windows");
+    expect(deltas).toHaveTextContent("7d");
+    expect(deltas).toHaveTextContent("$522.39");
+    expect(screen.getByTestId("account-plan")).toHaveTextContent("Standard");
   });
 
   it("renders provider tabs, count badges, and account cards", () => {
@@ -215,5 +238,31 @@ describe("AccountsSurface component", () => {
       />,
     );
     expect(screen.getByText("No accounts or credentials found.")).toBeInTheDocument();
+  });
+
+  it("shows successful real reset toast", async () => {
+    const onRunAccountAction = vi.fn();
+    render(
+      <AccountsSurface
+        {...createProps({
+          onRunAccountAction,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reset window" }));
+    expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
+  });
+
+  it("shows reset denial toast", async () => {
+    const onRunAccountAction = vi.fn().mockRejectedValue(new Error("no reset credits available"));
+    render(
+      <AccountsSurface
+        {...createProps({
+          onRunAccountAction,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reset window" }));
+    expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
   });
 });

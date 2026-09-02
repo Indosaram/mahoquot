@@ -95,7 +95,6 @@ describe("unified gateway auth boundary", () => {
       }),
     );
     const clients = createGatewayClients("http://127.0.0.1:18801", "api-key");
-    await clients.management.importLocalClaude();
     await clients.management.saveCredentialOrder(["b.json", "a.json"]);
     await clients.management.createGenericCredential({
       provider: "deepseek",
@@ -107,7 +106,6 @@ describe("unified gateway auth boundary", () => {
     });
     await clients.management.beginProviderAuth("claude");
     expect(calls.map((call) => [call.url, call.init?.method ?? "GET"])).toEqual([
-      ["http://127.0.0.1:18801/v0/management/claude/import-local", "POST"],
       ["http://127.0.0.1:18801/v0/management/auth-files/order", "PUT"],
       ["http://127.0.0.1:18801/v0/management/auth-files", "POST"],
       ["http://127.0.0.1:18801/v0/management/anthropic-auth-url", "GET"],
@@ -117,8 +115,8 @@ describe("unified gateway auth boundary", () => {
         (call) => new Headers(call.init?.headers).get("Authorization") === "Bearer api-key",
       ),
     ).toBe(true);
-    expect(calls[1]?.init?.body).toBe(JSON.stringify({ names: ["b.json", "a.json"] }));
-    expect(JSON.parse(String(calls[2]?.init?.body))).toMatchObject({
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ names: ["b.json", "a.json"] }));
+    expect(JSON.parse(String(calls[1]?.init?.body))).toMatchObject({
       content: {
         type: "generic",
         provider: "deepseek",

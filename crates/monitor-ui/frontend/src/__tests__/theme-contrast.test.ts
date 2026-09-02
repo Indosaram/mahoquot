@@ -46,6 +46,18 @@ function parseCssVariables(cssContent: string, selector: string): Record<string,
 }
 
 describe("CSS Design System Color Contrast (WCAG 2.1 AA >= 4.5:1)", () => {
+  it("keeps toast text fully opaque throughout entry motion", async () => {
+    // Given: the production globals.css stylesheet
+    const cssPath = resolve(__dirname, "../styles/globals.css");
+    const css = await readFile(cssPath, "utf8");
+
+    // When: inspecting the toast entry keyframe
+    const toastEntry = /@keyframes toast-in\s*\{\s*from\s*\{([^}]+)\}/.exec(css)?.[1] ?? "";
+
+    // Then: movement may animate, but readable text must never become translucent
+    expect(toastEntry).not.toMatch(/opacity\s*:/);
+  });
+
   it("ensures light theme muted and accent tokens meet WCAG AA contrast against light surfaces", async () => {
     // Given: the production globals.css stylesheet
     const cssPath = resolve(__dirname, "../styles/globals.css");

@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { providerLogos } from "../components/ProviderGlyph";
+import { ONBOARDING_PROVIDERS } from "../lib/onboarding";
 import {
   OPENCODEX_TO_QUOTIO_ALIASES,
   PROVIDER_CATALOG,
@@ -27,6 +28,16 @@ interface ReferenceProvider {
   readonly keyOptional?: boolean;
   readonly staticHeaders?: Record<string, string>;
 }
+
+describe("provider onboarding credential boundaries", () => {
+  it("never offers reads from external provider credential stores", () => {
+    const methodIds = ONBOARDING_PROVIDERS.flatMap((provider) =>
+      provider.methods.map((method) => method.id),
+    );
+    expect(methodIds).not.toContain("claude-local");
+    expect(methodIds).not.toContain("zcode-local");
+  });
+});
 
 describe("provider-catalog", () => {
   it("provides a brand icon for every catalog and dedicated onboarding provider", () => {

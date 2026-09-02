@@ -11,7 +11,7 @@ const account = (overrides: {
   secondary?: number | null;
   limitName?: string;
   totals?: { requests: number; tokens: number; total_cost_usd: number };
-  windows?: { label: string; requests: number }[];
+  windows?: { label: string; requests: number; cost_usd?: number | null }[];
 }): NormalizedAccount =>
   ({
     id: `${overrides.provider}-${overrides.email}`,
@@ -19,6 +19,7 @@ const account = (overrides: {
     credentialName: null,
     authIndex: null,
     provider: overrides.provider,
+    plan: null,
     email: overrides.email,
     label: overrides.email,
     health: "available",
@@ -69,8 +70,8 @@ describe("TrayPanel", () => {
             secondary: 82,
             totals: { requests: 7005, tokens: 1_184_368_836, total_cost_usd: 3990.364061 },
             windows: [
-              { label: "3h", requests: 350 },
-              { label: "24h", requests: 550 },
+              { label: "3h", requests: 350, cost_usd: 522.386327 },
+              { label: "24h", requests: 550, cost_usd: null },
             ],
           }),
           account({
@@ -106,6 +107,8 @@ describe("TrayPanel", () => {
     expect(screen.getByTestId("tray-totals").textContent).toContain("$3,990.36");
     expect(screen.getByTestId("tray-windows").textContent).toContain("3h: 350 req");
     expect(screen.getByTestId("tray-windows").textContent).toContain("24h: 550 req");
+    // value deltas ride the same chip; a window without cost shows count only
+    expect(screen.getByTestId("tray-windows").textContent).toContain("$522.39");
     expect(screen.getByText("Weekly")).toBeTruthy();
     expect(screen.getByText("0% left")).toBeTruthy();
     expect(screen.getAllByText("12 seconds ago").length).toBe(2);

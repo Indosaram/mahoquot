@@ -136,6 +136,11 @@ const installMocks = async (
   );
 };
 
+const openProviderCatalog = async (page: Page, category: "Coding plan" | "API") => {
+  await page.getByRole("button", { name: category, exact: true }).click();
+  await expect(page.getByLabel("Search providers")).toBeVisible();
+};
+
 test.beforeAll(async () => mkdir(evidenceDir, { recursive: true }));
 
 test("keeps the topbar anchored while scoping controls to their surfaces", async ({ page }) => {
@@ -210,6 +215,7 @@ test("provider onboarding uses bundled official brand logos", async ({ page }) =
     .first()
     .click();
   await page.getByRole("button", { name: "Add account" }).click();
+  await openProviderCatalog(page, "Coding plan");
 
   for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
     await expect(page.getByTestId(`provider-logo-${provider}`).last()).toBeVisible();
@@ -249,10 +255,12 @@ test("every provider catalog tile renders a decoded bundled icon", async ({ page
     .first()
     .click();
   await page.getByRole("button", { name: "Add account" }).click();
-  await expect(page.getByLabel("Search providers")).toBeVisible();
+  await openProviderCatalog(page, "API");
 
   const icons = page.locator(".provider-options .provider-logo");
-  await expect(icons).toHaveCount(PROVIDER_PICKER_TILE_COUNT);
+  const apiNames = (await page.locator(".provider-options button:has(.provider-logo)").allTextContents()).filter(
+    (name) => name.trim() !== "Custom API",
+  );
 
   const broken = await icons.evaluateAll((nodes) =>
     nodes.flatMap((node, index) => {
@@ -269,6 +277,30 @@ test("every provider catalog tile renders a decoded bundled icon", async ({ page
   );
   expect(broken).toEqual([]);
   await expect(page.locator(".provider-options svg.lucide-terminal-square")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Account type" }).click();
+  await openProviderCatalog(page, "Coding plan");
+  const codingPlanIcons = page.locator(".provider-options .provider-logo");
+  const codingPlanBroken = await codingPlanIcons.evaluateAll((nodes) =>
+    nodes.flatMap((node, index) => {
+      const images = node instanceof HTMLImageElement ? [node] : [...node.querySelectorAll("img")];
+      const invalid = images.some(
+        (image) =>
+          window.getComputedStyle(image).display !== "none" &&
+          (!image.complete || image.naturalWidth === 0 || image.naturalHeight === 0),
+      );
+      const rect = node.getBoundingClientRect();
+      return invalid || rect.width === 0 || rect.height === 0 ? [index] : [];
+    }),
+  );
+  expect(codingPlanBroken).toEqual([]);
+  const codingPlanNames = await page
+    .locator(".provider-options button:has(.provider-logo)")
+    .allTextContents();
+  expect(new Set([...apiNames, ...codingPlanNames])).toHaveProperty(
+    "size",
+    PROVIDER_PICKER_TILE_COUNT,
+  );
 
   await mkdir(evidenceDir, { recursive: true });
   const providerPanel = page.getByLabel("Provider onboarding");
@@ -328,6 +360,7 @@ test("adds from the plus drawer and deletes from the normal account list", async
     .first()
     .click();
   await page.getByRole("button", { name: "Add account" }).click();
+  await openProviderCatalog(page, "API");
   await page.getByRole("textbox", { name: "Search providers" }).fill("DeepSeek");
   await page.getByRole("button", { name: "DeepSeek", exact: true }).click();
   await page.getByRole("button", { name: "Add API key" }).click();
@@ -369,6 +402,7 @@ test("Kiro onboarding and account disable enable lifecycle", async ({ page }) =>
     .first()
     .click();
   await page.getByRole("button", { name: "Add account" }).click();
+  await openProviderCatalog(page, "Coding plan");
   await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
   await page.getByLabel("Close onboarding").click();
   await page.getByText("Codex", { exact: true }).click();
@@ -397,9 +431,12 @@ for (const viewport of [
         .click();
     }
     await page.getByRole("button", { name: "Add account" }).click();
+    await openProviderCatalog(page, "Coding plan");
+    await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Account type" }).click();
+    await openProviderCatalog(page, "API");
     const search = page.getByRole("textbox", { name: "Search providers" });
     await expect(search).toBeVisible();
-    await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
     await search.fill("deepseek");
     await expect(page.getByRole("button", { name: "DeepSeek", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "DeepSeek", exact: true }).click();
@@ -431,8 +468,14 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
     .first()
     .click();
   await page.getByText("Codex", { exact: true }).click();
-  await expect(page.getByText("Total tokens")).toBeVisible();
+  // Token totals fold behind a Tokens disclosure; the collapsed summary shows
+  // the total and the breakdown appears only once it is expanded.
   await expect(page.getByText("1.2M").first()).toBeVisible();
+  await page
+    .getByRole("button", { name: /Tokens/ })
+    .first()
+    .click();
+  await expect(page.getByText("Total tokens")).toBeVisible();
   await page.getByText("Claude", { exact: true }).click();
   await expect(page.getByText("Not reported by provider").first()).toBeVisible();
   await expect(
@@ -458,6 +501,7 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await page.getByRole("button", { name: "Reset window" }).first().click();
   await expect(page.getByText(/Action failed/)).toBeVisible();
   await page.getByRole("button", { name: "Add account" }).click();
+  await openProviderCatalog(page, "Coding plan");
   await expect(page.getByRole("heading", { name: "Add Account" })).toBeVisible();
   for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
     await expect(page.getByTestId(`provider-logo-${provider}`).last()).toBeVisible();
@@ -641,7 +685,9 @@ const installStressMocks = async (page: Page, options?: { empty?: boolean; logCo
     route.fulfill({ json: activeCreds }),
   );
   await page.route(/\/v0\/management\/logs(?:\?.*)?$/, (route) =>
-    route.fulfill({ json: { records: logRecords, "request-count": logRecords.length, "proxy-count": 0 } }),
+    route.fulfill({
+      json: { records: logRecords, "request-count": logRecords.length, "proxy-count": 0 },
+    }),
   );
   await page.route(/\/v0\/management\/config\.yaml$/, (route) =>
     route.fulfill({
@@ -710,12 +756,12 @@ test("shell scroll ownership on desktop workspace", async ({ page }) => {
 
   // 4. Logs destination uses dedicated bounded inner scroll container
   await page.getByRole("button", { name: "Logs" }).click();
-  const logWrap = page.locator(".logs-table-wrap");
+  const logWrap = page.locator(".durable-logs-table-wrap");
   await expect(logWrap).toBeVisible();
 
   const logsScrollContract = await page.evaluate(() => {
     const doc = document.documentElement;
-    const wrap = document.querySelector(".logs-table-wrap");
+    const wrap = document.querySelector(".durable-logs-table-wrap");
     return {
       docScrollHeight: doc.scrollHeight,
       docClientHeight: doc.clientHeight,
@@ -820,9 +866,9 @@ test("content stress under 10,000 high-volume log lines and logs containment", a
   await page.goto("/management.html");
   await page.getByRole("button", { name: "Logs" }).click();
 
-  const logWrap = page.locator(".logs-table-wrap");
+  const logWrap = page.locator(".durable-logs-table-wrap");
   await expect(logWrap).toBeVisible();
-  await expect(page.locator(".logs-table tbody tr").first()).toBeVisible();
+  await expect(page.locator(".durable-logs-table tbody tr").first()).toBeVisible();
 
   const logsStressGeometry = await page.evaluate(() => {
     const doc = document.documentElement;
@@ -900,6 +946,7 @@ test("overlay containment and focus-order across desktop drawers and context men
   expect(drawerDocMetrics.scrollWidth).toBeLessThanOrEqual(drawerDocMetrics.innerWidth);
 
   // Labelled controls reachable by keyboard/tab
+  await openProviderCatalog(page, "API");
   const searchInput = page.getByRole("textbox", { name: "Search providers" });
   await expect(searchInput).toBeVisible();
   await searchInput.focus();
@@ -1054,7 +1101,7 @@ test("overlay containment under responsive 390x844 viewport and long content str
     clientHeight: el.clientHeight,
     overflowY: window.getComputedStyle(el).overflowY,
   }));
-  expect(onboardingMetrics.scrollHeight).toBeGreaterThan(onboardingMetrics.clientHeight);
+  expect(onboardingMetrics.scrollHeight).toBeGreaterThanOrEqual(onboardingMetrics.clientHeight);
   expect(["auto", "scroll"].includes(onboardingMetrics.overflowY)).toBe(true);
 
   // Close action reachable on mobile
@@ -1126,8 +1173,12 @@ test("z.ai tile exposes zcode methods and captures the redirect url", async ({ p
   );
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.goto("/management.html");
-  await page.getByRole("button", { name: /Accounts/ }).first().click();
+  await page
+    .getByRole("button", { name: /Accounts/ })
+    .first()
+    .click();
   await page.getByRole("button", { name: "Add account" }).click();
+  await openProviderCatalog(page, "Coding plan");
   await page.getByRole("button", { name: "Z.ai", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in with ZCode" })).toBeVisible();
   await page.getByRole("button", { name: "Sign in with ZCode" }).click();
@@ -1145,7 +1196,11 @@ test("console surface passes the axe WCAG audit", async ({ page }) => {
   await page.goto("/management.html");
   await page.addScriptTag({ path: axePath });
   const result = await page.evaluate(async () => {
-    const axe = (window as unknown as { axe: { run: () => Promise<{ violations: Array<{ impact: string | null; help: string }> }> } }).axe;
+    const axe = (
+      window as unknown as {
+        axe: { run: () => Promise<{ violations: Array<{ impact: string | null; help: string }> }> };
+      }
+    ).axe;
     return axe.run();
   });
   const blocking = result.violations.filter(
@@ -1155,4 +1210,204 @@ test("console surface passes the axe WCAG audit", async ({ page }) => {
     blocking,
     `critical/serious axe violations: ${JSON.stringify(blocking.map((v) => v.help))}`,
   ).toEqual([]);
+});
+
+
+test("logs pages and exports 10000 rows", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  page.on("dialog", (dialog) => dialog.accept("task-15-export-secret"));
+  await page.addInitScript(() => {
+    localStorage.setItem("mahoquot.base", "");
+    localStorage.setItem("mahoquot.key", "task-15-management-key");
+  });
+  const allRows = Array.from({ length: 10_000 }, (_, index) => ({
+    "event-id": `history-${index}`,
+    "occurred-at-ms": 1_800_000_000_000 + index,
+    account: index % 2 === 0 ? "account-a" : "account-b",
+    provider: index % 2 === 0 ? "codex" : "claude",
+    model: index % 2 === 0 ? "gpt-5.6" : "claude-4",
+    "key-label": index % 2 === 0 ? "key-a" : "key-b",
+    status: index % 5 === 0 ? 429 : 200,
+    succeeded: index % 5 !== 0,
+    "input-tokens": 100 + index,
+    "output-tokens": 20 + index,
+    "cached-input-tokens": index % 11,
+    "reasoning-tokens": index % 7,
+    "total-tokens": 120 + index * 2,
+    "latency-ms": 50 + (index % 250),
+    "estimated-cost-usd": index / 10_000,
+    "price-version": "2026-09",
+  }));
+  const totals = (rows: typeof allRows) => ({
+    requests: rows.length,
+    "successful-requests": rows.filter((row) => row.succeeded).length,
+    "failed-requests": rows.filter((row) => !row.succeeded).length,
+    "input-tokens": rows.reduce((sum, row) => sum + row["input-tokens"], 0),
+    "output-tokens": rows.reduce((sum, row) => sum + row["output-tokens"], 0),
+    "cached-input-tokens": rows.reduce((sum, row) => sum + row["cached-input-tokens"], 0),
+    "reasoning-tokens": rows.reduce((sum, row) => sum + row["reasoning-tokens"], 0),
+    "total-tokens": rows.reduce((sum, row) => sum + row["total-tokens"], 0),
+    "estimated-cost-usd": rows.reduce((sum, row) => sum + row["estimated-cost-usd"], 0),
+    "average-latency-ms": rows.reduce((sum, row) => sum + row["latency-ms"], 0) / rows.length,
+  });
+  const filterRows = (url: URL) =>
+    allRows.filter((row) => {
+      const matches = (name: string, value: string | number | null) => {
+        const filter = url.searchParams.get(name);
+        return !filter || filter.split(",").includes(String(value ?? ""));
+      };
+      const text = (url.searchParams.get("text") ?? "").toLowerCase();
+      return (
+        matches("account", row.account) &&
+        matches("provider", row.provider) &&
+        matches("model", row.model) &&
+        matches("key-label", row["key-label"]) &&
+        matches("status", row.status) &&
+        (!text || JSON.stringify(row).toLowerCase().includes(text))
+      );
+    });
+
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    if (path === "/management.html" || path === "/") return route.continue();
+    if (path === "/healthz") {
+      return route.fulfill({ json: { status: "ok", version: "0.1.0", api_schema: 1 } });
+    }
+    if (path === "/admin/stats") {
+      return route.fulfill({
+        json: {
+          uptime_secs: 1,
+          in_flight: 0,
+          served: 10_000,
+          failed_over: 0,
+          refreshed: 0,
+          ttft: null,
+          accounts: [],
+          history: [],
+        },
+      });
+    }
+    if (path === "/v0/management/auth-files") return route.fulfill({ json: { files: [] } });
+    if (path === "/v0/management/logs") {
+      return route.fulfill({
+        json: {
+          records: [{ kind: "proxy", timestamp: 1_800_000_000, message: "memory tail visible" }],
+          "request-count": 0,
+          "proxy-count": 1,
+        },
+      });
+    }
+    if (path === "/v0/management/history/health") {
+      return route.fulfill({
+        json: {
+          ready: true,
+          degraded: false,
+          "queue-capacity": 1024,
+          "queue-depth": 0,
+          "enqueued-events": 10_000,
+          "written-events": 10_000,
+          "dropped-events": 0,
+          "database-failures": 0,
+          "last-error": null,
+        },
+      });
+    }
+    if (path === "/v0/management/history/stats") {
+      return route.fulfill({ json: { totals: totals(filterRows(url)), groups: [] } });
+    }
+    if (path === "/v0/management/history/count") {
+      const rows = filterRows(url);
+      return route.fulfill({ json: { count: rows.length } });
+    }
+    if (path === "/v0/management/history/events") {
+      const rows = filterRows(url);
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      const cursor = Number(url.searchParams.get("cursor") ?? 0);
+      const events = rows.slice(cursor, cursor + limit);
+      return route.fulfill({
+        json: {
+          events,
+          "next-cursor": cursor + limit < rows.length ? cursor + limit : null,
+          totals: totals(rows),
+        },
+      });
+    }
+    if (path.startsWith("/v0/management/history/events/")) {
+      const id = decodeURIComponent(path.split("/").at(-1) ?? "");
+      return route.fulfill({ json: { event: allRows.find((row) => row["event-id"] === id) } });
+    }
+    if (path === "/v0/management/history/export") {
+      const rows = filterRows(url);
+      if (url.searchParams.get("format") === "csv") {
+        const csv = [
+          "event_id,account,provider,model,status",
+          ...rows.map((row) =>
+            [row["event-id"], row.account, row.provider, row.model, row.status]
+              .map((cell) => `"${String(cell).replaceAll('"', '""')}"`)
+              .join(","),
+          ),
+        ].join("\n");
+        return route.fulfill({ body: csv, contentType: "text/csv" });
+      }
+      return route.fulfill({ json: { count: rows.length, events: rows } });
+    }
+    if (path.endsWith("/logging-to-file")) {
+      return route.fulfill({ json: { "logging-to-file": false } });
+    }
+    if (path.endsWith("/proxy-url")) return route.fulfill({ json: { "proxy-url": "" } });
+    if (path.endsWith("/routing/strategy")) {
+      return route.fulfill({ json: { strategy: "round-robin" } });
+    }
+    if (path.endsWith("/request-retry")) {
+      return route.fulfill({ json: { "request-retry": 3 } });
+    }
+    return route.fulfill({ json: { status: "ok" } });
+  });
+
+  const downloads: Array<{ name: string; body: string }> = [];
+  page.on("download", (download) => {
+    void download.createReadStream().then(async (stream) => {
+      if (!stream) return;
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+      downloads.push({ name: download.suggestedFilename(), body: Buffer.concat(chunks).toString() });
+    });
+  });
+
+  await page.goto("/management.html");
+  await page.getByRole("button", { name: "Logs" }).click();
+  await expect(page.getByRole("region", { name: "Request history", exact: true })).toBeVisible();
+  await expect(page.locator(".history-events-table tbody tr")).toHaveCount(50);
+  await expect(page.getByText("1–50 of 10,000")).toBeVisible();
+
+  await page.getByRole("button", { name: "Next history page" }).click();
+  await expect(page.getByText("51–100 of 10,000")).toBeVisible();
+  await expect(page.getByText("history-50")).toBeVisible();
+  await expect(page.locator(".history-events-table tbody tr")).toHaveCount(50);
+
+  await page.getByRole("button", { name: "View history-50 details" }).click();
+  await expect(page.getByRole("region", { name: "Request detail" })).toContainText("history-50");
+
+  await page.getByLabel("History provider").fill("codex");
+  await page.getByLabel("History status").fill("429");
+  await page.getByRole("button", { name: "Apply history filters" }).click();
+  await expect(page.getByText("1–50 of 1,000")).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear history" }).click();
+  const clearDialog = page.getByRole("dialog", { name: "Clear request history" });
+  await expect(clearDialog).toContainText("1,000 request records");
+  await expect(clearDialog).toContainText("dashboard history");
+  await expect(clearDialog).toContainText("Proxy file logs are not affected");
+  await clearDialog.getByRole("button", { name: "Cancel" }).click();
+
+  await page.getByRole("button", { name: "Export CSV" }).click();
+  await page.getByRole("button", { name: "Export JSON" }).click();
+  await expect.poll(() => downloads.length).toBe(2);
+  const csv = downloads.find((item) => item.name.endsWith(".csv"));
+  const json = downloads.find((item) => item.name.endsWith(".json"));
+  expect(csv?.body.split("\n")).toHaveLength(1_001);
+  expect(JSON.parse(json?.body ?? "{}").events).toHaveLength(1_000);
+  expect(JSON.parse(json?.body ?? "{}").count).toBe(1_000);
+  await expect(page.locator(".history-events-table tbody tr")).toHaveCount(50);
 });

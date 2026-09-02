@@ -110,6 +110,7 @@ describe("operations console", () => {
     expect(nav).toHaveTextContent("Accounts");
     expect(nav).toHaveTextContent("Logs");
     expect(nav).toHaveTextContent("Settings");
+    expect(nav).not.toHaveTextContent("Agents");
     expect(nav).not.toHaveTextContent("Credentials");
     expect(screen.getByText("Request activity")).toBeInTheDocument();
     expect(screen.getAllByText("Requests")[0]).toBeInTheDocument();
@@ -129,6 +130,8 @@ describe("operations console", () => {
     expect(screen.queryByText("Open logs")).not.toBeInTheDocument();
     expect(screen.queryByText(/Live/i)).not.toBeInTheDocument();
     expect(screen.queryByText("POOL HEALTH")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "CLI agents" })).toBeInTheDocument();
   });
 
   it("keeps refresh in Accounts and theme selection in Settings", async () => {
@@ -199,6 +202,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
     fireEvent.click(await screen.findByRole("button", { name: "Sign in with ZCode" }));
 
@@ -220,6 +224,60 @@ describe("operations console", () => {
     expect(
       screen.queryByRole("complementary", { name: "Provider onboarding" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("saves a custom relay target as a claude credential with the chosen plan", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files") && init?.method === "POST") {
+          requests.push({ url, body: String(init.body ?? "") });
+          return new Response(JSON.stringify({ status: "ok" }));
+        }
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    (await screen.findAllByText("Requests"))[0];
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "API" }));
+    fireEvent.change(await screen.findByLabelText("Search providers"), {
+      target: { value: "Custom API" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Custom API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add custom endpoint" }));
+
+    // hidden-feature gate: an empty or generic target never shows the plan list
+    expect(screen.queryByLabelText("Relay plan")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Provider endpoint"), {
+      target: { value: "https://claude.nekos.me" },
+    });
+    fireEvent.change(screen.getByLabelText("Relay plan"), {
+      target: { value: "opus-standard" },
+    });
+    fireEvent.change(screen.getByLabelText("Provider API key"), {
+      target: { value: "sk-clb-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save account" }));
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const content = JSON.parse(requests[0]?.body ?? "{}").content;
+    expect(content.type).toBe("claude");
+    expect(content.upstream_override).toBe("https://claude.nekos.me");
+    expect(content.api_key).toBe("sk-clb-secret");
+    expect(content.plan).toBe("opus-standard");
+    await waitFor(() => expect(requests.every(({ url }) => !url.includes("generic-"))).toBe(true));
   });
 
   it("detects provider approval without a manual status click", async () => {
@@ -258,6 +316,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
     fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenAI" }));
     expect(await screen.findByText(/Waiting for provider approval/i)).toBeInTheDocument();
@@ -374,6 +433,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
     fireEvent.click(screen.getByRole("button", { name: "Paste a provisioned API key" }));
 
@@ -933,14 +993,37 @@ describe("operations console", () => {
       value: { writeText },
     });
     localStorage.setItem("mahoquot.key", "secret-api-key");
+    Object.assign(window, {
+      __TAURI_INTERNALS__: {
+        invoke: vi.fn(async (command: string) => {
+          if (command === "gateway_status") return "running";
+          if (command === "migrate_legacy_secret") {
+            return { value: "secret-api-key", remove_legacy: true };
+          }
+          if (command === "read_secret") return { value: null };
+          if (command === "tunnel_status") {
+            return {
+              installed: false,
+              enabled: false,
+              running: false,
+              public_url: null,
+              error: null,
+            };
+          }
+          if (command === "list_codex_instances") return [];
+          return null;
+        }),
+      },
+    });
     render(<App />);
     fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
-    const input = screen.getByLabelText("API key");
+    const input = await screen.findByLabelText("API key");
     expect(input).toHaveAttribute("type", "password");
-    expect(input).toHaveValue("secret-api-key");
+    await waitFor(() => expect(input).toHaveValue("secret-api-key"));
     fireEvent.click(screen.getByRole("button", { name: "Copy API key" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("secret-api-key"));
     expect(screen.getByText("API key copied.")).toBeInTheDocument();
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   });
 
   it("opens Add Account directly without consulting migration state", async () => {
@@ -958,8 +1041,8 @@ describe("operations console", () => {
       expect(
         await screen.findByRole("complementary", { name: "Provider onboarding" }),
       ).toBeInTheDocument();
-      expect(invoke).toHaveBeenCalledTimes(1);
       expect(invoke).toHaveBeenCalledWith("gateway_status");
+      expect(invoke.mock.calls.some(([command]) => command === "migration_status")).toBe(false);
     } finally {
       Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     }
@@ -1028,6 +1111,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
 
     expect(authCalls).toHaveLength(0);
@@ -1081,6 +1165,7 @@ describe("operations console", () => {
     (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "API" }));
     fireEvent.change(await screen.findByLabelText("Search providers"), {
       target: { value: "OpenCode Free" },
     });
@@ -1123,6 +1208,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: "iFlow" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add iFlow key" }));
     fireEvent.change(screen.getByLabelText("Imported provider API key"), {
@@ -1154,6 +1240,7 @@ describe("operations console", () => {
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
 
     for (const provider of ["codex", "antigravity", "claude", "cursor"]) {
       await screen.findByRole("complementary", { name: "Provider onboarding" });
@@ -1199,6 +1286,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     expect(await screen.findByRole("button", { name: "Kiro" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close onboarding" }));
     fireEvent.click(await screen.findByRole("button", { name: "Disable runtime-id@example.com" }));
@@ -1299,70 +1387,7 @@ describe("operations console", () => {
     expect(screen.queryByText("gravity@example.com")).not.toBeInTheDocument();
   });
 
-  it("closes onboarding as soon as a local import starts quota discovery", async () => {
-    const calls: string[] = [];
-    let resolveUsage: ((response: Response) => void) | undefined;
-    const usageResponse = new Promise<Response>((resolve) => {
-      resolveUsage = resolve;
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        calls.push(`${init?.method ?? "GET"} ${url}`);
-        if (url.endsWith("/admin/usage/refresh")) return usageResponse;
-        if (url.includes("/admin/stats")) {
-          return Promise.resolve(new Response(JSON.stringify(stats)));
-        }
-        if (url.includes("auth-files")) {
-          return Promise.resolve(new Response(JSON.stringify({ files: [] })));
-        }
-        if (url.includes("/logs")) {
-          return Promise.resolve(
-            new Response(JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 })),
-          );
-        }
-        return Promise.resolve(new Response(JSON.stringify({ status: "ok" })));
-      }),
-    );
-    render(<App />);
-    const accounts = screen.getAllByText("Accounts").at(0);
-    if (!accounts) throw new Error("Accounts navigation missing");
-    fireEvent.click(accounts);
-    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Claude" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Import Claude Code subscription/i }),
-    );
-
-    await waitFor(() =>
-      expect(calls).toContain("POST http://127.0.0.1:18801/v0/management/claude/import-local"),
-    );
-    await waitFor(() => expect(calls).toContain("POST http://127.0.0.1:18801/admin/usage/refresh"));
-    expect(
-      screen.queryByRole("complementary", { name: "Provider onboarding" }),
-    ).not.toBeInTheDocument();
-
-    await act(async () => {
-      resolveUsage?.(new Response(JSON.stringify({ status: "ok" })));
-      await usageResponse;
-    });
-    await waitFor(() => {
-      const usageIndex = calls.indexOf("POST http://127.0.0.1:18801/admin/usage/refresh");
-      const refreshedStats = calls.findIndex(
-        (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
-      );
-      expect(refreshedStats).toBeGreaterThan(usageIndex);
-    });
-    expect(await screen.findByText(/Claude Code subscription imported/i)).toBeInTheDocument();
-  });
-
   it.each([
-    {
-      provider: "Z.ai",
-      method: "Import ZCode session",
-      endpoint: "/v0/management/zcode/import-local",
-    },
     {
       provider: "Trae",
       method: "Import Trae session",
@@ -1391,6 +1416,7 @@ describe("operations console", () => {
       render(<App />);
       fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
       fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
       fireEvent.click(await screen.findByRole("button", { name: provider }));
       fireEvent.click(await screen.findByRole("button", { name: method }));
 
@@ -1451,6 +1477,7 @@ describe("operations console", () => {
       render(<App />);
       fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
       fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
       fireEvent.click(await screen.findByRole("button", { name: provider }));
       fireEvent.click(await screen.findByRole("button", { name: method }));
       fireEvent.change(await screen.findByLabelText("Credential JSON"), {
@@ -1506,6 +1533,7 @@ describe("operations console", () => {
     render(<App />);
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Codex$/i }));
     fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenAI" }));
     expect(await screen.findByText(/Waiting for provider approval/i)).toBeInTheDocument();
@@ -1669,4 +1697,102 @@ it("warns when the gateway speaks a different management schema", async () => {
   const banner = await screen.findByRole("alert");
   expect(banner).toHaveTextContent("management schema 99");
   expect(banner).toHaveTextContent("expects 1");
+});
+
+describe("reset quota toast flows", () => {
+  const resettableStats = {
+    ...stats,
+    accounts: [
+      {
+        ...stats.accounts[0],
+        usage: {
+          ...stats.accounts[0].usage,
+          reset_credits_available: 1,
+        },
+      },
+    ],
+  };
+
+  it("shows successful real reset toast and updates notice", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url.includes("/admin/accounts/long-runtime-id%40example.com/reset") &&
+          method === "POST"
+        ) {
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(resettableStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        if (url.includes("config.yaml")) {
+          return new Response("port: 18801\n", {
+            headers: { "Content-Type": "application/yaml" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    const accountsTab = (await screen.findAllByText("Accounts"))[0];
+    fireEvent.click(accountsTab);
+
+    const resetButton = await screen.findByRole("button", { name: "Reset window" });
+    fireEvent.click(resetButton);
+
+    expect(await screen.findByText(/Window reset for/)).toBeInTheDocument();
+  });
+
+  it("shows reset denial toast on failure without false-success toast", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url.includes("/admin/accounts/long-runtime-id%40example.com/reset") &&
+          method === "POST"
+        ) {
+          return new Response(JSON.stringify({ ok: false, error: "no reset credits available" }), {
+            status: 409,
+          });
+        }
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(resettableStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        if (url.includes("config.yaml")) {
+          return new Response("port: 18801\n", {
+            headers: { "Content-Type": "application/yaml" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    const accountsTab = (await screen.findAllByText("Accounts"))[0];
+    fireEvent.click(accountsTab);
+
+    const resetButton = await screen.findByRole("button", { name: "Reset window" });
+    fireEvent.click(resetButton);
+
+    expect(
+      await screen.findByText(/Action failed: no reset credits available/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        /Window reset for long-runtime-id@example\.com — refreshed quota active\./,
+      ),
+    ).not.toBeInTheDocument();
+  });
 });

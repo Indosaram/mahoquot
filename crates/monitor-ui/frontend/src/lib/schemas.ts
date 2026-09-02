@@ -82,7 +82,14 @@ export const UsageSchema = z.object({
     .nullable()
     .optional(),
   windows: z
-    .array(z.object({ label: z.string(), requests: z.number(), tokens: z.number() }))
+    .array(
+      z.object({
+        label: z.string(),
+        requests: z.number(),
+        tokens: z.number(),
+        cost_usd: z.number().nullable().optional(),
+      }),
+    )
     .optional(),
 });
 export type Usage = z.infer<typeof UsageSchema>;
@@ -90,6 +97,7 @@ export type Usage = z.infer<typeof UsageSchema>;
 export const AccountStatsSchema = z.object({
   id: z.string(),
   provider: z.string().default("unknown"),
+  plan: z.string().nullable().optional(),
   health: z.union([z.record(z.unknown()), z.string()]).default("unknown"),
   ok: z.number().default(0),
   fails: z.number().default(0),
@@ -181,6 +189,12 @@ export const LogRecordSchema = z.object({
   "bytes-out": z.number().optional(),
   tokens: z.number().nullable().optional(),
   message: z.string().optional(),
+  event: z.string().optional(),
+  error: z.string().optional(),
+  method: z.string().optional(),
+  path: z.string().optional(),
+  "request-id": z.string().optional(),
+  "key-label": z.string().optional(),
 });
 export type LogRecord = z.infer<typeof LogRecordSchema>;
 
@@ -191,6 +205,124 @@ export const LogsResponseSchema = z.object({
   "latest-timestamp": z.number().optional(),
 });
 export type LogsResponse = z.infer<typeof LogsResponseSchema>;
+
+export const SchedulerSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  priorities: z.record(z.number().int().nonnegative()).default({}),
+});
+export type SchedulerSettings = z.infer<typeof SchedulerSettingsSchema>;
+
+export const SchedulerAccountStatusSchema = z.object({
+  id: z.string(),
+  selected: z.boolean(),
+  parked: z.boolean(),
+  priority: z.number().int().nonnegative().nullable(),
+  remaining_percent: z.number().int().min(0).max(100).nullable(),
+  reset_at_unix: z.number().int().nullable(),
+  consecutive_non_auth_failures: z.number().int().nonnegative(),
+});
+export type SchedulerAccountStatus = z.infer<typeof SchedulerAccountStatusSchema>;
+
+export const SchedulerStatusSchema = z.object({
+  enabled: z.boolean(),
+  selected: z.string().nullable(),
+  order: z.array(z.string()),
+  fail_open: z.boolean(),
+  reason: z.string(),
+  accounts: z.array(SchedulerAccountStatusSchema),
+});
+export type SchedulerStatus = z.infer<typeof SchedulerStatusSchema>;
+
+export const HistoryTotalsSchema = z.object({
+  requests: z.number().int().nonnegative(),
+  "successful-requests": z.number().int().nonnegative(),
+  "failed-requests": z.number().int().nonnegative(),
+  "input-tokens": z.number().int().nonnegative(),
+  "output-tokens": z.number().int().nonnegative(),
+  "cached-input-tokens": z.number().int().nonnegative(),
+  "reasoning-tokens": z.number().int().nonnegative(),
+  "total-tokens": z.number().int().nonnegative(),
+  "total-latency-ms": z.number().int().nonnegative().optional(),
+  "average-latency-ms": z.number().nonnegative().optional(),
+  "estimated-cost-usd": z.number().nonnegative(),
+});
+export type HistoryTotals = z.infer<typeof HistoryTotalsSchema>;
+
+export const HistoryGroupSchema = z.object({
+  "bucket-start-ms": z.number().int().nullable(),
+  account: z.string().nullable(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  "key-label": z.string().nullable(),
+  status: z.number().int().nullable(),
+  totals: HistoryTotalsSchema,
+});
+export type HistoryGroup = z.infer<typeof HistoryGroupSchema>;
+
+export const HistoryStatsResponseSchema = z.object({
+  totals: HistoryTotalsSchema,
+  groups: z.array(HistoryGroupSchema),
+});
+export type HistoryStatsResponse = z.infer<typeof HistoryStatsResponseSchema>;
+
+export const HistoryEventSchema = z.object({
+  "event-id": z.string(),
+  "occurred-at-ms": z.number().int(),
+  account: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  "key-label": z.string().nullable(),
+  status: z.number().int(),
+  succeeded: z.boolean(),
+  "input-tokens": z.number().int().nonnegative(),
+  "output-tokens": z.number().int().nonnegative(),
+  "cached-input-tokens": z.number().int().nonnegative(),
+  "reasoning-tokens": z.number().int().nonnegative(),
+  "total-tokens": z.number().int().nonnegative(),
+  "latency-ms": z.number().int().nonnegative(),
+  "estimated-cost-usd": z.number().nonnegative(),
+  "price-version": z.string().nullable(),
+});
+export type HistoryEvent = z.infer<typeof HistoryEventSchema>;
+
+export const HistoryEventsResponseSchema = z.object({
+  events: z.array(HistoryEventSchema),
+  "next-cursor": z.number().int().nullable(),
+  totals: HistoryTotalsSchema,
+});
+export type HistoryEventsResponse = z.infer<typeof HistoryEventsResponseSchema>;
+
+export const HistoryEventDetailResponseSchema = z.object({
+  event: HistoryEventSchema,
+});
+export type HistoryEventDetailResponse = z.infer<typeof HistoryEventDetailResponseSchema>;
+
+export const HistoryHealthSchema = z.object({
+  ready: z.boolean(),
+  degraded: z.boolean(),
+  "queue-capacity": z.number().int().nonnegative(),
+  "queue-depth": z.number().int().nonnegative(),
+  "enqueued-events": z.number().int().nonnegative(),
+  "written-events": z.number().int().nonnegative(),
+  "dropped-events": z.number().int().nonnegative(),
+  "database-failures": z.number().int().nonnegative(),
+  "last-error": z.string().nullable(),
+});
+export type HistoryHealth = z.infer<typeof HistoryHealthSchema>;
+
+export const ModelPriceSchema = z.object({
+  model: z.string().min(1),
+  version: z.string().min(1),
+  "input-per-million": z.number().nonnegative(),
+  "output-per-million": z.number().nonnegative(),
+  "cached-input-per-million": z.number().nonnegative(),
+  "effective-from-ms": z.number().int(),
+});
+export type ModelPrice = z.infer<typeof ModelPriceSchema>;
+
+export const ModelPricesResponseSchema = z.object({
+  prices: z.array(ModelPriceSchema),
+});
 
 export const parseAdminStats = (data: unknown): AdminStats => {
   const parsed = AdminStatsSchema.safeParse(data);

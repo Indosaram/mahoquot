@@ -203,8 +203,7 @@ test.describe("Mahoquot Primitive Showcase Harness", () => {
         scrollHeight: document.documentElement.scrollHeight,
         clientHeight: document.documentElement.clientHeight,
         hasHorizontalOverflow:
-          document.documentElement.scrollWidth >
-          document.documentElement.clientWidth,
+          document.documentElement.scrollWidth > document.documentElement.clientWidth,
       }));
 
       expect(measurements.hasHorizontalOverflow).toBe(false);
@@ -217,11 +216,7 @@ test.describe("Mahoquot Primitive Showcase Harness", () => {
       });
       // Also save short width name (e.g. 390.png)
       await page.screenshot({
-        path: resolve(
-          task7EvidenceDir,
-          "primitive-showcase",
-          `${vp.width}.png`,
-        ),
+        path: resolve(task7EvidenceDir, "primitive-showcase", `${vp.width}.png`),
         fullPage: true,
       });
     }
