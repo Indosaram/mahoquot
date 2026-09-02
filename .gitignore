@@ -23,3 +23,6 @@ crates/monitor-ui/icons/proposals/
 
 # staged gateway sidecar binaries for tauri bundling (staged by build.rs/release ci)
 crates/monitor-ui/gateways/
+
+# root workspace install cache (pinned tauri cli shim)
+/node_modules/
