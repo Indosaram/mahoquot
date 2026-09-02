@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 pub const MENU_ID_TOGGLE: &str = "tray_toggle_window";

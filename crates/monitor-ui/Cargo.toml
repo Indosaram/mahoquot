@@ -11,19 +11,30 @@ path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+ico = "0.5"
+png = "0.18"
 
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-notification = "2.4.0"
+tauri-plugin-updater = "2.11.0"
 axum = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+toml = "0.8"
 url = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+isolated-secret-tests = []
 
 # objc 0.2.7 (terminal release) expands `cfg(feature = "cargo-clippy")` inside
 # its msg_send! macro; declare the value so unexpected_cfgs stays a real signal.
@@ -35,3 +46,17 @@ objc = "0.2"
 # Global NSEvent monitors take an Objective-C block; the notch needs one to see
 # the cursor while another app is frontmost.
 block = "0.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gdkx11 = "0.18"
+gtk-layer-shell = { version = "0.8", features = ["v0_5"] }
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "randr"] }

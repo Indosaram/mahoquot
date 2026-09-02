@@ -323,14 +323,14 @@ fn shipped_notch_sizes_dock_right_and_stay_vertically_centered() {
         height: 1600.0,
     };
     let insets = NotchInsets {
-        vertical_offset: crate::NOTCH_VERTICAL_OFFSET,
+        vertical_offset: crate::notch::VERTICAL_OFFSET,
     };
 
     let idle = calculate_notch_window_position(
         &operator_display,
         &WindowDimensions {
-            width: crate::NOTCH_COMPACT_WIDTH,
-            height: crate::NOTCH_COMPACT_HEIGHT,
+            width: crate::notch::COMPACT.width,
+            height: crate::notch::COMPACT.height,
         },
         &insets,
     );
@@ -341,8 +341,8 @@ fn shipped_notch_sizes_dock_right_and_stay_vertically_centered() {
     let expanded = calculate_notch_window_position(
         &operator_display,
         &WindowDimensions {
-            width: crate::NOTCH_EXPANDED_WIDTH,
-            height: crate::NOTCH_EXPANDED_HEIGHT,
+            width: crate::notch::EXPANDED.width,
+            height: crate::notch::EXPANDED.height,
         },
         &insets,
     );

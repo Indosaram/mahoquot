@@ -9,73 +9,76 @@ permissions:
   contents: write
 
 jobs:
-  bundle-macos:
-    runs-on: macos-14
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout the app
-        uses: actions/checkout@v4
-
-      - name: Checkout the gateway at the same ref name
-        id: gateway_tagged
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: Indosaram/mahoquot-proxy
           ref: ${{ github.ref_name }}
           path: mahoquot-proxy
-        continue-on-error: true
-
-      - name: Fall back to the gateway default branch
-        if: steps.gateway_tagged.outcome != 'success'
-        uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          repository: Indosaram/mahoquot-proxy
-          path: mahoquot-proxy
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Build the gateway (release)
+          targets: ${{ matrix.target }}
+      - uses: oven-sh/setup-bun@v2
+      - name: Require signing secrets
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: test -n "$TAURI_SIGNING_PRIVATE_KEY" && test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+      - name: Test and build gateway sidecar
         working-directory: mahoquot-proxy
-        run: cargo build --release -p mahoquot-gateway
-
-      - name: Stage the gateway sidecar
+        run: cargo test --workspace && cargo build --release --bin mahoquot-gateway --target ${{ matrix.target }}
+      - name: Stage gateway sidecar
+        shell: bash
         run: |
           mkdir -p gateways
-          cp mahoquot-proxy/target/release/mahoquot-gateway \
-            "gateways/mahoquot-gateway-aarch64-apple-darwin"
-          codesign --force --sign - "gateways/mahoquot-gateway-aarch64-apple-darwin"
-
-      - name: Install workspace dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build the frontend bundle
+          source="mahoquot-proxy/target/${{ matrix.target }}/release/mahoquot-gateway"
+          destination="gateways/mahoquot-gateway-${{ matrix.target }}"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then source="${source}.exe"; destination="${destination}.exe"; fi
+          cp "$source" "$destination"
+      - name: Build authored frontend
         working-directory: crates/monitor-ui/frontend
-        run: |
-          bun install --frozen-lockfile
-          bun run typecheck
-          bun run build
-
-      - name: Bundle the app
-        run: bun run tauri build
-
-      - name: Verify the sidecar shipped inside the bundle
-        run: |
-          app="target/release/bundle/macos/mahoquot.app"
-          test -d "$app" || app=$(find target -name "mahoquot.app" -maxdepth 6 | head -1)
-          test -d "$app" || { echo "app bundle missing"; exit 1; }
-          test -x "$app/Contents/MacOS/mahoquot-gateway" || {
-            echo "gateway sidecar missing from $app"; exit 1;
-          }
-          echo "sidecar present: $app/Contents/MacOS/mahoquot-gateway"
-
-      - name: Upload the bundle
-        uses: actions/upload-artifact@v4
+        run: bun install --frozen-lockfile && bun run test && bun run typecheck && bun run build
+      - name: Build signed updater bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun install --frozen-lockfile && bun run tauri build --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
         with:
-          name: mahoquot-macos
-          path: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/macos/*.app
+          name: mahoquot-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/bundle/**
           if-no-files-found: error
+
+  publish-updater:
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Require all target artifacts
+        run: |
+          test -d artifacts/mahoquot-aarch64-apple-darwin
+          test -d artifacts/mahoquot-x86_64-apple-darwin
+          test -d artifacts/mahoquot-x86_64-pc-windows-msvc
+          test -d artifacts/mahoquot-x86_64-unknown-linux-gnu
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/**/*

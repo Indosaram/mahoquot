@@ -190,6 +190,13 @@ fn status_of(health: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// Health strings the gateway may add over time must not silently read as
+/// degraded, so only states that actually mean trouble are listed. A
+/// whitelist of "available" would flag every future healthy state instead.
+fn status_is_degraded(status: &str) -> bool {
+    matches!(status, "cooldown" | "error" | "failed" | "unavailable")
+}
+
 /// Resolve a window to a countdown, preferring the absolute reset timestamp
 /// because the relative one ages while the snapshot sits in gateway memory.
 fn window_view(w: &QuotaWindow, observed_at: Option<i64>, now_secs: i64) -> WindowView {
@@ -285,7 +292,7 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
 
     let degraded: Vec<String> = accounts
         .iter()
-        .filter(|a| a.status != "available" || (a.failure_rate > 0.5 && a.ok + a.fails >= 2))
+        .filter(|a| status_is_degraded(&a.status) || (a.failure_rate > 0.5 && a.ok + a.fails >= 2))
         .map(|a| a.id.clone())
         .collect();
 
@@ -451,6 +458,23 @@ mod tests {
         let v = build_view(&stats_json(), 4000);
         assert!(v.degraded.contains(&"cooling@x.io".to_string()));
         assert!(!v.degraded.contains(&"account-owner@gmail.com".to_string()));
+    }
+
+    #[test]
+    fn unrecognized_health_states_are_not_reported_as_degraded() {
+        // A gateway that starts reporting a new healthy state ("warming",
+        // "idle") must not turn the whole pool red in the console.
+        let s: AdminStats = serde_json::from_str(
+            r#"{"accounts":[
+                {"id":"warming@x.io","provider":"codex","health":{"status":"warming"},
+                 "ok":3,"fails":0,"ttft":null},
+                {"id":"broken@x.io","provider":"codex","health":{"status":"unavailable"},
+                 "ok":3,"fails":0,"ttft":null}]}"#,
+        )
+        .expect("parse");
+        let v = build_view(&s, 0);
+        assert!(!v.degraded.contains(&"warming@x.io".to_string()));
+        assert!(v.degraded.contains(&"broken@x.io".to_string()));
     }
 
     #[test]

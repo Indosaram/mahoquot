@@ -4,12 +4,21 @@
 )]
 
 mod bootstrap;
+mod cli_config;
+mod codex_launcher;
+mod gateway_process;
 #[cfg(test)]
 mod lifecycle_tests;
+mod notch;
+mod os_integration;
+mod platform;
+mod secrets;
+mod self_certification;
 mod stats;
 mod tray;
 #[cfg(test)]
 mod tray_tests;
+mod tunnel;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,26 +28,16 @@ use tauri::{
     tray::TrayIconBuilder,
     App, AppHandle, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewWindow,
 };
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_updater::UpdaterExt;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const NOTCH_WINDOW_LABEL: &str = "notch";
 const TRAY_ID: &str = "mahoquot";
 const TRAY_PANEL_LABEL: &str = "traypanel";
 const PANEL_WIDTH_LOGICAL: f64 = 340.0;
-const NOTCH_EXPANDED_WIDTH: f64 = 420.0;
-const NOTCH_EXPANDED_HEIGHT: f64 = 560.0;
-const NOTCH_COMPACT_WIDTH: f64 = 8.0;
-const NOTCH_COMPACT_HEIGHT: f64 = 180.0;
-const NOTCH_VERTICAL_OFFSET: f64 = 0.0;
 const GATEWAY_PORT: u16 = tray::GATEWAY_PORT;
-
-// NSStatusWindowLevel: floats above regular windows and the menu bar extras.
-#[cfg(target_os = "macos")]
-const NS_STATUS_WINDOW_LEVEL: i64 = 25;
-// NSWindowCollectionBehaviorCanJoinAllSpaces | Stationary: follows space
-// switches instead of being stranded on the space where it was created.
-#[cfg(target_os = "macos")]
-const NS_WINDOW_BEHAVIOR_ALL_SPACES_STATIONARY: i64 = (1 << 0) | (1 << 8);
 
 const LOCAL_GATEWAY_URL: &str = "http://127.0.0.1:18801";
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -48,6 +47,14 @@ const GATEWAY_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Clone, Default)]
 struct GatewayProcess {
     pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
+}
+
+#[derive(Default)]
+struct NativeStateObserver(std::sync::Mutex<os_integration::StateObserver>);
+
+#[derive(Clone, Copy)]
+struct StartupContext {
+    login_start: bool,
 }
 
 impl GatewayProcess {
@@ -112,10 +119,16 @@ impl StopSignal {
 static GATEWAY_CHILD_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 extern "C" fn terminate_gateway_on_signal(signal: i32) {
+    tunnel::terminate_tunnel_on_signal();
     let pid = GATEWAY_CHILD_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
     if pid > 0 {
+        #[cfg(unix)]
         unsafe {
             libc_kill(pid, StopSignal::Terminate.raw());
+        }
+        #[cfg(windows)]
+        unsafe {
+            let _ = signal_process_windows(pid);
         }
     }
     unsafe {
@@ -124,20 +137,42 @@ extern "C" fn terminate_gateway_on_signal(signal: i32) {
     }
 }
 
+#[cfg(unix)]
 extern "C" {
     #[link_name = "kill"]
     fn libc_kill(pid: i32, sig: i32) -> i32;
+}
+
+// signal/raise exist in both libc and the Windows msvcrt; only kill is
+// POSIX-only.
+extern "C" {
     #[link_name = "signal"]
     fn signal_raw(sig: i32, handler: usize) -> usize;
     #[link_name = "raise"]
     fn raise_raw(sig: i32) -> i32;
 }
 
+#[cfg(windows)]
+const PROCESS_TERMINATE: u32 = 0x0001;
+#[cfg(windows)]
+const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+#[cfg(windows)]
+const WAIT_TIMEOUT: u32 = 258;
+
+#[cfg(windows)]
+extern "system" {
+    fn OpenProcess(desired_access: u32, inherit_handle: i32, pid: u32) -> isize;
+    fn TerminateProcess(handle: isize, exit_code: u32) -> i32;
+    fn WaitForSingleObject(handle: isize, milliseconds: u32) -> u32;
+    fn CloseHandle(handle: isize) -> i32;
+}
+
 fn install_gateway_signal_guard() {
     unsafe {
-        signal_raw(15, terminate_gateway_on_signal as usize);
-        signal_raw(2, terminate_gateway_on_signal as usize);
-        signal_raw(1, terminate_gateway_on_signal as usize);
+        let handler = terminate_gateway_on_signal as *const () as usize;
+        signal_raw(15, handler);
+        signal_raw(2, handler);
+        signal_raw(1, handler);
     }
 }
 
@@ -148,20 +183,9 @@ struct NotchHoverState {
     expanded: std::sync::Arc<std::sync::atomic::AtomicBool>,
     collapse_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
     generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    #[cfg(target_os = "macos")]
     last_hit_test_ms: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
-
-/// Tokens returned by `addGlobal/LocalMonitorForEventsMatchingMask:`, kept so
-/// the monitors can be removed (and their blocks released) at exit instead of
-/// firing against a half-torn-down app.
-#[cfg(target_os = "macos")]
-struct NotchHoverMonitors(std::sync::Mutex<[*mut objc::runtime::Object; 2]>);
-// Raw ObjC pointers are not `Send`/`Sync`; the tokens are only ever read on
-// the main thread inside `removeMonitor:` at exit.
-#[cfg(target_os = "macos")]
-unsafe impl Send for NotchHoverMonitors {}
-#[cfg(target_os = "macos")]
-unsafe impl Sync for NotchHoverMonitors {}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -172,6 +196,150 @@ enum GatewayLifecycleStatus {
 
 fn gateway_listening() -> bool {
     std::net::TcpStream::connect(("127.0.0.1", GATEWAY_PORT)).is_ok()
+}
+
+fn notification_service_status<R: Runtime>(
+    app: &AppHandle<R>,
+) -> os_integration::NotificationServiceStatus {
+    match app.notification().permission_state() {
+        Ok(tauri::plugin::PermissionState::Denied) => {
+            os_integration::NotificationServiceStatus::PermissionDenied
+        }
+        Ok(_) => os_integration::NotificationServiceStatus::Available,
+        Err(error) => {
+            eprintln!("native notification service unavailable: {error}");
+            os_integration::NotificationServiceStatus::ServiceUnavailable
+        }
+    }
+}
+
+fn emit_observed_state<R: Runtime>(app: &AppHandle<R>, state: os_integration::ObservedState) {
+    let observer = app.state::<NativeStateObserver>();
+    let event = match observer.0.lock() {
+        Ok(mut observer) => observer.observe(state),
+        Err(_) => {
+            eprintln!("native state observer lock is poisoned");
+            None
+        }
+    };
+    let Some(event) = event else {
+        return;
+    };
+    if notification_service_status(app) != os_integration::NotificationServiceStatus::Available {
+        return;
+    }
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(event.title)
+        .body(event.body)
+        .show()
+    {
+        eprintln!(
+            "failed to show native notification category={}: {error}",
+            event.category.as_str()
+        );
+    }
+}
+
+fn clear_observed_state<R: Runtime>(app: &AppHandle<R>, state: &os_integration::ObservedState) {
+    let observer = app.state::<NativeStateObserver>();
+    if let Ok(mut observer) = observer.0.lock() {
+        observer.clear(state);
+    };
+}
+
+fn observe_monitor_view<R: Runtime>(app: &AppHandle<R>, view: &MonitorView) {
+    let isolated = view.accounts.iter().find(|account| {
+        account.status == "failed"
+            && account
+                .last_error
+                .as_deref()
+                .is_some_and(|detail| detail.to_ascii_lowercase().contains("auth"))
+    });
+    if let Some(account) = isolated {
+        emit_observed_state(
+            app,
+            os_integration::ObservedState::AuthIsolated {
+                account: account.id.clone(),
+            },
+        );
+    } else {
+        clear_observed_state(
+            app,
+            &os_integration::ObservedState::AuthIsolated {
+                account: String::new(),
+            },
+        );
+    }
+}
+
+fn observe_history_health<R: Runtime>(app: &AppHandle<R>, health: &serde_json::Value) {
+    let degraded = health
+        .get("degraded")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let detail = health
+        .get("last-error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Durable request history is degraded.")
+        .to_string();
+    let state = os_integration::ObservedState::HistoryDegraded { detail };
+    if degraded {
+        emit_observed_state(app, state);
+    } else {
+        clear_observed_state(app, &state);
+    }
+}
+
+fn observe_scheduler_status<R: Runtime>(app: &AppHandle<R>, status: &serde_json::Value) {
+    let exhausted = status
+        .get("selected")
+        .is_some_and(serde_json::Value::is_null)
+        && status
+            .get("accounts")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|accounts| !accounts.is_empty());
+    let state = os_integration::ObservedState::SchedulerAllExhausted;
+    if exhausted {
+        emit_observed_state(app, state);
+    } else {
+        clear_observed_state(app, &state);
+    }
+}
+
+fn start_native_state_observer<R: Runtime>(app: AppHandle<R>) {
+    let config = app.state::<Config>();
+    let base_url = config.base_url.clone();
+    let api_key = config.api_key.clone();
+    let client = config.client.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if let Ok(raw) = fetch_stats(&client, &base_url, &api_key).await {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as i64)
+                    .unwrap_or(0);
+                observe_monitor_view(&app, &build_view(&raw, now_ms));
+            }
+            let get_management = |path: &str| {
+                client
+                    .get(format!("{base_url}/v0/management/{path}"))
+                    .bearer_auth(&api_key)
+            };
+            if let Ok(response) = get_management("scheduler/status").send().await {
+                if let Ok(status) = response.json::<serde_json::Value>().await {
+                    observe_scheduler_status(&app, &status);
+                }
+            }
+            if let Ok(response) = get_management("history/health").send().await {
+                if let Ok(health) = response.json::<serde_json::Value>().await {
+                    observe_history_health(&app, &health);
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
 }
 
 fn wait_until(timeout: Duration, mut finished: impl FnMut() -> bool) -> bool {
@@ -188,6 +356,7 @@ fn wait_until(timeout: Duration, mut finished: impl FnMut() -> bool) -> bool {
     }
 }
 
+#[cfg(unix)]
 fn process_is_running(pid: i32) -> bool {
     if pid <= 1 {
         return false;
@@ -196,6 +365,45 @@ fn process_is_running(pid: i32) -> bool {
     result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(3)
 }
 
+/// Windows has no POSIX signals: "is running" probes the process handle and
+/// any stop signal degrades to TerminateProcess, which is the only
+/// termination mechanism the OS offers an external process.
+#[cfg(windows)]
+fn process_is_running(pid: i32) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
+        if handle == 0 {
+            return false;
+        }
+        let state = WaitForSingleObject(handle, 0);
+        CloseHandle(handle);
+        state == WAIT_TIMEOUT
+    }
+}
+
+#[cfg(windows)]
+fn signal_process_windows(pid: i32) -> Result<(), String> {
+    if pid <= 1 {
+        return Err("refusing to signal pid {pid}".replace("{pid}", &pid.to_string()));
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid as u32);
+        if handle == 0 {
+            return Err(format!("failed to open gateway pid={pid} for termination"));
+        }
+        let ok = TerminateProcess(handle, 1);
+        CloseHandle(handle);
+        if ok == 0 {
+            return Err(format!("failed to terminate gateway pid={pid}"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 fn signal_process(pid: i32, signal: StopSignal) -> Result<(), String> {
     if unsafe { libc_kill(pid, signal.raw()) } == 0 {
         return Ok(());
@@ -209,6 +417,11 @@ fn signal_process(pid: i32, signal: StopSignal) -> Result<(), String> {
             signal.raw()
         ))
     }
+}
+
+#[cfg(windows)]
+fn signal_process(pid: i32, _signal: StopSignal) -> Result<(), String> {
+    signal_process_windows(pid)
 }
 
 fn terminate_process(
@@ -367,14 +580,286 @@ fn wait_for_gateway_ready(process: &GatewayProcess) -> bool {
     }) && gateway_listening()
 }
 
-fn stop_owned_gateway(process: &GatewayProcess) -> Result<bool, String> {
+fn request_gateway_shutdown(config: &Config) {
+    let Ok(url) = reqwest::Url::parse(&config.base_url) else {
+        return;
+    };
+    if !matches!(url.host_str(), Some("127.0.0.1" | "localhost")) {
+        return;
+    }
+    let Some(port) = url.port_or_known_default() else {
+        return;
+    };
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(300),
+    ) else {
+        return;
+    };
+    let authorization = if config.api_key.is_empty() {
+        String::new()
+    } else {
+        format!("Authorization: Bearer {}\r\n", config.api_key)
+    };
+    let request = format!(
+        "POST /v0/management/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{authorization}Content-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let _ = std::io::Write::write_all(&mut stream, request.as_bytes());
+}
+
+fn stop_owned_gateway(process: &GatewayProcess, config: Option<&Config>) -> Result<bool, String> {
     let pid = process.pid();
     if pid <= 1 {
         return Ok(false);
     }
+    if let Some(config) = config {
+        request_gateway_shutdown(config);
+        if wait_until(GATEWAY_STOP_TIMEOUT, || !process_is_running(pid)) {
+            clear_gateway_pid(&process.pid, pid);
+            return Ok(true);
+        }
+    }
     terminate_process(pid, GATEWAY_STOP_TIMEOUT, || process.pid() != pid)?;
     clear_gateway_pid(&process.pid, pid);
     Ok(true)
+}
+
+#[tauri::command]
+fn native_settings_state(
+    app: tauri::AppHandle,
+    process: tauri::State<'_, GatewayProcess>,
+) -> os_integration::NativeSettingsState {
+    let login_start_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    os_integration::NativeSettingsState::new(
+        gateway_listening() || process.pid() > 1,
+        notification_service_status(&app),
+    )
+    .with_login_start(login_start_enabled)
+}
+
+#[tauri::command]
+fn set_login_start(
+    app: tauri::AppHandle,
+    process: tauri::State<'_, GatewayProcess>,
+    enabled: bool,
+) -> Result<os_integration::NativeSettingsState, String> {
+    if enabled {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    }
+    .map_err(|error| error.to_string())?;
+    Ok(os_integration::NativeSettingsState::new(
+        gateway_listening() || process.pid() > 1,
+        notification_service_status(&app),
+    )
+    .with_login_start(enabled))
+}
+
+#[tauri::command]
+fn request_notification_permission(
+    app: tauri::AppHandle,
+    process: tauri::State<'_, GatewayProcess>,
+) -> os_integration::NativeSettingsState {
+    let status = match app.notification().request_permission() {
+        Ok(tauri::plugin::PermissionState::Denied) => {
+            os_integration::NotificationServiceStatus::PermissionDenied
+        }
+        Ok(_) => os_integration::NotificationServiceStatus::Available,
+        Err(error) => {
+            eprintln!("native notification permission request failed: {error}");
+            os_integration::NotificationServiceStatus::ServiceUnavailable
+        }
+    };
+    os_integration::NativeSettingsState::new(gateway_listening() || process.pid() > 1, status)
+        .with_login_start(app.autolaunch().is_enabled().unwrap_or(false))
+}
+
+#[derive(serde::Serialize)]
+struct UpdateStatus {
+    available: bool,
+    version: Option<String>,
+}
+
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
+    let update = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(UpdateStatus {
+        available: update.is_some(),
+        version: update.map(|item| item.version),
+    })
+}
+
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    gateway: tauri::State<'_, GatewayProcess>,
+    config: tauri::State<'_, Config>,
+) -> Result<(), String> {
+    if gateway_target_policy(&config.base_url) != GatewayTargetPolicy::ManageLocal {
+        return Err("updates require the desktop-owned local gateway profile".into());
+    }
+    let update = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "no signed update is available".to_string())?;
+    stop_owned_gateway(&gateway, Some(&config)).map_err(|error| error.to_string())?;
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart();
+}
+
+#[tauri::command]
+fn tunnel_status(manager: tauri::State<'_, tunnel::TunnelManager>) -> tunnel::TunnelStatus {
+    manager.status()
+}
+
+#[tauri::command]
+async fn download_cloudflared(
+    manager: tauri::State<'_, tunnel::TunnelManager>,
+) -> Result<tunnel::TunnelStatus, String> {
+    tunnel::download_cloudflared(&tunnel::default_cloudflared_path()).await?;
+    Ok(manager.status())
+}
+
+#[tauri::command]
+fn start_tunnel(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, tunnel::TunnelManager>,
+    config: tauri::State<'_, Config>,
+) -> Result<tunnel::TunnelStatus, String> {
+    match manager.start(&config.base_url) {
+        Ok(status) => {
+            clear_observed_state(
+                &app,
+                &os_integration::ObservedState::TunnelFailed {
+                    detail: String::new(),
+                },
+            );
+            Ok(status)
+        }
+        Err(error) => {
+            emit_observed_state(
+                &app,
+                os_integration::ObservedState::TunnelFailed {
+                    detail: error.clone(),
+                },
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn stop_tunnel(
+    manager: tauri::State<'_, tunnel::TunnelManager>,
+) -> Result<tunnel::TunnelStatus, String> {
+    manager.stop()
+}
+
+#[tauri::command]
+async fn list_codex_instances(
+    launcher: tauri::State<'_, codex_launcher::CodexLauncher>,
+    config: tauri::State<'_, Config>,
+) -> Result<Vec<codex_launcher::CodexInstance>, String> {
+    let _ = launcher.reap();
+    let instances = launcher.instances();
+    for instance in instances
+        .iter()
+        .filter(|instance| instance.state == codex_launcher::InstanceState::Crashed)
+    {
+        let _ = scheduler_reservation(
+            &config,
+            reqwest::Method::DELETE,
+            &format!(
+                "/management/scheduler/reservations/{}",
+                instance.instance_id
+            ),
+            None,
+        )
+        .await;
+    }
+    Ok(instances)
+}
+
+#[tauri::command]
+async fn launch_codex_instance(
+    launcher: tauri::State<'_, codex_launcher::CodexLauncher>,
+    config: tauri::State<'_, Config>,
+    request: codex_launcher::CodexLaunchRequest,
+) -> Result<codex_launcher::CodexInstance, String> {
+    scheduler_reservation(
+        &config,
+        reqwest::Method::POST,
+        "/management/scheduler/reservations",
+        Some(serde_json::json!({ "instance_id": request.instance_id, "account_id": request.account_id })),
+    )
+    .await?;
+    match launcher.launch(request.clone()) {
+        Ok(instance) => Ok(instance),
+        Err(error) => {
+            let _ = scheduler_reservation(
+                &config,
+                reqwest::Method::DELETE,
+                &format!("/management/scheduler/reservations/{}", request.instance_id),
+                None,
+            )
+            .await;
+            Err(error.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+async fn stop_codex_instance(
+    launcher: tauri::State<'_, codex_launcher::CodexLauncher>,
+    config: tauri::State<'_, Config>,
+    instance_id: String,
+) -> Result<Vec<codex_launcher::CodexInstance>, String> {
+    launcher
+        .stop(&instance_id)
+        .map_err(|error| error.to_string())?;
+    scheduler_reservation(
+        &config,
+        reqwest::Method::DELETE,
+        &format!("/management/scheduler/reservations/{instance_id}"),
+        None,
+    )
+    .await?;
+    Ok(launcher.instances())
+}
+
+async fn scheduler_reservation(
+    config: &Config,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let mut request = config
+        .client
+        .request(method, format!("{}{path}", config.base_url))
+        .bearer_auth(&config.api_key);
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(format!("scheduler reservation failed ({status}): {body}"))
+    }
 }
 
 #[tauri::command]
@@ -404,7 +889,7 @@ fn start_gateway(
     if wait_for_gateway_ready(&process) {
         Ok(GatewayLifecycleStatus::Running)
     } else {
-        let _ = stop_owned_gateway(&process);
+        let _ = stop_owned_gateway(&process, None);
         Err("gateway did not begin listening within 5 seconds".to_string())
     }
 }
@@ -412,8 +897,15 @@ fn start_gateway(
 #[tauri::command]
 fn stop_gateway(
     process: tauri::State<'_, GatewayProcess>,
+    config: tauri::State<'_, Config>,
 ) -> Result<GatewayLifecycleStatus, String> {
-    if stop_owned_gateway(&process)? {
+    let ownership = if process.pid() > 1 {
+        gateway_process::GatewayOwnership::OwnedLocal
+    } else {
+        gateway_process::GatewayOwnership::Remote
+    };
+    let _shutdown_policy = gateway_process::shutdown_plan(ownership, false);
+    if stop_owned_gateway(&process, Some(&config))? {
         println!("mahoquot-gateway terminated");
     } else if gateway_listening() {
         return Ok(GatewayLifecycleStatus::Running);
@@ -422,23 +914,6 @@ fn stop_gateway(
 }
 
 fn notched_monitor<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Option<tauri::Monitor>> {
-    let monitors = app.available_monitors()?;
-    let summaries: Vec<tray::MonitorSummary> = monitors
-        .iter()
-        .map(|monitor| tray::MonitorSummary {
-            scale_factor: monitor.scale_factor(),
-            width: monitor.size().width,
-            height: monitor.size().height,
-        })
-        .collect();
-    if let Some(index) = tray::pick_notched_monitor_index(&summaries) {
-        println!(
-            "notch monitor selected name={:?} scale={}",
-            monitors[index].name(),
-            monitors[index].scale_factor()
-        );
-        return Ok(Some(monitors[index].clone()));
-    }
     app.primary_monitor()
 }
 
@@ -451,60 +926,11 @@ fn position_notch_window<R: Runtime>(
     position_notch_window_sized(
         app,
         window,
-        tray::WindowDimensions {
+        notch::Size {
             width: f64::from(outer.width) / scale,
             height: f64::from(outer.height) / scale,
         },
     )
-}
-
-#[cfg(target_os = "macos")]
-fn set_notch_window_frame<R: Runtime>(
-    app: &AppHandle<R>,
-    window: &WebviewWindow<R>,
-    logical: tray::WindowDimensions,
-) -> tauri::Result<()> {
-    use objc::{class, msg_send, sel, sel_impl};
-    let is_main: bool = unsafe { msg_send![class!(NSThread), isMainThread] };
-    if !is_main {
-        let app_handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let Some(win) = app_handle.get_webview_window(NOTCH_WINDOW_LABEL) else {
-                return;
-            };
-            let _ = set_notch_window_frame(&app_handle, &win, logical);
-        });
-        return Ok(());
-    }
-
-    let Ok(ns_window) = window.ns_window() else {
-        return Err(tauri::Error::WindowNotFound);
-    };
-    let ns_window = ns_window as *mut objc::runtime::Object;
-    unsafe {
-        // Relative-only frame change: read the window's own Cocoa frame and
-        // slide it so the right edge stays glued to the screen edge and the
-        // vertical center stays put. No coordinate-space conversion is ever
-        // involved, so the move cannot misplace the window across displays,
-        // and a single setFrame makes the grow/shrink atomic — no frame is
-        // ever composited with the strip at the expanded anchor position
-        // (the old black-line flash).
-        let frame: CgRect = msg_send![ns_window, frame];
-        let dw = logical.width - frame.size.width;
-        let dh = logical.height - frame.size.height;
-        let new_frame = CgRect {
-            origin: CgPoint {
-                x: frame.origin.x - dw,
-                y: frame.origin.y - dh / 2.0,
-            },
-            size: CgSize {
-                width: frame.size.width + dw,
-                height: frame.size.height + dh,
-            },
-        };
-        let _: () = msg_send![ns_window, setFrame: new_frame display: false];
-    }
-    Ok(())
 }
 
 /// Placement must be derived from the size the window is *becoming*: querying
@@ -513,7 +939,7 @@ fn set_notch_window_frame<R: Runtime>(
 fn position_notch_window_sized<R: Runtime>(
     app: &AppHandle<R>,
     window: &WebviewWindow<R>,
-    logical: tray::WindowDimensions,
+    logical: notch::Size,
 ) -> tauri::Result<()> {
     // Absolute placement — used only at startup, re-anchor, and display-change
     // paths where the window is hidden or fresh, so the two-step position+size
@@ -525,25 +951,15 @@ fn position_notch_window_sized<R: Runtime>(
     let scale_factor = monitor.scale_factor();
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
-    let display = tray::DisplayBounds {
-        origin_x: f64::from(monitor_position.x) / scale_factor,
-        origin_y: f64::from(monitor_position.y) / scale_factor,
+    let display = notch::Rect {
+        x: f64::from(monitor_position.x) / scale_factor,
+        y: f64::from(monitor_position.y) / scale_factor,
         width: f64::from(monitor_size.width) / scale_factor,
         height: f64::from(monitor_size.height) / scale_factor,
     };
-    let position = tray::calculate_notch_window_physical_position(
-        &display,
-        &logical,
-        &tray::NotchInsets {
-            vertical_offset: NOTCH_VERTICAL_OFFSET,
-        },
-        scale_factor,
-    );
+    let (x, y) = notch::physical_origin(display, logical, scale_factor);
 
-    window.set_position(PhysicalPosition::new(
-        position.x.round() as i32,
-        position.y.round() as i32,
-    ))?;
+    window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))?;
     window.set_size(LogicalSize::new(logical.width, logical.height))
 }
 
@@ -565,75 +981,6 @@ fn toggle_operations_console<R: Runtime>(app: &AppHandle<R>) {
 }
 
 #[cfg(target_os = "macos")]
-fn apply_menu_bar_level<R: Runtime>(window: &WebviewWindow<R>) {
-    use objc::{msg_send, sel, sel_impl};
-    let Ok(ns_window) = window.ns_window() else {
-        return;
-    };
-    let ns_window = ns_window as *mut objc::runtime::Object;
-    unsafe {
-        let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
-        let _: () = msg_send![
-            ns_window,
-            setCollectionBehavior: NS_WINDOW_BEHAVIOR_ALL_SPACES_STATIONARY
-        ];
-        // Re-classing a live NSWindow to NSPanel blanks its rendered content, and
-        // the panel styling is unnecessary anyway: the native cursor forwarding in
-        // `sync_notch_hover` owns hover, so nothing here depends on DOM pointer
-        // events reaching an inactive app.
-        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
-        let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: true];
-    }
-}
-
-#[cfg(target_os = "macos")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CgPoint {
-    x: f64,
-    y: f64,
-}
-
-#[cfg(target_os = "macos")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CgSize {
-    width: f64,
-    height: f64,
-}
-
-#[cfg(target_os = "macos")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CgRect {
-    origin: CgPoint,
-    size: CgSize,
-}
-
-#[cfg(target_os = "macos")]
-fn notch_screen_rect<R: Runtime>(window: &WebviewWindow<R>) -> Option<tray::ScreenRect> {
-    use objc::{msg_send, sel, sel_impl};
-    let ns_window = window.ns_window().ok()? as *mut objc::runtime::Object;
-    let frame: CgRect = unsafe { msg_send![ns_window, frame] };
-    Some(tray::ScreenRect {
-        x: frame.origin.x,
-        y: frame.origin.y,
-        width: frame.size.width,
-        height: frame.size.height,
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn cursor_location() -> tray::CursorPoint {
-    use objc::{class, msg_send, sel, sel_impl};
-    let point: CgPoint = unsafe { msg_send![class!(NSEvent), mouseLocation] };
-    tray::CursorPoint {
-        x: point.x,
-        y: point.y,
-    }
-}
-
-#[cfg(target_os = "macos")]
 fn sync_notch_hover(
     app: &AppHandle,
     expanded: &std::sync::atomic::AtomicBool,
@@ -649,12 +996,12 @@ fn sync_notch_hover(
     if !window.is_visible().unwrap_or(false) {
         return;
     }
-    let Some(rect) = notch_screen_rect(&window) else {
+    let Some(rect) = platform::notch_screen_rect(&window) else {
         return;
     };
-    let cursor = cursor_location();
+    let cursor = platform::cursor_location();
     let displays = display_logical_bounds(app);
-    if !tray::screen_rect_touches_display(&rect, &displays) {
+    if !notch::screen_rect_touches_display(&rect, &displays) {
         // The window drifted off every connected display (monitor unplugged,
         // resolution or arrangement changed). Re-anchor it and skip hover for
         // this sample: the frame AppKit reports next will be on-screen again.
@@ -665,11 +1012,11 @@ fn sync_notch_hover(
     }
     let was_open = expanded.load(Ordering::Relaxed);
     let was_pending = collapse_pending.load(Ordering::Relaxed);
-    let inside = tray::hover_cursor_inside(
+    let inside = notch::hover_cursor_inside(
         &rect,
         displays
             .iter()
-            .find(|display| tray::rects_overlap(&rect, display)),
+            .find(|display| notch::rects_overlap(&rect, display)),
         &cursor,
         was_open,
     );
@@ -686,7 +1033,7 @@ fn sync_notch_hover(
             // wry's WKWebView builds its own tracking areas, which stay silent while
             // another app is frontmost, so the webview can never hit-test the icons
             // itself. Forward the pointer the global monitor can still see.
-            if let Some(point) = tray::cursor_to_window_local(&rect, &cursor) {
+            if let Some(point) = notch::cursor_to_window_local(&rect, &cursor) {
                 let _ = window.eval(format!(
                     "window.dispatchEvent(new CustomEvent('mahoquot:notch-cursor',{{detail:{{x:{},y:{}}}}}));",
                     point.x, point.y
@@ -703,7 +1050,7 @@ fn sync_notch_hover(
             collapse_pending.store(false, Ordering::Relaxed);
             generation.fetch_add(1, Ordering::Relaxed);
             expanded.store(true, Ordering::Relaxed);
-            resize_notch(app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
+            resize_notch(app, notch::EXPANDED.width, notch::EXPANDED.height);
             let _ = window.eval(
                 "window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));",
             );
@@ -732,7 +1079,7 @@ fn sync_notch_hover(
                     current,
                     expanded.load(Ordering::Relaxed),
                 ) {
-                    resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
+                    resize_notch(&app, notch::COMPACT.width, notch::COMPACT.height);
                 }
             });
         }
@@ -749,7 +1096,7 @@ fn sync_notch_hover(
 /// positions only flip vertically, so each monitor's y range survives a
 /// straight scale division untouched.
 #[cfg(target_os = "macos")]
-fn display_logical_bounds(app: &AppHandle) -> Vec<tray::ScreenRect> {
+fn display_logical_bounds(app: &AppHandle) -> Vec<notch::Rect> {
     let monitors = app.available_monitors().unwrap_or_default();
     monitors
         .iter()
@@ -757,7 +1104,7 @@ fn display_logical_bounds(app: &AppHandle) -> Vec<tray::ScreenRect> {
             let scale = monitor.scale_factor();
             let position = monitor.position();
             let size = monitor.size();
-            tray::ScreenRect {
+            notch::Rect {
                 x: f64::from(position.x) / scale,
                 y: f64::from(position.y) / scale,
                 width: f64::from(size.width) / scale,
@@ -767,98 +1114,6 @@ fn display_logical_bounds(app: &AppHandle) -> Vec<tray::ScreenRect> {
         .collect()
 }
 
-/// The notch never takes focus, and macOS routes pointer events only to the
-/// frontmost app, so the webview's own mouseenter never fires while the user
-/// works elsewhere. A global NSEvent monitor gives us the cursor regardless.
-#[cfg(target_os = "macos")]
-fn start_notch_hover_watch(app: &AppHandle, state: &NotchHoverState) {
-    use block::ConcreteBlock;
-    use objc::{class, msg_send, sel, sel_impl};
-
-    let global_handle = app.clone();
-    let global_state = state.expanded.clone();
-    let global_pending = state.collapse_pending.clone();
-    let global_generation = state.generation.clone();
-    let global_last_hit_test_ms = state.last_hit_test_ms.clone();
-    let global_handler = ConcreteBlock::new(move |_event: *mut objc::runtime::Object| {
-        sync_notch_hover(
-            &global_handle,
-            &global_state,
-            &global_pending,
-            &global_generation,
-            &global_last_hit_test_ms,
-        );
-    })
-    .copy();
-
-    // A global monitor is silent while Mahoquot itself is frontmost, so the
-    // active-app case needs a local monitor, which must hand the event back.
-    let local_handle = app.clone();
-    let local_state = state.expanded.clone();
-    let local_pending = state.collapse_pending.clone();
-    let local_generation = state.generation.clone();
-    let local_last_hit_test_ms = state.last_hit_test_ms.clone();
-    let local_handler = ConcreteBlock::new(
-        move |event: *mut objc::runtime::Object| -> *mut objc::runtime::Object {
-            sync_notch_hover(
-                &local_handle,
-                &local_state,
-                &local_pending,
-                &local_generation,
-                &local_last_hit_test_ms,
-            );
-            event
-        },
-    )
-    .copy();
-
-    unsafe {
-        let mouse_moved_mask: u64 = 1 << 5;
-        let global_token: *mut objc::runtime::Object = msg_send![
-            class!(NSEvent),
-            addGlobalMonitorForEventsMatchingMask: mouse_moved_mask
-            handler: &*global_handler
-        ];
-        if global_token.is_null() {
-            eprintln!("failed to install notch hover monitor for background use");
-        }
-        let local_token: *mut objc::runtime::Object = msg_send![
-            class!(NSEvent),
-            addLocalMonitorForEventsMatchingMask: mouse_moved_mask
-            handler: &*local_handler
-        ];
-        if local_token.is_null() {
-            eprintln!("failed to install notch hover monitor for foreground use");
-        }
-        app.manage(NotchHoverMonitors(std::sync::Mutex::new([
-            global_token,
-            local_token,
-        ])));
-    }
-    println!("notch hover watch armed");
-    // The monitors own the blocks until they are removed at exit.
-    std::mem::forget(global_handler);
-    std::mem::forget(local_handler);
-}
-
-#[cfg(target_os = "macos")]
-fn apply_dock_icon() {
-    use objc::{class, msg_send, sel, sel_impl};
-    let bytes = include_bytes!("../icons/icon.png");
-    unsafe {
-        let data: *mut objc::runtime::Object =
-            msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() length: bytes.len()];
-        let image: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
-        let image: *mut objc::runtime::Object = msg_send![image, initWithData: data];
-        if image.is_null() {
-            eprintln!("failed to decode mahoquot dock icon");
-            return;
-        }
-        let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
-        let _: () = msg_send![app, setApplicationIconImage: image];
-    }
-}
-
 fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window(NOTCH_WINDOW_LABEL) else {
         return;
@@ -866,13 +1121,14 @@ fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
     let result = if window.is_visible().unwrap_or(false) {
         window.hide()
     } else {
-        window
-            .show()
-            .and_then(|_| {
-                apply_menu_bar_level(&window);
-                position_notch_window(app, &window)
-            })
-            .and_then(|_| window.set_focus())
+        if let Err(error) = platform::ensure_session_supported() {
+            eprintln!("{}: {}", error.code, error.message);
+            return;
+        }
+        window.show().and_then(|_| {
+            platform::apply_menu_bar_level(&window);
+            position_notch_window(app, &window)
+        })
     };
     if let Err(error) = result {
         eprintln!("failed to toggle Mahoquot notch window: {error}");
@@ -890,12 +1146,12 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
             return;
         }
     }
-    let target = tray::WindowDimensions { width, height };
+    let target = notch::Size { width, height };
     // Hover expand/collapse must be atomic: a position call sized for the
     // target followed by a resize composited the small strip at the expanded
     // anchor for a frame (the black-line flash). The relative setFrame slides
     // the window in one transaction instead.
-    if let Err(error) = set_notch_window_frame(app, &window, target) {
+    if let Err(error) = platform::set_notch_window_frame(app, &window, NOTCH_WINDOW_LABEL, target) {
         eprintln!("failed to resize notch window: {error}");
     }
     println!("notch resized width={width} height={height} scale={scale}");
@@ -912,7 +1168,7 @@ fn expand_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState>)
     state
         .generation
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    resize_notch(&app, NOTCH_EXPANDED_WIDTH, NOTCH_EXPANDED_HEIGHT);
+    resize_notch(&app, notch::EXPANDED.width, notch::EXPANDED.height);
 }
 
 #[tauri::command]
@@ -926,7 +1182,7 @@ fn collapse_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState
     state
         .generation
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    resize_notch(&app, NOTCH_COMPACT_WIDTH, NOTCH_COMPACT_HEIGHT);
+    resize_notch(&app, notch::COMPACT.width, notch::COMPACT.height);
 }
 
 fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
@@ -982,6 +1238,7 @@ fn toggle_tray_panel<R: Runtime>(
 
 /// Rebuilds the tray menu with one live quota line per reporting account.
 fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("CANARY setup-entered");
     let toggle = MenuItem::with_id(
         app,
         tray::MENU_ID_TOGGLE,
@@ -1041,8 +1298,10 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     tray_icon.build(app)?;
 
     #[cfg(target_os = "macos")]
-    apply_dock_icon();
+    platform::apply_dock_icon();
 
+    platform::ensure_session_supported()
+        .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let notch = app
         .get_webview_window(NOTCH_WINDOW_LABEL)
         .ok_or("missing notch window")?;
@@ -1051,8 +1310,11 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         return Err("missing main window".into());
     }
 
+    // Layer-shell init must happen BEFORE the window is realized: show()
+    // first would map the notch as a plain toplevel and the layer-shell
+    // initialization would fail silently.
+    platform::apply_menu_bar_level(&notch);
     let _ = notch.show();
-    apply_menu_bar_level(&notch);
     position_notch_window(app.handle(), &notch)?;
     let handle = app.handle().clone();
     let notch_clone = notch.clone();
@@ -1066,7 +1328,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
             println!("notch position settled x={} y={}", position.x, position.y);
         }
         #[cfg(target_os = "macos")]
-        if let Some(rect) = notch_screen_rect(&notch_clone) {
+        if let Some(rect) = platform::notch_screen_rect(&notch_clone) {
             println!(
                 "notch hover target rect x={} y={} w={} h={}",
                 rect.x, rect.y, rect.width, rect.height
@@ -1074,8 +1336,17 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         }
     });
 
-    #[cfg(target_os = "macos")]
-    start_notch_hover_watch(app.handle(), &app.state::<NotchHoverState>());
+    platform::start_notch_hover_watch(app.handle(), &app.state::<NotchHoverState>());
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    if let Some(output) = std::env::var_os("MAHOQUOT_NATIVE_CERTIFY") {
+        self_certification::schedule(app.handle(), std::path::PathBuf::from(output));
+    } else {
+        start_native_state_observer(app.handle().clone());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        start_native_state_observer(app.handle().clone());
+    }
 
     println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
     Ok(())
@@ -1087,14 +1358,135 @@ struct Config {
     client: reqwest::Client,
 }
 
+type DesktopSecretStore = secrets::SecretStore<secrets::KeyringBackend>;
+type DesktopCliConfig = std::sync::Mutex<cli_config::CliConfigManager>;
+
+fn cli_config_manager<'a>(
+    state: &'a tauri::State<'a, DesktopCliConfig>,
+) -> Result<std::sync::MutexGuard<'a, cli_config::CliConfigManager>, cli_config::CliConfigError> {
+    state.lock().map_err(|_| cli_config::CliConfigError {
+        kind: cli_config::CliConfigErrorKind::State,
+        message: "CLI configuration manager lock is poisoned".to_string(),
+    })
+}
+
 #[tauri::command]
-async fn load_stats(state: tauri::State<'_, Config>) -> Result<MonitorView, String> {
+fn list_cli_agents(
+    state: tauri::State<'_, DesktopCliConfig>,
+) -> Result<Vec<cli_config::CliAgentStatus>, cli_config::CliConfigError> {
+    cli_config_manager(&state)?.inspect_all()
+}
+
+#[tauri::command]
+fn preview_cli_agent(
+    state: tauri::State<'_, DesktopCliConfig>,
+    request: cli_config::ConfigureCliAgentRequest,
+) -> Result<cli_config::CliConfigPreview, cli_config::CliConfigError> {
+    cli_config_manager(&state)?.preview(request)
+}
+
+#[tauri::command]
+fn configure_cli_agent(
+    state: tauri::State<'_, DesktopCliConfig>,
+    request: cli_config::ConfigureCliAgentRequest,
+) -> Result<cli_config::CliAgentActionResult, cli_config::CliConfigError> {
+    cli_config_manager(&state)?.configure(request)
+}
+
+#[tauri::command]
+fn restore_cli_agent(
+    state: tauri::State<'_, DesktopCliConfig>,
+    agent_id: cli_config::CliAgentId,
+) -> Result<cli_config::CliAgentActionResult, cli_config::CliConfigError> {
+    cli_config_manager(&state)?.restore(agent_id)
+}
+
+fn secret_ref(endpoint: &str, profile: &str, kind: secrets::SecretKind) -> secrets::SecretRef {
+    secrets::SecretRef::new(endpoint, profile, kind)
+}
+
+#[derive(serde::Deserialize)]
+struct SecretRequest {
+    endpoint: String,
+    profile: String,
+    kind: secrets::SecretKind,
+}
+
+#[derive(serde::Deserialize)]
+struct WriteSecretRequest {
+    endpoint: String,
+    profile: String,
+    kind: secrets::SecretKind,
+    value: String,
+}
+
+#[derive(serde::Deserialize)]
+struct MigrateLegacySecretRequest {
+    endpoint: String,
+    profile: String,
+    kind: secrets::SecretKind,
+    legacy_value: Option<String>,
+}
+
+#[tauri::command]
+fn read_secret(
+    store: tauri::State<'_, DesktopSecretStore>,
+    request: SecretRequest,
+) -> Result<Option<String>, secrets::SecretStoreError> {
+    store.read(&secret_ref(
+        &request.endpoint,
+        &request.profile,
+        request.kind,
+    ))
+}
+
+#[tauri::command]
+fn write_secret(
+    store: tauri::State<'_, DesktopSecretStore>,
+    request: WriteSecretRequest,
+) -> Result<(), secrets::SecretStoreError> {
+    store.write(
+        &secret_ref(&request.endpoint, &request.profile, request.kind),
+        &request.value,
+    )
+}
+
+#[tauri::command]
+fn delete_secret(
+    store: tauri::State<'_, DesktopSecretStore>,
+    request: SecretRequest,
+) -> Result<(), secrets::SecretStoreError> {
+    store.delete(&secret_ref(
+        &request.endpoint,
+        &request.profile,
+        request.kind,
+    ))
+}
+
+#[tauri::command]
+fn migrate_legacy_secret(
+    store: tauri::State<'_, DesktopSecretStore>,
+    request: MigrateLegacySecretRequest,
+) -> Result<secrets::MigrationOutcome, secrets::SecretStoreError> {
+    store.migrate_legacy(
+        &secret_ref(&request.endpoint, &request.profile, request.kind),
+        request.legacy_value.as_deref(),
+    )
+}
+
+#[tauri::command]
+async fn load_stats(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Config>,
+) -> Result<MonitorView, String> {
     let raw = fetch_stats(&state.client, &state.base_url, &state.api_key).await?;
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    Ok(build_view(&raw, now_ms))
+    let view = build_view(&raw, now_ms);
+    observe_monitor_view(&app, &view);
+    Ok(view)
 }
 
 #[tauri::command]
@@ -1176,22 +1568,52 @@ async fn warm_all(state: tauri::State<'_, Config>) -> Result<serde_json::Value, 
 #[tauri::command]
 async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, String> {
     post_admin(&state, "/admin/usage/refresh").await?;
-    load_stats(state).await
+    let raw = fetch_stats(&state.client, &state.base_url, &state.api_key).await?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    Ok(build_view(&raw, now_ms))
 }
 
 fn main() {
+
+    eprintln!("CANARY main-entered");
     let base_url = std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| LOCAL_GATEWAY_URL.to_string());
     let gateway = GatewayProcess::default();
     let _ = spawn_gateway(&gateway, &base_url);
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();
-    let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
+    let init_script = bootstrap::console_initialization_script(&base_url);
+    let login_start = std::env::args().any(|argument| argument == "--login-start");
 
     let app = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("mahoquot")
+                .arg("--login-start")
+                .build(),
+        )
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(gateway)
+        .manage(NativeStateObserver::default())
+        .manage(StartupContext { login_start })
+        .manage(tunnel::TunnelManager::new(
+            tunnel::default_cloudflared_path(),
+        ))
+        .manage(codex_launcher::CodexLauncher::new(
+            codex_launcher::default_codex_binary(),
+            codex_launcher::default_instance_root(),
+        ))
+        .manage(secrets::SecretStore::new(secrets::KeyringBackend))
+        .manage(std::sync::Mutex::new(
+            cli_config::CliConfigManager::for_current_process(),
+        ))
         .manage(NotchHoverState {
             expanded: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             collapse_pending: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            #[cfg(target_os = "macos")]
             last_hit_test_ms: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
         .manage(Config {
@@ -1209,12 +1631,32 @@ fn main() {
             gateway_status,
             start_gateway,
             stop_gateway,
+            tunnel_status,
+            download_cloudflared,
+            start_tunnel,
+            stop_tunnel,
+            list_codex_instances,
+            launch_codex_instance,
+            stop_codex_instance,
+            native_settings_state,
+            set_login_start,
+            request_notification_permission,
+            check_for_update,
+            install_update,
             reset_account,
             warm_account,
             warm_all,
             refresh_usage,
             expand_notch,
-            collapse_notch
+            collapse_notch,
+            list_cli_agents,
+            preview_cli_agent,
+            configure_cli_agent,
+            restore_cli_agent,
+            read_secret,
+            write_secret,
+            delete_secret,
+            migrate_legacy_secret
         ])
         .setup(initialize_native_ui)
         .on_window_event(|window, event| {
@@ -1235,6 +1677,7 @@ fn main() {
         .on_page_load(|webview, payload| {
             if webview.label() == MAIN_WINDOW_LABEL
                 && payload.event() == tauri::webview::PageLoadEvent::Finished
+                && !webview.state::<StartupContext>().login_start
             {
                 let window = webview.window();
                 let _ = window.unminimize();
@@ -1244,35 +1687,40 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("failed to build mahoquot monitor");
+    eprintln!("CANARY build-ok");
     // Re-arm after Tauri/AppKit finish installing their own handlers, otherwise
     // ours is overwritten during setup and SIGTERM strands the gateway.
     install_gateway_signal_guard();
     app.run(|app, event| {
         // A macOS Dock click arrives as a Reopen event: reveal the hidden
         // console window so clicking the icon feels like "open the app".
+        #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         }
-        if let tauri::RunEvent::ExitRequested { .. } = event {
-            #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if crate::self_certification::CERTIFY_IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst)
             {
-                use objc::{class, msg_send, sel, sel_impl};
-                let monitors = app.state::<NotchHoverMonitors>();
-                if let Ok(tokens) = monitors.0.lock() {
-                    unsafe {
-                        for token in tokens.iter().copied() {
-                            if !token.is_null() {
-                                let _: () = msg_send![class!(NSEvent), removeMonitor: token];
-                            }
-                        }
-                    }
-                };
+                // The certification harness is mid-sequence; a window-close
+                // exit in headless sessions must not race the report write.
+                api.prevent_exit();
+                return;
+            }
+            platform::cleanup_notch_hover_watch(app);
+            let tunnel = app.state::<tunnel::TunnelManager>();
+            if let Err(error) = tunnel.stop() {
+                eprintln!("failed to stop cloudflared on exit: {error}");
+            }
+            let codex = app.state::<codex_launcher::CodexLauncher>();
+            if let Err(error) = codex.stop_all() {
+                eprintln!("failed to stop Codex instances on exit: {error}");
             }
             let gateway = app.state::<GatewayProcess>();
-            match stop_owned_gateway(&gateway) {
+            let config = app.state::<Config>();
+            match stop_owned_gateway(&gateway, Some(&config)) {
                 Ok(true) => println!("mahoquot-gateway terminated"),
                 Ok(false) => {}
                 Err(error) => eprintln!("failed to stop mahoquot-gateway on exit: {error}"),
