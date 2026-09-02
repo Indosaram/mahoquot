@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "canonical_schema": "../../mahoquot-proxy/docs/management-contract-v1.schema.json",
+  "contracts": {
+    "scheduler": {"request":{"enabled":true,"exhaustion-enter-percent":3,"exhaustion-exit-percent":5,"minimum-hold-seconds":600,"switch-margin-seconds":900},"response":{"status":"ok","active-account-id":"acct_01"}},
+    "history": {"request":{"from":"2026-09-01T00:00:00Z","to":"2026-09-02T00:00:00Z","time-bucket":"hour","queue-capacity":1024,"retention-days":30,"max-size-mb":512},"response":{"events":[],"next-cursor":null,"degraded":false}},
+    "reset": {"request":{"account-id":"acct_01","redeem-request-id":"redeem_01"},"response":{"status":"reset","redeem-request-id":"redeem_01","credits-remaining":0}},
+    "graceful-shutdown": {"request":{"owner":"desktop-local","deadline-ms":5000},"response":{"status":"draining","accepting":false}},
+    "pricing": {"request":{"model":"gpt-5","input-per-million":1.25,"output-per-million":10,"version":1},"response":{"status":"ok","price-version":1}},
+    "cli": {"request":{"agent":"codex","expected-current-hash":"sha256:abc"},"response":{"status":"configured","backup-created":true}},
+    "totp": {"request":{"entry-id":"totp_01","credential-store":"available"},"response":{"status":"stored"}},
+    "tunnel": {"request":{"enabled":true,"gateway-profile":"local-owned"},"response":{"status":"starting","url":null}},
+    "launcher": {"request":{"account-id":"acct_01","instance-id":"codex_01"},"response":{"status":"running","pid":12345}},
+    "updater": {"request":{"target":"aarch64-apple-darwin","schema-version":1,"gateway-profile":"local-owned"},"response":{"status":"ready","signature-valid":true}},
+    "platform-parity": {"request":{"session":"macos","compact":"8x180","expanded":"420x560"},"response":{"status":"supported","foreground-focus-unchanged":true}}
+  },
+  "error": {"status":400,"body":{"error":{"code":"scheduler_out_of_range","message":"exhaustion-enter-percent must be between 0 and 100","retryable":false,"field":"exhaustion-enter-percent"}}}
+}

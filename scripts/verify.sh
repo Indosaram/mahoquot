@@ -30,6 +30,23 @@ step "frontend test"
 step "site typecheck and build"
 (cd site && bun run build)
 
+step "bundled console freshness"
+# The e2e suite serves ui/index.html, so a stale artifact makes those specs
+# assert markup the source no longer produces. Rebuild and fail if the
+# committed artifact does not match what the current source compiles to.
+before=$(shasum -a 256 crates/monitor-ui/ui/index.html | awk '{print $1}')
+(cd "$frontend" && bun run build >/dev/null)
+after=$(shasum -a 256 crates/monitor-ui/ui/index.html | awk '{print $1}')
+if [ "$before" != "$after" ]; then
+  printf 'bundled console was stale and has been rebuilt:\n  committed: %s\n  rebuilt:   %s\n' "$before" "$after"
+  printf 'commit the refreshed crates/monitor-ui/ui/index.html\n'
+  exit 1
+fi
+echo "bundled console matches its source"
+
+step "frontend e2e"
+(cd "$frontend" && bun run test:e2e)
+
 step "embedded console drift"
 # The bundled console ships as ui/index.html in BOTH repos; they are synced
 # by hand (bun --cwd crates/monitor-ui/frontend run build && bun run sync:proxy),

@@ -1,0 +1,18 @@
+{
+  "manifest_version": 1,
+  "reference_commit": "21d75d08b38a23f97fbd534a1768a829cb147f2c",
+  "scope_in": [
+    "scheduler",
+    "usage-history",
+    "cost-model",
+    "agent-wiring",
+    "os-integration",
+    "account-mgmt",
+    "logs-surface",
+    "cross-platform-native-shell-parity",
+    "totp-vault",
+    "cloudflared-tunnel",
+    "codex-multi-instance-launcher"
+  ],
+  "capabilities": []
+}

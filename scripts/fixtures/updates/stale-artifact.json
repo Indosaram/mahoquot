@@ -1,0 +1,1 @@
+{"signature_valid":true,"target":"macos-aarch64","expected_target":"macos-aarch64","schema":1,"expected_schema":1,"download_complete":true,"gateway_flush":true,"profile":"owned_local","artifact_hash":"stale","expected_artifact_hash":"current","installed":{"desktop":"old","gateway":"old"}}

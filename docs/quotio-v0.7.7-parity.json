@@ -1,0 +1,163 @@
+{
+  "manifest_version": 1,
+  "reference_repository": "xiaocoss/quotio-desktop",
+  "reference_version": "v0.7.7",
+  "reference_commit": "21d75d08b38a23f97fbd534a1768a829cb147f2c",
+  "allowed_current_states": [
+    "covered",
+    "partial",
+    "missing-in-scope",
+    "excluded-with-rationale"
+  ],
+  "scope_in": [
+    "reset-hardening",
+    "scheduler",
+    "usage-history",
+    "cost-model",
+    "agent-wiring",
+    "os-integration",
+    "account-mgmt",
+    "logs-surface",
+    "cross-platform-native-shell-parity",
+    "totp-vault",
+    "cloudflared-tunnel",
+    "codex-multi-instance-launcher"
+  ],
+  "capabilities": [
+    {
+      "id": "reset-hardening",
+      "reference": "crates/quotio-core/src/quota.rs:761-845",
+      "current_state": "partial",
+      "decision": "Implement token refresh, one same-redeem-id retry, truthful typed failures, quota refresh, and desktop toasts.",
+      "owner": "mahoquot-proxy gateway quota and quotio-rs desktop accounts",
+      "behavior_test": "Todo 2 reset_credit_refresh_retry_is_idempotent and reset toast tests",
+      "notes": "A real reset exists, but expiry retry and complete error parity remain in scope."
+    },
+    {
+      "id": "scheduler",
+      "reference": "crates/quotio-core/src/scheduler.rs",
+      "current_state": "missing-in-scope",
+      "decision": "Build gateway-owned quota-reset-aware scheduling with a transient parking overlay and fail-open behavior.",
+      "owner": "mahoquot-proxy gateway scheduler",
+      "behavior_test": "Todos 3 and 8 scheduler algorithm and t23_scheduler tests",
+      "notes": "Manual disable stays persistent. Scheduler parking never rewrites credential JSON."
+    },
+    {
+      "id": "usage-history",
+      "reference": "crates/quotio-core/src/usage_store.rs",
+      "current_state": "partial",
+      "decision": "Add gateway-owned SQLite per-request history, analytical APIs, bounded ingestion, and explicit degraded state.",
+      "owner": "mahoquot-proxy gateway history and quotio-rs Logs/dashboard",
+      "behavior_test": "Todos 4, 9, 13, and 15 request history tests",
+      "notes": "Existing aggregate telemetry is not request history and may only be imported as aggregate compatibility data."
+    },
+    {
+      "id": "cost-model",
+      "reference": "apps/desktop/src/components/dashboard/ModelPricesDialog.tsx",
+      "current_state": "missing-in-scope",
+      "decision": "Store versioned model prices and expose estimated spend with snapshot and recompute semantics.",
+      "owner": "mahoquot-proxy gateway pricing and quotio-rs dashboard",
+      "behavior_test": "Todos 4, 9, and 13 pricing and cost recomputation tests",
+      "notes": "Estimated cost must identify the price version used."
+    },
+    {
+      "id": "agent-wiring",
+      "reference": "crates/quotio-core/src/agents.rs and agent_config.rs",
+      "current_state": "missing-in-scope",
+      "decision": "Support conflict-safe Claude Code, Codex CLI, Gemini CLI, and omo configuration on every OS.",
+      "owner": "quotio-rs desktop CLI adapters",
+      "behavior_test": "Todo 11 configure_and_restore_all_adapters",
+      "notes": "Restore is allowed only when the current hash matches the app-written hash."
+    },
+    {
+      "id": "os-integration",
+      "reference": "apps/desktop/src-tauri and updater UI at v0.7.7",
+      "current_state": "partial",
+      "decision": "Provide autostart, native notifications, and signed in-app desktop-plus-gateway updates on macOS, Windows, and Linux.",
+      "owner": "quotio-rs desktop platform and release",
+      "behavior_test": "Todos 19 and 20 OS integration and update fixture tests",
+      "notes": "Remote gateways are never stopped, replaced, or updated by the desktop."
+    },
+    {
+      "id": "account-mgmt",
+      "reference": "apps/desktop/src-tauri/src/lib.rs:809-985 and ApiKeysScreen.tsx",
+      "current_state": "partial",
+      "decision": "Complete custom provider, provider key, account import/export, ordering, priority, and inbound-key binding controls.",
+      "owner": "mahoquot-proxy management API and quotio-rs Accounts",
+      "behavior_test": "Todos 12 and 18 account management tests",
+      "notes": "List responses redact secrets. Export requires explicit authorization."
+    },
+    {
+      "id": "logs-surface",
+      "reference": "apps/desktop/src/components/sections/LogsScreen.tsx",
+      "current_state": "partial",
+      "decision": "Back Logs with paged durable history, filters, detail, scoped clear, and redacted CSV/JSON export.",
+      "owner": "mahoquot-proxy observability API and quotio-rs Logs",
+      "behavior_test": "Todo 15 logs pagination, filtering, clear, and export tests",
+      "notes": "Request history and proxy file logs have separate clear controls."
+    },
+    {
+      "id": "cross-platform-native-shell-parity",
+      "reference": "apps/desktop custom notch behavior at v0.7.7 plus approved platform invariants",
+      "current_state": "partial",
+      "decision": "Ship one shared right-side custom notch, tray, console, and lifecycle contract on macOS, Windows, Linux X11, GNOME Wayland, and KDE Wayland.",
+      "owner": "quotio-rs desktop notch and platform adapters",
+      "behavior_test": "Todos 5, 6, 7, 19, 20, and 21 platform certification",
+      "notes": "No tray-only or click-to-expand fallback. Unsupported sessions fail certification explicitly."
+    },
+    {
+      "id": "totp-vault",
+      "reference": "apps/desktop/src/lib/mfaVault.ts and TwoFactorAuthScreen.tsx",
+      "current_state": "missing-in-scope",
+      "decision": "Provide a cross-platform TOTP vault using native credential storage with no plaintext fallback.",
+      "owner": "quotio-rs desktop secrets and TOTP UI",
+      "behavior_test": "Todo 14 RFC fixture, locked-store, and non-serialization tests",
+      "notes": "Codes stay in memory and secrets never enter logs, telemetry, screenshots, or provider auth files."
+    },
+    {
+      "id": "cloudflared-tunnel",
+      "reference": "crates/quotio-core/src/tunnel.rs and TunnelCard.tsx",
+      "current_state": "missing-in-scope",
+      "decision": "Add disabled-by-default, checksum-verified cloudflared management for owned local gateways only.",
+      "owner": "quotio-rs desktop tunnel process",
+      "behavior_test": "Todo 16 fake_cloudflared_start_url_stop and failure tests",
+      "notes": "Explicit opt-in is required and the child must be reaped on exit."
+    },
+    {
+      "id": "codex-multi-instance-launcher",
+      "reference": "crates/quotio-core/src/codex_launch.rs and codex_catalog.rs",
+      "current_state": "missing-in-scope",
+      "decision": "Launch concurrent isolated Codex instances bound to selected accounts without changing the global Codex session.",
+      "owner": "quotio-rs desktop launcher and mahoquot-proxy scheduler binding",
+      "behavior_test": "Todo 17 two_isolated_instances and lifecycle failure tests",
+      "notes": "Running bindings exclude accounts from scheduler selection."
+    },
+    {
+      "id": "i18n",
+      "reference": "User-approved Scope OUT",
+      "current_state": "excluded-with-rationale",
+      "decision": "Exclude multilingual frameworks, locale switching, and translated copy.",
+      "owner": "scope governance",
+      "behavior_test": "Todo 21 source and shipped-artifact scope audit",
+      "notes": "Explicit user exclusion. It is not part of scope_in."
+    },
+    {
+      "id": "provider-credential-keychain-migration",
+      "reference": "User-approved Scope OUT and headless gateway auth-dir contract",
+      "current_state": "excluded-with-rationale",
+      "decision": "Keep provider credentials under ~/.mahoquot/auth. Native stores are limited to desktop secrets and TOTP material.",
+      "owner": "scope governance",
+      "behavior_test": "Todos 10 and 21 credential-location and plaintext-fallback audits",
+      "notes": "Moving provider credentials would break standalone gateway operation."
+    },
+    {
+      "id": "live-provider-verification",
+      "reference": "User-approved Scope OUT",
+      "current_state": "excluded-with-rationale",
+      "decision": "Use local mock gateways and upstreams only. Do not call live Codex or Claude models.",
+      "owner": "verification governance",
+      "behavior_test": "Todo 21 evidence audit for mock-only endpoints and ports 18840-18899",
+      "notes": "Prevents cost, nondeterminism, and credential exposure during QA."
+    }
+  ]
+}
