@@ -76,6 +76,7 @@ import {
 import { blocks, pendingKey } from "./lib/pending";
 import { GENERIC_PROVIDER_OPTIONS } from "./lib/provider-catalog";
 import { RELAY_PLAN_GROUPS, buildRelayCredential, isRelayTarget } from "./lib/relay-plans";
+import type { ScopedApiKey } from "./lib/schemas";
 import {
   type HistoryHealth,
   type HistoryStatsResponse,
@@ -174,6 +175,7 @@ export default function App() {
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
   const [configYaml, setConfigYaml] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
+  const [scopedKeys, setScopedKeys] = useState<readonly ScopedApiKey[]>([]);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
   const [zcodeCallbackUrl, setZcodeCallbackUrl] = useState("");
   const [cliAgents, setCliAgents] = useState<CliAgentStatus[]>([]);
@@ -203,12 +205,12 @@ export default function App() {
 
   const reloadCliAgents = useCallback(async () => {
     const agents = await listCliAgents();
-    setCliAgents(agents);
+    setCliAgents(Array.isArray(agents) ? agents : []);
     return agents;
   }, []);
 
   useEffect(() => {
-    if (surface !== "agents") return;
+    if (surface !== "agents" && surface !== "settings") return;
     void Promise.all([reloadCliAgents(), listCodexInstances().then(setCodexInstances)]).catch(
       (error: unknown) => setNotice(actionFailed(error)),
     );
@@ -301,6 +303,19 @@ export default function App() {
   }, [onboardingOpen, configOpen]);
 
   const clients = useMemo(() => createGatewayClients(baseUrl, relayKey), [baseUrl, relayKey]);
+
+  const reloadScopedKeys = useCallback(async () => {
+    try {
+      const keys = await clients.management.scopedKeys();
+      setScopedKeys(keys);
+    } catch {
+      // Ignored when offline or non-responsive
+    }
+  }, [clients]);
+
+  useEffect(() => {
+    void reloadScopedKeys();
+  }, [reloadScopedKeys]);
 
   const queryHistory = useCallback(
     async (query: HistoryStatsQuery = {}) => {
@@ -416,12 +431,28 @@ export default function App() {
     telemetry,
     schemaMismatch,
     credentialsError,
+    modelRegistryStatus,
+    modelRegistryError,
+    gatewayModels,
     refresh,
     refreshUsage,
     refreshNow,
     setCredentials,
     setLoadState,
   } = useGatewayPolling(clients);
+
+  const refreshModelRegistry = useCallback(async () => {
+    setPending(pendingKey.auth("registry:refresh"));
+    try {
+      await clients.management.refreshModelRegistry();
+      await refresh();
+      setNotice("Model registry catalog refreshed.");
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setPending("");
+    }
+  }, [clients, refresh, setNotice]);
 
   const {
     proxyUrl,
@@ -1178,181 +1209,213 @@ export default function App() {
           />
         ) : null}
 
-        {surface === "settings" ? (
-          <>
-            <AgentsSurface
-              agents={cliAgents}
-              gatewayUrl={baseUrl || "http://127.0.0.1:18801"}
-              busyAgent={busyAgent}
-              onConfigure={configureAgent}
-              onRestore={restoreAgent}
-              codexAccounts={accounts
-                .filter((account) => account.provider === "codex")
-                .map((account) => ({ id: account.id, label: account.label }))}
-              codexInstances={codexInstances}
-              codexBusy={codexBusy}
-              onLaunchCodex={launchCodex}
-              onStopCodex={stopCodex}
-            />
-            <TotpVaultSurface
-              entries={totp.entries}
-              codes={totp.codes}
-              remaining={totp.remaining}
-              error={totp.error}
-              onAdd={totp.add}
-              onEdit={totp.edit}
-              onRemove={totp.remove}
-              onImport={totp.importEntries}
-              onRetry={totp.reload}
-              onCopyCode={totp.copyCode}
-            />
-          </>
-        ) : null}
-
         {surface === "logs" ? (
-          <DurableLogs
-            records={logs}
-            fromMemoryTail={!loggingToFile}
-            loadHistory={clients.management.historyEvents}
-            loadHistoryDetail={clients.management.historyEvent}
-          />
+          <div className="content logs-surface">
+            <DurableLogs
+              records={logs}
+              fromMemoryTail={!loggingToFile}
+              loadHistory={clients.management.historyEvents}
+              loadHistoryDetail={clients.management.historyEvent}
+              onManualRefresh={async () => {
+                await refresh();
+              }}
+            />
+          </div>
         ) : null}
 
         {surface === "settings" ? (
-          <SettingsSurface
-            gatewayLifecycle={gatewayLifecycle}
-            pending={pending}
-            loadState={loadState}
-            baseUrl={baseUrl}
-            gatewayUrlError={gatewayUrlError}
-            relayKey={relayKey}
-            routingStrategy={routingStrategy}
-            requestRetry={requestRetry}
-            proxyUrl={proxyUrl}
-            loggingToFile={loggingToFile}
-            theme={theme}
-            showRemaining={showRemaining}
-            onShowRemainingChange={setShowRemaining}
-            onToggleGateway={toggleGateway}
-            nativeSettings={nativeSettings}
-            nativeSettingsBusy={nativeSettingsBusy}
-            updateStatus={updateStatus}
-            updateBusy={updateBusy}
-            onCheckUpdate={() => {
-              setUpdateBusy(true);
-              void checkForUpdate()
-                .then(setUpdateStatus)
-                .catch((error) => setNotice(actionFailed(error)))
-                .finally(() => setUpdateBusy(false));
-            }}
-            onInstallUpdate={() => {
-              setUpdateBusy(true);
-              void installUpdate().catch((error) => {
-                setNotice(actionFailed(error));
-                setUpdateBusy(false);
-              });
-            }}
-            onLoginStartChange={changeLoginStart}
-            onRequestNotificationPermission={enableNativeNotifications}
-            onBaseUrlChange={(val) => {
-              setBaseUrlState(val);
-              setGatewayUrlError(null);
-            }}
-            secretStoreError={secretStoreError}
-            onRetrySecretStore={() => setSecretRetry((value) => value + 1)}
-            onRelayKeyChange={(value) => {
-              setRelayKeyState(value);
-              setSecretStoreError(null);
-            }}
-            onRelayKeyBlur={() => {
-              void writeDesktopSecret(baseUrl, "default", "management_key", relayKey.trim())
-                .then(() => setSecretStoreError(null))
-                .catch((error: unknown) => {
-                  const typed =
-                    error instanceof SecretStoreError
-                      ? error
-                      : new SecretStoreError({ kind: "backend", detail: String(error) });
-                  setSecretStoreError(typed);
-                  setNotice(typed.message);
-                });
-            }}
-            onCopyRelayKey={() => {
-              void navigator.clipboard
-                .writeText(relayKey)
-                .then(() => setNotice("API key copied."))
-                .catch(() => setNotice("Action failed: clipboard unavailable"));
-            }}
-            onSaveConnection={() => {
-              const error = validateGatewayBaseUrl(baseUrl);
-              setGatewayUrlError(error);
-              if (error) {
-                setNotice(error);
-                return;
+          <div className="content settings-surface">
+            <SettingsSurface
+              agentsSlot={
+                <AgentsSurface
+                  agents={cliAgents}
+                  gatewayUrl={baseUrl || "http://127.0.0.1:18801"}
+                  busyAgent={busyAgent}
+                  onConfigure={configureAgent}
+                  onRestore={restoreAgent}
+                  codexAccounts={accounts
+                    .filter((account) => account.provider === "codex")
+                    .map((account) => ({ id: account.id, label: account.label }))}
+                  codexInstances={codexInstances}
+                  codexBusy={codexBusy}
+                  runtimeModels={gatewayModels.map((m) => m.id)}
+                  onLaunchCodex={launchCodex}
+                  onStopCodex={stopCodex}
+                />
               }
-              const normalizedBase = baseUrl.trim().replace(/\/+$/, "");
-              setGatewayBaseUrl(baseUrl);
-              setBaseUrlState(normalizedBase);
-              void writeDesktopSecret(normalizedBase, "default", "management_key", relayKey.trim())
-                .then(() => {
-                  setSecretStoreError(null);
-                  // The saved scalars belong to the previous instance; force the
-                  // settings surface to reload them from the new connection.
-                  setSettingsLoaded(false);
-                })
-                .catch((reason: unknown) => {
-                  const typed =
-                    reason instanceof SecretStoreError
-                      ? reason
-                      : new SecretStoreError({ kind: "backend", detail: String(reason) });
-                  setSecretStoreError(typed);
-                  setNotice(typed.message);
+              totpVaultSlot={
+                <TotpVaultSurface
+                  entries={totp.entries}
+                  codes={totp.codes}
+                  remaining={totp.remaining}
+                  error={totp.error}
+                  onAdd={totp.add}
+                  onEdit={totp.edit}
+                  onRemove={totp.remove}
+                  onImport={totp.importEntries}
+                  onRetry={totp.reload}
+                  onCopyCode={totp.copyCode}
+                />
+              }
+              gatewayLifecycle={gatewayLifecycle}
+              pending={pending}
+              loadState={loadState}
+              baseUrl={baseUrl}
+              gatewayUrlError={gatewayUrlError}
+              relayKey={relayKey}
+              scopedKeys={scopedKeys}
+              availableModels={gatewayModels}
+              availableAccounts={accounts.map((a) => ({ id: a.id, provider: a.provider }))}
+              onCreateScopedKey={async (payload) => {
+                const res = await clients.management.createScopedKey(payload);
+                await reloadScopedKeys();
+                return res;
+              }}
+              onPatchScopedKey={async (id, payload) => {
+                await clients.management.patchScopedKey(id, payload);
+                await reloadScopedKeys();
+              }}
+              onDeleteScopedKey={async (id) => {
+                await clients.management.deleteScopedKey(id);
+                await reloadScopedKeys();
+              }}
+              onRefreshScopedKeys={reloadScopedKeys}
+              routingStrategy={routingStrategy}
+              requestRetry={requestRetry}
+              proxyUrl={proxyUrl}
+              loggingToFile={loggingToFile}
+              theme={theme}
+              showRemaining={showRemaining}
+              onShowRemainingChange={setShowRemaining}
+              onToggleGateway={toggleGateway}
+              nativeSettings={nativeSettings}
+              nativeSettingsBusy={nativeSettingsBusy}
+              updateStatus={updateStatus}
+              updateBusy={updateBusy}
+              onCheckUpdate={() => {
+                setUpdateBusy(true);
+                void checkForUpdate()
+                  .then(setUpdateStatus)
+                  .catch((error) => setNotice(actionFailed(error)))
+                  .finally(() => setUpdateBusy(false));
+              }}
+              onInstallUpdate={() => {
+                setUpdateBusy(true);
+                void installUpdate().catch((error) => {
+                  setNotice(actionFailed(error));
+                  setUpdateBusy(false);
                 });
-              setNotice("Connection saved — active now for this console.");
-              void refresh();
-            }}
-            onRoutingStrategyChange={setRoutingStrategy}
-            onRequestRetryChange={setRequestRetry}
-            onProxyUrlChange={setProxyUrl}
-            onLoggingToFileChange={setLoggingToFile}
-            onSaveProxySettings={saveProxySettings}
-            onThemeChange={(nextTheme) => {
-              persistTheme(nextTheme);
-              setTheme(nextTheme);
-            }}
-            onOpenConfigEditor={openConfigEditor}
-            historyHealth={historyHealth}
-            historyStats={historyStats}
-            historyError={historyError}
-            countHistory={clients.management.historyCount}
-            clearHistory={clearHistory}
-            exportHistory={clients.management.exportHistory}
-            onHistoryCleared={(deleted) =>
-              setNotice(`Cleared ${deleted.toLocaleString("en-US")} request records.`)
-            }
-            schedulerSettings={schedulerSettings}
-            schedulerStatus={schedulerStatus}
-            schedulerAccountLabels={Object.fromEntries(
-              accounts.map((account) => [account.id, account.label]),
-            )}
-            schedulerError={schedulerError}
-            schedulerPending={schedulerPending}
-            onSaveSchedulerSettings={saveSchedulerSettings}
-            onSaveSchedulerOrder={saveSchedulerOrder}
-            modelPrices={modelPrices}
-            onSaveModelPrice={saveModelPrice}
-            tunnelStatus={tunnelStatus}
-            tunnelBusy={tunnelBusy}
-            onDownloadCloudflared={() => runTunnelAction("download")}
-            onEnableTunnel={() => runTunnelAction("enable")}
-            onDisableTunnel={() => runTunnelAction("disable")}
-            onCopyTunnelUrl={() => {
-              if (!tunnelStatus.public_url) return;
-              void navigator.clipboard
-                .writeText(tunnelStatus.public_url)
-                .then(() => setNotice("Public tunnel URL copied."))
-                .catch(() => setNotice("Action failed: clipboard unavailable"));
-            }}
-          />
+              }}
+              onLoginStartChange={changeLoginStart}
+              onRequestNotificationPermission={enableNativeNotifications}
+              onBaseUrlChange={(val) => {
+                setBaseUrlState(val);
+                setGatewayUrlError(null);
+              }}
+              secretStoreError={secretStoreError}
+              onRetrySecretStore={() => setSecretRetry((value) => value + 1)}
+              onRelayKeyChange={(value) => {
+                setRelayKeyState(value);
+                setSecretStoreError(null);
+              }}
+              onRelayKeyBlur={() => {
+                void writeDesktopSecret(baseUrl, "default", "management_key", relayKey.trim())
+                  .then(() => setSecretStoreError(null))
+                  .catch((error: unknown) => {
+                    const typed =
+                      error instanceof SecretStoreError
+                        ? error
+                        : new SecretStoreError({ kind: "backend", detail: String(error) });
+                    setSecretStoreError(typed);
+                    setNotice(typed.message);
+                  });
+              }}
+              onCopyRelayKey={() => {
+                void navigator.clipboard
+                  .writeText(relayKey)
+                  .then(() => setNotice("API key copied."))
+                  .catch(() => setNotice("Action failed: clipboard unavailable"));
+              }}
+              onSaveConnection={() => {
+                const error = validateGatewayBaseUrl(baseUrl);
+                setGatewayUrlError(error);
+                if (error) {
+                  setNotice(error);
+                  return;
+                }
+                const normalizedBase = baseUrl.trim().replace(/\/+$/, "");
+                setGatewayBaseUrl(baseUrl);
+                setBaseUrlState(normalizedBase);
+                void writeDesktopSecret(
+                  normalizedBase,
+                  "default",
+                  "management_key",
+                  relayKey.trim(),
+                )
+                  .then(() => {
+                    setSecretStoreError(null);
+                    // The saved scalars belong to the previous instance; force the
+                    // settings surface to reload them from the new connection.
+                    setSettingsLoaded(false);
+                  })
+                  .catch((reason: unknown) => {
+                    const typed =
+                      reason instanceof SecretStoreError
+                        ? reason
+                        : new SecretStoreError({ kind: "backend", detail: String(reason) });
+                    setSecretStoreError(typed);
+                    setNotice(typed.message);
+                  });
+                setNotice("Connection saved — active now for this console.");
+                void refresh();
+              }}
+              onRoutingStrategyChange={setRoutingStrategy}
+              onRequestRetryChange={setRequestRetry}
+              onProxyUrlChange={setProxyUrl}
+              onLoggingToFileChange={setLoggingToFile}
+              onSaveProxySettings={saveProxySettings}
+              onThemeChange={(nextTheme) => {
+                persistTheme(nextTheme);
+                setTheme(nextTheme);
+              }}
+              onOpenConfigEditor={openConfigEditor}
+              historyHealth={historyHealth}
+              historyStats={historyStats}
+              historyError={historyError}
+              countHistory={clients.management.historyCount}
+              clearHistory={clearHistory}
+              exportHistory={clients.management.exportHistory}
+              onHistoryCleared={(deleted) =>
+                setNotice(`Cleared ${deleted.toLocaleString("en-US")} request records.`)
+              }
+              schedulerSettings={schedulerSettings}
+              schedulerStatus={schedulerStatus}
+              schedulerAccountLabels={Object.fromEntries(
+                accounts.map((account) => [account.id, account.label]),
+              )}
+              schedulerError={schedulerError}
+              schedulerPending={schedulerPending}
+              onSaveSchedulerSettings={saveSchedulerSettings}
+              onSaveSchedulerOrder={saveSchedulerOrder}
+              modelPrices={modelPrices}
+              onSaveModelPrice={saveModelPrice}
+              modelRegistryStatus={modelRegistryStatus}
+              modelRegistryError={modelRegistryError}
+              onRefreshModelRegistry={refreshModelRegistry}
+              tunnelStatus={tunnelStatus}
+              tunnelBusy={tunnelBusy}
+              onDownloadCloudflared={() => runTunnelAction("download")}
+              onEnableTunnel={() => runTunnelAction("enable")}
+              onDisableTunnel={() => runTunnelAction("disable")}
+              onCopyTunnelUrl={() => {
+                if (!tunnelStatus.public_url) return;
+                void navigator.clipboard
+                  .writeText(tunnelStatus.public_url)
+                  .then(() => setNotice("Public tunnel URL copied."))
+                  .catch(() => setNotice("Action failed: clipboard unavailable"));
+              }}
+            />
+          </div>
         ) : null}
       </main>
 
@@ -1460,6 +1523,21 @@ export default function App() {
                     onChange={(event) => setStep({ ...step, baseUrl: event.target.value })}
                   />
                 </label>
+                {step.provider.models.length > 0 || step.provider.defaultModel ? (
+                  <div className="provider-preset-models" aria-label="Suggested models">
+                    <span>Suggested models</span>
+                    <small>
+                      {step.provider.defaultModel
+                        ? `${step.provider.defaultModel}${
+                            step.provider.models.length > 0 &&
+                            !step.provider.models.includes(step.provider.defaultModel)
+                              ? ` (${step.provider.models.join(", ")})`
+                              : ""
+                          }`
+                        : step.provider.models.join(", ")}
+                    </small>
+                  </div>
+                ) : null}
                 {isRelayTarget(step.baseUrl) ? (
                   <label className="zcode-field">
                     <span>Plan</span>

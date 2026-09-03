@@ -223,7 +223,6 @@ const operationsManagement = () =>
   createGatewayClients("http://127.0.0.1:18840", "history-test-key")
     .management as unknown as IntendedOperationsManagement;
 
-
 const installAppMocks = (options?: { historyUnavailable?: boolean }) => {
   const calls: Array<{ readonly url: string; readonly method: string; readonly body: string }> = [];
   let currentOrder = [...schedulerStatus.order];
@@ -588,9 +587,9 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0] as HTMLElement);
 
     const pricing = await screen.findByRole("region", { name: "History and pricing" });
-    expect(within(pricing).getByText("Ready")).toBeInTheDocument();
+    await waitFor(() => expect(within(pricing).getByText("Ready")).toBeInTheDocument());
     expect(within(pricing).getByText("3 events written · queue 0/1024")).toBeInTheDocument();
-    expect(within(pricing).getByText("$7.50")).toBeInTheDocument();
+    await waitFor(() => expect(within(pricing).getByText("$7.50")).toBeInTheDocument());
 
     const inputRate = within(pricing).getByLabelText("Input price for gpt-5.6-sol");
     fireEvent.change(inputRate, { target: { value: "4" } });

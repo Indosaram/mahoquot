@@ -1,8 +1,13 @@
 import { type GatewayClients, GatewayError } from "@/lib/api";
 import type { GatewayLifecycleStatus } from "@/lib/native";
-import { EXPECTED_API_SCHEMA } from "@/lib/schemas";
-import type { LogRecord } from "@/lib/schemas";
-import type { AdminStats, AuthFileItem } from "@/lib/schemas";
+import {
+  type AdminStats,
+  type AuthFileItem,
+  EXPECTED_API_SCHEMA,
+  type GatewayModelEntry,
+  type LogRecord,
+  type ModelRegistryStatus,
+} from "@/lib/schemas";
 import {
   type TelemetrySample,
   appendTelemetrySample,
@@ -53,6 +58,9 @@ export function useGatewayPolling(clients: GatewayClients) {
   const [credentialsError, setCredentialsError] = useState("");
   const [logsError, setLogsError] = useState("");
   const [schemaMismatch, setSchemaMismatch] = useState<string | null>(null);
+  const [modelRegistryStatus, setModelRegistryStatus] = useState<ModelRegistryStatus | null>(null);
+  const [modelRegistryError, setModelRegistryError] = useState("");
+  const [gatewayModels, setGatewayModels] = useState<readonly GatewayModelEntry[]>([]);
   const firstLoad = useRef(true);
   const hasSucceeded = useRef(false);
   const usageRefreshAt = useRef(0);
@@ -136,12 +144,12 @@ export function useGatewayPolling(clients: GatewayClients) {
       return false;
     }
     hasSucceeded.current = true;
-    // These two are independent: the gateway rejects /logs outright while file
-    // logging is disabled, and folding both into one Promise.all used to wipe the
-    // credential inventory on every poll, silently stripping account management.
-    const [credentialResult, logResult] = await Promise.allSettled([
+    // These are independent so failures in optional services do not strip credentials.
+    const [credentialResult, logResult, registryResult, modelsResult] = await Promise.allSettled([
       clients.management.credentials(),
       clients.management.logs(),
+      clients.management.modelRegistryStatus(),
+      clients.management.models(),
     ]);
     if (credentialResult.status === "fulfilled") {
       setCredentials(credentialResult.value);
@@ -160,6 +168,20 @@ export function useGatewayPolling(clients: GatewayClients) {
     } else {
       setLogs([]);
       setLogsError(logResult.reason instanceof Error ? logResult.reason.message : "unknown error");
+    }
+    if (registryResult.status === "fulfilled") {
+      setModelRegistryStatus(registryResult.value);
+      setModelRegistryError("");
+    } else {
+      setModelRegistryStatus(null);
+      setModelRegistryError(
+        registryResult.reason instanceof Error ? registryResult.reason.message : "unknown error",
+      );
+    }
+    if (modelsResult.status === "fulfilled") {
+      setGatewayModels(modelsResult.value);
+    } else {
+      setGatewayModels([]);
     }
     return succeeded;
   }, [clients]);
@@ -258,6 +280,11 @@ export function useGatewayPolling(clients: GatewayClients) {
     telemetry,
     setTelemetry,
     schemaMismatch,
+    modelRegistryStatus,
+    setModelRegistryStatus,
+    modelRegistryError,
+    gatewayModels,
+    setGatewayModels,
     refresh,
     refreshUsage,
     refreshNow,

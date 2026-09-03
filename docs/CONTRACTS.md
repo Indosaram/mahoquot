@@ -58,6 +58,16 @@ TOTP secrets use native credential storage. Codes remain in memory and never ent
 
 Signed updates contain a compatible desktop and gateway as one release unit. Install verifies signature, target, schema, and session support, then flushes and stops the owned local gateway before replacement. Remote profiles only report incompatibility.
 
+## Unified Runtime Model Registry
+
+The standalone gateway owns model discovery, catalog distribution, cryptographic verification, capability gating, and routing resolution. The desktop application consumes the gateway's runtime model registry without duplicating catalog authority or maintaining independent model definitions.
+
+Key architectural boundaries:
+- **No Catalog Duplication**: The desktop frontend retains static onboarding metadata (e.g., account setup labels, default prompt suggestions, and base URLs) in `provider-catalog.ts`, but treats the running gateway as the sole source of truth for runtime model availability, capabilities, and aliases.
+- **Gateway Runtime Truth**: Active models and available options are obtained dynamically via standard gateway endpoints (`/v1/models`, `/v1beta/models`, or `/v0/management/model-registry`).
+- **Telemetry & Degradation**: Stale or error states in catalog refresh are surfaced to the desktop via the management contract schema without blocking local inference.
+- **Detailed Specification**: For full details on the cryptographic distribution, provider admission policy, source precedence, and publication workflow, refer to the [Proxy Catalog Publication Guide](../mahoquot-proxy/docs/catalog-publication.md).
+
 ## Errors and examples
 
 Management errors use a stable JSON envelope:

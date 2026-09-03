@@ -12,7 +12,29 @@
     "tunnel": {"request":{"enabled":true,"gateway-profile":"local-owned"},"response":{"status":"starting","url":null}},
     "launcher": {"request":{"account-id":"acct_01","instance-id":"codex_01"},"response":{"status":"running","pid":12345}},
     "updater": {"request":{"target":"aarch64-apple-darwin","schema-version":1,"gateway-profile":"local-owned"},"response":{"status":"ready","signature-valid":true}},
-    "platform-parity": {"request":{"session":"macos","compact":"8x180","expanded":"420x560"},"response":{"status":"supported","foreground-focus-unchanged":true}}
+    "platform-parity": {"request":{"session":"macos","compact":"8x180","expanded":"420x560"},"response":{"status":"supported","foreground-focus-unchanged":true}},
+    "model-registry": {
+      "request": {
+        "action": "refresh"
+      },
+      "response": {
+        "source": "remote_signed",
+        "catalog-version": 42,
+        "generation": 7,
+        "generated-at": 1788393600,
+        "loaded-at": 1788393602,
+        "stale": false,
+        "last-refresh": {
+          "outcome": "success",
+          "attempted-at": 1788393602,
+          "duration-ms": 84,
+          "rejection-reason": null
+        },
+        "provider-count": 7,
+        "model-count": 41,
+        "refresh-in-flight": false
+      }
+    }
   },
   "error": {"status":400,"body":{"error":{"code":"scheduler_out_of_range","message":"exhaustion-enter-percent must be between 0 and 100","retryable":false,"field":"exhaustion-enter-percent"}}}
 }

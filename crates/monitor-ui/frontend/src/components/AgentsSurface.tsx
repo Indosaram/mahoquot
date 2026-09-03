@@ -1,5 +1,5 @@
 import { Bot, Play, RotateCcw, ShieldCheck, Square } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CliAgentId, CliAgentStatus, CodexInstance, CodexLaunchRequest } from "../lib/native";
 import { Badge, Button, Card, Field, Input } from "./ui";
 
@@ -12,6 +12,7 @@ export interface AgentsSurfaceProps {
   readonly codexAccounts?: readonly { readonly id: string; readonly label: string }[];
   readonly codexInstances?: readonly CodexInstance[];
   readonly codexBusy?: boolean;
+  readonly runtimeModels?: readonly string[];
   readonly onLaunchCodex?: (request: CodexLaunchRequest) => Promise<unknown>;
   readonly onStopCodex?: (instanceId: string) => Promise<unknown>;
 }
@@ -37,7 +38,7 @@ const stateTone = (state: CliAgentStatus["config_state"]): string => {
 };
 
 export function AgentsSurface({
-  agents,
+  agents = [],
   gatewayUrl,
   busyAgent,
   onConfigure,
@@ -45,6 +46,7 @@ export function AgentsSurface({
   codexAccounts = [],
   codexInstances = [],
   codexBusy = false,
+  runtimeModels,
   onLaunchCodex = async () => undefined,
   onStopCodex = async () => undefined,
 }: AgentsSurfaceProps) {
@@ -59,7 +61,14 @@ export function AgentsSurface({
     [codexAccounts, codexInstances],
   );
   const [accountId, setAccountId] = useState(availableAccounts[0]?.id ?? "");
-  const [model, setModel] = useState("gpt-5.6-codex");
+  const [model, setModel] = useState(
+    runtimeModels && runtimeModels.length > 0 ? (runtimeModels[0] as string) : "gpt-5.6-codex",
+  );
+  useEffect(() => {
+    if (runtimeModels && runtimeModels.length > 0 && !runtimeModels.includes(model)) {
+      setModel(runtimeModels[0] as string);
+    }
+  }, [runtimeModels, model]);
   const [reasoningEffort, setReasoningEffort] = useState("high");
   const launch = () => {
     const selected = availableAccounts.some((account) => account.id === accountId)
@@ -74,7 +83,7 @@ export function AgentsSurface({
     });
   };
   return (
-    <div className="content agents-content">
+    <div className="agents-content">
       <Card className="agents-intro">
         <div className="settings-icon">
           <ShieldCheck size={18} />
@@ -87,6 +96,67 @@ export function AgentsSurface({
           </p>
         </div>
       </Card>
+      {(agents?.length ?? 0) > 0 ? (
+        <div className="agents-grid">
+          {agents.map((agent) => {
+            const busy = busyAgent === agent.agent_id;
+            return (
+              <article className="agent-card" key={agent.agent_id}>
+                <header>
+                  <span className="agent-glyph" aria-hidden="true">
+                    <Bot size={19} />
+                  </span>
+                  <div>
+                    <h2>{agent.display_name}</h2>
+                    <p>{agent.installed ? "Installed" : "Not detected"}</p>
+                  </div>
+                  <Badge tone={stateTone(agent.config_state)}>
+                    {stateCopy(agent.config_state)}
+                  </Badge>
+                </header>
+                <dl>
+                  <div>
+                    <dt>Platform</dt>
+                    <dd>{agent.platform}</dd>
+                  </div>
+                  <div>
+                    <dt>Configuration</dt>
+                    <dd title={agent.target_path}>{agent.target_path}</dd>
+                  </div>
+                </dl>
+                {agent.config_state === "modified" ? (
+                  <p role="alert" className="agent-conflict">
+                    The file changed after Mahoquot configured it. Restore is blocked to preserve
+                    the newer edit.
+                  </p>
+                ) : null}
+                <div className="agent-actions">
+                  <Button
+                    aria-label={`Configure ${agent.display_name}`}
+                    disabled={busy || agent.config_state === "modified"}
+                    onClick={() => void onConfigure(agent.agent_id, gatewayUrl)}
+                  >
+                    {busy
+                      ? "Working…"
+                      : agent.config_state === "configured"
+                        ? "Refresh"
+                        : "Configure"}
+                  </Button>
+                  {agent.backup ? (
+                    <Button
+                      aria-label={`Restore ${agent.display_name}`}
+                      disabled={busy}
+                      onClick={() => void onRestore(agent.agent_id)}
+                    >
+                      <RotateCcw size={14} /> Restore
+                    </Button>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
       <Card className="agents-intro codex-launcher-card">
         <div>
           <h2>Codex instances</h2>
@@ -109,11 +179,27 @@ export function AgentsSurface({
             </select>
           </Field>
           <Field label="Model">
-            <Input
-              aria-label="Codex model"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            />
+            {runtimeModels && runtimeModels.length > 0 ? (
+              <select
+                aria-label="Codex model"
+                data-testid="runtime-model-selector"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                {runtimeModels.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                aria-label="Codex model"
+                data-testid="runtime-model-selector"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              />
+            )}
           </Field>
           <Field label="Reasoning">
             <select
@@ -150,63 +236,6 @@ export function AgentsSurface({
           </div>
         ))}
       </Card>
-      <div className="agents-grid">
-        {agents.map((agent) => {
-          const busy = busyAgent === agent.agent_id;
-          return (
-            <article className="agent-card" key={agent.agent_id}>
-              <header>
-                <span className="agent-glyph" aria-hidden="true">
-                  <Bot size={19} />
-                </span>
-                <div>
-                  <h2>{agent.display_name}</h2>
-                  <p>{agent.installed ? "Installed" : "Not detected"}</p>
-                </div>
-                <Badge tone={stateTone(agent.config_state)}>{stateCopy(agent.config_state)}</Badge>
-              </header>
-              <dl>
-                <div>
-                  <dt>Platform</dt>
-                  <dd>{agent.platform}</dd>
-                </div>
-                <div>
-                  <dt>Configuration</dt>
-                  <dd title={agent.target_path}>{agent.target_path}</dd>
-                </div>
-              </dl>
-              {agent.config_state === "modified" ? (
-                <p role="alert" className="agent-conflict">
-                  The file changed after Mahoquot configured it. Restore is blocked to preserve the
-                  newer edit.
-                </p>
-              ) : null}
-              <div className="agent-actions">
-                <Button
-                  aria-label={`Configure ${agent.display_name}`}
-                  disabled={busy || agent.config_state === "modified"}
-                  onClick={() => void onConfigure(agent.agent_id, gatewayUrl)}
-                >
-                  {busy
-                    ? "Working…"
-                    : agent.config_state === "configured"
-                      ? "Refresh"
-                      : "Configure"}
-                </Button>
-                {agent.backup ? (
-                  <Button
-                    aria-label={`Restore ${agent.display_name}`}
-                    disabled={busy}
-                    onClick={() => void onRestore(agent.agent_id)}
-                  >
-                    <RotateCcw size={14} /> Restore
-                  </Button>
-                ) : null}
-              </div>
-            </article>
-          );
-        })}
-      </div>
     </div>
   );
 }

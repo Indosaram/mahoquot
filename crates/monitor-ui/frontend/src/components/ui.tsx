@@ -13,8 +13,15 @@ export const Input = ({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   <input className={cn("input", className)} {...props} />
 );
 
-export const Badge = ({ tone = "neutral", children }: { tone?: string; children: ReactNode }) => (
-  <span className={`badge badge-${tone}`}>{children}</span>
+export const Badge = ({
+  tone = "neutral",
+  className,
+  children,
+  ...props
+}: HTMLAttributes<HTMLSpanElement> & { tone?: string }) => (
+  <span className={cn(`badge badge-${tone}`, className)} {...props}>
+    {children}
+  </span>
 );
 
 export const Field = ({

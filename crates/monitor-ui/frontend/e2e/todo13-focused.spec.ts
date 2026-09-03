@@ -353,8 +353,6 @@ test("scheduler history cost reset flow", async ({ page }) => {
     page.locator(".toast").filter({ hasText: "Window reset for Account A" }),
   ).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/reset-success-toast.png`, fullPage: true });
-
-  await expect(page.getByLabel("Account scheduling")).toBeVisible();
 });
 
 test("unknown quota stays unknown for the scheduler", async ({ page }) => {

@@ -215,6 +215,13 @@ const RUNTIME_CACHE_CREDENTIAL_FILES: ReadonlySet<string> = new Set([
   "usage-samples.json",
 ]);
 
+function cleanAccountLabel(raw: string, provider: string): string {
+  if (provider === "antigravity" && raw.startsWith("antigravity-")) {
+    return raw.slice("antigravity-".length);
+  }
+  return raw;
+}
+
 export const mergeAccountsAndCredentials = (
   runtimeAccounts: readonly AccountStats[],
   credentialFiles: readonly AuthFileItem[],
@@ -254,7 +261,7 @@ export const mergeAccountsAndCredentials = (
       provider: providerOf(r.provider || "unknown"),
       plan: r.plan ?? null,
       email: rEmail,
-      label: cred?.label || rEmail || r.id,
+      label: cleanAccountLabel(cred?.label || rEmail || r.id, providerOf(r.provider || "unknown")),
       health,
       healthRaw: typeof r.health === "string" ? r.health : JSON.stringify(r.health),
       cooldownUntilUnixMs: r.reset_at_unix_ms ?? null,
@@ -298,7 +305,7 @@ export const mergeAccountsAndCredentials = (
       provider: providerOf(c.type || c.provider || "unknown"),
       plan: null,
       email: cEmail,
-      label: c.label || c.name,
+      label: cleanAccountLabel(c.label || c.name, providerOf(c.type || c.provider || "unknown")),
       health: "not_loaded",
       healthRaw: "Not loaded into pool",
       cooldownUntilUnixMs: null,

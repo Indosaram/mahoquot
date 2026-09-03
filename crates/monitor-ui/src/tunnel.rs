@@ -217,6 +217,17 @@ pub fn default_cloudflared_path() -> PathBuf {
     if let Some(path) = std::env::var_os("MAHOQUOT_CLOUDFLARED_BIN") {
         return PathBuf::from(path);
     }
+    // Check if system cloudflared exists in standard PATH / Homebrew locations
+    for candidate in [
+        "/opt/homebrew/bin/cloudflared",
+        "/usr/local/bin/cloudflared",
+        "/usr/bin/cloudflared",
+    ] {
+        let p = PathBuf::from(candidate);
+        if p.is_file() {
+            return p;
+        }
+    }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -389,18 +400,35 @@ fn verified_marker_path(binary: &Path) -> PathBuf {
 }
 
 fn installed_binary_is_verified(binary: &Path) -> bool {
-    let Ok(bytes) = fs::read(binary) else {
+    // If the binary doesn't exist at all, not verified
+    if !binary.is_file() {
         return false;
-    };
-    let Ok(marker) = fs::read_to_string(verified_marker_path(binary)) else {
-        return false;
-    };
-    let Some(expected) = marker.trim().strip_prefix("sha256:") else {
-        return false;
-    };
-    expected.len() == 64
-        && expected.chars().all(|c| c.is_ascii_hexdigit())
-        && format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(expected)
+    }
+    // For managed downloads in ~/.mahoquot/bin, verify against the sidecar marker file
+    let marker = verified_marker_path(binary);
+    if marker.is_file() {
+        let Ok(bytes) = fs::read(binary) else {
+            return false;
+        };
+        let Ok(marker_str) = fs::read_to_string(marker) else {
+            return false;
+        };
+        let Some(expected) = marker_str.trim().strip_prefix("sha256:") else {
+            return false;
+        };
+        return expected.len() == 64
+            && expected.chars().all(|c| c.is_ascii_hexdigit())
+            && format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(expected);
+    }
+    // If it is a system-installed binary (e.g. /opt/homebrew/bin/cloudflared or env override),
+    // test execution via `cloudflared --version`
+    Command::new(binary)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]

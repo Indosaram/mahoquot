@@ -7,7 +7,13 @@
  * `account` scopes name the account they act on: a mutation on one card must
  * not disable the buttons on another.
  */
-export type PendingScope = "account" | "onboarding" | "settings" | "gateway" | "config";
+export type PendingScope =
+  | "account"
+  | "onboarding"
+  | "settings"
+  | "gateway"
+  | "config"
+  | "registry";
 
 export const pendingKey = {
   auth: (method: string) => `auth:${method}`,
@@ -20,6 +26,7 @@ export const pendingKey = {
   gateway: "gateway:lifecycle",
   configLoad: "config:load",
   configSave: "config:save",
+  registryRefresh: "registry:refresh",
 } as const;
 
 const SCOPE_PREFIXES: readonly (readonly [string, PendingScope])[] = [
@@ -33,6 +40,7 @@ const SCOPE_PREFIXES: readonly (readonly [string, PendingScope])[] = [
   ["settings:", "settings"],
   ["gateway:", "gateway"],
   ["config:", "config"],
+  ["registry:", "registry"],
 ];
 
 export const scopeOf = (key: string): PendingScope | null => {

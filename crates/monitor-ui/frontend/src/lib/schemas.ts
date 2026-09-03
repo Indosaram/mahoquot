@@ -21,6 +21,40 @@ export type GatewayHealth = z.infer<typeof GatewayHealthSchema>;
 /** Management wire schema this console build speaks; gateway `api_schema` must match. */
 export const EXPECTED_API_SCHEMA = 1;
 
+export const ModelRegistryLastRefreshSchema = z.object({
+  outcome: z.enum(["never", "success", "error"]),
+  "attempted-at": z.number().int().nonnegative().nullish(),
+  "duration-ms": z.number().int().nonnegative().nullish(),
+  "rejection-reason": z.string().nullish(),
+});
+
+export const ModelRegistryStatusSchema = z.object({
+  source: z.enum([
+    "embedded_fallback",
+    "lkg_cache",
+    "remote_signed",
+    "discovered",
+    "local_override",
+  ]),
+  "catalog-version": z.number().int().nonnegative(),
+  generation: z.number().int().positive(),
+  "generated-at": z.number().int().nonnegative().nullable(),
+  "loaded-at": z.number().int().nonnegative(),
+  stale: z.boolean(),
+  "last-refresh": ModelRegistryLastRefreshSchema,
+  "provider-count": z.number().int().nonnegative(),
+  "model-count": z.number().int().nonnegative(),
+  "refresh-in-flight": z.boolean(),
+});
+export type ModelRegistryStatus = z.infer<typeof ModelRegistryStatusSchema>;
+
+export const ModelRegistryRefreshResponseSchema = z.object({
+  accepted: z.boolean(),
+  coalesced: z.boolean(),
+  state: ModelRegistryStatusSchema,
+});
+export type ModelRegistryRefreshResponse = z.infer<typeof ModelRegistryRefreshResponseSchema>;
+
 export const TtftSnapshotSchema = z.object({
   p50_ms: z.number().default(0),
   p90_ms: z.number().default(0),
@@ -382,4 +416,71 @@ export const parseLogs = (data: unknown): LogsResponse => {
     throw new Error(`Failed to parse logs response: ${parsed.error.message}`);
   }
   return parsed.data;
+};
+
+export const parseModelRegistryStatus = (data: unknown): ModelRegistryStatus => {
+  const parsed = ModelRegistryStatusSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`Failed to parse model registry status: ${parsed.error.message}`);
+  }
+  return parsed.data;
+};
+
+export const GatewayModelEntrySchema = z.object({
+  id: z.string().min(1),
+  object: z.string().default("model"),
+  created: z.number().int().optional(),
+  owned_by: z.string().default("openai"),
+});
+export type GatewayModelEntry = z.infer<typeof GatewayModelEntrySchema>;
+
+export const GatewayModelsResponseSchema = z.object({
+  object: z.string().default("list"),
+  data: z.array(GatewayModelEntrySchema).default([]),
+});
+export type GatewayModelsResponse = z.infer<typeof GatewayModelsResponseSchema>;
+
+export const parseGatewayModels = (data: unknown): GatewayModelsResponse => {
+  const parsed = GatewayModelsResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`Failed to parse models response: ${parsed.error.message}`);
+  }
+  return parsed.data;
+};
+
+export const ScopedApiKeySchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  key_prefix: z.string(),
+  key_identifier: z.string(),
+  raw_key: z.string().optional(),
+  allowed_providers: z.array(z.string()).default([]),
+  allowed_accounts: z.array(z.string()).default([]),
+  allowed_models: z.array(z.string()).default([]),
+  token_limit: z.number().int().nonnegative().default(0),
+  token_used: z.number().int().nonnegative().default(0),
+  is_active: z.boolean().default(true),
+  is_exhausted: z.boolean().default(false),
+  created_at_ms: z.number().int(),
+  expires_at_ms: z.number().int().nullable().optional(),
+});
+export type ScopedApiKey = z.infer<typeof ScopedApiKeySchema>;
+
+export const ScopedKeysResponseSchema = z.object({
+  scoped_keys: z.array(ScopedApiKeySchema).default([]),
+});
+export type ScopedKeysResponse = z.infer<typeof ScopedKeysResponseSchema>;
+
+export const CreateScopedKeyResponseSchema = z.object({
+  api_key: z.string().min(1),
+  key: ScopedApiKeySchema,
+});
+export type CreateScopedKeyResponse = z.infer<typeof CreateScopedKeyResponseSchema>;
+
+export const parseScopedKeys = (data: unknown): readonly ScopedApiKey[] => {
+  const parsed = ScopedKeysResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`Failed to parse scoped keys response: ${parsed.error.message}`);
+  }
+  return parsed.data.scoped_keys;
 };

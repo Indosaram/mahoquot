@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import type { HistoryStatsQuery } from "../lib/api";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
 import { Button, Card } from "./ui";
@@ -8,6 +9,7 @@ export interface DurableLogsProps {
   readonly fromMemoryTail?: boolean;
   readonly loadHistory?: (query: HistoryStatsQuery) => Promise<HistoryEventsResponse>;
   readonly loadHistoryDetail?: (eventId: string) => Promise<HistoryEvent>;
+  readonly onManualRefresh?: () => Promise<void>;
 }
 
 const PAGE_LIMIT = 50;
@@ -43,7 +45,12 @@ const toHistoryEvent = (record: LogRecord, index: number): HistoryEvent => ({
   "price-version": null,
 });
 
-const formatTime = (occurredAtMs: number): string =>
+const formatTime = (occurredAtMs: number): string => {
+  if (occurredAtMs <= 0) return "-";
+  return new Date(occurredAtMs).toLocaleTimeString([], { hour12: false });
+};
+
+const formatDateTime = (occurredAtMs: number): string =>
   occurredAtMs > 0 ? new Date(occurredAtMs).toLocaleString() : "-";
 
 const formatCost = (value: number): string => `$${value.toFixed(2)}`;
@@ -71,6 +78,7 @@ export function DurableLogs({
   fromMemoryTail = false,
   loadHistory,
   loadHistoryDetail,
+  onManualRefresh,
 }: DurableLogsProps) {
   const [tab, setTab] = useState<"requests" | "proxy">("requests");
   const [provider, setProvider] = useState("all");
@@ -88,7 +96,14 @@ export function DurableLogs({
   const [loadedBefore, setLoadedBefore] = useState(0);
   const [selected, setSelected] = useState<HistoryEvent | null>(null);
   const [pending, setPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState("");
+
+  const pageHistoryRef = useRef(pageHistory);
+  pageHistoryRef.current = pageHistory;
+
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
 
   const proxyRecords = useMemo(
     () =>
@@ -99,6 +114,39 @@ export function DurableLogs({
     [records],
   );
 
+  const fetchLatestPage = useCallback(
+    async (isBackground = false) => {
+      if (!loadHistory) return;
+      if (!isBackground) setPending(true);
+      else setRefreshing(true);
+      try {
+        const page = await loadHistory({
+          providers: providerRef.current === "all" ? undefined : [providerRef.current],
+          limit: PAGE_LIMIT,
+        });
+        // Only update the event list if user is still on the first page
+        if (pageHistoryRef.current.length === 0) {
+          setEvents(page.events);
+          setNextCursor(page["next-cursor"]);
+          setLoadedBefore(0);
+        }
+        setTotals(page.totals);
+        setProviderOptions((prev) => {
+          const distinct = new Set([...prev, ...page.events.map((e) => e.provider)]);
+          return [...distinct].sort();
+        });
+      } catch (error) {
+        if (!isBackground) {
+          setActionError(error instanceof Error ? error.message : "History unavailable");
+        }
+      } finally {
+        if (!isBackground) setPending(false);
+        else setRefreshing(false);
+      }
+    },
+    [loadHistory],
+  );
+
   useEffect(() => {
     if (loadHistory) return;
     setEvents(initialEvents);
@@ -106,30 +154,24 @@ export function DurableLogs({
     setProviderOptions([...new Set(initialEvents.map((event) => event.provider))].sort());
   }, [initialEvents, loadHistory]);
 
+  // Initial load
   useEffect(() => {
     if (!loadHistory) return;
-    let active = true;
-    setPending(true);
-    void loadHistory({ limit: PAGE_LIMIT })
-      .then((page) => {
-        if (!active) return;
-        setEvents(page.events);
-        setTotals(page.totals);
-        setNextCursor(page["next-cursor"]);
-        setProviderOptions([...new Set(page.events.map((event) => event.provider))].sort());
-        setLoadedBefore(0);
-        setPageHistory([]);
-      })
-      .catch((error: unknown) => {
-        if (active) setActionError(error instanceof Error ? error.message : "History unavailable");
-      })
-      .finally(() => {
-        if (active) setPending(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [loadHistory]);
+    setPageHistory([]);
+    setLoadedBefore(0);
+    void fetchLatestPage(false);
+  }, [fetchLatestPage, loadHistory]);
+
+  // Auto-refresh polling every 3 seconds when on the first page
+  useEffect(() => {
+    if (!loadHistory) return;
+    const timer = setInterval(() => {
+      if (pageHistoryRef.current.length === 0 && document.visibilityState === "visible") {
+        void fetchLatestPage(true);
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [fetchLatestPage, loadHistory]);
 
   const applyProvider = async (next: string) => {
     setProvider(next);
@@ -218,22 +260,38 @@ export function DurableLogs({
               {fromMemoryTail ? " File logging is off — showing the in-memory tail." : ""}
             </p>
           </div>
-          <label className="logs-provider-filter">
-            <span>Provider</span>
-            <select
-              className="input"
-              aria-label="Log provider filter"
-              value={provider}
-              onChange={(event) => void applyProvider(event.target.value)}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <Button
+              aria-label="Refresh logs"
+              disabled={pending || refreshing}
+              onClick={async () => {
+                await Promise.allSettled([
+                  fetchLatestPage(false),
+                  onManualRefresh ? onManualRefresh() : Promise.resolve(),
+                ]);
+              }}
+              style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
             >
-              <option value="all">All providers</option>
-              {providerOptions.map((item) => (
-                <option value={item} key={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
+              <RefreshCw size={14} className={refreshing || pending ? "spin" : ""} />
+              Refresh
+            </Button>
+            <label className="logs-provider-filter">
+              <span>Provider</span>
+              <select
+                className="input"
+                aria-label="Log provider filter"
+                value={provider}
+                onChange={(event) => void applyProvider(event.target.value)}
+              >
+                <option value="all">All providers</option>
+                {providerOptions.map((item) => (
+                  <option value={item} key={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </header>
 
         <div className="durable-logs-tabs" role="tablist" aria-label="Log view">
@@ -268,29 +326,29 @@ export function DurableLogs({
           <section aria-label="Request history">
             {!actionError ? (
               <section className="durable-logs-summary" aria-label="Request totals">
-              <div>
-                <span>Total</span>
-                <strong>{totalCount.toLocaleString("en-US")}</strong>
-              </div>
-              <div>
-                <span>Success</span>
-                <strong>{activeTotals["successful-requests"].toLocaleString("en-US")}</strong>
-              </div>
-              <div>
-                <span>Failed</span>
-                <strong>{activeTotals["failed-requests"].toLocaleString("en-US")}</strong>
-              </div>
-              <div>
-                <span>Avg Time</span>
-                <strong>
-                  {Math.round(activeTotals["average-latency-ms"] ?? 0).toLocaleString("en-US")} ms
-                </strong>
-              </div>
-              <div>
-                <span>Tokens</span>
-                <strong>{activeTotals["total-tokens"].toLocaleString("en-US")}</strong>
-              </div>
-            </section>
+                <div>
+                  <span>Total</span>
+                  <strong>{totalCount.toLocaleString("en-US")}</strong>
+                </div>
+                <div>
+                  <span>Success</span>
+                  <strong>{activeTotals["successful-requests"].toLocaleString("en-US")}</strong>
+                </div>
+                <div>
+                  <span>Failed</span>
+                  <strong>{activeTotals["failed-requests"].toLocaleString("en-US")}</strong>
+                </div>
+                <div>
+                  <span>Avg Time</span>
+                  <strong>
+                    {Math.round(activeTotals["average-latency-ms"] ?? 0).toLocaleString("en-US")} ms
+                  </strong>
+                </div>
+                <div>
+                  <span>Tokens</span>
+                  <strong>{activeTotals["total-tokens"].toLocaleString("en-US")}</strong>
+                </div>
+              </section>
             ) : null}
 
             <div className="durable-logs-table-wrap">
@@ -430,7 +488,7 @@ export function DurableLogs({
             </div>
             <div>
               <dt>Occurred</dt>
-              <dd>{formatTime(selected["occurred-at-ms"])}</dd>
+              <dd>{formatDateTime(selected["occurred-at-ms"])}</dd>
             </div>
             <div>
               <dt>Input tokens</dt>

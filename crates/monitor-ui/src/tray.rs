@@ -225,9 +225,10 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
 pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
     let app_dir = std::path::Path::new(home).join(".mahoquot/auth");
     if let Err(error) = std::fs::create_dir_all(&app_dir) {
-        eprintln!(
-            "failed to create mahoquot auth directory {}: {error}",
-            app_dir.display()
+        tracing::error!(
+            path = %app_dir.display(),
+            %error,
+            "failed to create mahoquot auth directory"
         );
     }
     app_dir

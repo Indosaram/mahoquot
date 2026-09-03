@@ -100,6 +100,70 @@ pub trait SecretBackend {
     fn delete(&self, account: &str) -> Result<(), SecretStoreError>;
 }
 
+/// Plain filesystem secret backend that stores secrets under `~/.mahoquot/secrets.json`
+/// without popping OS Keychain / Windows Credential Manager authentication dialogs.
+#[derive(Debug, Clone, Default)]
+pub struct PlainFileBackend;
+
+impl PlainFileBackend {
+    fn path() -> std::path::PathBuf {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(home)
+            .join(".mahoquot")
+            .join("secrets.json")
+    }
+
+    fn load() -> std::collections::HashMap<String, String> {
+        let path = Self::path();
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(map) = serde_json::from_slice(&bytes) {
+                return map;
+            }
+        }
+        std::collections::HashMap::new()
+    }
+
+    fn save(map: &std::collections::HashMap<String, String>) -> Result<(), SecretStoreError> {
+        let path = Self::path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let bytes = serde_json::to_vec_pretty(map)
+            .map_err(|e| SecretStoreError::Backend(format!("serialize: {e}")))?;
+        std::fs::write(&path, bytes)
+            .map_err(|e| SecretStoreError::Backend(format!("write: {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+}
+
+impl SecretBackend for PlainFileBackend {
+    fn read(&self, account: &str) -> Result<Option<String>, SecretStoreError> {
+        let map = Self::load();
+        Ok(map.get(account).cloned())
+    }
+
+    fn write(&self, account: &str, value: &str) -> Result<(), SecretStoreError> {
+        let mut map = Self::load();
+        map.insert(account.to_string(), value.to_string());
+        Self::save(&map)
+    }
+
+    fn delete(&self, account: &str) -> Result<(), SecretStoreError> {
+        let mut map = Self::load();
+        if map.remove(account).is_some() {
+            Self::save(&map)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(not(feature = "isolated-secret-tests"))]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KeyringBackend;

@@ -101,7 +101,7 @@ export const TotpVaultSurface = ({
   };
 
   return (
-    <Stack className="content totp-vault-surface">
+    <Stack className="totp-vault-surface">
       <div className="section-head">
         <div>
           <span className="kicker">NATIVE CREDENTIAL STORAGE</span>
@@ -127,71 +127,73 @@ export const TotpVaultSurface = ({
         onCopyCode={onCopyCode}
       />
 
-      <section className="totp-vault-card" aria-label="Add 2FA entry">
-        <div className="totp-vault-card-head">
-          <div>
-            <strong>Add authenticator entry</strong>
-            <small>Paste a Base32 secret or an otpauth://totp URI.</small>
+      <div className="totp-forms-grid">
+        <section className="totp-vault-card" aria-label="Add 2FA entry">
+          <div className="totp-vault-card-head">
+            <div>
+              <strong>Add authenticator entry</strong>
+              <small>Paste a Base32 secret or an otpauth://totp URI.</small>
+            </div>
           </div>
-        </div>
-        <div className="totp-add-grid">
-          <label>
-            <span>Label</span>
-            <input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
-          </label>
-          <label>
-            <span>Secret or URI</span>
-            <input
-              type="password"
-              value={input}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setInput(event.currentTarget.value)}
-            />
-          </label>
+          <div className="totp-add-grid">
+            <label>
+              <span>Label</span>
+              <input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
+            </label>
+            <label>
+              <span>Secret or URI</span>
+              <input
+                type="password"
+                value={input}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setInput(event.currentTarget.value)}
+              />
+            </label>
+            <Button
+              disabled={busy || !input.trim()}
+              onClick={() =>
+                void submit(
+                  () => onAdd(input, label.trim() || undefined),
+                  () => {
+                    setInput("");
+                    setLabel("");
+                  },
+                )
+              }
+            >
+              <Plus size={14} /> Add
+            </Button>
+          </div>
+        </section>
+
+        <section className="totp-vault-card" aria-label="Import 2FA entries">
+          <div className="totp-vault-card-head">
+            <div>
+              <strong>Bulk import</strong>
+              <small>One Base32 secret or otpauth URI per line.</small>
+            </div>
+          </div>
+          <textarea
+            aria-label="TOTP import values"
+            value={importInput}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setImportInput(event.currentTarget.value)}
+          />
           <Button
-            disabled={busy || !input.trim()}
+            disabled={busy || !importInput.trim()}
             onClick={() =>
               void submit(
-                () => onAdd(input, label.trim() || undefined),
-                () => {
-                  setInput("");
-                  setLabel("");
-                },
+                () => onImport(importInput),
+                () => setImportInput(""),
               )
             }
           >
-            <Plus size={14} /> Add
+            <Upload size={14} /> Import
           </Button>
-        </div>
-      </section>
-
-      <section className="totp-vault-card" aria-label="Import 2FA entries">
-        <div className="totp-vault-card-head">
-          <div>
-            <strong>Bulk import</strong>
-            <small>One Base32 secret or otpauth URI per line.</small>
-          </div>
-        </div>
-        <textarea
-          aria-label="TOTP import values"
-          value={importInput}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => setImportInput(event.currentTarget.value)}
-        />
-        <Button
-          disabled={busy || !importInput.trim()}
-          onClick={() =>
-            void submit(
-              () => onImport(importInput),
-              () => setImportInput(""),
-            )
-          }
-        >
-          <Upload size={14} /> Import
-        </Button>
-      </section>
+        </section>
+      </div>
 
       <section className="totp-vault-card" aria-label="Saved 2FA entries">
         <div className="totp-vault-card-head">

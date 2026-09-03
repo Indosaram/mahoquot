@@ -264,7 +264,14 @@ impl CliConfigManager {
             CliAgentId::ClaudeCode => self.home.join(".claude").join("settings.json"),
             CliAgentId::CodexCli => self.home.join(".codex").join("config.toml"),
             CliAgentId::GeminiCli => self.home.join(".gemini").join(".env"),
-            CliAgentId::Omo => self.home.join(".omo").join("models.json"),
+            CliAgentId::Omo => {
+                let agent_models = self.home.join(".omo").join("agent").join("models.json");
+                if agent_models.exists() || self.home.join(".omo").join("agent").exists() {
+                    agent_models
+                } else {
+                    self.home.join(".omo").join("models.json")
+                }
+            }
         }
     }
 
@@ -557,21 +564,63 @@ fn object_entry<'a>(
         .ok_or_else(|| CliConfigError::malformed(agent_id, format!("{key} must be an object")))
 }
 
+fn resolve_master_token() -> String {
+    if let Ok(key) = std::env::var("MAHOQUOT_API_KEY") {
+        if !key.trim().is_empty() {
+            return key.trim().to_string();
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let config_path = PathBuf::from(home).join(".mahoquot/auth/config.yaml");
+    if let Ok(content) = fs::read_to_string(config_path) {
+        let mut in_keys = false;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("api-keys:") {
+                in_keys = true;
+                if let Some(rest) = trimmed.strip_prefix("api-keys:").map(str::trim) {
+                    if rest.starts_with('[') && rest.ends_with(']') {
+                        let inner = rest[1..rest.len() - 1].trim();
+                        let key = inner.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
+                        if !key.is_empty() {
+                            return key.to_string();
+                        }
+                    }
+                }
+                continue;
+            }
+            if in_keys {
+                if trimmed.starts_with('-') {
+                    let key = trimmed
+                        .trim_start_matches('-')
+                        .trim()
+                        .trim_matches(|c| c == '\'' || c == '"');
+                    if !key.is_empty() {
+                        return key.to_string();
+                    }
+                } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    break;
+                }
+            }
+        }
+    }
+    LOCAL_AGENT_TOKEN.to_string()
+}
+
 fn generate_claude(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
+    let token = resolve_master_token();
     let mut root = parse_json_object(CliAgentId::ClaudeCode, existing)?;
     let env = object_entry(&mut root, "env", CliAgentId::ClaudeCode)?;
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
         JsonValue::String(gateway.to_string()),
     );
-    env.insert(
-        "ANTHROPIC_AUTH_TOKEN".to_string(),
-        JsonValue::String(LOCAL_AGENT_TOKEN.to_string()),
-    );
+    env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), JsonValue::String(token));
     pretty_json(root)
 }
 
 fn generate_codex(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
+    let token = resolve_master_token();
     let text = std::str::from_utf8(existing)
         .map_err(|error| CliConfigError::malformed(CliAgentId::CodexCli, error))?;
     let mut root: toml::Table = if text.trim().is_empty() {
@@ -606,7 +655,7 @@ fn generate_codex(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigEr
     );
     provider.insert(
         "experimental_bearer_token".to_string(),
-        toml::Value::String(LOCAL_AGENT_TOKEN.to_string()),
+        toml::Value::String(token),
     );
     provider.insert(
         "wire_api".to_string(),
@@ -674,6 +723,7 @@ fn valid_env_key(key: &str) -> bool {
 }
 
 fn generate_gemini(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
+    let token = resolve_master_token();
     let managed = ["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"];
     let mut output = Vec::new();
     for line in parse_env(existing)? {
@@ -695,18 +745,19 @@ fn generate_gemini(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigE
         output.push(String::new());
     }
     output.push(format!("GOOGLE_GEMINI_BASE_URL={gateway}"));
-    output.push(format!("GEMINI_API_KEY={LOCAL_AGENT_TOKEN}"));
+    output.push(format!("GEMINI_API_KEY={token}"));
     Ok(format!("{}\n", output.join("\n")).into_bytes())
 }
 
 fn generate_omo(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
+    let token = resolve_master_token();
     let mut root = parse_json_object(CliAgentId::Omo, existing)?;
     let providers = object_entry(&mut root, "providers", CliAgentId::Omo)?;
     providers.insert(
         "mahoquot".to_string(),
         serde_json::json!({
             "api": "openai-responses",
-            "apiKey": LOCAL_AGENT_TOKEN,
+            "apiKey": token,
             "baseUrl": format!("{gateway}/v1"),
             "models": []
         }),

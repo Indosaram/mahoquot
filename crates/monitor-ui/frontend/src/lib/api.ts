@@ -2,8 +2,11 @@ import { z } from "zod";
 import {
   type AdminStats,
   type AuthFileItem,
+  type CreateScopedKeyResponse,
+  CreateScopedKeyResponseSchema,
   type GatewayHealth,
   GatewayHealthSchema,
+  type GatewayModelEntry,
   type HistoryEvent,
   HistoryEventDetailResponseSchema,
   type HistoryEventsResponse,
@@ -16,13 +19,20 @@ import {
   type ModelPrice,
   ModelPriceSchema,
   ModelPricesResponseSchema,
+  type ModelRegistryRefreshResponse,
+  ModelRegistryRefreshResponseSchema,
+  type ModelRegistryStatus,
   type SchedulerSettings,
   SchedulerSettingsSchema,
   type SchedulerStatus,
   SchedulerStatusSchema,
+  type ScopedApiKey,
   parseAdminStats,
   parseAuthFiles,
+  parseGatewayModels,
   parseLogs,
+  parseModelRegistryStatus,
+  parseScopedKeys,
 } from "./schemas";
 
 const providerAuthStartSchema = z.object({
@@ -146,6 +156,31 @@ export interface GatewayClients {
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
     scalar(path: string): Promise<Record<string, unknown>>;
     saveScalar(path: string, value: ScalarValue): Promise<void>;
+    models(): Promise<readonly GatewayModelEntry[]>;
+    modelRegistryStatus(): Promise<ModelRegistryStatus>;
+    refreshModelRegistry(): Promise<ModelRegistryRefreshResponse>;
+    scopedKeys(): Promise<readonly ScopedApiKey[]>;
+    createScopedKey(payload: {
+      readonly name: string;
+      readonly allowed_providers?: readonly string[];
+      readonly allowed_accounts?: readonly string[];
+      readonly allowed_models?: readonly string[];
+      readonly token_limit?: number;
+      readonly expires_at_ms?: number | null;
+    }): Promise<CreateScopedKeyResponse>;
+    patchScopedKey(
+      id: string,
+      payload: {
+        readonly name?: string;
+        readonly allowed_providers?: readonly string[];
+        readonly allowed_accounts?: readonly string[];
+        readonly allowed_models?: readonly string[];
+        readonly token_limit?: number;
+        readonly is_active?: boolean;
+        readonly expires_at_ms?: number | null;
+      },
+    ): Promise<ScopedApiKey>;
+    deleteScopedKey(id: string): Promise<void>;
   };
 }
 
@@ -501,6 +536,49 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ value }),
         });
+      },
+      models: async () => {
+        const response = await requestJson(`${base}/v1/models`, authHeaders);
+        return parseGatewayModels(response).data;
+      },
+      modelRegistryStatus: async () =>
+        parseModelRegistryStatus(
+          await requestJson(`${base}/v0/management/model-registry`, authHeaders),
+        ),
+      refreshModelRegistry: async () =>
+        ModelRegistryRefreshResponseSchema.parse(
+          await requestJson(`${base}/v0/management/model-registry`, authHeaders, {
+            method: "POST",
+          }),
+        ),
+      scopedKeys: async () =>
+        parseScopedKeys(await requestJson(`${base}/v0/management/scoped-keys`, authHeaders)),
+      createScopedKey: async (payload) =>
+        CreateScopedKeyResponseSchema.parse(
+          await requestJson(`${base}/v0/management/scoped-keys`, authHeaders, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }),
+        ),
+      patchScopedKey: async (id, payload) => {
+        const resp = (await requestJson(
+          `${base}/v0/management/scoped-keys/${encodeURIComponent(id)}`,
+          authHeaders,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+        )) as { key: ScopedApiKey };
+        return resp.key;
+      },
+      deleteScopedKey: async (id) => {
+        await requestJson(
+          `${base}/v0/management/scoped-keys/${encodeURIComponent(id)}`,
+          authHeaders,
+          { method: "DELETE" },
+        );
       },
     },
   };

@@ -89,7 +89,7 @@ pub fn schedule(app: &tauri::AppHandle, output: std::path::PathBuf) {
 
     let handle = app.clone();
     std::thread::spawn(move || {
-        eprintln!("certify thread started");
+        tracing::debug!("certify thread started");
         let wait_for_size = |width: f64, height: f64, iterations: u32| -> Option<Rect> {
             let mut last_seen: Option<(f64, f64)> = None;
             for attempt in 0..iterations {
@@ -100,17 +100,17 @@ pub fn schedule(app: &tauri::AppHandle, output: std::path::PathBuf) {
                             && (rect.height - height).abs() < 1.0
                             && rect.width > 0.0
                         {
-                            eprintln!("certify measured {width}x{height} on attempt {attempt}");
+                            tracing::debug!(width, height, attempt, "certify measured size");
                             return Some(rect);
                         }
                     }
                 }
                 if attempt % 10 == 0 {
-                    eprintln!("certify probe {attempt}: want {width}x{height} last {last_seen:?}");
+                    tracing::debug!(attempt, width, height, ?last_seen, "certify probe");
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            eprintln!("certify wait_for_size timed out for {width}x{height} last {last_seen:?}");
+            tracing::warn!(width, height, ?last_seen, "certify wait_for_size timed out");
             None
         };
         let Some(window) = handle.get_webview_window(crate::NOTCH_WINDOW_LABEL) else {
@@ -263,7 +263,7 @@ pub fn schedule(app: &tauri::AppHandle, output: std::path::PathBuf) {
             .map_err(|error| error.to_string())
             .and_then(|bytes| std::fs::write(&output, bytes).map_err(|error| error.to_string()));
         if let Err(error) = write_result {
-            eprintln!("failed to write native certification: {error}");
+            tracing::error!(%error, "failed to write native certification");
             finish(&handle, 1);
             return;
         }
