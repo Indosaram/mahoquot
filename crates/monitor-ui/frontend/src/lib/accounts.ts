@@ -42,19 +42,22 @@ export interface NormalizedAccount {
 }
 
 export const extractEmail = (idOrEmail: string): string => {
-  const clean = idOrEmail.trim();
-  // e.g. "565c2911-account-f@example.com" -> extract the email part
+  let clean = idOrEmail.trim();
+  if (clean.toLowerCase().startsWith("codex-")) {
+    clean = clean.slice("codex-".length);
+  }
   const atIndex = clean.lastIndexOf("@");
   if (atIndex > 0) {
     const prefix = clean.slice(0, atIndex);
-    const domain = clean.slice(atIndex + 1);
+    let domain = clean.slice(atIndex + 1);
+    domain = domain.replace(/-(?:plus|prolite|pro|team|free|enterprise)(?:\.json)?$/i, "");
     const hyphenIdx = prefix.indexOf("-");
     if (hyphenIdx > 0 && hyphenIdx < prefix.length - 1) {
       // Return the email without the runtime prefix if present
       const user = prefix.slice(hyphenIdx + 1);
       return `${user}@${domain}`.toLowerCase();
     }
-    return clean.toLowerCase();
+    return `${prefix}@${domain}`.toLowerCase();
   }
   return clean.toLowerCase();
 };
@@ -216,10 +219,28 @@ const RUNTIME_CACHE_CREDENTIAL_FILES: ReadonlySet<string> = new Set([
 ]);
 
 function cleanAccountLabel(raw: string, provider: string): string {
-  if (provider === "antigravity" && raw.startsWith("antigravity-")) {
-    return raw.slice("antigravity-".length);
+  let label = raw;
+  if (provider === "antigravity" && label.startsWith("antigravity-")) {
+    label = label.slice("antigravity-".length);
   }
-  return raw;
+  if (provider === "codex" || provider === "openai") {
+    if (label.toLowerCase().startsWith("codex-")) {
+      label = label.slice("codex-".length);
+    }
+    const at = label.lastIndexOf("@");
+    if (at > 0) {
+      let prefix = label.slice(0, at);
+      const suffix = label
+        .slice(at + 1)
+        .replace(/-(?:plus|prolite|pro|team|free|enterprise)(?:\.json)?$/i, "");
+      const hyphenIdx = prefix.indexOf("-");
+      if (hyphenIdx > 0 && hyphenIdx < prefix.length - 1) {
+        prefix = prefix.slice(hyphenIdx + 1);
+      }
+      label = `${prefix}@${suffix}`;
+    }
+  }
+  return label;
 }
 
 export const mergeAccountsAndCredentials = (
@@ -261,7 +282,7 @@ export const mergeAccountsAndCredentials = (
       provider: providerOf(r.provider || "unknown"),
       plan: r.plan ?? null,
       email: rEmail,
-      label: cleanAccountLabel(cred?.label || rEmail || r.id, providerOf(r.provider || "unknown")),
+      label: cleanAccountLabel(cred?.label || r.id, providerOf(r.provider || "unknown")),
       health,
       healthRaw: typeof r.health === "string" ? r.health : JSON.stringify(r.health),
       cooldownUntilUnixMs: r.reset_at_unix_ms ?? null,

@@ -190,10 +190,17 @@ export function useGatewayPolling(clients: GatewayClients) {
   // not make it spin on its own.
   const refreshNow = useCallback(async () => {
     setRefreshing(true);
+    const start = Date.now();
     try {
       await refresh();
     } finally {
-      setRefreshing(false);
+      const elapsed = Date.now() - start;
+      const minSpinMs = 500;
+      if (elapsed < minSpinMs) {
+        setTimeout(() => setRefreshing(false), minSpinMs - elapsed);
+      } else {
+        setRefreshing(false);
+      }
     }
   }, [refresh]);
 

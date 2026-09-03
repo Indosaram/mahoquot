@@ -258,4 +258,26 @@ describe("Account Normalization and Quota Capability", () => {
     expect(formatResetTime(3700)).toBe("1h 1m");
     expect(formatResetTime(90000)).toBe("1d 1h");
   });
+
+  it("cleans codex runtime prefix and plan suffix from raw account id", () => {
+    const rawCodex = "codex-588314d6-ZqvM9mzp@doloffer.shop-plus";
+    const merged = mergeAccountsAndCredentials(
+      [
+        {
+          id: rawCodex,
+          provider: "codex",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: null,
+        },
+      ],
+      [],
+    );
+    expect(merged[0]?.email).toBe("zqvm9mzp@doloffer.shop");
+    expect(merged[0]?.label).toBe("ZqvM9mzp@doloffer.shop");
+  });
 });

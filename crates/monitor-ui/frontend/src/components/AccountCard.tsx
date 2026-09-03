@@ -6,10 +6,12 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import { Fragment, type MouseEvent, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import { blocks } from "../lib/pending";
+import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
@@ -73,7 +75,38 @@ export const AccountCard = ({
   const isPending = blocks(pending, "account", account.id);
   const rows = quotaRows(account);
   const [tokensOpen, setTokensOpen] = useState(false);
-  const detail = account.runtimeId ?? account.credentialName ?? "Credential only";
+  const [refreshing, setRefreshing] = useState(false);
+  const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
+
+  const errorKey = account.lastError
+    ? `${account.lastError.unix_ms}_${account.lastError.status}_${account.lastError.message}`
+    : null;
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    if (errorKey) setDismissedErrorKey(errorKey);
+    try {
+      await onRefresh();
+    } finally {
+      // Keep spinning briefly so the user clearly sees the feedback
+      setTimeout(() => setRefreshing(false), 400);
+    }
+  };
+
+  const cleanDetail = (raw: string): string => {
+    let d = raw;
+    if (d.startsWith("codex-")) d = d.slice("codex-".length);
+    const at = d.lastIndexOf("@");
+    if (at > 0) {
+      const p = d.slice(0, at).replace(/^[0-9a-fA-F]{8,}-/, "");
+      const s = d.slice(at + 1).replace(/-(plus|prolite|pro|team|free|enterprise)(\.json)?$/i, "");
+      return `${p}@${s}`;
+    }
+    return d;
+  };
+
+  const rawDetail = account.runtimeId ?? account.credentialName ?? "Credential only";
+  const detail = cleanDetail(rawDetail);
   const detailRedundant =
     detail === account.label ||
     detail.toLowerCase().includes(account.label.toLowerCase()) ||
@@ -120,7 +153,14 @@ export const AccountCard = ({
             <ProviderGlyph provider={account.provider} />
           </span>
           {account.usage?.plan_type ? (
-            <span className="plan-badge">{account.usage.plan_type}</span>
+            <span
+              className={`plan-badge plan-badge-${getPlanTierColor(
+                account.usage.plan_type,
+                account.provider,
+              )}`}
+            >
+              {account.usage.plan_type}
+            </span>
           ) : null}
           <div className="account-id">
             <div>
@@ -140,10 +180,10 @@ export const AccountCard = ({
           </Button>
           <Button
             aria-label="Refresh quota"
-            disabled={!account.runtimeId || isPending}
-            onClick={() => void onRefresh()}
+            disabled={!account.runtimeId || isPending || refreshing}
+            onClick={() => void handleRefresh()}
           >
-            <RefreshCw size={14} /> Refresh
+            <RefreshCw size={14} className={refreshing ? "spin" : ""} /> Refresh
           </Button>
           {account.canReset ? (
             <Button
@@ -308,10 +348,20 @@ export const AccountCard = ({
           <div className="quota-empty">Not reported by provider</div>
         )}
       </div>
-      {account.lastError ? (
+      {account.lastError && dismissedErrorKey !== errorKey ? (
         <div className="account-error">
           <AlertTriangle size={14} />
-          {account.lastError.message || `HTTP ${account.lastError.status}`}
+          <span className="account-error-message">
+            {account.lastError.message || `HTTP ${account.lastError.status}`}
+          </span>
+          <button
+            type="button"
+            className="account-error-dismiss"
+            aria-label="Dismiss error"
+            onClick={() => setDismissedErrorKey(errorKey)}
+          >
+            <X size={12} />
+          </button>
         </div>
       ) : null}
       {!account.runtimeId ? (

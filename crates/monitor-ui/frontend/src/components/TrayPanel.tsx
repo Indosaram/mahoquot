@@ -10,6 +10,7 @@ import {
 import { useMemo, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import type { GatewayLifecycleStatus } from "../lib/native";
+import { getPlanTierColor } from "../lib/plan-tier";
 import type { TotpEntry } from "../lib/totp-vault";
 import { quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
@@ -192,7 +193,14 @@ export const TrayPanel = ({
                 <RefreshCw size={12} className={refreshing ? "tray-spin" : undefined} />
               </button>
               {planBadge(account.usage?.plan_type) && (
-                <span className="tray-plan">{planBadge(account.usage?.plan_type)}</span>
+                <span
+                  className={`tray-plan tray-plan-${getPlanTierColor(
+                    account.usage?.plan_type,
+                    account.provider,
+                  )}`}
+                >
+                  {planBadge(account.usage?.plan_type)}
+                </span>
               )}
             </div>
             {account.usage?.totals && (

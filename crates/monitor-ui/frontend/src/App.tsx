@@ -1153,9 +1153,13 @@ export default function App() {
             <div className="top-actions">
               <Button
                 aria-label="Refresh snapshot"
-                onClick={() => void refreshUsage(true).finally(() => void refresh())}
+                disabled={refreshing}
+                onClick={() => {
+                  void refreshNow();
+                  void refreshUsage(true);
+                }}
               >
-                <RefreshCw size={15} /> Refresh
+                <RefreshCw size={15} className={refreshing ? "spin" : ""} /> Refresh
               </Button>
               <Button aria-label="Add account" onClick={() => void openOnboarding()}>
                 <Plus size={16} />

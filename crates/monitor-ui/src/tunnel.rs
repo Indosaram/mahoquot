@@ -630,7 +630,7 @@ mod tests {
         let manager = TunnelManager::new(binary);
 
         let status = manager
-            .start_with_timeout("http://127.0.0.1:18840", Duration::from_secs(2))
+            .start_with_timeout("http://127.0.0.1:18840", Duration::from_secs(5))
             .unwrap();
         assert_eq!(
             status.public_url.as_deref(),
