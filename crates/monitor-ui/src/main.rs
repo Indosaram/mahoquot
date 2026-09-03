@@ -207,7 +207,7 @@ fn notification_service_status<R: Runtime>(
         }
         Ok(_) => os_integration::NotificationServiceStatus::Available,
         Err(error) => {
-            eprintln!("native notification service unavailable: {error}");
+            tracing::warn!(%error, "native notification service unavailable");
             os_integration::NotificationServiceStatus::ServiceUnavailable
         }
     }
@@ -218,7 +218,7 @@ fn emit_observed_state<R: Runtime>(app: &AppHandle<R>, state: os_integration::Ob
     let event = match observer.0.lock() {
         Ok(mut observer) => observer.observe(state),
         Err(_) => {
-            eprintln!("native state observer lock is poisoned");
+            tracing::error!("native state observer lock is poisoned");
             None
         }
     };
@@ -235,9 +235,10 @@ fn emit_observed_state<R: Runtime>(app: &AppHandle<R>, state: os_integration::Ob
         .body(event.body)
         .show()
     {
-        eprintln!(
-            "failed to show native notification category={}: {error}",
-            event.category.as_str()
+        tracing::error!(
+            category = event.category.as_str(),
+            %error,
+            "failed to show native notification"
         );
     }
 }
@@ -487,24 +488,28 @@ fn gateway_binary_launchable(path: &std::path::Path) -> bool {
 fn reclaim_gateway_port(own_gateway_binary: &std::path::Path) -> bool {
     for pid in listener_pids() {
         let Some(listener_binary) = listener_executable_path(pid) else {
-            eprintln!("skipping gateway port listener with unknown executable pid={pid}");
+            tracing::warn!(
+                pid,
+                "skipping gateway port listener with unknown executable"
+            );
             continue;
         };
         let listener_binary = std::fs::canonicalize(&listener_binary).unwrap_or(listener_binary);
         if reclaim_listener_policy(&listener_binary, own_gateway_binary)
             == ReclaimListenerPolicy::Skip
         {
-            eprintln!(
-                "skipping foreign gateway port listener pid={pid} executable={}",
-                listener_binary.display()
+            tracing::warn!(
+                pid,
+                executable = %listener_binary.display(),
+                "skipping foreign gateway port listener"
             );
             continue;
         }
-        println!("reclaiming gateway port from orphan pid={pid}");
+        tracing::info!(pid, "reclaiming gateway port from orphan");
         if let Err(error) =
             terminate_process(pid, GATEWAY_STOP_TIMEOUT, || !process_is_running(pid))
         {
-            eprintln!("failed to reclaim gateway port from pid={pid}: {error}");
+            tracing::error!(pid, %error, "failed to reclaim gateway port");
         }
     }
     !gateway_listening()
@@ -533,12 +538,12 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
     let bin =
         tray::resolve_gateway_binary(std::env::var("MAHOQUOT_GATEWAY_BIN").ok(), exe.as_deref())?;
     if !gateway_binary_launchable(&bin) {
-        eprintln!("gateway binary unavailable: {}", bin.display());
+        tracing::error!(path = %bin.display(), "gateway binary unavailable");
         return None;
     }
     let own_gateway_binary = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
     if gateway_listening() && !reclaim_gateway_port(&own_gateway_binary) {
-        eprintln!("gateway port is occupied by a listener this app does not own");
+        tracing::warn!("gateway port is occupied by a listener this app does not own");
         return None;
     }
 
@@ -550,7 +555,7 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
     {
         Ok(mut child) => {
             let pid = child.id() as i32;
-            println!("mahoquot-gateway spawned pid={pid}");
+            tracing::info!(pid, "mahoquot-gateway spawned");
             process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
             GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
             install_gateway_signal_guard();
@@ -559,16 +564,16 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
                 let result = child.wait();
                 clear_gateway_pid(&process_pid, pid);
                 match result {
-                    Ok(status) => println!("mahoquot-gateway exited pid={pid} status={status}"),
+                    Ok(status) => tracing::info!(pid, %status, "mahoquot-gateway exited"),
                     Err(error) => {
-                        eprintln!("failed to harvest mahoquot-gateway pid={pid}: {error}")
+                        tracing::error!(pid, %error, "failed to harvest mahoquot-gateway");
                     }
                 }
             });
             Some(pid)
         }
         Err(error) => {
-            eprintln!("failed to spawn mahoquot-gateway: {error}");
+            tracing::error!(%error, "failed to spawn mahoquot-gateway");
             None
         }
     }
@@ -667,7 +672,7 @@ fn request_notification_permission(
         }
         Ok(_) => os_integration::NotificationServiceStatus::Available,
         Err(error) => {
-            eprintln!("native notification permission request failed: {error}");
+            tracing::warn!(%error, "native notification permission request failed");
             os_integration::NotificationServiceStatus::ServiceUnavailable
         }
     };
@@ -906,7 +911,7 @@ fn stop_gateway(
     };
     let _shutdown_policy = gateway_process::shutdown_plan(ownership, false);
     if stop_owned_gateway(&process, Some(&config))? {
-        println!("mahoquot-gateway terminated");
+        tracing::info!("mahoquot-gateway terminated");
     } else if gateway_listening() {
         return Ok(GatewayLifecycleStatus::Running);
     }
@@ -976,7 +981,7 @@ fn toggle_operations_console<R: Runtime>(app: &AppHandle<R>) {
             .and_then(|_| window.set_focus())
     };
     if let Err(error) = result {
-        eprintln!("failed to toggle Mahoquot Operations Console: {error}");
+        tracing::error!(%error, "failed to toggle Mahoquot Operations Console");
     }
 }
 
@@ -1001,12 +1006,13 @@ fn sync_notch_hover(
     };
     let cursor = platform::cursor_location();
     let displays = display_logical_bounds(app);
-    if !notch::screen_rect_touches_display(&rect, &displays) {
-        // The window drifted off every connected display (monitor unplugged,
-        // resolution or arrangement changed). Re-anchor it and skip hover for
-        // this sample: the frame AppKit reports next will be on-screen again.
+    // Tolerance of 4.0 logical pixels accounts for fractional scaling / AppKit coordinate rounding
+    if !notch::notch_is_right_anchored_any_display(&rect, &displays, 4.0) {
+        // The window drifted off its target display edge (monitor unplugged,
+        // resolution or arrangement changed, or stranded in the center after resize).
+        // Re-anchor it and skip hover for this sample: the frame reported next will be docked.
         if let Err(error) = position_notch_window(app, &window) {
-            eprintln!("failed to re-anchor off-screen notch: {error}");
+            tracing::warn!(%error, "failed to re-anchor misplaced notch");
         }
         return;
     }
@@ -1054,9 +1060,14 @@ fn sync_notch_hover(
             let _ = window.eval(
                 "window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:true}));",
             );
-            println!(
-                "notch hover open=true rect=({},{},{},{}) cursor=({},{})",
-                rect.x, rect.y, rect.width, rect.height, cursor.x, cursor.y
+            tracing::debug!(
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                cursor.x,
+                cursor.y,
+                "notch hover open=true"
             );
         }
         tray::HoverIntent::ScheduleCollapse => {
@@ -1066,7 +1077,7 @@ fn sync_notch_hover(
             let _ = window.eval(
                 "window.dispatchEvent(new CustomEvent('mahoquot:notch-hover',{detail:false}));",
             );
-            println!("notch hover open=false immediate=true");
+            tracing::debug!("notch hover open=false immediate=true");
             let app = app.clone();
             let state = app.state::<NotchHoverState>();
             let expanded = state.expanded.clone();
@@ -1122,7 +1133,7 @@ fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
         window.hide()
     } else {
         if let Err(error) = platform::ensure_session_supported() {
-            eprintln!("{}: {}", error.code, error.message);
+            tracing::error!(code = %error.code, message = %error.message, "session unsupported");
             return;
         }
         window.show().and_then(|_| {
@@ -1131,7 +1142,7 @@ fn toggle_notch_window<R: Runtime>(app: &AppHandle<R>) {
         })
     };
     if let Err(error) = result {
-        eprintln!("failed to toggle Mahoquot notch window: {error}");
+        tracing::error!(%error, "failed to toggle Mahoquot notch window");
     }
 }
 
@@ -1152,9 +1163,9 @@ fn resize_notch<R: Runtime>(app: &AppHandle<R>, width: f64, height: f64) {
     // anchor for a frame (the black-line flash). The relative setFrame slides
     // the window in one transaction instead.
     if let Err(error) = platform::set_notch_window_frame(app, &window, NOTCH_WINDOW_LABEL, target) {
-        eprintln!("failed to resize notch window: {error}");
+        tracing::error!(%error, "failed to resize notch window");
     }
-    println!("notch resized width={width} height={height} scale={scale}");
+    tracing::debug!(width, height, scale, "notch resized");
 }
 
 #[tauri::command]
@@ -1189,7 +1200,7 @@ fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
     for label in [MAIN_WINDOW_LABEL, NOTCH_WINDOW_LABEL] {
         if let Some(window) = app.get_webview_window(label) {
             if let Err(error) = window.eval("window.location.reload()") {
-                eprintln!("failed to refresh Mahoquot window {label}: {error}");
+                tracing::error!(label, %error, "failed to refresh Mahoquot window");
             }
         }
     }
@@ -1230,7 +1241,7 @@ fn toggle_tray_panel<R: Runtime>(
             x.round() as i32,
             y.round() as i32,
         ))
-        .map_err(|error| eprintln!("failed to position tray panel: {error}"))
+        .map_err(|error| tracing::error!(%error, "failed to position tray panel"))
         .ok();
     let _ = panel.show();
     let _ = panel.set_focus();
@@ -1320,17 +1331,20 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(500));
         if let Err(error) = position_notch_window(&handle, &notch_clone) {
-            eprintln!("delayed notch positioning failed: {error}");
+            tracing::error!(%error, "delayed notch positioning failed");
             return;
         }
         if let Ok(position) = notch_clone.outer_position() {
-            println!("notch position settled x={} y={}", position.x, position.y);
+            tracing::debug!(position.x, position.y, "notch position settled");
         }
         #[cfg(target_os = "macos")]
         if let Some(rect) = platform::notch_screen_rect(&notch_clone) {
-            println!(
-                "notch hover target rect x={} y={} w={} h={}",
-                rect.x, rect.y, rect.width, rect.height
+            tracing::debug!(
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                "notch hover target rect"
             );
         }
     });
@@ -1347,7 +1361,10 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
         start_native_state_observer(app.handle().clone());
     }
 
-    println!("mahoquot-monitor-ready windows={MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}");
+    tracing::info!(
+        windows = format!("{MAIN_WINDOW_LABEL},{NOTCH_WINDOW_LABEL}"),
+        "mahoquot-monitor-ready"
+    );
     Ok(())
 }
 
@@ -1357,7 +1374,7 @@ struct Config {
     client: reqwest::Client,
 }
 
-type DesktopSecretStore = secrets::SecretStore<secrets::KeyringBackend>;
+type DesktopSecretStore = secrets::SecretStore<secrets::PlainFileBackend>;
 type DesktopCliConfig = std::sync::Mutex<cli_config::CliConfigManager>;
 
 fn cli_config_manager<'a>(
@@ -1430,13 +1447,20 @@ struct MigrateLegacySecretRequest {
 #[tauri::command]
 fn read_secret(
     store: tauri::State<'_, DesktopSecretStore>,
+    config: tauri::State<'_, Config>,
     request: SecretRequest,
 ) -> Result<Option<String>, secrets::SecretStoreError> {
-    store.read(&secret_ref(
+    if let Some(val) = store.read(&secret_ref(
         &request.endpoint,
         &request.profile,
         request.kind,
-    ))
+    ))? {
+        return Ok(Some(val));
+    }
+    if request.kind == secrets::SecretKind::ManagementKey && !config.api_key.is_empty() {
+        return Ok(Some(config.api_key.clone()));
+    }
+    Ok(None)
 }
 
 #[tauri::command]
@@ -1465,12 +1489,34 @@ fn delete_secret(
 #[tauri::command]
 fn migrate_legacy_secret(
     store: tauri::State<'_, DesktopSecretStore>,
+    config: tauri::State<'_, Config>,
     request: MigrateLegacySecretRequest,
 ) -> Result<secrets::MigrationOutcome, secrets::SecretStoreError> {
-    store.migrate_legacy(
+    let outcome = store.migrate_legacy(
         &secret_ref(&request.endpoint, &request.profile, request.kind),
         request.legacy_value.as_deref(),
-    )
+    )?;
+
+    if outcome.value.is_some() {
+        return Ok(outcome);
+    }
+
+    // If no secret was saved in keychain or legacy storage, fall back to the
+    // master API key configured for this gateway so the UI is automatically unlocked.
+    if request.kind == secrets::SecretKind::ManagementKey && !config.api_key.is_empty() {
+        let master = &config.api_key;
+        let _ = store.write(
+            &secret_ref(&request.endpoint, &request.profile, request.kind),
+            master,
+        );
+        return Ok(secrets::MigrationOutcome {
+            value: Some(master.clone()),
+            remove_legacy: false,
+            reconnect: true,
+        });
+    }
+
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -1575,12 +1621,81 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
     Ok(build_view(&raw, now_ms))
 }
 
+fn extract_first_api_key(yaml: &str) -> Option<String> {
+    let mut in_keys = false;
+    for line in yaml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("api-keys:") {
+            in_keys = true;
+            if let Some(rest) = trimmed.strip_prefix("api-keys:").map(str::trim) {
+                if rest.starts_with('[') && rest.ends_with(']') {
+                    let inner = rest[1..rest.len() - 1].trim();
+                    let key = inner.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
+                    if !key.is_empty() {
+                        return Some(key.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        if in_keys {
+            if trimmed.starts_with('-') {
+                let key = trimmed
+                    .trim_start_matches('-')
+                    .trim()
+                    .trim_matches(|c| c == '\'' || c == '"');
+                if !key.is_empty() {
+                    return Some(key.to_string());
+                }
+            } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                break;
+            }
+        }
+    }
+    None
+}
+
+/// Ensure a master API key exists in config.yaml so both local agents and the
+/// desktop app can authenticate with the gateway. Returns the master key.
+fn ensure_master_api_key() -> String {
+    let auth_dir =
+        tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    let config_path = auth_dir.join("config.yaml");
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        if let Some(key) = extract_first_api_key(&content) {
+            return key;
+        }
+    }
+
+    // Generate a fresh secure master key
+    let generated = format!("mq-master-{}", uuid::Uuid::new_v4().simple());
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        let updated = if content.contains("api-keys: []") {
+            content.replace("api-keys: []", &format!("api-keys:\n- {generated}"))
+        } else if content.contains("api-keys:") {
+            content.replace("api-keys:", &format!("api-keys:\n- {generated}"))
+        } else {
+            format!("{content}\napi-keys:\n- {generated}\n")
+        };
+        let _ = std::fs::write(&config_path, updated);
+    }
+    generated
+}
+
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let base_url = std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| LOCAL_GATEWAY_URL.to_string());
     let gateway = GatewayProcess::default();
     let _ = spawn_gateway(&gateway, &base_url);
-    let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_default();
-    let init_script = bootstrap::console_initialization_script(&base_url);
+    let master_key = ensure_master_api_key();
+    let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_else(|_| master_key.clone());
+    let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
     let login_start = std::env::args().any(|argument| argument == "--login-start");
 
     let app = tauri::Builder::default()
@@ -1602,7 +1717,7 @@ fn main() {
             codex_launcher::default_codex_binary(),
             codex_launcher::default_instance_root(),
         ))
-        .manage(secrets::SecretStore::new(secrets::KeyringBackend))
+        .manage(secrets::SecretStore::new(secrets::PlainFileBackend))
         .manage(std::sync::Mutex::new(
             cli_config::CliConfigManager::for_current_process(),
         ))
@@ -1657,6 +1772,14 @@ fn main() {
         ])
         .setup(initialize_native_ui)
         .on_window_event(|window, event| {
+            if window.label() == NOTCH_WINDOW_LABEL {
+                if let tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } = event {
+                    let app = window.app_handle();
+                    if let Some(notch_webview) = app.get_webview_window(NOTCH_WINDOW_LABEL) {
+                        let _ = position_notch_window(app, &notch_webview);
+                    }
+                }
+            }
             if window.label() == TRAY_PANEL_LABEL {
                 if let tauri::WindowEvent::Focused(false) = event {
                     let _ = window.hide();
@@ -1667,7 +1790,7 @@ fn main() {
                     api.prevent_close();
                 }
                 if let Err(error) = window.hide() {
-                    eprintln!("failed to hide Mahoquot window {}: {error}", window.label());
+                    tracing::error!(label = %window.label(), %error, "failed to hide Mahoquot window");
                 }
             }
         })
@@ -1709,18 +1832,18 @@ fn main() {
             platform::cleanup_notch_hover_watch(app);
             let tunnel = app.state::<tunnel::TunnelManager>();
             if let Err(error) = tunnel.stop() {
-                eprintln!("failed to stop cloudflared on exit: {error}");
+                tracing::error!(%error, "failed to stop cloudflared on exit");
             }
             let codex = app.state::<codex_launcher::CodexLauncher>();
             if let Err(error) = codex.stop_all() {
-                eprintln!("failed to stop Codex instances on exit: {error}");
+                tracing::error!(%error, "failed to stop Codex instances on exit");
             }
             let gateway = app.state::<GatewayProcess>();
             let config = app.state::<Config>();
             match stop_owned_gateway(&gateway, Some(&config)) {
-                Ok(true) => println!("mahoquot-gateway terminated"),
+                Ok(true) => tracing::info!("mahoquot-gateway terminated"),
                 Ok(false) => {}
-                Err(error) => eprintln!("failed to stop mahoquot-gateway on exit: {error}"),
+                Err(error) => tracing::error!(%error, "failed to stop mahoquot-gateway on exit"),
             }
         }
     });

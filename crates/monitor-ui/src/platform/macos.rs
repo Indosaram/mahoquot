@@ -52,7 +52,7 @@ struct CgRect {
     size: CgSize,
 }
 
-pub struct NotchHoverMonitors(pub std::sync::Mutex<[*mut objc::runtime::Object; 2]>);
+pub struct NotchHoverMonitors(pub std::sync::Mutex<[*mut objc::runtime::Object; 3]>);
 
 unsafe impl Send for NotchHoverMonitors {}
 unsafe impl Sync for NotchHoverMonitors {}
@@ -164,7 +164,7 @@ pub fn apply_dock_icon() {
         let image: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
         let image: *mut objc::runtime::Object = msg_send![image, initWithData: data];
         if image.is_null() {
-            eprintln!("failed to decode mahoquot dock icon");
+            tracing::error!("failed to decode mahoquot dock icon");
             return;
         }
         let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
@@ -211,6 +211,23 @@ pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) 
     )
     .copy();
 
+    let observer_handle = app.clone();
+    let observer_handler = ConcreteBlock::new(move |_notification: *mut objc::runtime::Object| {
+        let handle = observer_handle.clone();
+        let target_handle = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            let Some(window) = target_handle.get_webview_window(crate::NOTCH_WINDOW_LABEL) else {
+                return;
+            };
+            if let Err(error) = crate::position_notch_window(&target_handle, &window) {
+                tracing::warn!(%error, "failed to reposition notch after screen parameters change");
+            } else {
+                tracing::info!("notch repositioned after screen parameters change");
+            }
+        });
+    })
+    .copy();
+
     unsafe {
         let mouse_moved_mask: u64 = 1 << 5;
         let global_token: *mut objc::runtime::Object = msg_send![
@@ -223,14 +240,32 @@ pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) 
             addLocalMonitorForEventsMatchingMask: mouse_moved_mask
             handler: &*local_handler
         ];
+
+        // Observe screen configuration/resolution/arrangement changes
+        let center: *mut objc::runtime::Object =
+            msg_send![class!(NSNotificationCenter), defaultCenter];
+        let notif_name: *mut objc::runtime::Object = msg_send![
+            class!(NSString),
+            stringWithUTF8String: b"NSApplicationDidChangeScreenParametersNotification\0".as_ptr()
+        ];
+        let screen_observer_token: *mut objc::runtime::Object = msg_send![
+            center,
+            addObserverForName: notif_name
+            object: std::ptr::null::<objc::runtime::Object>()
+            queue: std::ptr::null::<objc::runtime::Object>()
+            usingBlock: &*observer_handler
+        ];
+
         app.manage(NotchHoverMonitors(std::sync::Mutex::new([
             global_token,
             local_token,
+            screen_observer_token,
         ])));
     }
-    println!("notch hover watch armed");
+    tracing::info!("notch hover watch and screen parameter observer armed");
     std::mem::forget(global_handler);
     std::mem::forget(local_handler);
+    std::mem::forget(observer_handler);
 }
 
 pub fn cleanup_notch_hover_watch(app: &AppHandle) {
@@ -239,10 +274,16 @@ pub fn cleanup_notch_hover_watch(app: &AppHandle) {
     let monitors = app.state::<NotchHoverMonitors>();
     if let Ok(tokens) = monitors.0.lock() {
         unsafe {
-            for token in tokens.iter().copied() {
-                if !token.is_null() {
-                    let _: () = msg_send![class!(NSEvent), removeMonitor: token];
-                }
+            if !tokens[0].is_null() {
+                let _: () = msg_send![class!(NSEvent), removeMonitor: tokens[0]];
+            }
+            if !tokens[1].is_null() {
+                let _: () = msg_send![class!(NSEvent), removeMonitor: tokens[1]];
+            }
+            if !tokens[2].is_null() {
+                let center: *mut objc::runtime::Object =
+                    msg_send![class!(NSNotificationCenter), defaultCenter];
+                let _: () = msg_send![center, removeObserver: tokens[2]];
             }
         }
     };

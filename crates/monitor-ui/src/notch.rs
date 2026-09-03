@@ -250,6 +250,26 @@ pub fn screen_rect_touches_display(rect: &Rect, displays: &[Rect]) -> bool {
     displays.iter().any(|display| rects_overlap(rect, display))
 }
 
+pub fn notch_is_right_anchored_on_display(
+    notch_rect: &Rect,
+    display: &Rect,
+    tolerance: f64,
+) -> bool {
+    let expected_x = display.x + display.width - notch_rect.width;
+    (notch_rect.x - expected_x).abs() <= tolerance
+}
+
+pub fn notch_is_right_anchored_any_display(
+    notch_rect: &Rect,
+    displays: &[Rect],
+    tolerance: f64,
+) -> bool {
+    displays.iter().any(|display| {
+        rects_overlap(notch_rect, display)
+            && notch_is_right_anchored_on_display(notch_rect, display, tolerance)
+    })
+}
+
 pub const EDGE_CORRIDOR_WIDTH: f64 = 480.0;
 pub const EDGE_CORRIDOR_VERTICAL_SLACK: f64 = 48.0;
 
@@ -449,5 +469,37 @@ mod tests {
             resize_backend(DesktopSession::GnomeWayland),
             ResizeBackend::Unsupported
         );
+    }
+
+    #[test]
+    fn right_anchored_detection_detects_stranded_center_window() {
+        let display = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let docked_compact = Rect {
+            x: 1920.0 - 8.0,
+            y: (1080.0 - 180.0) / 2.0,
+            width: 8.0,
+            height: 180.0,
+        };
+        // Docked at right edge
+        assert!(notch_is_right_anchored_on_display(&docked_compact, &display, 2.0));
+        assert!(notch_is_right_anchored_any_display(&docked_compact, &[display], 2.0));
+
+        // Stranded in center (e.g. after display resize from 3840 to 1920 or offset drift)
+        let stranded_center = Rect {
+            x: 960.0,
+            y: (1080.0 - 180.0) / 2.0,
+            width: 8.0,
+            height: 180.0,
+        };
+        // Touches display is true because it's inside the display!
+        assert!(screen_rect_touches_display(&stranded_center, &[display]));
+        // BUT it is NOT right anchored!
+        assert!(!notch_is_right_anchored_on_display(&stranded_center, &display, 2.0));
+        assert!(!notch_is_right_anchored_any_display(&stranded_center, &[display], 2.0));
     }
 }
