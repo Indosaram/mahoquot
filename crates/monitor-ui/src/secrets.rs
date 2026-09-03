@@ -6,6 +6,7 @@ use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "isolated-secret-tests"))]
+#[allow(dead_code)]
 const SECRET_SERVICE: &str = "mahoquot.desktop";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +52,9 @@ impl SecretRef {
     serde(tag = "kind", content = "detail", rename_all = "snake_case")
 )]
 pub enum SecretStoreError {
+    #[allow(dead_code)]
     Locked,
+    #[allow(dead_code)]
     Unavailable,
     VerificationFailed,
     Backend(String),
@@ -166,9 +169,11 @@ impl SecretBackend for PlainFileBackend {
 
 #[cfg(not(feature = "isolated-secret-tests"))]
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(dead_code)]
 pub struct KeyringBackend;
 
 #[cfg(not(feature = "isolated-secret-tests"))]
+#[allow(dead_code)]
 impl KeyringBackend {
     fn entry(account: &str) -> Result<Entry, SecretStoreError> {
         Entry::new(SECRET_SERVICE, account).map_err(map_keyring_error)
@@ -277,6 +282,7 @@ fn normalize_profile(profile: &str) -> String {
 }
 
 #[cfg(not(feature = "isolated-secret-tests"))]
+#[allow(dead_code)]
 fn map_keyring_error(error: KeyringError) -> SecretStoreError {
     match error {
         KeyringError::NoStorageAccess(reason) => {

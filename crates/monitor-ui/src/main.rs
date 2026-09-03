@@ -104,6 +104,7 @@ fn stop_signal_order() -> [StopSignal; 2] {
     [StopSignal::Terminate, StopSignal::Kill]
 }
 
+#[cfg(unix)]
 impl StopSignal {
     fn raw(self) -> i32 {
         match self {
@@ -127,7 +128,7 @@ extern "C" fn terminate_gateway_on_signal(signal: i32) {
             libc_kill(pid, StopSignal::Terminate.raw());
         }
         #[cfg(windows)]
-        unsafe {
+        {
             let _ = signal_process_windows(pid);
         }
     }

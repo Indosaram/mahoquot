@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.mahoquot.monitor",
   "build": {
-    "beforeDevCommand": "bun dev",
+    "beforeDevCommand": "cd frontend && bun run dev",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "ui"
   },
@@ -61,7 +61,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg", "deb", "rpm", "nsis", "msi"],
     "externalBin": [
       "gateways/mahoquot-gateway"
     ],
@@ -70,6 +70,7 @@
       "icons/128x128.png",
       "icons/256x256.png",
       "icons/icon.icns",
+      "icons/icon.ico",
       "icons/icon.png"
     ]
   },

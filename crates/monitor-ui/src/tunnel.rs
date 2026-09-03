@@ -612,10 +612,20 @@ mod tests {
     #[test]
     fn fake_cloudflared_start_url_stop() {
         let dir = test_dir("happy");
+        #[cfg(not(windows))]
         let binary = dir.join("cloudflared");
+        #[cfg(windows)]
+        let binary = dir.join("cloudflared.cmd");
+
+        #[cfg(not(windows))]
         write_fake(
             &binary,
             "#!/bin/sh\necho 'INF https://happy-tree-1234.trycloudflare.com' >&2\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+        );
+        #[cfg(windows)]
+        write_fake(
+            &binary,
+            "@echo off\r\necho INF https://happy-tree-1234.trycloudflare.com >&2\r\n:loop\r\nping 127.0.0.1 -n 2 >nul\r\ngoto loop\r\n",
         );
         let manager = TunnelManager::new(binary);
 
@@ -660,10 +670,20 @@ mod tests {
     #[test]
     fn malformed_output_times_out_without_orphan() {
         let dir = test_dir("malformed");
+        #[cfg(not(windows))]
         let binary = dir.join("cloudflared");
+        #[cfg(windows)]
+        let binary = dir.join("cloudflared.cmd");
+
+        #[cfg(not(windows))]
         write_fake(
             &binary,
             "#!/bin/sh\necho 'INF no public URL here' >&2\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+        );
+        #[cfg(windows)]
+        write_fake(
+            &binary,
+            "@echo off\r\necho INF no public URL here >&2\r\n:loop\r\nping 127.0.0.1 -n 2 >nul\r\ngoto loop\r\n",
         );
         let manager = TunnelManager::new(binary);
         let error = manager
@@ -691,12 +711,25 @@ mod tests {
     #[test]
     fn crash_clears_state() {
         let dir = test_dir("crash");
+        #[cfg(not(windows))]
         let binary = dir.join("cloudflared");
+        #[cfg(windows)]
+        let binary = dir.join("cloudflared.cmd");
         let crash_trigger = dir.join("crash-now");
+
+        #[cfg(not(windows))]
         write_fake(
             &binary,
             &format!(
                 "#!/bin/sh\necho 'https://short-life.trycloudflare.com' >&2\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nexit 12\n",
+                crash_trigger.display()
+            ),
+        );
+        #[cfg(windows)]
+        write_fake(
+            &binary,
+            &format!(
+                "@echo off\r\necho https://short-life.trycloudflare.com >&2\r\n:loop\r\nif exist \"{}\" exit /b 12\r\nping 127.0.0.1 -n 1 >nul\r\ngoto loop\r\n",
                 crash_trigger.display()
             ),
         );

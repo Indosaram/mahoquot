@@ -246,7 +246,7 @@ pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) 
             msg_send![class!(NSNotificationCenter), defaultCenter];
         let notif_name: *mut objc::runtime::Object = msg_send![
             class!(NSString),
-            stringWithUTF8String: b"NSApplicationDidChangeScreenParametersNotification\0".as_ptr()
+            stringWithUTF8String: c"NSApplicationDidChangeScreenParametersNotification".as_ptr()
         ];
         let screen_observer_token: *mut objc::runtime::Object = msg_send![
             center,

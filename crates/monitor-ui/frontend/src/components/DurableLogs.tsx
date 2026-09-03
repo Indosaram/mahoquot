@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
 import { Button, Card } from "./ui";

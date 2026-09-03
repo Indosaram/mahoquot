@@ -282,16 +282,32 @@ fn io_error(error: std::io::Error) -> CodexLauncherError {
 
 #[cfg(test)]
 fn write_fake_codex(root: &Path, crash: bool) -> PathBuf {
+    #[cfg(not(windows))]
     let path = root.join(if crash {
         "fake-codex-crash"
     } else {
         "fake-codex"
     });
+    #[cfg(windows)]
+    let path = root.join(if crash {
+        "fake-codex-crash.cmd"
+    } else {
+        "fake-codex.cmd"
+    });
+
+    #[cfg(not(windows))]
     let script = if crash {
         "#!/bin/sh\nexit 42\n"
     } else {
         "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n"
     };
+    #[cfg(windows)]
+    let script = if crash {
+        "@exit /b 42\r\n"
+    } else {
+        "@echo off\r\n:loop\r\nping 127.0.0.1 -n 2 >nul\r\ngoto loop\r\n"
+    };
+
     fs::create_dir_all(root).unwrap();
     fs::write(&path, script).unwrap();
     #[cfg(unix)]

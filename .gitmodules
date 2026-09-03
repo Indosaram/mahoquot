@@ -1,0 +1,3 @@
+[submodule "mahoquot-proxy"]
+	path = mahoquot-proxy
+	url = https://github.com/Indosaram/mahoquot-proxy.git

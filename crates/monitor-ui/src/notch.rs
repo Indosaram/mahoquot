@@ -486,8 +486,16 @@ mod tests {
             height: 180.0,
         };
         // Docked at right edge
-        assert!(notch_is_right_anchored_on_display(&docked_compact, &display, 2.0));
-        assert!(notch_is_right_anchored_any_display(&docked_compact, &[display], 2.0));
+        assert!(notch_is_right_anchored_on_display(
+            &docked_compact,
+            &display,
+            2.0
+        ));
+        assert!(notch_is_right_anchored_any_display(
+            &docked_compact,
+            &[display],
+            2.0
+        ));
 
         // Stranded in center (e.g. after display resize from 3840 to 1920 or offset drift)
         let stranded_center = Rect {
@@ -499,7 +507,15 @@ mod tests {
         // Touches display is true because it's inside the display!
         assert!(screen_rect_touches_display(&stranded_center, &[display]));
         // BUT it is NOT right anchored!
-        assert!(!notch_is_right_anchored_on_display(&stranded_center, &display, 2.0));
-        assert!(!notch_is_right_anchored_any_display(&stranded_center, &[display], 2.0));
+        assert!(!notch_is_right_anchored_on_display(
+            &stranded_center,
+            &display,
+            2.0
+        ));
+        assert!(!notch_is_right_anchored_any_display(
+            &stranded_center,
+            &[display],
+            2.0
+        ));
     }
 }
