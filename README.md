@@ -1,20 +1,50 @@
-# Mahoquot
+<p align="center">
+  <img src="docs/images/logo.png" width="96" height="96" alt="Mahoquot Logo" />
+</p>
 
-High-concurrency LLM inference proxy and account router written in Rust with a desktop operations console built on Tauri v2 and React.
+<h1 align="center">Mahoquot</h1>
 
-Mahoquot routes OpenAI, Anthropic, Gemini, Claude, Cursor, Kiro, and Z-code traffic across multiple upstream accounts with sequence-stamped round-robin fairness, automatic token refreshing, in-flight failover, and lock-free runtime configuration. It serves as a drop-in replacement for the CLIProxyAPI management surface (129 routes).
+<p align="center">
+  High-concurrency LLM inference proxy and account router written in Rust with an operations console.
+</p>
 
-- Architecture & Conventions: [`AGENTS.md`](./AGENTS.md)
-- Product Contract: [`PRODUCT.md`](./PRODUCT.md)
-- Design Tokens: [`DESIGN.md`](./DESIGN.md)
-- Protocol & Failover Contracts: [`docs/CONTRACTS.md`](./docs/CONTRACTS.md)
-- Reference Parity & Provider Coverage: [`docs/reference-parity.md`](./docs/reference-parity.md)
+<p align="center">
+  <a href="./AGENTS.md">Architecture</a> &bull;
+  <a href="./PRODUCT.md">Product Contract</a> &bull;
+  <a href="./DESIGN.md">Design Tokens</a> &bull;
+  <a href="./docs/CONTRACTS.md">Protocol Contracts</a> &bull;
+  <a href="./docs/reference-parity.md">Provider Reference</a>
+</p>
+
+---
+
+## Overview
+
+Mahoquot routes inference traffic across subscription pools for Codex, Claude, Gemini, Antigravity, Cursor, Kiro, and Z-code. It distributes requests across upstream accounts with monotonic round-robin fairness, automatic OAuth token refreshing, pre-first-byte in-flight failover, and lock-free runtime configuration. It provides a drop-in replacement for the CLIProxyAPI management surface (129 routes).
+
+<p align="center">
+  <img src="docs/images/console-overview.png" alt="Mahoquot Operations Console - Overview" width="100%" />
+</p>
+
+<p align="center">
+  <img src="docs/images/console-accounts.png" alt="Mahoquot Operations Console - Accounts" width="100%" />
+</p>
+
+---
+
+## Core Capabilities
+
+- **Sequence-stamped round robin**: Monotonic rotation that survives account churn, cooldown, and recovery without double-serving or counter resets.
+- **Pre-first-byte failover**: Automatic retries across up to `min(pool_available, 3)` distinct accounts on 429, 401, 403, 500, 502, 503, and 504 before any downstream byte is committed.
+- **Zero-copy passthrough**: No body parsing on matched-family routes. Pooled hyper client per upstream host with `TCP_NODELAY`.
+- **Lock-free configuration**: `ArcSwap` on the request hot path. Settings persist atomically to YAML with zero downtime and no restart needed.
+- **Automatic OAuth refresh**: Credentials live as OAuth account files on disk; expired tokens refresh automatically in the background.
 
 ---
 
 ## Desktop Application
 
-The desktop application bundles `mahoquot-gateway` as a managed native sidecar.
+The desktop application bundles the gateway as a managed native process.
 
 ### Quick Start
 
@@ -25,22 +55,22 @@ The desktop application bundles `mahoquot-gateway` as a managed native sidecar.
    ```
    *(If cloned without `--recurse-submodules`, the build process automatically initializes and fetches the `mahoquot-proxy` submodule.)*
 
-2. **Development**:
+2. **Run in development**:
    ```bash
    bun install
    bun run dev
    ```
-   Alternatively, run directly via Cargo:
+   Or launch directly via Cargo:
    ```bash
    cargo run -p mahoquot-monitor-ui
    ```
 
-3. **Production Build**:
+3. **Build production app bundle**:
    ```bash
    bun install
    bun run build
    ```
-   This compiles the frontend, builds the proxy sidecar, and generates the native desktop package under `target/release/bundle/`:
+   Generated native packages are placed under `target/release/bundle/`:
    - macOS: `.app`, `.dmg`
    - Linux: `.deb`, `.rpm`
    - Windows: `.exe` (NSIS setup), `.msi` (WiX)
@@ -49,7 +79,7 @@ The desktop application bundles `mahoquot-gateway` as a managed native sidecar.
 
 ## Standalone Proxy
 
-The proxy core can also run headless without the desktop UI. It is maintained in [`mahoquot-proxy`](https://github.com/Indosaram/mahoquot-proxy) (submodule in `./mahoquot-proxy` or sibling checkout `../mahoquot-proxy`).
+The proxy core can run headless without the desktop UI. It is maintained in [`mahoquot-proxy`](https://github.com/Indosaram/mahoquot-proxy) (submodule at `./mahoquot-proxy` or sibling checkout `../mahoquot-proxy`).
 
 ```bash
 cd mahoquot-proxy
@@ -61,7 +91,7 @@ cargo build --release --bin mahoquot-gateway
 
 ## Verification
 
-Run all repository quality gates in a single command:
+Run all repository quality gates with one command:
 
 ```bash
 bash scripts/verify.sh
@@ -79,7 +109,7 @@ Gates executed:
 
 ## Benchmarks
 
-All benchmark figures follow the methodology in [`results/ARCH-REVALIDATION.md`](./results/ARCH-REVALIDATION.md): paired within-round comparison, randomized tier order, warmup round discarded, deterministic mock upstream with a 40 ms TTFT floor, measured on Apple M4 Max (macOS arm64).
+Benchmark methodology follows [`results/ARCH-REVALIDATION.md`](./results/ARCH-REVALIDATION.md): paired within-round comparison, randomized tier order, warmup round discarded, deterministic mock upstream with a 40 ms TTFT floor, measured on Apple M4 Max (macOS arm64).
 
 - **Tier A**: Direct mock (floor)
 - **Tier B**: CLIProxyAPI v7.2.140 (Go incumbent)
@@ -102,9 +132,9 @@ At 20 chunks, mahoquot delivers +10.5 ms p50 / +43.7 ms p99 improvements. At 200
 
 ### Streaming Relay Cost
 
-- Per-chunk relay overhead: ~58 us/chunk (mahoquot) vs ~378 us/chunk (CLIProxyAPI) (~6.5x difference).
-- Long streaming throughput: Under extended 200-chunk streams at 500 concurrent streams, mahoquot maintains 4,971 RPS while the incumbent drops to 1,314 RPS.
-- Failover handling: Injected 429 retries resolve within budget with 0 client-visible errors; unresolvable exhaustion gracefully sheds load with immediate 503 responses while preserving account round-robin balance.
+- **Per-chunk relay overhead**: ~58 us/chunk (mahoquot) vs ~378 us/chunk (CLIProxyAPI) (~6.5x difference).
+- **Long streaming throughput**: Under extended 200-chunk streams at 500 concurrent streams, mahoquot maintains 4,971 RPS while the incumbent drops to 1,314 RPS.
+- **Failover handling**: Injected 429 retries resolve within budget with 0 client-visible errors; unresolvable exhaustion gracefully sheds load with immediate 503 responses while preserving account round-robin balance.
 
 ### Reproducing Benchmarks
 
