@@ -1,15 +1,16 @@
-import { RefreshCw } from "lucide-react";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
-import { Button, Card } from "./ui";
+import { Button } from "./ui";
 
 export interface DurableLogsProps {
   readonly records: readonly LogRecord[];
   readonly fromMemoryTail?: boolean;
   readonly loadHistory?: (query: HistoryStatsQuery) => Promise<HistoryEventsResponse>;
   readonly loadHistoryDetail?: (eventId: string) => Promise<HistoryEvent>;
-  readonly onManualRefresh?: () => Promise<void>;
+  /** Increments when the gateway streams a new request line. */
+  readonly liveTick?: number;
 }
 
 const PAGE_LIMIT = 50;
@@ -78,7 +79,7 @@ export function DurableLogs({
   fromMemoryTail = false,
   loadHistory,
   loadHistoryDetail,
-  onManualRefresh,
+  liveTick = 0,
 }: DurableLogsProps) {
   const [tab, setTab] = useState<"requests" | "proxy">("requests");
   const [provider, setProvider] = useState("all");
@@ -105,6 +106,11 @@ export function DurableLogs({
   const providerRef = useRef(provider);
   providerRef.current = provider;
 
+  // The initial load and each liveTick refresh race on the same endpoint, so a
+  // slower earlier response could land last and overwrite newer rows. Only the
+  // most recently issued request is allowed to publish its result.
+  const requestSeqRef = useRef(0);
+
   const proxyRecords = useMemo(
     () =>
       records
@@ -119,11 +125,14 @@ export function DurableLogs({
       if (!loadHistory) return;
       if (!isBackground) setPending(true);
       else setRefreshing(true);
+      requestSeqRef.current += 1;
+      const seq = requestSeqRef.current;
       try {
         const page = await loadHistory({
           providers: providerRef.current === "all" ? undefined : [providerRef.current],
           limit: PAGE_LIMIT,
         });
+        if (seq !== requestSeqRef.current) return;
         // Only update the event list if user is still on the first page
         if (pageHistoryRef.current.length === 0) {
           setEvents(page.events);
@@ -136,7 +145,7 @@ export function DurableLogs({
           return [...distinct].sort();
         });
       } catch (error) {
-        if (!isBackground) {
+        if (!isBackground && seq === requestSeqRef.current) {
           setActionError(error instanceof Error ? error.message : "History unavailable");
         }
       } finally {
@@ -162,16 +171,13 @@ export function DurableLogs({
     void fetchLatestPage(false);
   }, [fetchLatestPage, loadHistory]);
 
-  // Auto-refresh polling every 3 seconds when on the first page
+  // The gateway pushes each new request line, so the first page refreshes from
+  // the stream instead of a timer. Paged-back views stay frozen on purpose.
   useEffect(() => {
-    if (!loadHistory) return;
-    const timer = setInterval(() => {
-      if (pageHistoryRef.current.length === 0 && document.visibilityState === "visible") {
-        void fetchLatestPage(true);
-      }
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [fetchLatestPage, loadHistory]);
+    if (!loadHistory || !liveTick) return;
+    if (pageHistoryRef.current.length !== 0) return;
+    void fetchLatestPage(true);
+  }, [fetchLatestPage, liveTick, loadHistory]);
 
   const applyProvider = async (next: string) => {
     setProvider(next);
@@ -251,7 +257,7 @@ export function DurableLogs({
 
   return (
     <div className="durable-logs">
-      <Card className="durable-logs-console">
+      <section className="durable-logs-console">
         <header className="durable-logs-head">
           <div>
             <h2>Gateway logs</h2>
@@ -261,20 +267,10 @@ export function DurableLogs({
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <Button
-              aria-label="Refresh logs"
-              disabled={pending || refreshing}
-              onClick={async () => {
-                await Promise.allSettled([
-                  fetchLatestPage(false),
-                  onManualRefresh ? onManualRefresh() : Promise.resolve(),
-                ]);
-              }}
-              style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
-            >
-              <RefreshCw size={14} className={refreshing || pending ? "spin" : ""} />
-              Refresh
-            </Button>
+            <span className="logs-live-indicator" role="status">
+              <span className={`logs-live-dot${refreshing ? " active" : ""}`} aria-hidden="true" />
+              Live
+            </span>
             <label className="logs-provider-filter">
               <span>Provider</span>
               <select
@@ -451,7 +447,7 @@ export function DurableLogs({
             {proxyRecords.length === 0 ? <div className="logs-empty">No proxy events.</div> : null}
           </div>
         )}
-      </Card>
+      </section>
 
       {selected ? (
         <section className="durable-log-detail" aria-label="Request detail">

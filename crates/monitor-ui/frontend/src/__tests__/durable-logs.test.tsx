@@ -185,3 +185,67 @@ describe("Durable logs surface", () => {
     expect(screen.getByText("account-a failed over to account-b")).toBeInTheDocument();
   });
 });
+
+describe("DurableLogs stale response ordering", () => {
+  it("does not let a slow earlier request overwrite a newer one", async () => {
+    // The initial load and the liveTick refresh both call loadHistory. Without a
+    // sequencing guard the slower FIRST response lands last and overwrites the
+    // newer page, showing operators stale rows that never self-correct.
+    const staleEvent = {
+      ...durableEvents[0],
+      "event-id": "stale-row",
+      model: "STALE-MODEL",
+    };
+    const freshEvent = {
+      ...durableEvents[0],
+      "event-id": "fresh-row",
+      model: "FRESH-MODEL",
+    };
+
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    let call = 0;
+    const loadHistory = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        await firstGate;
+        return { events: [staleEvent] as never, "next-cursor": null, totals };
+      }
+      return { events: [freshEvent] as never, "next-cursor": null, totals };
+    });
+
+    const view = render(
+      <DurableLogs
+        records={[] as never}
+        loadHistory={loadHistory}
+        loadHistoryDetail={vi.fn()}
+      />,
+    );
+
+    // The newer refresh resolves first.
+    view.rerender(
+      <DurableLogs
+        records={[] as never}
+        loadHistory={loadHistory}
+        loadHistoryDetail={vi.fn()}
+        liveTick={1}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("FRESH-MODEL")).toBeTruthy());
+
+    // Now the original, older request finally resolves.
+    releaseFirst?.();
+    await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(2));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("STALE-MODEL"),
+        "a slower earlier response overwrote the newer page",
+      ).toBeNull();
+    });
+    expect(screen.getByText("FRESH-MODEL")).toBeTruthy();
+  });
+});
