@@ -633,8 +633,7 @@ export function SettingsSurface({
                 <span>
                   <strong>Enable scheduler</strong>
                   <small>
-                    Ranks eligible quota by active reset time; exhausted accounts fall back to the
-                    base routing strategy.
+                    Ranks eligible quota by active reset time; default account priority follows the order set in the Accounts view.
                   </small>
                 </span>
               </label>
