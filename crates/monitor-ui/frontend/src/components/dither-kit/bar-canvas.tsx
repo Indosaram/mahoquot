@@ -137,6 +137,7 @@ export function BarCanvas() {
     let lastPaintSig = "";
     let lastSelected: string | null | undefined = Symbol() as never;
     let lastHover: number | null | undefined = Symbol() as never;
+    let entranceReported = !animate;
 
     const requestDraw = () => {
       if (raf || document.visibilityState === "hidden") return;
@@ -161,9 +162,15 @@ export function BarCanvas() {
         lastRevision = s.revision;
         animStart = 0; // re-play the wave on data change / replay
         lastProg = -1;
+        entranceReported = false;
       }
       if (!animStart) animStart = now;
       const prog = animate ? Math.min(1, (now - animStart) / duration) : 1;
+      // Tell the context the reveal is done so DOM markers fade in in sync.
+      if (prog >= 1 && !entranceReported) {
+        entranceReported = true;
+        s.markEntranceDone();
+      }
 
       if (prog !== lastProg) {
         lastProg = prog;

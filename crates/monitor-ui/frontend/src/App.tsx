@@ -146,6 +146,9 @@ export default function App() {
 
   const [theme, setTheme] = useState(getTheme);
   const [baseUrl, setBaseUrlState] = useState(getGatewayBaseUrl);
+  // The Gateway URL input edits `baseUrl` per keystroke; secret work must key
+  // off the value the operator actually committed with Save & reconnect.
+  const [committedBaseUrl, setCommittedBaseUrl] = useState(getGatewayBaseUrl);
   const [relayKey, setRelayKeyState] = useState("");
   const [secretStoreError, setSecretStoreError] = useState<SecretStoreError | null>(null);
   const [secretRetry, setSecretRetry] = useState(0);
@@ -535,7 +538,7 @@ export default function App() {
     void secretRetry;
     let active = true;
     const legacyValue = getLegacyRelayKey();
-    void migrateLegacyDesktopSecret(baseUrl, "default", "management_key", legacyValue)
+    void migrateLegacyDesktopSecret(committedBaseUrl, "default", "management_key", legacyValue)
       .then((outcome) => {
         if (!active) return;
         if (outcome.remove_legacy) removeLegacyRelayKey();
@@ -554,7 +557,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [baseUrl, secretRetry, setNotice, surface]);
+  }, [committedBaseUrl, secretRetry, setNotice, surface]);
 
   useEffect(() => {
     // the quota display mode is flipped in the console settings; the tray and
@@ -1379,6 +1382,7 @@ export default function App() {
                 const normalizedBase = baseUrl.trim().replace(/\/+$/, "");
                 setGatewayBaseUrl(baseUrl);
                 setBaseUrlState(normalizedBase);
+                setCommittedBaseUrl(normalizedBase);
                 void writeDesktopSecret(
                   normalizedBase,
                   "default",
