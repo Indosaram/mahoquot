@@ -33,7 +33,7 @@ Mahoquot routes inference traffic across subscription pools for Codex, Claude, G
 A right-edge notch keeps per-provider quota on screen without opening the console. Hovering expands the island into per-account limits and reset times.
 
 <p align="center">
-  <img src="docs/images/notch-expanded.png" alt="Mahoquot notch - expanded provider quota" width="420" />
+  <img src="docs/images/notch-expanded.png" alt="Mahoquot notch - expanded provider quota" width="100%" />
 </p>
 
 ---
