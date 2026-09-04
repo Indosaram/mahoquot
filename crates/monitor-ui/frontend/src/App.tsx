@@ -53,6 +53,7 @@ import {
   migrateLegacyDesktopSecret,
   openExternalUrl,
   previewCliAgent,
+  readDesktopSecret,
   requestNativeNotificationPermission,
   restoreCliAgent,
   setLoginStart,
@@ -183,6 +184,7 @@ export default function App() {
   const [codexInstances, setCodexInstances] = useState<CodexInstance[]>([]);
   const [codexBusy, setCodexBusy] = useState(false);
   const [historyStats, setHistoryStats] = useState<HistoryStatsResponse | null>(null);
+  const [liveLogTick, setLiveLogTick] = useState(0);
   const [historyHealth, setHistoryHealth] = useState<HistoryHealth | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [schedulerSettings, setSchedulerSettings] = useState<SchedulerSettings | null>(null);
@@ -346,6 +348,15 @@ export default function App() {
     void queryHistory();
   }, [queryHistory, surface]);
 
+  // The gateway streams every new log line; the Logs surface consumes the tick
+  // instead of polling. Only subscribe while that surface is mounted.
+  useEffect(() => {
+    if (surface !== "logs") return;
+    return clients.management.subscribeLogs((record) => {
+      if (record.kind === "request") setLiveLogTick((tick) => tick + 1);
+    });
+  }, [clients, surface]);
+
   const clearHistory = useCallback(
     async (query: HistoryStatsQuery) => clients.management.clearHistory(query),
     [clients],
@@ -498,6 +509,26 @@ export default function App() {
       getNativeSettings().then(setNativeSettings),
     ]).catch((error: unknown) => setNotice(actionFailed(error)));
   }, [setNotice, surface]);
+
+  useEffect(() => {
+    // The notch and tray are secondary webviews that never own onboarding, so
+    // they read the stored management key instead of running the console's
+    // one-time legacy migration. Without it every gateway call 401s and the
+    // notch renders its empty ring even though accounts exist.
+    if (surface !== "notch" && surface !== "tray") return;
+    let active = true;
+    void readDesktopSecret(baseUrl, "default", "management_key")
+      .then((value) => {
+        if (active) setRelayKeyState(value ?? "");
+      })
+      .catch(() => {
+        // These surfaces have no settings UI to recover in; the console owns
+        // surfacing secret-store failures.
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl, surface]);
 
   useEffect(() => {
     if (surface === "notch" || surface === "tray") return;
@@ -1220,9 +1251,7 @@ export default function App() {
               fromMemoryTail={!loggingToFile}
               loadHistory={clients.management.historyEvents}
               loadHistoryDetail={clients.management.historyEvent}
-              onManualRefresh={async () => {
-                await refresh();
-              }}
+              liveTick={liveLogTick}
             />
           </div>
         ) : null}

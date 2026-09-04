@@ -814,6 +814,50 @@ describe("operations console", () => {
     }
   });
 
+  it("authenticates notch gateway reads with the stored management key", async () => {
+    window.history.pushState({}, "", "/management.html?surface=notch");
+    // The notch is an unauthenticated webview until it reads the desktop secret;
+    // without the key every gateway call 401s and the ring renders empty.
+    const authorizations: (string | null)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const headers = new Headers(init?.headers);
+        authorizations.push(headers.get("Authorization"));
+        if (headers.get("Authorization") !== "Bearer notch-managed-key") {
+          return new Response(JSON.stringify({ error: { message: "invalid api key" } }), {
+            status: 401,
+          });
+        }
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    Object.assign(window, {
+      __TAURI_INTERNALS__: {
+        invoke: vi.fn(async (command: string) => {
+          if (command === "gateway_status") return "running";
+          if (command === "read_secret") return "notch-managed-key";
+          return null;
+        }),
+      },
+    });
+    try {
+      render(<App />);
+      expect(await screen.findByTestId("notch-ring-codex")).toBeInTheDocument();
+      expect(authorizations).toContain("Bearer notch-managed-key");
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+      window.history.pushState({}, "", "/");
+    }
+  });
+
   it("opens the notch immediately from a native hover event without an animation frame", async () => {
     window.history.pushState({}, "", "/management.html?surface=notch");
     let hover: ((payload: boolean) => void) | undefined;
