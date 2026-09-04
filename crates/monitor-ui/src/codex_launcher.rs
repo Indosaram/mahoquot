@@ -78,6 +78,27 @@ pub fn default_instance_root() -> PathBuf {
     crate::tray::default_auth_dir(&home).join(".codex-instances")
 }
 
+/// Rejects an `instance_id` that is not a single safe path segment.
+///
+/// The id arrives over IPC and is joined into a path that is created, written
+/// to, and later removed recursively, so a traversal segment would write and
+/// delete outside the launcher root. Ids are launcher-generated, so an
+/// allowlist is the correct strictness.
+fn validate_instance_id(instance_id: &str) -> Result<(), CodexLauncherError> {
+    let is_safe = !instance_id.is_empty()
+        && instance_id.len() <= 64
+        && instance_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if is_safe {
+        Ok(())
+    } else {
+        Err(CodexLauncherError(format!(
+            "invalid instance id: {instance_id}"
+        )))
+    }
+}
+
 impl CodexLauncher {
     pub fn new(binary: PathBuf, root: PathBuf) -> Self {
         Self {
@@ -158,6 +179,7 @@ impl CodexLauncher {
                 request.instance_id
             )));
         }
+        validate_instance_id(&request.instance_id)?;
         let codex_home = self.root.join(&request.instance_id);
         fs::create_dir_all(&codex_home).map_err(io_error)?;
         fs::write(
@@ -355,6 +377,33 @@ mod tests {
         assert!(launcher.instances().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn instance_id_cannot_escape_the_launcher_root() {
+        // instance_id arrives over IPC and is joined straight into a path that
+        // is then created, written to, and later remove_dir_all'd, so a
+        // traversal segment writes and deletes outside the launcher root.
+        let root = temp();
+        let outside = root.parent().expect("parent").join("codex-escape-probe");
+        let _ = fs::remove_dir_all(&outside);
+        let launcher = CodexLauncher::for_test(&root);
+        let escape = format!("../{}", "codex-escape-probe");
+        let result = launcher.launch_fake(request(&escape, "account-a"));
+        let escaped = outside.exists();
+        let _ = launcher.stop_all();
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.is_err(),
+            "a traversing instance_id was accepted; it wrote to {}",
+            outside.display()
+        );
+        assert!(
+            !escaped,
+            "launcher wrote outside its root at {}",
+            outside.display()
+        );
+    }
+
     #[test]
     fn duplicate_binding_rejected() {
         let root = temp();
