@@ -411,6 +411,9 @@ describe("operations console", () => {
     expect(JSON.parse(bodies[0] ?? "{}")).toEqual({
       names: ["codex-b.json", "codex-a.json"],
     });
+    expect(
+      screen.getByText("Account priority saved. Top accounts are used first in Fill-first routing."),
+    ).toBeInTheDocument();
   });
 
   it("adds a Z.ai account by writing a provisioned key credential", async () => {

@@ -704,7 +704,7 @@ export default function App() {
       setCredentials((prev) =>
         [...prev].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)),
       );
-      setNotice("Account order saved. This is a display order and does not change routing.");
+      setNotice("Account priority saved. Top accounts are used first in Fill-first routing.");
     } catch (error) {
       setNotice(actionFailed(error));
     } finally {
