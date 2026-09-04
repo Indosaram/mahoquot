@@ -530,3 +530,53 @@ fn an_open_panel_holds_while_the_pointer_roams_the_corridor_toward_its_card() {
     ));
     assert!(!hover_cursor_inside(&panel, None, &toward_card, true));
 }
+
+#[cfg(unix)]
+#[test]
+fn auth_dir_is_not_world_accessible() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!(
+        "mahoquot-authperm-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&home).expect("temp home");
+    let dir = crate::tray::default_auth_dir(home.to_str().expect("utf8 home"));
+    let mode = std::fs::metadata(&dir)
+        .expect("auth dir metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    std::fs::remove_dir_all(&home).ok();
+    assert_eq!(
+        mode, 0o700,
+        "credential store must be owner-only, got {mode:o}"
+    );
+}
+
+#[test]
+fn master_key_document_is_produced_when_config_is_absent() {
+    // A first run has no config.yaml at all; the generated key still has to
+    // land in a document, otherwise the app authenticates with a key the
+    // gateway never loads.
+    let rendered = crate::tray::config_with_master_api_key(None, "mq-master-abc");
+    assert!(
+        rendered.contains("mq-master-abc"),
+        "absent config produced no key document: {rendered}"
+    );
+    assert!(
+        rendered.contains("api-keys:") && rendered.contains("- mq-master-abc"),
+        "rendered document is not a valid api-keys document: {rendered}"
+    );
+}
+
+#[test]
+fn master_key_replaces_empty_api_keys_list() {
+    let rendered =
+        crate::tray::config_with_master_api_key(Some("port: 18801\napi-keys: []\n"), "mq-master-x");
+    assert!(rendered.contains("- mq-master-x"), "{rendered}");
+    assert!(!rendered.contains("api-keys: []"), "{rendered}");
+}

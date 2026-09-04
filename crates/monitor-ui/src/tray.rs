@@ -221,6 +221,23 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
     }
 }
 
+/// The config.yaml body that must be on disk for `generated` to be the
+/// gateway's master key. `existing` is the current file content, or `None` when
+/// the file does not exist yet: that case still has to produce a document,
+/// otherwise the app would hand out a key the gateway never loads.
+pub fn config_with_master_api_key(existing: Option<&str>, generated: &str) -> String {
+    let Some(content) = existing else {
+        return format!("api-keys:\n- {generated}\n");
+    };
+    if content.contains("api-keys: []") {
+        content.replace("api-keys: []", &format!("api-keys:\n- {generated}"))
+    } else if content.contains("api-keys:") {
+        content.replace("api-keys:", &format!("api-keys:\n- {generated}"))
+    } else {
+        format!("{content}\napi-keys:\n- {generated}\n")
+    }
+}
+
 /// The app owns its credential store at `~/.mahoquot/auth`.
 pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
     let app_dir = std::path::Path::new(home).join(".mahoquot/auth");
@@ -230,6 +247,22 @@ pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
             %error,
             "failed to create mahoquot auth directory"
         );
+    }
+    // This directory holds OAuth tokens and provider secrets, so it must not be
+    // readable or listable by other local users. create_dir_all applies
+    // 0o777 & !umask (commonly 0755), so the mode is set explicitly.
+    #[cfg(unix)]
+    if app_dir.is_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) =
+            std::fs::set_permissions(&app_dir, std::fs::Permissions::from_mode(0o700))
+        {
+            tracing::error!(
+                path = %app_dir.display(),
+                %error,
+                "failed to restrict mahoquot auth directory permissions"
+            );
+        }
     }
     app_dir
 }

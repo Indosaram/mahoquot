@@ -1670,16 +1670,9 @@ fn ensure_master_api_key() -> String {
 
     // Generate a fresh secure master key
     let generated = format!("mq-master-{}", uuid::Uuid::new_v4().simple());
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        let updated = if content.contains("api-keys: []") {
-            content.replace("api-keys: []", &format!("api-keys:\n- {generated}"))
-        } else if content.contains("api-keys:") {
-            content.replace("api-keys:", &format!("api-keys:\n- {generated}"))
-        } else {
-            format!("{content}\napi-keys:\n- {generated}\n")
-        };
-        let _ = std::fs::write(&config_path, updated);
-    }
+    let existing = std::fs::read_to_string(&config_path).ok();
+    let updated = tray::config_with_master_api_key(existing.as_deref(), &generated);
+    let _ = std::fs::write(&config_path, updated);
     generated
 }
 
@@ -1693,8 +1686,11 @@ fn main() {
 
     let base_url = std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| LOCAL_GATEWAY_URL.to_string());
     let gateway = GatewayProcess::default();
-    let _ = spawn_gateway(&gateway, &base_url);
+    // The key must be on disk before the child starts: the gateway loads
+    // config.yaml at startup, so spawning first makes it miss a freshly
+    // minted key until the next launch.
     let master_key = ensure_master_api_key();
+    let _ = spawn_gateway(&gateway, &base_url);
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_else(|_| master_key.clone());
     let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
     let login_start = std::env::args().any(|argument| argument == "--login-start");
