@@ -1672,7 +1672,15 @@ fn ensure_master_api_key() -> String {
     let generated = format!("mq-master-{}", uuid::Uuid::new_v4().simple());
     let existing = std::fs::read_to_string(&config_path).ok();
     let updated = tray::config_with_master_api_key(existing.as_deref(), &generated);
-    let _ = std::fs::write(&config_path, updated);
+    // A silent write failure is the exact failure mode this function exists to
+    // prevent: the app would authenticate with a key the gateway never loaded.
+    if let Err(error) = std::fs::write(&config_path, updated) {
+        tracing::error!(
+            path = %config_path.display(),
+            %error,
+            "failed to persist the master API key; the gateway will not accept it"
+        );
+    }
     generated
 }
 
