@@ -240,4 +240,17 @@ describe("request telemetry sampling", () => {
       ],
     });
   });
+
+  it("does not inflate per-provider rows by summing cumulative totals", () => {
+    // appendTelemetrySample stores per-provider figures that summarizeTelemetry
+    // sums across samples, so they must be per-sample deltas like the
+    // top-level fields - not the cumulative counters carried in AdminStats.
+    const first = appendTelemetrySample([], snapshot(10, 10, 0), 1_000);
+    const second = appendTelemetrySample(first, snapshot(20, 20, 0), 2_000);
+    const third = appendTelemetrySample(second, snapshot(30, 30, 0), 3_000);
+    const summary = summarizeTelemetry(third);
+    const codex = summary.providers.find((provider) => provider.provider === "codex");
+    expect(codex?.successes).toBe(summary.successes);
+    expect(summary.successes).toBe(30);
+  });
 });

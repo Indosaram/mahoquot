@@ -23,7 +23,17 @@ export interface TelemetrySample {
   readonly inFlight: number;
   readonly p50Ms: number;
   readonly p90Ms: number;
+  /**
+   * Cumulative per-provider counters as reported by the gateway. Kept
+   * cumulative because the next sample subtracts against them to derive its
+   * own deltas; aggregate over `providerDeltas` instead of summing these.
+   */
   readonly providers: readonly ProviderTotal[];
+  /**
+   * Per-sample per-provider deltas, aligned with the top-level fields.
+   * Optional so samples persisted before this field existed still load.
+   */
+  readonly providerDeltas?: readonly ProviderTotal[];
   readonly accounts: readonly AccountTotal[];
 }
 
@@ -100,6 +110,7 @@ export const appendTelemetrySample = (
     p50Ms: currentLatency.p50Ms,
     p90Ms: currentLatency.p90Ms,
     providers,
+    providerDeltas,
     accounts,
   };
   return [...samples, next].slice(-43_200);
@@ -118,6 +129,8 @@ export const persistedTelemetrySamples = (
     p50Ms: 0,
     p90Ms: 0,
     providers: bucket.providers,
+    // Persisted buckets are already per-minute deltas, so both views coincide.
+    providerDeltas: bucket.providers,
     accounts: bucket.accounts.map((account) => ({
       id: account.account,
       requests: account.requests,
@@ -146,7 +159,7 @@ export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
     requests += sample.requests;
     successes += sample.successes;
     failures += sample.failures;
-    for (const provider of sample.providers) {
+    for (const provider of sample.providerDeltas ?? sample.providers) {
       const current = providers.get(provider.provider) ?? {
         provider: provider.provider,
         requests: 0,
