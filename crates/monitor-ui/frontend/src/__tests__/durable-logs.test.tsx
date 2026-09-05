@@ -141,13 +141,16 @@ describe("Durable logs surface", () => {
 
 
   it("keeps a provider-filtered page when a slower background request resolves late", async () => {
-    const staleGate = Promise.withResolvers<void>();
+    let releaseStale = () => {};
+    const stalePending = new Promise<void>((resolve) => {
+      releaseStale = resolve;
+    });
     const loadHistory = vi.fn(async (query: { providers?: string[] }) => {
       if (query.providers?.[0] === "anthropic") {
         return { events: [{"event-id":"FRESH-ANTHROPIC","occurred-at-ms":1_788_192_000_000,account:"acct","provider":"anthropic","model":"claude","key-label":"k",status:200,succeeded:true,"input-tokens":1,"output-tokens":1,"cached-input-tokens":0,"reasoning-tokens":0,"total-tokens":2,"latency-ms":5,"estimated-cost-usd":0.1,"price-version":"2026-09"}] as never, "next-cursor": null, totals };
       }
       if (loadHistory.mock.calls.length > 1) {
-        await staleGate.promise;
+        await stalePending;
         return { events: [{"event-id":"STALE-ALL","occurred-at-ms":1_788_192_000_000,account:"acct","provider":"codex","model":"gpt","key-label":"k",status:200,succeeded:true,"input-tokens":1,"output-tokens":1,"cached-input-tokens":0,"reasoning-tokens":0,"total-tokens":2,"latency-ms":5,"estimated-cost-usd":0.1,"price-version":"2026-09"}] as never, "next-cursor": 9, totals };
       }
       return { events: durableEvents as never, "next-cursor": 2, totals };
@@ -167,7 +170,7 @@ describe("Durable logs surface", () => {
     });
     expect(await screen.findByText("FRESH-ANTHROPIC")).toBeInTheDocument();
 
-    staleGate.resolve();
+    releaseStale();
     await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(3));
     await new Promise((r) => setTimeout(r, 0));
 
