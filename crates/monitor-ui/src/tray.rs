@@ -221,6 +221,43 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
     }
 }
 
+/// The first key the gateway will accept from its `config.yaml`. This is the
+/// one reader for that document: the app and every CLI it configures must hand
+/// out the same key, so a second hand-rolled parser would let them drift.
+pub fn extract_first_api_key(yaml: &str) -> Option<String> {
+    let mut in_keys = false;
+    for line in yaml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("api-keys:") {
+            in_keys = true;
+            if let Some(rest) = trimmed.strip_prefix("api-keys:").map(str::trim) {
+                if rest.starts_with('[') && rest.ends_with(']') {
+                    let inner = rest[1..rest.len() - 1].trim();
+                    let key = inner.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
+                    if !key.is_empty() {
+                        return Some(key.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        if in_keys {
+            if trimmed.starts_with('-') {
+                let key = trimmed
+                    .trim_start_matches('-')
+                    .trim()
+                    .trim_matches(|c| c == '\'' || c == '"');
+                if !key.is_empty() {
+                    return Some(key.to_string());
+                }
+            } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                break;
+            }
+        }
+    }
+    None
+}
+
 /// The config.yaml body that must be on disk for `generated` to be the
 /// gateway's master key. `existing` is the current file content, or `None` when
 /// the file does not exist yet: that case still has to produce a document,

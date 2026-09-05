@@ -1,13 +1,21 @@
-import { Bot, Play, RotateCcw, ShieldCheck, Square } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { CliAgentId, CliAgentStatus, CodexInstance, CodexLaunchRequest } from "../lib/native";
-import { Badge, Button, Card, Field, Input } from "./ui";
+import { Bot, RotateCcw, ShieldCheck } from "lucide-react";
+import type {
+  CliAgentId,
+  CliAgentStatus,
+  CliConfigPreview,
+  CodexInstance,
+  CodexLaunchRequest,
+} from "../lib/native";
+import { Badge, Button, Card } from "./ui";
+import { CodexInstancesCard } from "./CodexInstancesCard";
 
 export interface AgentsSurfaceProps {
   readonly agents: readonly CliAgentStatus[];
-  readonly gatewayUrl: string;
   readonly busyAgent: CliAgentId | null;
-  readonly onConfigure: (agentId: CliAgentId, gatewayUrl: string) => Promise<unknown>;
+  readonly pendingPreview: CliConfigPreview | null;
+  readonly onPreview: (agentId: CliAgentId) => Promise<unknown>;
+  readonly onApply: (agentId: CliAgentId, adoptCurrent: boolean) => Promise<unknown>;
+  readonly onCancelPreview: () => void;
   readonly onRestore: (agentId: CliAgentId) => Promise<unknown>;
   readonly codexAccounts?: readonly { readonly id: string; readonly label: string }[];
   readonly codexInstances?: readonly CodexInstance[];
@@ -26,62 +34,41 @@ const stateCopy = (state: CliAgentStatus["config_state"]): string => {
     case "configured":
       return "Configured";
     case "modified":
-      return "Restore conflict";
+      return "Changed after setup";
+    case "removed":
+      return "Configuration deleted";
   }
 };
 
 const stateTone = (state: CliAgentStatus["config_state"]): string => {
   if (state === "configured") return "ok";
   if (state === "modified") return "bad";
-  if (state === "unmanaged") return "warn";
+  if (state === "unmanaged" || state === "removed") return "warn";
   return "neutral";
+};
+
+const actionCopy = (state: CliAgentStatus["config_state"]): string => {
+  if (state === "configured") return "Refresh";
+  if (state === "modified") return "Take ownership";
+  if (state === "removed") return "Recreate";
+  return "Configure";
 };
 
 export function AgentsSurface({
   agents = [],
-  gatewayUrl,
   busyAgent,
-  onConfigure,
+  pendingPreview,
+  onPreview,
+  onApply,
+  onCancelPreview,
   onRestore,
   codexAccounts = [],
   codexInstances = [],
   codexBusy = false,
   runtimeModels,
-  onLaunchCodex = async () => undefined,
-  onStopCodex = async () => undefined,
+  onLaunchCodex,
+  onStopCodex,
 }: AgentsSurfaceProps) {
-  const availableAccounts = useMemo(
-    () =>
-      codexAccounts.filter(
-        (account) =>
-          !codexInstances.some(
-            (item) => item.account_id === account.id && item.state === "running",
-          ),
-      ),
-    [codexAccounts, codexInstances],
-  );
-  const [accountId, setAccountId] = useState(availableAccounts[0]?.id ?? "");
-  const [model, setModel] = useState(
-    runtimeModels && runtimeModels.length > 0 ? (runtimeModels[0] as string) : "gpt-5.6-codex",
-  );
-  useEffect(() => {
-    if (runtimeModels && runtimeModels.length > 0 && !runtimeModels.includes(model)) {
-      setModel(runtimeModels[0] as string);
-    }
-  }, [runtimeModels, model]);
-  const [reasoningEffort, setReasoningEffort] = useState("high");
-  const launch = () => {
-    const selected = availableAccounts.some((account) => account.id === accountId)
-      ? accountId
-      : (availableAccounts[0]?.id ?? "");
-    if (!selected) return;
-    void onLaunchCodex({
-      instance_id: `codex-${Date.now().toString(36)}`,
-      account_id: selected,
-      model,
-      reasoning_effort: reasoningEffort,
-    });
-  };
   return (
     <div className="agents-content">
       <Card className="agents-intro">
@@ -91,8 +78,8 @@ export function AgentsSurface({
         <div>
           <h2>CLI agents</h2>
           <p>
-            Connect local coding agents without replacing unrelated settings. Mahoquot keeps a
-            byte-exact backup and refuses restore after a user edit.
+            Connect local coding agents without replacing unrelated settings. Mahoquot shows exactly
+            which settings change, keeps a byte-exact backup, and refuses to discard a user edit.
           </p>
         </div>
       </Card>
@@ -100,6 +87,8 @@ export function AgentsSurface({
         <div className="agents-grid">
           {agents.map((agent) => {
             const busy = busyAgent === agent.agent_id;
+            const conflicted = agent.config_state === "modified";
+            const preview = pendingPreview?.agent_id === agent.agent_id ? pendingPreview : null;
             return (
               <article className="agent-card" key={agent.agent_id}>
                 <header>
@@ -124,118 +113,87 @@ export function AgentsSurface({
                     <dd title={agent.target_path}>{agent.target_path}</dd>
                   </div>
                 </dl>
-                {agent.config_state === "modified" ? (
+                {conflicted ? (
                   <p role="alert" className="agent-conflict">
-                    The file changed after Mahoquot configured it. Restore is blocked to preserve
-                    the newer edit.
+                    The file changed after Mahoquot configured it, so restore is blocked. Taking
+                    ownership keeps the current file and makes it the new backup
+                    {agent.backup ? `, replacing the original saved at ${agent.backup.path}` : ""}.
                   </p>
                 ) : null}
-                <div className="agent-actions">
-                  <Button
-                    aria-label={`Configure ${agent.display_name}`}
-                    disabled={busy || agent.config_state === "modified"}
-                    onClick={() => void onConfigure(agent.agent_id, gatewayUrl)}
-                  >
-                    {busy
-                      ? "Working…"
-                      : agent.config_state === "configured"
-                        ? "Refresh"
-                        : "Configure"}
-                  </Button>
-                  {agent.backup ? (
+                {agent.config_state === "removed" ? (
+                  <p role="alert" className="agent-conflict">
+                    The file is gone. Recreating it cannot lose a user edit, and the original backup
+                    is still available to restore.
+                  </p>
+                ) : null}
+                {preview ? (
+                  <section className="agent-preview" aria-label="Pending configuration">
+                    <dl>
+                      <div>
+                        <dt>Writes</dt>
+                        <dd>
+                          {preview.format} · {preview.app_written_bytes.length} bytes
+                        </dd>
+                      </div>
+                    </dl>
+                    {preview.replaced_keys.length > 0 ? (
+                      <p role="alert" className="agent-conflict">
+                        Replaces existing settings: {preview.replaced_keys.join(", ")}
+                      </p>
+                    ) : (
+                      <p>No existing setting changes value.</p>
+                    )}
+                    {preview.preserves_unrelated_settings ? null : (
+                      <p role="alert" className="agent-conflict">
+                        This write also changes settings Mahoquot does not own.
+                      </p>
+                    )}
+                    <div className="agent-actions">
+                      <Button
+                        aria-label={`Apply ${agent.display_name} configuration`}
+                        disabled={busy}
+                        onClick={() => void onApply(agent.agent_id, conflicted)}
+                      >
+                        {busy ? "Working…" : "Apply"}
+                      </Button>
+                      <Button aria-label="Cancel pending configuration" onClick={onCancelPreview}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </section>
+                ) : (
+                  <div className="agent-actions">
                     <Button
-                      aria-label={`Restore ${agent.display_name}`}
+                      aria-label={`Configure ${agent.display_name}`}
                       disabled={busy}
-                      onClick={() => void onRestore(agent.agent_id)}
+                      onClick={() => void onPreview(agent.agent_id)}
                     >
-                      <RotateCcw size={14} /> Restore
+                      {busy ? "Working…" : actionCopy(agent.config_state)}
                     </Button>
-                  ) : null}
-                </div>
+                    {agent.backup ? (
+                      <Button
+                        aria-label={`Restore ${agent.display_name}`}
+                        disabled={busy || conflicted}
+                        onClick={() => void onRestore(agent.agent_id)}
+                      >
+                        <RotateCcw size={14} /> Restore
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
               </article>
             );
           })}
         </div>
       ) : null}
-      <Card className="agents-intro codex-launcher-card">
-        <div>
-          <h2>Codex instances</h2>
-          <p>
-            Launch concurrent Codex sessions in isolated homes without changing your global session.
-          </p>
-        </div>
-        <div className="connection-fields">
-          <Field label="Account">
-            <select
-              aria-label="Codex account"
-              value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
-            >
-              {availableAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Model">
-            {runtimeModels && runtimeModels.length > 0 ? (
-              <select
-                aria-label="Codex model"
-                data-testid="runtime-model-selector"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-              >
-                {runtimeModels.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <Input
-                aria-label="Codex model"
-                data-testid="runtime-model-selector"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-              />
-            )}
-          </Field>
-          <Field label="Reasoning">
-            <select
-              aria-label="Reasoning effort"
-              value={reasoningEffort}
-              onChange={(event) => setReasoningEffort(event.target.value)}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </Field>
-          <Button
-            aria-label="Launch Codex instance"
-            disabled={codexBusy || availableAccounts.length === 0}
-            onClick={launch}
-          >
-            <Play size={14} /> Launch
-          </Button>
-        </div>
-        {codexInstances.map((instance) => (
-          <div className="agent-actions" key={instance.instance_id}>
-            <Badge tone={instance.state === "running" ? "ok" : "bad"}>{instance.state}</Badge>
-            <span>
-              {instance.instance_id} · PID {instance.pid}
-            </span>
-            <Button
-              aria-label={`Stop ${instance.instance_id}`}
-              disabled={codexBusy}
-              onClick={() => void onStopCodex(instance.instance_id)}
-            >
-              <Square size={13} /> Stop
-            </Button>
-          </div>
-        ))}
-      </Card>
+      <CodexInstancesCard
+        accounts={codexAccounts}
+        instances={codexInstances}
+        busy={codexBusy}
+        runtimeModels={runtimeModels}
+        onLaunch={onLaunchCodex}
+        onStop={onStopCodex}
+      />
     </div>
   );
 }

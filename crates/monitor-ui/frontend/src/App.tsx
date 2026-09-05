@@ -35,6 +35,7 @@ import { wantsNativeMenu } from "./lib/context-menu";
 import {
   type CliAgentId,
   type CliAgentStatus,
+  type CliConfigPreview,
   type CodexInstance,
   type CodexLaunchRequest,
   type NativeSettingsState,
@@ -87,6 +88,7 @@ import {
   type SchedulerStatus,
 } from "./lib/schemas";
 import {
+  DEFAULT_GATEWAY_URL,
   getGatewayBaseUrl,
   getLegacyRelayKey,
   getQuotaShowRemaining,
@@ -184,6 +186,7 @@ export default function App() {
   const [zcodeCallbackUrl, setZcodeCallbackUrl] = useState("");
   const [cliAgents, setCliAgents] = useState<CliAgentStatus[]>([]);
   const [busyAgent, setBusyAgent] = useState<CliAgentId | null>(null);
+  const [agentPreview, setAgentPreview] = useState<CliConfigPreview | null>(null);
   const [codexInstances, setCodexInstances] = useState<CodexInstance[]>([]);
   const [codexBusy, setCodexBusy] = useState(false);
   const [historyStats, setHistoryStats] = useState<HistoryStatsResponse | null>(null);
@@ -250,28 +253,6 @@ export default function App() {
       }
     },
     [setNotice],
-  );
-
-  const configureAgent = useCallback(
-    async (agentId: CliAgentId, gatewayUrl: string) => {
-      setBusyAgent(agentId);
-      try {
-        const request = { agent_id: agentId, gateway_url: gatewayUrl } as const;
-        await previewCliAgent(request);
-        const result = await configureCliAgent(request);
-        setNotice(
-          result.outcome === "conflict"
-            ? "Configuration conflict — file left unchanged."
-            : `${result.state.display_name} configured.`,
-        );
-        await reloadCliAgents();
-      } catch (error) {
-        setNotice(actionFailed(error));
-      } finally {
-        setBusyAgent(null);
-      }
-    },
-    [reloadCliAgents, setNotice],
   );
 
   const restoreAgent = useCallback(
@@ -454,6 +435,54 @@ export default function App() {
     setCredentials,
     setLoadState,
   } = useGatewayPolling(clients);
+
+  const agentRequest = useCallback(
+    (agentId: CliAgentId) => ({
+      agent_id: agentId,
+      gateway_url: baseUrl || DEFAULT_GATEWAY_URL,
+      models: gatewayModels.map((model) => model.id),
+    }),
+    [baseUrl, gatewayModels],
+  );
+
+  const previewAgent = useCallback(
+    async (agentId: CliAgentId) => {
+      setBusyAgent(agentId);
+      try {
+        setAgentPreview(await previewCliAgent(agentRequest(agentId)));
+      } catch (error) {
+        setAgentPreview(null);
+        setNotice(actionFailed(error));
+      } finally {
+        setBusyAgent(null);
+      }
+    },
+    [agentRequest, setNotice],
+  );
+
+  const applyAgent = useCallback(
+    async (agentId: CliAgentId, adoptCurrent: boolean) => {
+      setBusyAgent(agentId);
+      try {
+        const result = await configureCliAgent({
+          ...agentRequest(agentId),
+          adopt_current: adoptCurrent,
+        });
+        setNotice(
+          result.outcome === "conflict"
+            ? "Configuration conflict — file left unchanged."
+            : `${result.state.display_name} configured.`,
+        );
+        setAgentPreview(null);
+        await reloadCliAgents();
+      } catch (error) {
+        setNotice(actionFailed(error));
+      } finally {
+        setBusyAgent(null);
+      }
+    },
+    [agentRequest, reloadCliAgents, setNotice],
+  );
 
   const refreshModelRegistry = useCallback(async () => {
     setPending(pendingKey.auth("registry:refresh"));
@@ -1265,9 +1294,11 @@ export default function App() {
               agentsSlot={
                 <AgentsSurface
                   agents={cliAgents}
-                  gatewayUrl={baseUrl || "http://127.0.0.1:18801"}
                   busyAgent={busyAgent}
-                  onConfigure={configureAgent}
+                  pendingPreview={agentPreview}
+                  onPreview={previewAgent}
+                  onApply={applyAgent}
+                  onCancelPreview={() => setAgentPreview(null)}
                   onRestore={restoreAgent}
                   codexAccounts={accounts
                     .filter((account) => account.provider === "codex")

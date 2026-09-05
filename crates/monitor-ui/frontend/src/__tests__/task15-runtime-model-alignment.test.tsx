@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AgentsSurface } from "../components/AgentsSurface";
+import { CodexInstancesCard } from "../components/CodexInstancesCard";
 import { SettingsSurface } from "../components/SettingsSurface";
 import { createGatewayClients } from "../lib/api";
 import {
@@ -152,15 +152,10 @@ describe("Task 15: Runtime model consumption and catalog metadata alignment", ()
     // 2. Runtime model selector renders gateway active models ("runtime-next") and NOT preset "legacy-only"
     const onLaunch = vi.fn();
     render(
-      <AgentsSurface
-        agents={[]}
-        gatewayUrl="http://127.0.0.1:18801"
-        busyAgent={null}
-        onConfigure={vi.fn()}
-        onRestore={vi.fn()}
-        codexAccounts={[{ id: "acc-1", label: "dev@example.com" }]}
+      <CodexInstancesCard
+        accounts={[{ id: "acc-1", label: "dev@example.com" }]}
         runtimeModels={["runtime-next"]}
-        onLaunchCodex={onLaunch}
+        onLaunch={onLaunch}
       />,
     );
 

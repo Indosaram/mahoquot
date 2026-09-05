@@ -1622,40 +1622,6 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
     Ok(build_view(&raw, now_ms))
 }
 
-fn extract_first_api_key(yaml: &str) -> Option<String> {
-    let mut in_keys = false;
-    for line in yaml.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("api-keys:") {
-            in_keys = true;
-            if let Some(rest) = trimmed.strip_prefix("api-keys:").map(str::trim) {
-                if rest.starts_with('[') && rest.ends_with(']') {
-                    let inner = rest[1..rest.len() - 1].trim();
-                    let key = inner.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
-                    if !key.is_empty() {
-                        return Some(key.to_string());
-                    }
-                }
-            }
-            continue;
-        }
-        if in_keys {
-            if trimmed.starts_with('-') {
-                let key = trimmed
-                    .trim_start_matches('-')
-                    .trim()
-                    .trim_matches(|c| c == '\'' || c == '"');
-                if !key.is_empty() {
-                    return Some(key.to_string());
-                }
-            } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                break;
-            }
-        }
-    }
-    None
-}
-
 /// Ensure a master API key exists in config.yaml so both local agents and the
 /// desktop app can authenticate with the gateway. Returns the master key.
 fn ensure_master_api_key() -> String {
@@ -1663,7 +1629,7 @@ fn ensure_master_api_key() -> String {
         tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     let config_path = auth_dir.join("config.yaml");
     if let Ok(content) = std::fs::read_to_string(&config_path) {
-        if let Some(key) = extract_first_api_key(&content) {
+        if let Some(key) = tray::extract_first_api_key(&content) {
             return key;
         }
     }

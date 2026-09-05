@@ -147,7 +147,7 @@ export const stopCodexInstance = (instanceId: string): Promise<CodexInstance[]> 
 
 export type CliAgentId = "claude_code" | "codex_cli" | "gemini_cli" | "omo";
 export type CliPlatform = "macos" | "linux" | "windows";
-export type CliConfigState = "absent" | "unmanaged" | "configured" | "modified";
+export type CliConfigState = "absent" | "unmanaged" | "configured" | "modified" | "removed";
 export type CliConfigFormat = "json" | "toml" | "env";
 export type CliAgentAction = "configure" | "restore";
 export type CliAgentActionOutcome = "applied" | "restored" | "conflict" | "noop";
@@ -173,6 +173,10 @@ export interface CliAgentStatus {
 export interface ConfigureCliAgentRequest {
   readonly agent_id: CliAgentId;
   readonly gateway_url: string;
+  /** Model ids the gateway serves; adapters that must enumerate models use them. */
+  readonly models?: readonly string[];
+  /** Adopt the file as it is on disk, replacing the backup. Escapes a conflict. */
+  readonly adopt_current?: boolean;
 }
 
 export interface CliConfigPreview {
@@ -180,6 +184,8 @@ export interface CliConfigPreview {
   readonly target_path: string;
   readonly format: CliConfigFormat;
   readonly app_written_bytes: number[];
+  /** Pre-existing settings whose value this write changes, as dotted paths. */
+  readonly replaced_keys: readonly string[];
   readonly preserves_unrelated_settings: boolean;
 }
 

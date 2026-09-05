@@ -10,7 +10,9 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-const LOCAL_AGENT_TOKEN: &str = "mahoquot-local";
+/// Every file this module writes carries a gateway token, so it is written
+/// owner-only even when the file it replaces was world-readable.
+const SECRET_MODE: u32 = 0o600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +97,9 @@ pub enum CliConfigState {
     Unmanaged,
     Configured,
     Modified,
+    /// Managed by this app, but the file is gone. Distinct from `Modified`
+    /// because recreating it cannot destroy a user edit.
+    Removed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +171,15 @@ impl std::error::Error for CliConfigError {}
 pub struct ConfigureCliAgentRequest {
     pub agent_id: CliAgentId,
     pub gateway_url: String,
+    /// Model ids the gateway currently serves. Adapters that must enumerate
+    /// models to be usable write these; an empty list keeps whatever the
+    /// existing configuration already listed.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Adopt the file exactly as it is on disk right now, replacing the
+    /// recorded backup with it. This is the only way out of a conflict.
+    #[serde(default)]
+    pub adopt_current: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +188,11 @@ pub struct CliConfigPreview {
     pub target_path: PathBuf,
     pub format: CliConfigFormat,
     pub app_written_bytes: Vec<u8>,
+    /// Pre-existing settings whose value this write changes, as dotted paths.
+    /// This is the disclosure the UI shows before touching a user's file.
+    pub replaced_keys: Vec<String>,
+    /// Computed, not asserted: true when every replaced setting belongs to the
+    /// set this feature owns.
     pub preserves_unrelated_settings: bool,
 }
 
@@ -221,6 +240,7 @@ pub struct CliConfigManager {
     home: PathBuf,
     app_data: PathBuf,
     platform: CliPlatform,
+    token_override: Option<String>,
 }
 
 impl CliConfigManager {
@@ -229,6 +249,7 @@ impl CliConfigManager {
             home,
             app_data,
             platform,
+            token_override: None,
         }
     }
 
@@ -256,7 +277,37 @@ impl CliConfigManager {
                 .unwrap_or_else(|| home.join(".local").join("share"))
                 .join("mahoquot"),
         };
-        Self::new(home, app_data, platform)
+        let token_override = std::env::var("MAHOQUOT_API_KEY")
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty());
+        Self {
+            home,
+            app_data,
+            platform,
+            token_override,
+        }
+    }
+
+    /// The token the gateway will actually accept. `main` mints this key into
+    /// `config.yaml` before the gateway starts, so a missing key means that
+    /// bootstrap never ran: writing a placeholder instead would hand every CLI
+    /// a credential the gateway rejects, which looks like success and fails on
+    /// the first request.
+    fn master_token(&self) -> Result<String, CliConfigError> {
+        if let Some(token) = &self.token_override {
+            return Ok(token.clone());
+        }
+        let config_path = self.home.join(".mahoquot").join("auth").join("config.yaml");
+        let content = read_optional(&config_path)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        crate::tray::extract_first_api_key(&content).ok_or_else(|| {
+            CliConfigError::state(format!(
+                "no gateway API key in {}; start Mahoquot once so it can mint the master key",
+                config_path.display()
+            ))
+        })
     }
 
     pub fn target_path(&self, agent_id: CliAgentId) -> PathBuf {
@@ -265,9 +316,13 @@ impl CliConfigManager {
             CliAgentId::CodexCli => self.home.join(".codex").join("config.toml"),
             CliAgentId::GeminiCli => self.home.join(".gemini").join(".env"),
             CliAgentId::Omo => {
-                let agent_models = self.home.join(".omo").join("agent").join("models.json");
-                if agent_models.exists() || self.home.join(".omo").join("agent").exists() {
-                    agent_models
+                // Newer layouts keep the catalog under `agent/`, older ones at
+                // the root. The directory is the marker because the file may
+                // not exist yet; testing the file too only widened the window
+                // in which the answer could change between calls.
+                let agent_dir = self.home.join(".omo").join("agent");
+                if agent_dir.is_dir() {
+                    agent_dir.join("models.json")
                 } else {
                     self.home.join(".omo").join("models.json")
                 }
@@ -291,17 +346,30 @@ impl CliConfigManager {
         self.agent_state_dir(agent_id).join("backup.bin")
     }
 
+    /// The file this app owns for `agent_id`. A record pins the path that was
+    /// actually written, so an agent that moves its config location later
+    /// cannot strand the managed file behind a freshly resolved path.
+    fn managed_target(&self, agent_id: CliAgentId, record: Option<&OwnershipRecord>) -> PathBuf {
+        record
+            .map(|record| record.target_path.clone())
+            .unwrap_or_else(|| self.target_path(agent_id))
+    }
+
     pub fn inspect(&self, agent_id: CliAgentId) -> Result<CliAgentStatus, CliConfigError> {
-        let target_path = self.target_path(agent_id);
         let record = self.read_record(agent_id)?;
+        let target_path = self.managed_target(agent_id, record.as_ref());
         let current = read_optional(&target_path)?;
         let config_state = match (&record, &current) {
             (None, None) => CliConfigState::Absent,
             (None, Some(_)) => CliConfigState::Unmanaged,
-            (Some(record), Some(bytes)) if sha256_bytes(bytes) == record.app_written_hash => {
-                CliConfigState::Configured
+            (Some(_), None) => CliConfigState::Removed,
+            (Some(record), Some(bytes)) => {
+                if sha256_bytes(bytes) == record.app_written_hash {
+                    CliConfigState::Configured
+                } else {
+                    CliConfigState::Modified
+                }
             }
-            (Some(_), _) => CliConfigState::Modified,
         };
         let backup = record.as_ref().and_then(|record| {
             record.backup_path.as_ref().map(|path| CliConfigBackup {
@@ -338,15 +406,27 @@ impl CliConfigManager {
         &self,
         request: ConfigureCliAgentRequest,
     ) -> Result<CliConfigPreview, CliConfigError> {
-        let target_path = self.target_path(request.agent_id);
+        let agent_id = request.agent_id;
+        let record = self.read_record(agent_id)?;
+        let target_path = self.managed_target(agent_id, record.as_ref());
         let existing = read_optional(&target_path)?.unwrap_or_default();
-        let app_written_bytes = generate_config(request.agent_id, &existing, &request.gateway_url)?;
+        let app_written_bytes = generate_config(
+            agent_id,
+            &existing,
+            &request.gateway_url,
+            &self.master_token()?,
+            &request.models,
+        )?;
+        let replaced_keys = replaced_settings(agent_id, &existing, &app_written_bytes);
+        let preserves_unrelated_settings =
+            replaced_keys.iter().all(|key| is_managed_key(agent_id, key));
         Ok(CliConfigPreview {
-            agent_id: request.agent_id,
+            agent_id,
             target_path,
-            format: request.agent_id.format(),
+            format: agent_id.format(),
             app_written_bytes,
-            preserves_unrelated_settings: true,
+            replaced_keys,
+            preserves_unrelated_settings,
         })
     }
 
@@ -355,54 +435,73 @@ impl CliConfigManager {
         request: ConfigureCliAgentRequest,
     ) -> Result<CliAgentActionResult, CliConfigError> {
         let agent_id = request.agent_id;
-        let target_path = self.target_path(agent_id);
-        let current = read_optional(&target_path)?;
         let prior_record = self.read_record(agent_id)?;
+        let target_path = self.managed_target(agent_id, prior_record.as_ref());
+        let current = read_optional(&target_path)?;
 
-        if let Some(record) = &prior_record {
-            let current_matches = current
+        // Only a file that still exists and no longer matches our write carries
+        // a user edit worth protecting. A file that is simply gone carries
+        // nothing, so recreating it loses no work.
+        let conflicting_edit = prior_record.as_ref().is_some_and(|record| {
+            current
                 .as_ref()
-                .is_some_and(|bytes| sha256_bytes(bytes) == record.app_written_hash);
-            if !current_matches {
-                return Ok(CliAgentActionResult {
-                    action: CliAgentAction::Configure,
-                    outcome: CliAgentActionOutcome::Conflict,
-                    state: self.inspect(agent_id)?,
-                });
-            }
+                .is_some_and(|bytes| sha256_bytes(bytes) != record.app_written_hash)
+        });
+        if conflicting_edit && !request.adopt_current {
+            return Ok(CliAgentActionResult {
+                action: CliAgentAction::Configure,
+                outcome: CliAgentActionOutcome::Conflict,
+                state: self.inspect(agent_id)?,
+            });
         }
+        let adopting = conflicting_edit && request.adopt_current;
 
         let app_written_bytes = generate_config(
             agent_id,
             current.as_deref().unwrap_or_default(),
             &request.gateway_url,
+            &self.master_token()?,
+            &request.models,
         )?;
         let app_written_hash = sha256_bytes(&app_written_bytes);
-        let original_bytes = match &prior_record {
-            Some(record) if record.original_existed => {
-                let path = record
-                    .backup_path
-                    .as_ref()
-                    .ok_or_else(|| CliConfigError::state("ownership record has no backup path"))?;
-                Some(fs::read(path).map_err(|error| CliConfigError::io("read CLI backup", error))?)
+        // Adopting makes the edited file the new original: the user asked for
+        // their current file to become what restore puts back.
+        let original_bytes = if adopting {
+            current.clone()
+        } else {
+            match &prior_record {
+                Some(record) if record.original_existed => {
+                    let path = record.backup_path.as_ref().ok_or_else(|| {
+                        CliConfigError::state("ownership record has no backup path")
+                    })?;
+                    Some(
+                        fs::read(path)
+                            .map_err(|error| CliConfigError::io("read CLI backup", error))?,
+                    )
+                }
+                Some(_) => None,
+                None => current.clone(),
             }
-            Some(_) => None,
-            None => current.clone(),
         };
-        let original_mode = prior_record
-            .as_ref()
-            .and_then(|record| record.original_mode)
-            .or_else(|| file_mode(&target_path));
+        let original_mode = if adopting {
+            file_mode(&target_path)
+        } else {
+            prior_record
+                .as_ref()
+                .and_then(|record| record.original_mode)
+                .or_else(|| file_mode(&target_path))
+        };
         let original_hash = original_bytes.as_ref().map(|bytes| sha256_bytes(bytes));
         let backup_path = original_bytes.as_ref().map(|_| self.backup_path(agent_id));
 
         if let (Some(bytes), Some(path)) = (&original_bytes, &backup_path) {
-            atomic_write(path, bytes, original_mode)
+            atomic_write(path, bytes, Some(SECRET_MODE))
                 .map_err(|error| CliConfigError::io("write CLI backup", error))?;
         }
 
-        let target_mode = file_mode(&target_path).or(original_mode).or(Some(0o600));
-        atomic_write(&target_path, &app_written_bytes, target_mode)
+        // The generated file gains a token the original did not have, so its
+        // permissions are tightened rather than inherited.
+        atomic_write(&target_path, &app_written_bytes, Some(SECRET_MODE))
             .map_err(|error| CliConfigError::io("write CLI configuration", error))?;
 
         let record = OwnershipRecord {
@@ -434,12 +533,15 @@ impl CliConfigManager {
                 state: self.inspect(agent_id)?,
             });
         };
-        let target_path = self.target_path(agent_id);
+        let target_path = record.target_path.clone();
         let current = read_optional(&target_path)?;
-        let current_matches = current
+        // A user edit is the only thing restore must refuse to discard. A file
+        // the user deleted has nothing to lose, and putting the original back
+        // is exactly the undo they asked for.
+        let holds_user_edit = current
             .as_ref()
-            .is_some_and(|bytes| sha256_bytes(bytes) == record.app_written_hash);
-        if !current_matches {
+            .is_some_and(|bytes| sha256_bytes(bytes) != record.app_written_hash);
+        if holds_user_edit {
             return Ok(CliAgentActionResult {
                 action: CliAgentAction::Restore,
                 outcome: CliAgentActionOutcome::Conflict,
@@ -494,9 +596,9 @@ impl CliConfigManager {
         let record: OwnershipRecord = serde_json::from_slice(&bytes).map_err(|error| {
             CliConfigError::state(format!("invalid CLI ownership record: {error}"))
         })?;
-        if record.agent_id != agent_id || record.target_path != self.target_path(agent_id) {
+        if record.agent_id != agent_id {
             return Err(CliConfigError::state(
-                "CLI ownership record targets a different file",
+                "CLI ownership record belongs to a different agent",
             ));
         }
         Ok(Some(record))
@@ -507,7 +609,7 @@ impl CliConfigManager {
             CliConfigError::state(format!("serialize CLI ownership record: {error}"))
         })?;
         bytes.push(b'\n');
-        atomic_write(&self.record_path(record.agent_id), &bytes, Some(0o600))
+        atomic_write(&self.record_path(record.agent_id), &bytes, Some(SECRET_MODE))
             .map_err(|error| CliConfigError::io("write CLI ownership record", error))
     }
 }
@@ -516,17 +618,135 @@ fn generate_config(
     agent_id: CliAgentId,
     existing: &[u8],
     gateway_url: &str,
+    token: &str,
+    gateway_models: &[String],
 ) -> Result<Vec<u8>, CliConfigError> {
     let gateway = gateway_url.trim().trim_end_matches('/');
     if gateway.is_empty() {
         return Err(CliConfigError::state("gateway URL must not be empty"));
     }
     match agent_id {
-        CliAgentId::ClaudeCode => generate_claude(existing, gateway),
-        CliAgentId::CodexCli => generate_codex(existing, gateway),
-        CliAgentId::GeminiCli => generate_gemini(existing, gateway),
-        CliAgentId::Omo => generate_omo(existing, gateway),
+        CliAgentId::ClaudeCode => generate_claude(existing, gateway, token),
+        CliAgentId::CodexCli => generate_codex(existing, gateway, token),
+        CliAgentId::GeminiCli => generate_gemini(existing, gateway, token),
+        CliAgentId::Omo => generate_omo(existing, gateway, token, gateway_models),
     }
+}
+
+/// Settings that already existed and whose value this write changes, reported
+/// as dotted paths. Added keys are not replacements, so they never appear.
+fn replaced_settings(agent_id: CliAgentId, existing: &[u8], generated: &[u8]) -> Vec<String> {
+    let mut keys = Vec::new();
+    match agent_id.format() {
+        CliConfigFormat::Json => {
+            let before = serde_json::from_slice::<JsonValue>(existing).ok();
+            let after = serde_json::from_slice::<JsonValue>(generated).ok();
+            if let (Some(before), Some(after)) = (before, after) {
+                collect_json_replacements("", &before, &after, &mut keys);
+            }
+        }
+        CliConfigFormat::Toml => {
+            let parse = |bytes: &[u8]| {
+                std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+            };
+            if let (Some(before), Some(after)) = (parse(existing), parse(generated)) {
+                collect_toml_replacements("", &before, &after, &mut keys);
+            }
+        }
+        CliConfigFormat::Env => {
+            let after = env_assignments(generated);
+            for (key, value) in env_assignments(existing) {
+                if after
+                    .iter()
+                    .any(|(other, updated)| *other == key && *updated != value)
+                {
+                    keys.push(key);
+                }
+            }
+        }
+    }
+    keys
+}
+
+fn collect_json_replacements(
+    prefix: &str,
+    before: &JsonValue,
+    after: &JsonValue,
+    keys: &mut Vec<String>,
+) {
+    let (Some(before), Some(after)) = (before.as_object(), after.as_object()) else {
+        return;
+    };
+    for (key, old) in before {
+        let Some(new) = after.get(key) else { continue };
+        if old == new {
+            continue;
+        }
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        if old.is_object() && new.is_object() {
+            collect_json_replacements(&path, old, new, keys);
+        } else {
+            keys.push(path);
+        }
+    }
+}
+
+fn collect_toml_replacements(
+    prefix: &str,
+    before: &toml::Value,
+    after: &toml::Value,
+    keys: &mut Vec<String>,
+) {
+    let (Some(before), Some(after)) = (before.as_table(), after.as_table()) else {
+        return;
+    };
+    for (key, old) in before {
+        let Some(new) = after.get(key) else { continue };
+        if old == new {
+            continue;
+        }
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        if old.as_table().is_some() && new.as_table().is_some() {
+            collect_toml_replacements(&path, old, new, keys);
+        } else {
+            keys.push(path);
+        }
+    }
+}
+
+fn env_assignments(bytes: &[u8]) -> Vec<(String, String)> {
+    parse_env(bytes)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|line| match line {
+            EnvLine::Assignment { key, value, .. } => Some((key, value)),
+            EnvLine::Raw(_) => None,
+        })
+        .collect()
+}
+
+/// The settings this feature owns. A replacement outside this set means an
+/// adapter is trampling configuration that is none of its business.
+fn is_managed_key(agent_id: CliAgentId, key: &str) -> bool {
+    let managed: &[&str] = match agent_id {
+        CliAgentId::ClaudeCode => &["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN"],
+        CliAgentId::CodexCli => &["model_provider", "model_providers.mahoquot"],
+        CliAgentId::GeminiCli => &["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"],
+        CliAgentId::Omo => &["providers.mahoquot"],
+    };
+    managed
+        .iter()
+        .any(|owned| key == *owned || key.starts_with(&format!("{owned}.")))
 }
 
 fn parse_json_object(
@@ -564,63 +784,25 @@ fn object_entry<'a>(
         .ok_or_else(|| CliConfigError::malformed(agent_id, format!("{key} must be an object")))
 }
 
-fn resolve_master_token() -> String {
-    if let Ok(key) = std::env::var("MAHOQUOT_API_KEY") {
-        if !key.trim().is_empty() {
-            return key.trim().to_string();
-        }
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let config_path = PathBuf::from(home).join(".mahoquot/auth/config.yaml");
-    if let Ok(content) = fs::read_to_string(config_path) {
-        let mut in_keys = false;
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("api-keys:") {
-                in_keys = true;
-                if let Some(rest) = trimmed.strip_prefix("api-keys:").map(str::trim) {
-                    if rest.starts_with('[') && rest.ends_with(']') {
-                        let inner = rest[1..rest.len() - 1].trim();
-                        let key = inner.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
-                        if !key.is_empty() {
-                            return key.to_string();
-                        }
-                    }
-                }
-                continue;
-            }
-            if in_keys {
-                if trimmed.starts_with('-') {
-                    let key = trimmed
-                        .trim_start_matches('-')
-                        .trim()
-                        .trim_matches(|c| c == '\'' || c == '"');
-                    if !key.is_empty() {
-                        return key.to_string();
-                    }
-                } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                    break;
-                }
-            }
-        }
-    }
-    LOCAL_AGENT_TOKEN.to_string()
-}
-
-fn generate_claude(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
-    let token = resolve_master_token();
+fn generate_claude(
+    existing: &[u8],
+    gateway: &str,
+    token: &str,
+) -> Result<Vec<u8>, CliConfigError> {
     let mut root = parse_json_object(CliAgentId::ClaudeCode, existing)?;
     let env = object_entry(&mut root, "env", CliAgentId::ClaudeCode)?;
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
         JsonValue::String(gateway.to_string()),
     );
-    env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), JsonValue::String(token));
+    env.insert(
+        "ANTHROPIC_AUTH_TOKEN".to_string(),
+        JsonValue::String(token.to_string()),
+    );
     pretty_json(root)
 }
 
-fn generate_codex(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
-    let token = resolve_master_token();
+fn generate_codex(existing: &[u8], gateway: &str, token: &str) -> Result<Vec<u8>, CliConfigError> {
     let text = std::str::from_utf8(existing)
         .map_err(|error| CliConfigError::malformed(CliAgentId::CodexCli, error))?;
     let mut root: toml::Table = if text.trim().is_empty() {
@@ -629,13 +811,12 @@ fn generate_codex(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigEr
         toml::from_str(text)
             .map_err(|error| CliConfigError::malformed(CliAgentId::CodexCli, error))?
     };
+    // Codex only routes through a custom provider when `model_provider` points
+    // at it, so this key is the point of the whole write. It is reported as a
+    // replaced setting when the user already had one.
     root.insert(
         "model_provider".to_string(),
         toml::Value::String("mahoquot".to_string()),
-    );
-    root.insert(
-        "supports_websockets".to_string(),
-        toml::Value::Boolean(true),
     );
     let providers = root
         .entry("model_providers".to_string())
@@ -655,7 +836,7 @@ fn generate_codex(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigEr
     );
     provider.insert(
         "experimental_bearer_token".to_string(),
-        toml::Value::String(token),
+        toml::Value::String(token.to_string()),
     );
     provider.insert(
         "wire_api".to_string(),
@@ -722,8 +903,7 @@ fn valid_env_key(key: &str) -> bool {
         && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
-fn generate_gemini(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
-    let token = resolve_master_token();
+fn generate_gemini(existing: &[u8], gateway: &str, token: &str) -> Result<Vec<u8>, CliConfigError> {
     let managed = ["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"];
     let mut output = Vec::new();
     for line in parse_env(existing)? {
@@ -749,17 +929,41 @@ fn generate_gemini(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigE
     Ok(format!("{}\n", output.join("\n")).into_bytes())
 }
 
-fn generate_omo(existing: &[u8], gateway: &str) -> Result<Vec<u8>, CliConfigError> {
-    let token = resolve_master_token();
+fn generate_omo(
+    existing: &[u8],
+    gateway: &str,
+    token: &str,
+    gateway_models: &[String],
+) -> Result<Vec<u8>, CliConfigError> {
     let mut root = parse_json_object(CliAgentId::Omo, existing)?;
     let providers = object_entry(&mut root, "providers", CliAgentId::Omo)?;
+    // omo builds its model picker from this array, so an empty one leaves the
+    // provider selectable but unusable. Merge rather than replace: existing
+    // entries keep the fields a user tuned by hand, and only ids the gateway
+    // reports for the first time are appended, so a new upstream model shows up
+    // without a curated catalog being flattened.
+    let mut models = providers
+        .get("mahoquot")
+        .and_then(|provider| provider.get("models"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for id in gateway_models {
+        let known = models
+            .iter()
+            .any(|model| model.get("id").and_then(JsonValue::as_str) == Some(id.as_str()));
+        if !known {
+            models.push(serde_json::json!({ "id": id, "name": id }));
+        }
+    }
     providers.insert(
         "mahoquot".to_string(),
         serde_json::json!({
-            "api": "openai-responses",
+            "name": "Mahoquot",
+            "api": "openai-completions",
             "apiKey": token,
             "baseUrl": format!("{gateway}/v1"),
-            "models": []
+            "models": models
         }),
     );
     pretty_json(root)
@@ -916,12 +1120,23 @@ mod tests {
         }
     }
 
+    const TEST_TOKEN: &str = "mq-master-testkey";
+
     fn manager(name: &str, platform: CliPlatform) -> (CliConfigManager, PathBuf, PathBuf) {
         let root = root(name);
         let home = root.join("home");
         let app_data = root.join("app-data");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&app_data).unwrap();
+        // The gateway key the app mints at startup. Seeding it keeps every test
+        // reading this isolated home instead of the developer's real one.
+        let auth_dir = home.join(".mahoquot").join("auth");
+        fs::create_dir_all(&auth_dir).unwrap();
+        fs::write(
+            auth_dir.join("config.yaml"),
+            format!("port: 18801\napi-keys:\n- {TEST_TOKEN}\n"),
+        )
+        .unwrap();
         (
             CliConfigManager::new(home.clone(), app_data.clone(), platform),
             home,
@@ -933,6 +1148,8 @@ mod tests {
         ConfigureCliAgentRequest {
             agent_id,
             gateway_url: "http://127.0.0.1:18840".to_string(),
+            models: Vec::new(),
+            adopt_current: false,
         }
     }
 
@@ -1098,6 +1315,265 @@ mod tests {
             assert!(first.preserves_unrelated_settings);
             assert_ne!(first.app_written_bytes, fixture(agent_id));
         }
+    }
+
+    /// The states the adapters exist to produce. Determinism and "differs from
+    /// the fixture" cannot catch a wrong key, a wrong wire protocol, or an
+    /// empty model list, which is exactly how a config that reads as
+    /// `Configured` can still fail on the first request.
+    #[test]
+    fn generated_configs_point_each_agent_at_the_gateway() {
+        let gateway = "http://127.0.0.1:18840";
+
+        let (claude_manager, _, _) = manager("content-claude", CliPlatform::Linux);
+        write_fixture(
+            &claude_manager.target_path(CliAgentId::ClaudeCode),
+            fixture(CliAgentId::ClaudeCode),
+        );
+        let claude: JsonValue = serde_json::from_slice(
+            &claude_manager
+                .preview(request(CliAgentId::ClaudeCode))
+                .unwrap()
+                .app_written_bytes,
+        )
+        .unwrap();
+        assert_eq!(claude["env"]["ANTHROPIC_BASE_URL"], gateway);
+        assert_eq!(claude["env"]["ANTHROPIC_AUTH_TOKEN"], TEST_TOKEN);
+        assert_eq!(claude["env"]["KEEP"], "yes");
+        assert_eq!(claude["theme"], "dark");
+
+        let (codex_manager, _, _) = manager("content-codex", CliPlatform::Linux);
+        write_fixture(
+            &codex_manager.target_path(CliAgentId::CodexCli),
+            fixture(CliAgentId::CodexCli),
+        );
+        let bytes = codex_manager
+            .preview(request(CliAgentId::CodexCli))
+            .unwrap()
+            .app_written_bytes;
+        let codex: toml::Value = toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert_eq!(codex["model_provider"].as_str(), Some("mahoquot"));
+        assert_eq!(codex["model"].as_str(), Some("user-model"));
+        let provider = &codex["model_providers"]["mahoquot"];
+        assert_eq!(
+            provider["base_url"].as_str(),
+            Some(format!("{gateway}/v1").as_str())
+        );
+        assert_eq!(provider["experimental_bearer_token"].as_str(), Some(TEST_TOKEN));
+        assert_eq!(provider["wire_api"].as_str(), Some("responses"));
+        // Not a documented Codex key, and it was being written at the root
+        // rather than inside the provider table.
+        assert!(codex.get("supports_websockets").is_none());
+
+        let (gemini_manager, _, _) = manager("content-gemini", CliPlatform::Linux);
+        write_fixture(
+            &gemini_manager.target_path(CliAgentId::GeminiCli),
+            fixture(CliAgentId::GeminiCli),
+        );
+        let bytes = gemini_manager
+            .preview(request(CliAgentId::GeminiCli))
+            .unwrap()
+            .app_written_bytes;
+        let gemini = String::from_utf8(bytes).unwrap();
+        assert!(gemini.contains(&format!("GOOGLE_GEMINI_BASE_URL={gateway}\n")));
+        assert!(gemini.contains(&format!("GEMINI_API_KEY={TEST_TOKEN}\n")));
+        assert!(gemini.contains("KEEP=value"));
+        assert!(gemini.contains("# user comment"));
+    }
+
+    #[test]
+    fn omo_provider_is_usable_and_merges_new_models_into_a_curated_list() {
+        let (manager, _, _) = manager("omo-models", CliPlatform::Linux);
+        let target = manager.target_path(CliAgentId::Omo);
+        write_fixture(&target, fixture(CliAgentId::Omo));
+
+        let seeded = ConfigureCliAgentRequest {
+            models: vec!["gpt-5.6-codex".to_string()],
+            ..request(CliAgentId::Omo)
+        };
+        let bytes = manager.preview(seeded).unwrap().app_written_bytes;
+        let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
+        let provider = &config["providers"]["mahoquot"];
+        assert_eq!(provider["name"], "Mahoquot");
+        assert_eq!(provider["api"], "openai-completions");
+        assert_eq!(provider["apiKey"], TEST_TOKEN);
+        assert_eq!(provider["baseUrl"], "http://127.0.0.1:18840/v1");
+        // An empty array leaves the provider selectable but unusable.
+        assert_eq!(
+            provider["models"],
+            serde_json::json!([{ "id": "gpt-5.6-codex", "name": "gpt-5.6-codex" }])
+        );
+        assert_eq!(config["provider"]["custom"]["name"], "Keep");
+
+        // Hand-tuned entries survive verbatim, a model the gateway repeats is
+        // not duplicated, and a newly served one is appended.
+        let curated = br#"{"providers":{"mahoquot":{"models":[{"id":"kept","name":"Kept","contextWindow":123}]}}}"#;
+        write_fixture(&target, curated);
+        let bytes = manager
+            .preview(ConfigureCliAgentRequest {
+                models: vec![
+                    "kept".to_string(),
+                    "brand-new".to_string(),
+                    "brand-new".to_string(),
+                ],
+                ..request(CliAgentId::Omo)
+            })
+            .unwrap()
+            .app_written_bytes;
+        let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            config["providers"]["mahoquot"]["models"],
+            serde_json::json!([
+                { "id": "kept", "name": "Kept", "contextWindow": 123 },
+                { "id": "brand-new", "name": "brand-new" }
+            ])
+        );
+    }
+
+    #[test]
+    fn omo_merge_leaves_a_curated_list_untouched_when_the_gateway_adds_nothing() {
+        let (manager, _, _) = manager("omo-merge-noop", CliPlatform::Linux);
+        let target = manager.target_path(CliAgentId::Omo);
+        let curated = br#"{"providers":{"mahoquot":{"models":[{"id":"kept","cost":{"input":7}}]}}}"#;
+        write_fixture(&target, curated);
+
+        for models in [Vec::new(), vec!["kept".to_string()]] {
+            let bytes = manager
+                .preview(ConfigureCliAgentRequest {
+                    models,
+                    ..request(CliAgentId::Omo)
+                })
+                .unwrap()
+                .app_written_bytes;
+            let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                config["providers"]["mahoquot"]["models"],
+                serde_json::json!([{ "id": "kept", "cost": { "input": 7 } }])
+            );
+        }
+    }
+
+    #[test]
+    fn preview_discloses_replaced_settings_and_flags_only_owned_ones() {
+        let (manager, _, _) = manager("replaced-keys", CliPlatform::Linux);
+
+        // A Codex user who already picked a provider loses that choice.
+        let codex = manager.target_path(CliAgentId::CodexCli);
+        write_fixture(&codex, b"model_provider = \"openai\"\nmodel = \"gpt-5.6\"\n");
+        let preview = manager.preview(request(CliAgentId::CodexCli)).unwrap();
+        assert_eq!(preview.replaced_keys, vec!["model_provider".to_string()]);
+        assert!(preview.preserves_unrelated_settings);
+
+        // Adding settings is not replacing them.
+        let gemini = manager.target_path(CliAgentId::GeminiCli);
+        write_fixture(&gemini, b"KEEP=value\n");
+        let preview = manager.preview(request(CliAgentId::GeminiCli)).unwrap();
+        assert!(preview.replaced_keys.is_empty());
+
+        // An existing managed value is a replacement.
+        write_fixture(&gemini, b"GEMINI_API_KEY=old\nKEEP=value\n");
+        let preview = manager.preview(request(CliAgentId::GeminiCli)).unwrap();
+        assert_eq!(preview.replaced_keys, vec!["GEMINI_API_KEY".to_string()]);
+        assert!(preview.preserves_unrelated_settings);
+    }
+
+    #[test]
+    fn a_missing_gateway_key_fails_instead_of_writing_a_rejected_token() {
+        let (manager, home, _) = manager("missing-key", CliPlatform::Linux);
+        fs::remove_file(home.join(".mahoquot").join("auth").join("config.yaml")).unwrap();
+        let target = manager.target_path(CliAgentId::ClaudeCode);
+        write_fixture(&target, fixture(CliAgentId::ClaudeCode));
+
+        let error = manager.configure(request(CliAgentId::ClaudeCode)).unwrap_err();
+        assert_eq!(error.kind, CliConfigErrorKind::State);
+        assert_eq!(fs::read(&target).unwrap(), fixture(CliAgentId::ClaudeCode));
+        assert!(!manager.record_path(CliAgentId::ClaudeCode).exists());
+    }
+
+    #[test]
+    fn adopting_the_current_file_escapes_a_conflict() {
+        let (manager, _, _) = manager("adopt-current", CliPlatform::Linux);
+        let agent_id = CliAgentId::CodexCli;
+        let target = manager.target_path(agent_id);
+        write_fixture(&target, fixture(agent_id));
+        manager.configure(request(agent_id)).unwrap();
+
+        let user_edit = b"model = \"user-choice\"\n";
+        fs::write(&target, user_edit).unwrap();
+        assert_eq!(
+            manager.configure(request(agent_id)).unwrap().outcome,
+            CliAgentActionOutcome::Conflict
+        );
+
+        let adopted = manager
+            .configure(ConfigureCliAgentRequest {
+                adopt_current: true,
+                ..request(agent_id)
+            })
+            .unwrap();
+        assert_eq!(adopted.outcome, CliAgentActionOutcome::Applied);
+        assert_eq!(adopted.state.config_state, CliConfigState::Configured);
+
+        // Restore now returns the edit that was adopted, not the original.
+        let restored = manager.restore(agent_id).unwrap();
+        assert_eq!(restored.outcome, CliAgentActionOutcome::Restored);
+        assert_eq!(fs::read(&target).unwrap(), user_edit);
+    }
+
+    #[test]
+    fn a_deleted_config_can_be_rewritten_and_restored() {
+        for agent_id in CliAgentId::ALL {
+            let (manager, _, _) = manager(&format!("removed-{agent_id:?}"), CliPlatform::Linux);
+            let target = manager.target_path(agent_id);
+            let original = fixture(agent_id);
+            write_fixture(&target, original);
+            manager.configure(request(agent_id)).unwrap();
+
+            fs::remove_file(&target).unwrap();
+            assert_eq!(
+                manager.inspect(agent_id).unwrap().config_state,
+                CliConfigState::Removed
+            );
+
+            // Nothing on disk means nothing to protect, so neither action is a
+            // conflict the user cannot escape.
+            let reapplied = manager.configure(request(agent_id)).unwrap();
+            assert_eq!(reapplied.outcome, CliAgentActionOutcome::Applied);
+            assert_eq!(reapplied.state.config_state, CliConfigState::Configured);
+
+            fs::remove_file(&target).unwrap();
+            let restored = manager.restore(agent_id).unwrap();
+            assert_eq!(restored.outcome, CliAgentActionOutcome::Restored);
+            assert_eq!(fs::read(&target).unwrap(), original);
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_world_readable_config_is_tightened_and_its_mode_restored() {
+        let (manager, _, _) = manager("secret-mode", CliPlatform::Linux);
+        let agent_id = CliAgentId::ClaudeCode;
+        let target = manager.target_path(agent_id);
+        write_fixture(&target, fixture(agent_id));
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let applied = manager.configure(request(agent_id)).unwrap();
+        // The generated file carries a token the original did not have.
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let backup = applied.state.backup.as_ref().expect("backup recorded");
+        assert_eq!(
+            fs::metadata(&backup.path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        manager.restore(agent_id).unwrap();
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
     }
 
     #[test]

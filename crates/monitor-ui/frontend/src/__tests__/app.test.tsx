@@ -412,7 +412,9 @@ describe("operations console", () => {
       names: ["codex-b.json", "codex-a.json"],
     });
     expect(
-      screen.getByText("Account priority saved. Top accounts are used first in Fill-first routing."),
+      screen.getByText(
+        "Account priority saved. Top accounts are used first in Fill-first routing.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -1071,6 +1073,79 @@ describe("operations console", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("secret-api-key"));
     expect(screen.getByText("API key copied.")).toBeInTheDocument();
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  });
+
+  it("previews a CLI agent write, discloses it, and only then configures", async () => {
+    const agent = {
+      agent_id: "claude_code",
+      display_name: "Claude Code",
+      installed: true,
+      binary_path: "/usr/local/bin/claude",
+      target_path: "/home/test/.claude/settings.json",
+      config_state: "unmanaged",
+      backup: null,
+      original_hash: null,
+      app_written_hash: null,
+      platform: "linux",
+    };
+    const invoke = vi.fn(async (command: string, _args?: Record<string, unknown>) => {
+      if (command === "gateway_status") return "running";
+      if (command === "list_cli_agents") return [agent];
+      if (command === "list_codex_instances") return [];
+      if (command === "tunnel_status") {
+        return {
+          installed: false,
+          enabled: false,
+          running: false,
+          public_url: null,
+          error: null,
+        };
+      }
+      if (command === "preview_cli_agent") {
+        return {
+          agent_id: "claude_code",
+          target_path: agent.target_path,
+          format: "json",
+          app_written_bytes: [1, 2, 3],
+          replaced_keys: ["env.ANTHROPIC_BASE_URL"],
+          preserves_unrelated_settings: true,
+        };
+      }
+      if (command === "configure_cli_agent") {
+        return { action: "configure", outcome: "applied", state: agent };
+      }
+      return null;
+    });
+    Object.assign(window, { __TAURI_INTERNALS__: { invoke } });
+
+    try {
+      render(<App />);
+      fireEvent.click(screen.getAllByText("Settings").at(0) as HTMLElement);
+      fireEvent.click(await screen.findByRole("button", { name: "Configure Claude Code" }));
+
+      const panel = await screen.findByRole("region", { name: "Pending configuration" });
+      expect(within(panel).getByRole("alert")).toHaveTextContent(
+        "Replaces existing settings: env.ANTHROPIC_BASE_URL",
+      );
+      expect(invoke.mock.calls.some(([command]) => command === "configure_cli_agent")).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "Apply Claude Code configuration" }));
+      await waitFor(() => expect(screen.getByText("Claude Code configured.")).toBeInTheDocument());
+
+      expect(invoke).toHaveBeenCalledWith("configure_cli_agent", {
+        request: {
+          agent_id: "claude_code",
+          gateway_url: "http://127.0.0.1:18801",
+          models: [],
+          adopt_current: false,
+        },
+      });
+      expect(
+        screen.queryByRole("region", { name: "Pending configuration" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    }
   });
 
   it("opens Add Account directly without consulting migration state", async () => {

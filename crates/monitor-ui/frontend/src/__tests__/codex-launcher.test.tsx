@@ -1,23 +1,18 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AgentsSurface } from "../components/AgentsSurface";
+import { CodexInstancesCard } from "../components/CodexInstancesCard";
 
 describe("Codex multi-instance launcher", () => {
   it("launches explicit account model and reasoning selections and stops instances", async () => {
     const onLaunchCodex = vi.fn().mockResolvedValue(undefined);
     const onStopCodex = vi.fn().mockResolvedValue(undefined);
     render(
-      <AgentsSurface
-        agents={[]}
-        gatewayUrl="http://127.0.0.1:18801"
-        busyAgent={null}
-        onConfigure={vi.fn()}
-        onRestore={vi.fn()}
-        codexAccounts={[
+      <CodexInstancesCard
+        accounts={[
           { id: "codex-a", label: "a@example.com" },
           { id: "codex-b", label: "b@example.com" },
         ]}
-        codexInstances={[
+        instances={[
           {
             instance_id: "existing",
             account_id: "codex-b",
@@ -26,9 +21,9 @@ describe("Codex multi-instance launcher", () => {
             state: "running",
           },
         ]}
-        codexBusy={false}
-        onLaunchCodex={onLaunchCodex}
-        onStopCodex={onStopCodex}
+        busy={false}
+        onLaunch={onLaunchCodex}
+        onStop={onStopCodex}
       />,
     );
 
@@ -43,7 +38,9 @@ describe("Codex multi-instance launcher", () => {
       account_id: "codex-a",
       model: "gpt-5.6-codex",
       reasoning_effort: "high",
-      instance_id: expect.stringMatching(/^codex-/),
+      instance_id: expect.stringMatching(
+        /^codex-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      ),
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Stop existing" }));
