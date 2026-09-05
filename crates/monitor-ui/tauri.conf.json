@@ -61,7 +61,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "deb", "rpm", "nsis", "msi"],
+    "targets": ["app", "dmg", "deb", "rpm", "appimage", "nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "gateways/mahoquot-gateway"
     ],
