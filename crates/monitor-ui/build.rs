@@ -65,35 +65,57 @@ fn generated_windows_icon() -> Option<PathBuf> {
 }
 
 fn resolve_proxy_dir(repo_root: &Path) -> Option<PathBuf> {
+    println!("cargo:rerun-if-env-changed=MAHOQUOT_PROXY_DIR");
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join(".mahoquot-proxy-path").display()
+    );
+    let explicit = |value: &str| {
+        let p = repo_root.join(value);
+        assert!(
+            !value.is_empty() && p.join("Cargo.toml").is_file(),
+            "Invalid proxy directory: {}",
+            p.display()
+        );
+        Some(p.canonicalize().expect("cannot resolve proxy directory"))
+    };
     // 1. Explicit env var override
     if let Ok(dir) = std::env::var("MAHOQUOT_PROXY_DIR") {
-        let p = PathBuf::from(dir);
-        if p.join("Cargo.toml").is_file() {
-            return Some(p);
-        }
+        return explicit(&dir);
     }
     // 2. Explicit config file
-    if let Ok(layout) = std::fs::read_to_string(repo_root.join(".mahoquot-proxy-path")) {
-        let p = PathBuf::from(layout.trim());
-        if p.join("Cargo.toml").is_file() {
-            return Some(p);
-        }
+    let config = repo_root.join(".mahoquot-proxy-path");
+    if config.exists() {
+        let layout = std::fs::read_to_string(config).expect("cannot read proxy path config");
+        return explicit(layout.trim());
     }
     // 3. Sibling checkout (../mahoquot-proxy)
     if let Some(parent) = repo_root.parent() {
         let sibling = parent.join("mahoquot-proxy");
         if sibling.join("Cargo.toml").is_file() {
-            return Some(sibling);
+            return Some(
+                sibling
+                    .canonicalize()
+                    .expect("cannot resolve sibling proxy"),
+            );
         }
     }
     // 4. In-repo submodule (mahoquot-proxy)
     let in_repo = repo_root.join("mahoquot-proxy");
     if in_repo.join("Cargo.toml").is_file() {
-        return Some(in_repo);
+        return Some(
+            in_repo
+                .canonicalize()
+                .expect("cannot resolve in-repo proxy"),
+        );
     }
     // 5. Try git submodule init or clone if not yet populated
     if ensure_submodule_initialized(repo_root, &in_repo) && in_repo.join("Cargo.toml").is_file() {
-        return Some(in_repo);
+        return Some(
+            in_repo
+                .canonicalize()
+                .expect("cannot resolve initialized proxy"),
+        );
     }
     None
 }

@@ -4,6 +4,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
+if [[ ${MAHOQUOT_PROXY_DIR+x} ]]; then
+  PROXY_DIR="$MAHOQUOT_PROXY_DIR"
+elif [[ -f .mahoquot-proxy-path ]]; then
+  PROXY_DIR="$(< .mahoquot-proxy-path)"
+  PROXY_DIR="${PROXY_DIR#"${PROXY_DIR%%[![:space:]]*}"}"
+  PROXY_DIR="${PROXY_DIR%"${PROXY_DIR##*[![:space:]]}"}"
+elif [[ -f ../mahoquot-proxy/Cargo.toml ]]; then
+  PROXY_DIR="../mahoquot-proxy"
+elif [[ -f mahoquot-proxy/Cargo.toml ]]; then
+  PROXY_DIR="mahoquot-proxy"
+else
 echo "==> Ensuring mahoquot-proxy repository is present..."
 if [ ! -f "mahoquot-proxy/Cargo.toml" ] && [ ! -f "../mahoquot-proxy/Cargo.toml" ]; then
   if [ -f ".gitmodules" ] && command -v git >/dev/null 2>&1; then
@@ -18,8 +29,16 @@ if [ ! -f "mahoquot-proxy/Cargo.toml" ] && [ ! -f "../mahoquot-proxy/Cargo.toml"
 fi
 
 PROXY_DIR="mahoquot-proxy"
-if [ -f "../mahoquot-proxy/Cargo.toml" ] && [ ! -f "mahoquot-proxy/Cargo.toml" ]; then
-  PROXY_DIR="../mahoquot-proxy"
+fi
+if [[ -z "$PROXY_DIR" || ! -f "$PROXY_DIR/Cargo.toml" ]]; then
+  echo "Invalid proxy directory: $PROXY_DIR" >&2
+  exit 1
+fi
+PROXY_DIR="$(cd "$PROXY_DIR" && pwd -P)"
+echo "==> Using proxy directory: $PROXY_DIR"
+if git -C "$PROXY_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+  git -C "$PROXY_DIR" rev-parse HEAD
+  git -C "$PROXY_DIR" status --short
 fi
 
 HOST_TARGET="$(rustc -vV | awk '/^host:/{print $2}')"
