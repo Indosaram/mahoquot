@@ -139,6 +139,42 @@ describe("Durable logs surface", () => {
     expect(within(summary).getByText("150")).toBeInTheDocument();
   });
 
+
+  it("keeps a provider-filtered page when a slower background request resolves late", async () => {
+    const staleGate = Promise.withResolvers<void>();
+    const loadHistory = vi.fn(async (query: { providers?: string[] }) => {
+      if (query.providers?.[0] === "anthropic") {
+        return { events: [{"event-id":"FRESH-ANTHROPIC","occurred-at-ms":1_788_192_000_000,account:"acct","provider":"anthropic","model":"claude","key-label":"k",status:200,succeeded:true,"input-tokens":1,"output-tokens":1,"cached-input-tokens":0,"reasoning-tokens":0,"total-tokens":2,"latency-ms":5,"estimated-cost-usd":0.1,"price-version":"2026-09"}] as never, "next-cursor": null, totals };
+      }
+      if (loadHistory.mock.calls.length > 1) {
+        await staleGate.promise;
+        return { events: [{"event-id":"STALE-ALL","occurred-at-ms":1_788_192_000_000,account:"acct","provider":"codex","model":"gpt","key-label":"k",status:200,succeeded:true,"input-tokens":1,"output-tokens":1,"cached-input-tokens":0,"reasoning-tokens":0,"total-tokens":2,"latency-ms":5,"estimated-cost-usd":0.1,"price-version":"2026-09"}] as never, "next-cursor": 9, totals };
+      }
+      return { events: durableEvents as never, "next-cursor": 2, totals };
+    });
+    const { rerender } = render(
+      <DurableLogs records={requestRecords as never} loadHistory={loadHistory as never} liveTick={0} />,
+    );
+    expect(await screen.findByText("req-success")).toBeInTheDocument();
+
+    rerender(
+      <DurableLogs records={requestRecords as never} loadHistory={loadHistory as never} liveTick={1} />,
+    );
+    await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(2));
+
+    fireEvent.change(screen.getByLabelText("Log provider filter"), {
+      target: { value: "anthropic" },
+    });
+    expect(await screen.findByText("FRESH-ANTHROPIC")).toBeInTheDocument();
+
+    staleGate.resolve();
+    await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByText("STALE-ALL")).not.toBeInTheDocument();
+    expect(screen.getByText("FRESH-ANTHROPIC")).toBeInTheDocument();
+  });
+
   it("opens the request detail view without cost or eyebrow decoration", async () => {
     const { loadHistoryDetail } = renderLogs();
 

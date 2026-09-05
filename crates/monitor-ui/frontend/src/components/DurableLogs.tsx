@@ -187,18 +187,22 @@ export function DurableLogs({
     setActionError("");
     if (!loadHistory) return;
     setPending(true);
+    requestSeqRef.current += 1;
+    const seq = requestSeqRef.current;
     try {
       const page = await loadHistory({
         providers: next === "all" ? undefined : [next],
         limit: PAGE_LIMIT,
       });
+      if (seq !== requestSeqRef.current) return;
       setEvents(page.events);
       setTotals(page.totals);
       setNextCursor(page["next-cursor"]);
     } catch (error) {
+      if (seq !== requestSeqRef.current) return;
       setActionError(error instanceof Error ? error.message : "History unavailable");
     } finally {
-      setPending(false);
+      if (seq === requestSeqRef.current) setPending(false);
     }
   };
 
@@ -206,21 +210,25 @@ export function DurableLogs({
     if (!loadHistory || nextCursor === null) return;
     setPending(true);
     setActionError("");
+    requestSeqRef.current += 1;
+    const seq = requestSeqRef.current;
     try {
       const page = await loadHistory({
         providers: provider === "all" ? undefined : [provider],
         limit: PAGE_LIMIT,
         cursor: nextCursor,
       });
+      if (seq !== requestSeqRef.current) return;
       setPageHistory((history) => [...history, { events, nextCursor, loadedBefore }]);
       setEvents(page.events);
       setTotals(page.totals);
       setLoadedBefore((current) => current + events.length);
       setNextCursor(page["next-cursor"]);
     } catch (error) {
+      if (seq !== requestSeqRef.current) return;
       setActionError(error instanceof Error ? error.message : "History unavailable");
     } finally {
-      setPending(false);
+      if (seq === requestSeqRef.current) setPending(false);
     }
   };
 
