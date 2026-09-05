@@ -71,11 +71,8 @@ pub fn default_codex_binary() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(executable))
 }
 
-pub fn default_instance_root() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    crate::tray::default_auth_dir(&home).join(".codex-instances")
+pub fn default_instance_root() -> Result<PathBuf, String> {
+    Ok(crate::tray::default_auth_dir(crate::tray::current_home()?).join(".codex-instances"))
 }
 
 /// Rejects an `instance_id` that is not a single safe path segment.
@@ -261,6 +258,18 @@ impl CodexLauncher {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_test_exit(&self, id: &str) {
+        self.instances
+            .lock()
+            .unwrap()
+            .get_mut(id)
+            .unwrap()
+            .child
+            .wait()
+            .unwrap();
     }
 
     pub fn stop(&self, id: &str) -> Result<(), CodexLauncherError> {

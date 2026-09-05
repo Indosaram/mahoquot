@@ -8,6 +8,43 @@ use crate::tray::{
 };
 
 #[test]
+fn home_resolution_is_shared_and_never_uses_cwd() {
+    use crate::tray::resolve_home;
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let profile = root.path().join("profile");
+    assert_eq!(
+        resolve_home(
+            Some(home.clone().into_os_string()),
+            Some(profile.clone().into_os_string())
+        )
+        .unwrap(),
+        home
+    );
+    assert_eq!(
+        resolve_home(None, Some(profile.clone().into_os_string())).unwrap(),
+        profile
+    );
+    assert_eq!(
+        resolve_home(Some("".into()), Some(profile.clone().into_os_string())).unwrap(),
+        profile
+    );
+    for (home, profile) in [
+        (None, None),
+        (Some("".into()), Some("".into())),
+        (Some(".".into()), None),
+    ] {
+        assert!(
+            resolve_home(home, profile).is_err(),
+            "missing/relative home must not fall through to cwd"
+        );
+    }
+    let auth = crate::tray::default_auth_dir(&profile);
+    assert_eq!(auth, profile.join(".mahoquot/auth"));
+    assert!(auth.is_dir());
+}
+
+#[test]
 fn cursor_to_window_local_flips_appkit_origin_to_css_top_left() {
     // given the expanded island in AppKit space (origin bottom-left)
     let window = ScreenRect {
@@ -460,7 +497,7 @@ fn default_auth_dir_creates_mahoquot_auth_when_missing() {
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("home dir");
 
-    let resolved = default_auth_dir(&home.display().to_string());
+    let resolved = default_auth_dir(&home);
 
     assert_eq!(resolved, home.join(".mahoquot/auth"));
     assert!(resolved.is_dir());
@@ -475,7 +512,7 @@ fn default_auth_dir_ignores_existing_legacy_auth_dir() {
     let legacy = home.join(format!(".{}-{}-{}", "cli", "proxy", "api"));
     std::fs::create_dir_all(&legacy).expect("legacy auth dir");
 
-    let resolved = default_auth_dir(&home.display().to_string());
+    let resolved = default_auth_dir(&home);
 
     assert_eq!(resolved, home.join(".mahoquot/auth"));
     std::fs::remove_dir_all(&home).ok();

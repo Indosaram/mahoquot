@@ -28,6 +28,7 @@ flate2 = "1"
 tar = "0.4"
 toml = "0.8"
 url = { workspace = true }
+open = "5"
 reqwest = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -37,6 +38,10 @@ keyring = { version = "3.6.3", default-features = false, features = ["apple-nati
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 isolated-secret-tests = []
+
+[dev-dependencies]
+
+tempfile = "3"
 
 # objc 0.2.7 (terminal release) expands `cfg(feature = "cargo-clippy")` inside
 # its msg_send! macro; declare the value so unexpected_cfgs stays a real signal.

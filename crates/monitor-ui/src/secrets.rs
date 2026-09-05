@@ -2,19 +2,14 @@ use std::fmt;
 
 #[cfg(not(feature = "isolated-secret-tests"))]
 use keyring::{Entry, Error as KeyringError};
-#[cfg(not(feature = "isolated-secret-tests"))]
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "isolated-secret-tests"))]
 #[allow(dead_code)]
 const SECRET_SERVICE: &str = "mahoquot.desktop";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "isolated-secret-tests"), derive(Deserialize))]
-#[cfg_attr(
-    not(feature = "isolated-secret-tests"),
-    serde(rename_all = "snake_case")
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SecretKind {
     ManagementKey,
     Totp,
@@ -45,12 +40,8 @@ impl SecretRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(feature = "isolated-secret-tests"), derive(Serialize))]
-#[cfg_attr(
-    not(feature = "isolated-secret-tests"),
-    serde(tag = "kind", content = "detail", rename_all = "snake_case")
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub enum SecretStoreError {
     #[allow(dead_code)]
     Locked,
@@ -105,42 +96,83 @@ pub trait SecretBackend {
 
 /// Plain filesystem secret backend that stores secrets under `~/.mahoquot/secrets.json`
 /// without popping OS Keychain / Windows Credential Manager authentication dialogs.
-#[derive(Debug, Clone, Default)]
-pub struct PlainFileBackend;
+#[derive(Debug, Clone)]
+pub struct PlainFileBackend {
+    path: std::path::PathBuf,
+}
 
 impl PlainFileBackend {
-    fn path() -> std::path::PathBuf {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        std::path::PathBuf::from(home)
-            .join(".mahoquot")
-            .join("secrets.json")
+    pub fn new() -> Result<Self, String> {
+        Ok(Self {
+            path: crate::tray::current_home()?.join(".mahoquot/secrets.json"),
+        })
     }
 
-    fn load() -> std::collections::HashMap<String, String> {
-        let path = Self::path();
-        if let Ok(bytes) = std::fs::read(&path) {
-            if let Ok(map) = serde_json::from_slice(&bytes) {
-                return map;
-            }
+    fn load_from(
+        path: &std::path::Path,
+    ) -> Result<std::collections::HashMap<String, String>, SecretStoreError> {
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| SecretStoreError::Backend(format!("parse secrets: {e}"))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(e) => Err(SecretStoreError::Backend(format!("read secrets: {e}"))),
         }
-        std::collections::HashMap::new()
     }
 
-    fn save(map: &std::collections::HashMap<String, String>) -> Result<(), SecretStoreError> {
-        let path = Self::path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let bytes = serde_json::to_vec_pretty(map)
-            .map_err(|e| SecretStoreError::Backend(format!("serialize: {e}")))?;
-        std::fs::write(&path, bytes)
-            .map_err(|e| SecretStoreError::Backend(format!("write: {e}")))?;
+    fn lock(&self) -> Result<std::fs::File, SecretStoreError> {
+        let parent = self.path.parent().expect("secret path has parent");
+        std::fs::create_dir_all(parent).map_err(Self::io_error)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        // Keep the sidecar inode stable across replacement and process lifetimes.
+        let file = options
+            .open(self.path.with_extension("lock"))
+            .map_err(Self::io_error)?;
+        file.lock().map_err(Self::io_error)?;
+        Ok(file)
+    }
+
+    fn io_error(error: std::io::Error) -> SecretStoreError {
+        SecretStoreError::Backend(error.to_string())
+    }
+
+    fn save_to(
+        path: &std::path::Path,
+        map: &std::collections::HashMap<String, String>,
+        before_replace: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
+    ) -> Result<(), SecretStoreError> {
+        use std::io::Write;
+        let bytes = serde_json::to_vec_pretty(map)
+            .map_err(|e| SecretStoreError::Backend(format!("serialize: {e}")))?;
+        let parent = path.parent().expect("secret path has parent");
+        let stage = parent.join(format!(".secrets-{}.tmp", uuid::Uuid::new_v4()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&stage).map_err(Self::io_error)?;
+        let result = (|| {
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            drop(file);
+            before_replace(&stage)?;
+            std::fs::rename(&stage, path)
+        })();
+        if let Err(error) = result {
+            if let Err(cleanup) = std::fs::remove_file(&stage) {
+                return Err(SecretStoreError::Backend(format!(
+                    "{error}; temporary file cleanup: {cleanup}"
+                )));
+            }
+            return Err(Self::io_error(error));
         }
         Ok(())
     }
@@ -148,20 +180,22 @@ impl PlainFileBackend {
 
 impl SecretBackend for PlainFileBackend {
     fn read(&self, account: &str) -> Result<Option<String>, SecretStoreError> {
-        let map = Self::load();
-        Ok(map.get(account).cloned())
+        let _lock = self.lock()?;
+        Ok(Self::load_from(&self.path)?.get(account).cloned())
     }
 
     fn write(&self, account: &str, value: &str) -> Result<(), SecretStoreError> {
-        let mut map = Self::load();
+        let _lock = self.lock()?;
+        let mut map = Self::load_from(&self.path)?;
         map.insert(account.to_string(), value.to_string());
-        Self::save(&map)
+        Self::save_to(&self.path, &map, |_| Ok(()))
     }
 
     fn delete(&self, account: &str) -> Result<(), SecretStoreError> {
-        let mut map = Self::load();
+        let _lock = self.lock()?;
+        let mut map = Self::load_from(&self.path)?;
         if map.remove(account).is_some() {
-            Self::save(&map)?;
+            Self::save_to(&self.path, &map, |_| Ok(()))?;
         }
         Ok(())
     }
@@ -265,8 +299,7 @@ impl<B: SecretBackend> SecretStore<B> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(feature = "isolated-secret-tests"), derive(Serialize))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MigrationOutcome {
     pub value: Option<String>,
     pub remove_legacy: bool,
@@ -309,6 +342,165 @@ fn map_keyring_error(error: KeyringError) -> SecretStoreError {
 mod tests {
     use super::*;
     use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+
+    #[test]
+    fn plain_file_rejects_corrupt_and_unreadable_instead_of_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.json");
+        assert!(PlainFileBackend::load_from(&path).unwrap().is_empty());
+        std::fs::write(&path, b"{broken").unwrap();
+        assert!(
+            PlainFileBackend::load_from(&path).is_err(),
+            "corrupt bytes must not become an empty vault"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"{broken");
+        assert!(
+            PlainFileBackend::load_from(dir.path()).is_err(),
+            "non-NotFound read errors must propagate"
+        );
+        let backend = PlainFileBackend { path: path.clone() };
+        assert!(backend.read("a").is_err());
+        assert!(backend.write("b", "B").is_err());
+        assert!(backend.delete("a").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{broken");
+    }
+
+    #[test]
+    fn plain_file_failed_replacement_preserves_bytes_and_cleans_private_stage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.json");
+        let original = br#"{"a":"A"}"#;
+        std::fs::write(&path, original).unwrap();
+        let map = [("b".to_string(), "B".to_string())].into_iter().collect();
+        let result = PlainFileBackend::save_to(&path, &map, |stage| {
+            assert_eq!(stage.parent(), path.parent());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    std::fs::metadata(stage)?.permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            Err(std::io::Error::other("injected replacement failure"))
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn plain_file_lock_excludes_independent_handles() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = PlainFileBackend {
+            path: dir.path().join("secrets.json"),
+        };
+        let held = backend.lock().unwrap();
+        let other = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(backend.path.with_extension("lock"))
+            .unwrap();
+        assert!(matches!(
+            other.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(held);
+        other.try_lock().unwrap();
+    }
+
+    #[test]
+    fn plain_file_subprocess_writer() {
+        let Some(path) = std::env::var_os("MAHOQUOT_SECRET_TEST_PATH") else {
+            return;
+        };
+        let account = std::env::var("MAHOQUOT_SECRET_TEST_ACCOUNT").unwrap();
+        use std::io::{Read, Write};
+        println!("SECRET_WRITER_READY");
+        std::io::stdout().flush().unwrap();
+        let mut go = [0];
+        std::io::stdin().read_exact(&mut go).unwrap();
+        let backend = PlainFileBackend { path: path.into() };
+        for index in 0..32 {
+            backend
+                .write(&format!("{account}-{index}"), &account)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn plain_file_concurrent_process_updates_survive_reopen() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::{Command, Stdio};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.json");
+        let backend = PlainFileBackend { path: path.clone() };
+        backend.write("a", "A").unwrap();
+        let mut children = Vec::new();
+        for account in ["b", "c"] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "secrets::tests::plain_file_subprocess_writer",
+                    "--nocapture",
+                ])
+                .env("MAHOQUOT_SECRET_TEST_PATH", &path)
+                .env("MAHOQUOT_SECRET_TEST_ACCOUNT", account)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = child.stdout.take().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                let mut ready = Some(tx);
+                for line in BufReader::new(output).lines() {
+                    let line = line.unwrap();
+                    if line == "SECRET_WRITER_READY" {
+                        ready.take().unwrap().send(()).unwrap();
+                    }
+                }
+            });
+            if let Err(error) = rx.recv_timeout(std::time::Duration::from_secs(20)) {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("writer readiness: {error}");
+            }
+            children.push((child, reader));
+        }
+        for (child, _) in &mut children {
+            child.stdin.take().unwrap().write_all(b"g").unwrap();
+        }
+        for (mut child, reader) in children {
+            assert!(child.wait().unwrap().success());
+            reader.join().unwrap();
+        }
+        let reopened = PlainFileBackend { path: path.clone() };
+        assert_eq!(reopened.read("a").unwrap().as_deref(), Some("A"));
+        for account in ["b", "c"] {
+            for index in 0..32 {
+                assert_eq!(
+                    reopened
+                        .read(&format!("{account}-{index}"))
+                        .unwrap()
+                        .as_deref(),
+                    Some(account)
+                );
+            }
+        }
+        assert_eq!(PlainFileBackend::load_from(&path).unwrap().len(), 65);
+        reopened.delete("b-0").unwrap();
+        assert_eq!(reopened.read("b-0").unwrap(), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Failure {

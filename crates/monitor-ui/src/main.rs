@@ -6,9 +6,13 @@
 mod bootstrap;
 mod cli_config;
 mod codex_launcher;
+#[cfg(test)]
+mod external_url_tests;
 mod gateway_process;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod native_reservation_tests;
 mod notch;
 mod os_integration;
 mod platform;
@@ -548,8 +552,14 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
         return None;
     }
 
-    let auth_dir =
-        tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    let home = match tray::current_home() {
+        Ok(home) => home,
+        Err(error) => {
+            tracing::error!(%error, "cannot resolve gateway auth directory");
+            return None;
+        }
+    };
+    let auth_dir = tray::default_auth_dir(home);
     match std::process::Command::new(&bin)
         .env("AUTH_DIR", auth_dir)
         .spawn()
@@ -734,7 +744,7 @@ fn tunnel_status(manager: tauri::State<'_, tunnel::TunnelManager>) -> tunnel::Tu
 async fn download_cloudflared(
     manager: tauri::State<'_, tunnel::TunnelManager>,
 ) -> Result<tunnel::TunnelStatus, String> {
-    tunnel::download_cloudflared(&tunnel::default_cloudflared_path()).await?;
+    tunnel::download_cloudflared(&tunnel::default_cloudflared_path()?).await?;
     Ok(manager.status())
 }
 
@@ -778,6 +788,13 @@ async fn list_codex_instances(
     launcher: tauri::State<'_, codex_launcher::CodexLauncher>,
     config: tauri::State<'_, Config>,
 ) -> Result<Vec<codex_launcher::CodexInstance>, String> {
+    list_codex_instances_inner(&launcher, &config).await
+}
+
+async fn list_codex_instances_inner(
+    launcher: &codex_launcher::CodexLauncher,
+    config: &Config,
+) -> Result<Vec<codex_launcher::CodexInstance>, String> {
     let _ = launcher.reap();
     let instances = launcher.instances();
     for instance in instances
@@ -785,10 +802,10 @@ async fn list_codex_instances(
         .filter(|instance| instance.state == codex_launcher::InstanceState::Crashed)
     {
         let _ = scheduler_reservation(
-            &config,
+            config,
             reqwest::Method::DELETE,
             &format!(
-                "/management/scheduler/reservations/{}",
+                "/v0/management/scheduler/reservations/{}",
                 instance.instance_id
             ),
             None,
@@ -804,10 +821,18 @@ async fn launch_codex_instance(
     config: tauri::State<'_, Config>,
     request: codex_launcher::CodexLaunchRequest,
 ) -> Result<codex_launcher::CodexInstance, String> {
+    launch_codex_instance_inner(&launcher, &config, request).await
+}
+
+async fn launch_codex_instance_inner(
+    launcher: &codex_launcher::CodexLauncher,
+    config: &Config,
+    request: codex_launcher::CodexLaunchRequest,
+) -> Result<codex_launcher::CodexInstance, String> {
     scheduler_reservation(
-        &config,
+        config,
         reqwest::Method::POST,
-        "/management/scheduler/reservations",
+        "/v0/management/scheduler/reservations",
         Some(serde_json::json!({ "instance_id": request.instance_id, "account_id": request.account_id })),
     )
     .await?;
@@ -815,9 +840,12 @@ async fn launch_codex_instance(
         Ok(instance) => Ok(instance),
         Err(error) => {
             let _ = scheduler_reservation(
-                &config,
+                config,
                 reqwest::Method::DELETE,
-                &format!("/management/scheduler/reservations/{}", request.instance_id),
+                &format!(
+                    "/v0/management/scheduler/reservations/{}",
+                    request.instance_id
+                ),
                 None,
             )
             .await;
@@ -832,13 +860,21 @@ async fn stop_codex_instance(
     config: tauri::State<'_, Config>,
     instance_id: String,
 ) -> Result<Vec<codex_launcher::CodexInstance>, String> {
+    stop_codex_instance_inner(&launcher, &config, instance_id).await
+}
+
+async fn stop_codex_instance_inner(
+    launcher: &codex_launcher::CodexLauncher,
+    config: &Config,
+    instance_id: String,
+) -> Result<Vec<codex_launcher::CodexInstance>, String> {
     launcher
         .stop(&instance_id)
         .map_err(|error| error.to_string())?;
     scheduler_reservation(
-        &config,
+        config,
         reqwest::Method::DELETE,
-        &format!("/management/scheduler/reservations/{instance_id}"),
+        &format!("/v0/management/scheduler/reservations/{instance_id}"),
         None,
     )
     .await?;
@@ -1551,14 +1587,18 @@ fn open_console(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
+    open_external_url_with(url, |url| open::that(url))
+}
+
+fn open_external_url_with(
+    url: String,
+    opener: impl FnOnce(&str) -> std::io::Result<()>,
+) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|error| format!("invalid external URL: {error}"))?;
     if parsed.scheme() != "https" {
         return Err("only https external URLs are allowed".to_string());
     }
-    std::process::Command::new("open")
-        .arg(&url)
-        .spawn()
-        .map_err(|error| format!("failed to open browser: {error}"))?;
+    opener(&url).map_err(|error| format!("failed to open browser: {error}"))?;
     Ok(())
 }
 
@@ -1624,13 +1664,12 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 
 /// Ensure a master API key exists in config.yaml so both local agents and the
 /// desktop app can authenticate with the gateway. Returns the master key.
-fn ensure_master_api_key() -> String {
-    let auth_dir =
-        tray::default_auth_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+fn ensure_master_api_key() -> Result<String, String> {
+    let auth_dir = tray::default_auth_dir(tray::current_home()?);
     let config_path = auth_dir.join("config.yaml");
     if let Ok(content) = std::fs::read_to_string(&config_path) {
         if let Some(key) = tray::extract_first_api_key(&content) {
-            return key;
+            return Ok(key);
         }
     }
 
@@ -1647,7 +1686,7 @@ fn ensure_master_api_key() -> String {
             "failed to persist the master API key; the gateway will not accept it"
         );
     }
-    generated
+    Ok(generated)
 }
 
 fn main() {
@@ -1663,7 +1702,7 @@ fn main() {
     // The key must be on disk before the child starts: the gateway loads
     // config.yaml at startup, so spawning first makes it miss a freshly
     // minted key until the next launch.
-    let master_key = ensure_master_api_key();
+    let master_key = ensure_master_api_key().expect("cannot initialize desktop home");
     let _ = spawn_gateway(&gateway, &base_url);
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_else(|_| master_key.clone());
     let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
@@ -1682,13 +1721,15 @@ fn main() {
         .manage(NativeStateObserver::default())
         .manage(StartupContext { login_start })
         .manage(tunnel::TunnelManager::new(
-            tunnel::default_cloudflared_path(),
+            tunnel::default_cloudflared_path().expect("cannot initialize tunnel home"),
         ))
         .manage(codex_launcher::CodexLauncher::new(
             codex_launcher::default_codex_binary(),
-            codex_launcher::default_instance_root(),
+            codex_launcher::default_instance_root().expect("cannot initialize Codex home"),
         ))
-        .manage(secrets::SecretStore::new(secrets::PlainFileBackend))
+        .manage(secrets::SecretStore::new(
+            secrets::PlainFileBackend::new().expect("cannot initialize secret store home"),
+        ))
         .manage(std::sync::Mutex::new(
             cli_config::CliConfigManager::for_current_process(),
         ))

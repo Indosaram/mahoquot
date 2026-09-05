@@ -67,7 +67,8 @@ impl TunnelManager {
             enabled: runtime.child.is_some(),
             running: runtime.child.is_some(),
             public_url: runtime.public_url.clone(),
-            has_binary: installed_binary_is_verified(&self.binary_path),
+            // Display presence only; launch independently verifies the current bytes.
+            has_binary: self.binary_path.is_file(),
         }
     }
 
@@ -81,7 +82,7 @@ impl TunnelManager {
         timeout: Duration,
     ) -> Result<TunnelStatus, String> {
         ensure_local_gateway(gateway_url)?;
-        if !self.status().has_binary {
+        if !installed_binary_is_verified(&self.binary_path) {
             return Err("cloudflared is not installed and verified".to_string());
         }
 
@@ -89,6 +90,7 @@ impl TunnelManager {
             .runtime
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reap_crashed(&mut runtime);
         if runtime.child.is_some() {
             return Err("cloudflared tunnel is already running".to_string());
         }
@@ -213,9 +215,9 @@ impl Drop for TunnelManager {
     }
 }
 
-pub fn default_cloudflared_path() -> PathBuf {
+pub fn default_cloudflared_path() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("MAHOQUOT_CLOUDFLARED_BIN") {
-        return PathBuf::from(path);
+        return Ok(PathBuf::from(path));
     }
     // Check if system cloudflared exists in standard PATH / Homebrew locations
     for candidate in [
@@ -225,19 +227,16 @@ pub fn default_cloudflared_path() -> PathBuf {
     ] {
         let p = PathBuf::from(candidate);
         if p.is_file() {
-            return p;
+            return Ok(p);
         }
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = crate::tray::current_home()?;
     let name = if cfg!(target_os = "windows") {
         "cloudflared.exe"
     } else {
         "cloudflared"
     };
-    home.join(".mahoquot").join("bin").join(name)
+    Ok(home.join(".mahoquot").join("bin").join(name))
 }
 
 pub async fn download_cloudflared(dest: &Path) -> Result<(), String> {
@@ -620,7 +619,7 @@ mod tests {
         #[cfg(not(windows))]
         write_fake(
             &binary,
-            "#!/bin/sh\necho 'INF https://happy-tree-1234.trycloudflare.com' >&2\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+            "#!/bin/sh\necho 'INF https://happy-tree-1234.trycloudflare.com' >&2\nkill -STOP $$\n",
         );
         #[cfg(windows)]
         write_fake(
@@ -668,6 +667,68 @@ mod tests {
     }
 
     #[test]
+    fn status_is_cheap_but_start_revalidates_binary() {
+        let dir = test_dir("status-tamper");
+        let binary = dir.join("cloudflared");
+        write_fake(&binary, "#!/bin/sh\nexit 0\n");
+        let manager = TunnelManager::new(binary.clone());
+        assert!(installed_binary_is_verified(&binary));
+        assert!(manager.status().has_binary);
+        let before = fs::metadata(&binary).unwrap();
+        fs::write(&binary, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&binary)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_accessed(before.accessed().unwrap())
+                    .set_modified(before.modified().unwrap()),
+            )
+            .unwrap();
+        let after = fs::metadata(&binary).unwrap();
+        assert_eq!(before.len(), after.len());
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        let present = manager.status().has_binary;
+        let error = manager
+            .start_with_timeout("http://127.0.0.1:18882", Duration::ZERO)
+            .unwrap_err();
+        assert!(!manager.status().running);
+        fs::remove_dir_all(dir).unwrap();
+        assert!(
+            present,
+            "display observes presence, not full checksum verification"
+        );
+        assert_eq!(error, "cloudflared is not installed and verified");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn status_observes_presence_without_executing_external_binary() {
+        let dir = test_dir("status-external");
+        let binary = dir.join("cloudflared");
+        let invoked = dir.join("invoked");
+        fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\nprintf invoked > '{}'\nexit 0\n",
+                invoked.display()
+            ),
+        )
+        .unwrap();
+        make_executable(&binary).unwrap();
+        let manager = TunnelManager::new(binary.clone());
+        for _ in 0..100 {
+            assert!(manager.status().has_binary);
+        }
+        let executed = invoked.exists();
+        fs::remove_file(&binary).unwrap();
+        assert!(!manager.status().has_binary);
+        fs::remove_dir_all(dir).unwrap();
+        assert!(!executed, "status must not execute --version");
+    }
+
+    #[test]
     fn malformed_output_times_out_without_orphan() {
         let dir = test_dir("malformed");
         #[cfg(not(windows))]
@@ -678,7 +739,7 @@ mod tests {
         #[cfg(not(windows))]
         write_fake(
             &binary,
-            "#!/bin/sh\necho 'INF no public URL here' >&2\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+            "#!/bin/sh\necho 'INF no public URL here' >&2\nkill -STOP $$\n",
         );
         #[cfg(windows)]
         write_fake(
@@ -715,40 +776,21 @@ mod tests {
         let binary = dir.join("cloudflared");
         #[cfg(windows)]
         let binary = dir.join("cloudflared.cmd");
-        let crash_trigger = dir.join("crash-now");
-
         #[cfg(not(windows))]
-        write_fake(
-            &binary,
-            &format!(
-                "#!/bin/sh\necho 'https://short-life.trycloudflare.com' >&2\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nexit 12\n",
-                crash_trigger.display()
-            ),
-        );
+        write_fake(&binary, "#!/bin/sh\nexit 12\n");
         #[cfg(windows)]
-        write_fake(
-            &binary,
-            &format!(
-                "@echo off\r\necho https://short-life.trycloudflare.com >&2\r\n:loop\r\nif exist \"{}\" exit /b 12\r\nping 127.0.0.1 -n 1 >nul\r\ngoto loop\r\n",
-                crash_trigger.display()
-            ),
-        );
+        write_fake(&binary, "@echo off\r\nexit /b 12\r\n");
+        let mut child = Command::new(&binary).spawn().unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(12));
         let manager = TunnelManager::new(binary);
-        let started = manager
-            .start_with_timeout("http://localhost:18842", Duration::from_secs(5))
-            .unwrap();
-        assert!(started.running);
-        fs::write(&crash_trigger, b"crash").unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let status = manager.status();
-            if !status.running {
-                assert!(status.public_url.is_none());
-                break;
-            }
-            assert!(Instant::now() < deadline, "fake cloudflared was not reaped");
-            std::thread::sleep(Duration::from_millis(10));
+        {
+            let mut runtime = manager.runtime.lock().unwrap();
+            runtime.child = Some(child);
+            runtime.public_url = Some("https://short-life.trycloudflare.com".to_string());
         }
+        let status = manager.status();
+        assert!(!status.running);
+        assert!(status.public_url.is_none());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -276,8 +276,8 @@ pub fn config_with_master_api_key(existing: Option<&str>, generated: &str) -> St
 }
 
 /// The app owns its credential store at `~/.mahoquot/auth`.
-pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
-    let app_dir = std::path::Path::new(home).join(".mahoquot/auth");
+pub fn default_auth_dir(home: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    let app_dir = home.as_ref().join(".mahoquot/auth");
     if let Err(error) = std::fs::create_dir_all(&app_dir) {
         tracing::error!(
             path = %app_dir.display(),
@@ -302,6 +302,21 @@ pub fn default_auth_dir(home: &str) -> std::path::PathBuf {
         }
     }
     app_dir
+}
+
+pub fn resolve_home(
+    home: Option<std::ffi::OsString>,
+    userprofile: Option<std::ffi::OsString>,
+) -> Result<PathBuf, String> {
+    home.filter(|value| !value.is_empty())
+        .or_else(|| userprofile.filter(|value| !value.is_empty()))
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| "HOME or USERPROFILE must identify an absolute home directory".to_string())
+}
+
+pub fn current_home() -> Result<PathBuf, String> {
+    resolve_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
 }
 
 pub fn resolve_gateway_binary(env_override: Option<String>, exe: Option<&Path>) -> Option<PathBuf> {
