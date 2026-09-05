@@ -282,10 +282,8 @@ impl CliConfigManager {
             .map(|key| key.trim().to_string())
             .filter(|key| !key.is_empty());
         Self {
-            home,
-            app_data,
-            platform,
             token_override,
+            ..Self::new(home, app_data, platform)
         }
     }
 
@@ -418,8 +416,9 @@ impl CliConfigManager {
             &request.models,
         )?;
         let replaced_keys = replaced_settings(agent_id, &existing, &app_written_bytes);
-        let preserves_unrelated_settings =
-            replaced_keys.iter().all(|key| is_managed_key(agent_id, key));
+        let preserves_unrelated_settings = replaced_keys
+            .iter()
+            .all(|key| is_managed_key(agent_id, key));
         Ok(CliConfigPreview {
             agent_id,
             target_path,
@@ -609,8 +608,12 @@ impl CliConfigManager {
             CliConfigError::state(format!("serialize CLI ownership record: {error}"))
         })?;
         bytes.push(b'\n');
-        atomic_write(&self.record_path(record.agent_id), &bytes, Some(SECRET_MODE))
-            .map_err(|error| CliConfigError::io("write CLI ownership record", error))
+        atomic_write(
+            &self.record_path(record.agent_id),
+            &bytes,
+            Some(SECRET_MODE),
+        )
+        .map_err(|error| CliConfigError::io("write CLI ownership record", error))
     }
 }
 
@@ -784,11 +787,7 @@ fn object_entry<'a>(
         .ok_or_else(|| CliConfigError::malformed(agent_id, format!("{key} must be an object")))
 }
 
-fn generate_claude(
-    existing: &[u8],
-    gateway: &str,
-    token: &str,
-) -> Result<Vec<u8>, CliConfigError> {
+fn generate_claude(existing: &[u8], gateway: &str, token: &str) -> Result<Vec<u8>, CliConfigError> {
     let mut root = parse_json_object(CliAgentId::ClaudeCode, existing)?;
     let env = object_entry(&mut root, "env", CliAgentId::ClaudeCode)?;
     env.insert(
@@ -1359,7 +1358,10 @@ mod tests {
             provider["base_url"].as_str(),
             Some(format!("{gateway}/v1").as_str())
         );
-        assert_eq!(provider["experimental_bearer_token"].as_str(), Some(TEST_TOKEN));
+        assert_eq!(
+            provider["experimental_bearer_token"].as_str(),
+            Some(TEST_TOKEN)
+        );
         assert_eq!(provider["wire_api"].as_str(), Some("responses"));
         // Not a documented Codex key, and it was being written at the root
         // rather than inside the provider table.
@@ -1434,7 +1436,8 @@ mod tests {
     fn omo_merge_leaves_a_curated_list_untouched_when_the_gateway_adds_nothing() {
         let (manager, _, _) = manager("omo-merge-noop", CliPlatform::Linux);
         let target = manager.target_path(CliAgentId::Omo);
-        let curated = br#"{"providers":{"mahoquot":{"models":[{"id":"kept","cost":{"input":7}}]}}}"#;
+        let curated =
+            br#"{"providers":{"mahoquot":{"models":[{"id":"kept","cost":{"input":7}}]}}}"#;
         write_fixture(&target, curated);
 
         for models in [Vec::new(), vec!["kept".to_string()]] {
@@ -1459,7 +1462,10 @@ mod tests {
 
         // A Codex user who already picked a provider loses that choice.
         let codex = manager.target_path(CliAgentId::CodexCli);
-        write_fixture(&codex, b"model_provider = \"openai\"\nmodel = \"gpt-5.6\"\n");
+        write_fixture(
+            &codex,
+            b"model_provider = \"openai\"\nmodel = \"gpt-5.6\"\n",
+        );
         let preview = manager.preview(request(CliAgentId::CodexCli)).unwrap();
         assert_eq!(preview.replaced_keys, vec!["model_provider".to_string()]);
         assert!(preview.preserves_unrelated_settings);
@@ -1484,7 +1490,9 @@ mod tests {
         let target = manager.target_path(CliAgentId::ClaudeCode);
         write_fixture(&target, fixture(CliAgentId::ClaudeCode));
 
-        let error = manager.configure(request(CliAgentId::ClaudeCode)).unwrap_err();
+        let error = manager
+            .configure(request(CliAgentId::ClaudeCode))
+            .unwrap_err();
         assert_eq!(error.kind, CliConfigErrorKind::State);
         assert_eq!(fs::read(&target).unwrap(), fixture(CliAgentId::ClaudeCode));
         assert!(!manager.record_path(CliAgentId::ClaudeCode).exists());
