@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteDesktopSecret,
   listenTotpVaultChanged,
@@ -34,24 +34,30 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
   const [codes, setCodes] = useState<Readonly<Record<string, string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
+  const loadGeneration = useRef(0);
 
   const reload = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     try {
       const loaded = await vault.load();
       const generated = await Promise.all(
         loaded.map(async (entry) => [entry.id, await generateTotp(entry)] as const),
       );
+      if (generation !== loadGeneration.current) return;
       setEntries(loaded);
       setCodes(Object.fromEntries(generated));
       setError(null);
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (generation === loadGeneration.current) setError(errorMessage(reason));
     }
   }, [vault]);
 
   useEffect(() => {
     if (!enabled) return;
     void reload();
+    return () => {
+      loadGeneration.current += 1;
+    };
   }, [enabled, reload]);
 
   useEffect(() => {

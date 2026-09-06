@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
@@ -39,6 +38,7 @@ const toHistoryEvent = (record: LogRecord, index: number): HistoryEvent => ({
   "input-tokens": 0,
   "output-tokens": record.tokens ?? 0,
   "cached-input-tokens": 0,
+  "cache-write-tokens": 0,
   "reasoning-tokens": 0,
   "total-tokens": record.tokens ?? 0,
   "latency-ms": record["latency-ms"] ?? 0,
@@ -66,6 +66,10 @@ const totalsOf = (events: readonly HistoryEvent[]): HistoryTotals => {
     "input-tokens": 0,
     "output-tokens": events.reduce((sum, event) => sum + event["output-tokens"], 0),
     "cached-input-tokens": 0,
+    "cache-write-tokens": events.reduce(
+      (sum, event) => sum + (event["cache-write-tokens"] ?? 0),
+      0,
+    ),
     "reasoning-tokens": 0,
     "total-tokens": events.reduce((sum, event) => sum + event["total-tokens"], 0),
     "total-latency-ms": totalLatency,
@@ -110,6 +114,9 @@ export function DurableLogs({
   // slower earlier response could land last and overwrite newer rows. Only the
   // most recently issued request is allowed to publish its result.
   const requestSeqRef = useRef(0);
+  // Explicit actions own their results and pending state, not live freshness.
+  const actionSeqRef = useRef(0);
+  const pendingActionRef = useRef<number | null>(null);
 
   const proxyRecords = useMemo(
     () =>
@@ -123,6 +130,8 @@ export function DurableLogs({
   const fetchLatestPage = useCallback(
     async (isBackground = false) => {
       if (!loadHistory) return;
+      const actionSeq = isBackground ? actionSeqRef.current : ++actionSeqRef.current;
+      const blockedByAction = isBackground && pendingActionRef.current !== null;
       if (!isBackground) setPending(true);
       else setRefreshing(true);
       requestSeqRef.current += 1;
@@ -132,7 +141,8 @@ export function DurableLogs({
           providers: providerRef.current === "all" ? undefined : [providerRef.current],
           limit: PAGE_LIMIT,
         });
-        if (seq !== requestSeqRef.current) return;
+        if (seq !== requestSeqRef.current || actionSeq !== actionSeqRef.current || blockedByAction)
+          return;
         // Only update the event list if user is still on the first page
         if (pageHistoryRef.current.length === 0) {
           setEvents(page.events);
@@ -145,12 +155,12 @@ export function DurableLogs({
           return [...distinct].sort();
         });
       } catch (error) {
-        if (!isBackground && seq === requestSeqRef.current) {
+        if (!isBackground && seq === requestSeqRef.current && actionSeq === actionSeqRef.current) {
           setActionError(error instanceof Error ? error.message : "History unavailable");
         }
       } finally {
-        if (!isBackground) setPending(false);
-        else setRefreshing(false);
+        if (!isBackground && actionSeq === actionSeqRef.current) setPending(false);
+        if (isBackground && seq === requestSeqRef.current) setRefreshing(false);
       }
     },
     [loadHistory],
@@ -187,22 +197,25 @@ export function DurableLogs({
     setActionError("");
     if (!loadHistory) return;
     setPending(true);
-    requestSeqRef.current += 1;
-    const seq = requestSeqRef.current;
+    const seq = ++actionSeqRef.current;
+    pendingActionRef.current = seq;
     try {
       const page = await loadHistory({
         providers: next === "all" ? undefined : [next],
         limit: PAGE_LIMIT,
       });
-      if (seq !== requestSeqRef.current) return;
+      if (seq !== actionSeqRef.current) return;
       setEvents(page.events);
       setTotals(page.totals);
       setNextCursor(page["next-cursor"]);
     } catch (error) {
-      if (seq !== requestSeqRef.current) return;
+      if (seq !== actionSeqRef.current) return;
       setActionError(error instanceof Error ? error.message : "History unavailable");
     } finally {
-      if (seq === requestSeqRef.current) setPending(false);
+      if (seq === actionSeqRef.current) {
+        pendingActionRef.current = null;
+        setPending(false);
+      }
     }
   };
 
@@ -210,25 +223,28 @@ export function DurableLogs({
     if (!loadHistory || nextCursor === null) return;
     setPending(true);
     setActionError("");
-    requestSeqRef.current += 1;
-    const seq = requestSeqRef.current;
+    const seq = ++actionSeqRef.current;
+    pendingActionRef.current = seq;
     try {
       const page = await loadHistory({
         providers: provider === "all" ? undefined : [provider],
         limit: PAGE_LIMIT,
         cursor: nextCursor,
       });
-      if (seq !== requestSeqRef.current) return;
+      if (seq !== actionSeqRef.current) return;
       setPageHistory((history) => [...history, { events, nextCursor, loadedBefore }]);
       setEvents(page.events);
       setTotals(page.totals);
       setLoadedBefore((current) => current + events.length);
       setNextCursor(page["next-cursor"]);
     } catch (error) {
-      if (seq !== requestSeqRef.current) return;
+      if (seq !== actionSeqRef.current) return;
       setActionError(error instanceof Error ? error.message : "History unavailable");
     } finally {
-      if (seq === requestSeqRef.current) setPending(false);
+      if (seq === actionSeqRef.current) {
+        pendingActionRef.current = null;
+        setPending(false);
+      }
     }
   };
 
@@ -258,7 +274,9 @@ export function DurableLogs({
     loadHistory || provider === "all"
       ? events
       : events.filter((event) => event.provider === provider);
-  const activeTotals = totals ?? totalsOf(visibleEvents);
+  const activeTotals = totals
+    ? { ...totals, "cache-write-tokens": totals["cache-write-tokens"] ?? 0 }
+    : totalsOf(visibleEvents);
   const totalCount = activeTotals.requests;
   const firstVisible = visibleEvents.length ? loadedBefore + 1 : 0;
   const lastVisible = loadedBefore + visibleEvents.length;
@@ -275,10 +293,10 @@ export function DurableLogs({
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <span className="logs-live-indicator" role="status">
+            <output className="logs-live-indicator">
               <span className={`logs-live-dot${refreshing ? " active" : ""}`} aria-hidden="true" />
               Live
-            </span>
+            </output>
             <label className="logs-provider-filter">
               <span>Provider</span>
               <select
@@ -351,6 +369,10 @@ export function DurableLogs({
                 <div>
                   <span>Tokens</span>
                   <strong>{activeTotals["total-tokens"].toLocaleString("en-US")}</strong>
+                </div>
+                <div>
+                  <span>Cache Write</span>
+                  <strong>{activeTotals["cache-write-tokens"].toLocaleString("en-US")}</strong>
                 </div>
               </section>
             ) : null}
@@ -501,6 +523,10 @@ export function DurableLogs({
             <div>
               <dt>Output tokens</dt>
               <dd>{selected["output-tokens"].toLocaleString("en-US")}</dd>
+            </div>
+            <div>
+              <dt>Cache write tokens</dt>
+              <dd>{(selected["cache-write-tokens"] ?? 0).toLocaleString("en-US")}</dd>
             </div>
             <div>
               <dt>Latency</dt>

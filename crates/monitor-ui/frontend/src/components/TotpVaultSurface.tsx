@@ -102,14 +102,6 @@ export const TotpVaultSurface = ({
 
   return (
     <Stack className="totp-vault-surface">
-      <div className="section-head">
-        <div>
-          <span className="kicker">NATIVE CREDENTIAL STORAGE</span>
-          <h2>2FA Vault</h2>
-          <p>Secrets stay in the desktop keyring. Generated codes exist only in memory.</p>
-        </div>
-      </div>
-
       {error ? (
         <div className="state-panel warning" role="alert">
           <AlertTriangle size={16} />

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -121,7 +121,8 @@ describe("provider-catalog", () => {
     expect(antigravity?.label).toBe("Google Antigravity");
     expect(antigravity?.authKind).toBe("oauth");
     expect(antigravity?.adapter).toBe("google");
-    expect(antigravity?.defaultModel).toBe("gemini-3.7-flash");
+    expect(antigravity?.defaultModel).toBe("gemini-3.8-flash-high");
+    expect(antigravity?.models).toContain("gemini-3.7-flash-high");
 
     const zai = PROVIDER_CATALOG_BY_ID.zai;
     expect(zai).toBeDefined();
@@ -317,6 +318,21 @@ describe("reference registry parity", () => {
     omissions: readonly { id: string; reason: string }[];
   };
   const comparedFields = ["label", "baseUrl", "adapter", "authKind", "keyOptional"] as const;
+
+  it("offers only antigravity models the gateway registry binds", () => {
+    const registryPath = path.resolve(
+      here,
+      "../../../../../mahoquot-proxy/crates/registry/catalog/models-v1.json",
+    );
+    if (!existsSync(registryPath)) return;
+    const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
+      models: Record<string, { bindings?: Record<string, unknown> }>;
+    };
+    const bound = (model: string) => Boolean(registry.models[model]?.bindings?.antigravity);
+    const entry = PROVIDER_CATALOG_BY_ID["google-antigravity"];
+    expect((entry?.models ?? []).filter((model) => !bound(model))).toEqual([]);
+    expect(bound(entry?.defaultModel ?? "")).toBe(true);
+  });
   const declared = new Set(deviations.deviations.map((entry) => `${entry.id}.${entry.field}`));
   const omitted = new Set(deviations.omissions.map((entry) => entry.id));
 

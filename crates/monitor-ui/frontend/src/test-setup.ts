@@ -40,6 +40,18 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof globalThis.ResizeObserver;
 }
 
+// jsdom ships no EventSource, so the live log stream subscription would throw
+// before a Logs assertion could run. The stub records nothing; tests that care
+// about streamed rows drive the component's liveTick prop directly.
+if (typeof globalThis.EventSource === "undefined") {
+  class EventSourceStub {
+    onmessage: ((event: MessageEvent<string>) => void) | null = null;
+    onerror: ((event: Event) => void) | null = null;
+    close() {}
+  }
+  globalThis.EventSource = EventSourceStub as unknown as typeof globalThis.EventSource;
+}
+
 // Mock localStorage if missing or incomplete
 const storageMock = (() => {
   let store: Record<string, string> = {};

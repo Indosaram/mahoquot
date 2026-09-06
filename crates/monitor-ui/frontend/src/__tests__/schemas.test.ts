@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseAdminStats, parseAuthFiles, parseLogs } from "../lib/schemas";
+import {
+  HistoryEventSchema,
+  HistoryTotalsSchema,
+  parseAdminStats,
+  parseAuthFiles,
+  parseLogs,
+} from "../lib/schemas";
 
 describe("Gateway API Zod Schemas", () => {
   it("parses live-shaped /admin/stats with TTFT snapshot and accounts", () => {
@@ -206,5 +212,52 @@ describe("Gateway API Zod Schemas", () => {
     expect(parsed.records[0]?.status).toBe(200);
     expect(parsed.records[1]?.message).toContain("config updated");
     expect(parsed["request-count"]).toBe(1);
+  });
+
+  it("parses HistoryTotals and HistoryEvent with cache-write-tokens", () => {
+    const rawTotals = {
+      requests: 10,
+      "successful-requests": 9,
+      "failed-requests": 1,
+      "input-tokens": 100,
+      "output-tokens": 50,
+      "cached-input-tokens": 20,
+      "cache-write-tokens": 1234,
+      "reasoning-tokens": 10,
+      "total-tokens": 150,
+      "estimated-cost-usd": 0.05,
+    };
+    const parsedTotals = HistoryTotalsSchema.parse(rawTotals);
+    expect(parsedTotals["cache-write-tokens"]).toBe(1234);
+
+    const { "cache-write-tokens": _omittedTotals, ...rawTotalsDefault } = rawTotals;
+    const defaultTotals = HistoryTotalsSchema.parse(rawTotalsDefault);
+    expect(defaultTotals["cache-write-tokens"]).toBe(0);
+
+    const rawEvent = {
+      "event-id": "event-1",
+      "occurred-at-ms": 1720000000000,
+      account: "acc-1",
+      provider: "codex",
+      model: "gpt-5.6",
+      "key-label": null,
+      status: 200,
+      succeeded: true,
+      "input-tokens": 100,
+      "output-tokens": 50,
+      "cached-input-tokens": 20,
+      "cache-write-tokens": 1234,
+      "reasoning-tokens": 10,
+      "total-tokens": 150,
+      "latency-ms": 80,
+      "estimated-cost-usd": 0.01,
+      "price-version": null,
+    };
+    const parsedEvent = HistoryEventSchema.parse(rawEvent);
+    expect(parsedEvent["cache-write-tokens"]).toBe(1234);
+
+    const { "cache-write-tokens": _omittedEvent, ...rawEventDefault } = rawEvent;
+    const defaultEvent = HistoryEventSchema.parse(rawEventDefault);
+    expect(defaultEvent["cache-write-tokens"]).toBe(0);
   });
 });

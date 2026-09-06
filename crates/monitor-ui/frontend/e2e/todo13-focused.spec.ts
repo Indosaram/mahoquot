@@ -341,8 +341,8 @@ test("scheduler history cost reset flow", async ({ page }) => {
   await page.screenshot({ path: `${evidenceDir}/model-price-edit.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Accounts" }).click();
-  const resetButton = page.getByRole("button", { name: "Reset window" }).first();
-  await resetButton.click();
+  await page.getByRole("button", { name: /^More actions for / }).first().click();
+  await page.getByRole("menuitem", { name: /^Spend 1 banked reset for / }).click();
   await expect
     .poll(() => captured.filter((call) => call.url.includes("/reset")).length)
     .toBeGreaterThan(0);
@@ -392,7 +392,8 @@ test("invalid price is rejected without a success toast", async ({ page }) => {
 test("reset denied shows a failure toast", async ({ page }) => {
   installMocks(page, { resetDenies: true });
   await openAccounts(page);
-  await page.getByRole("button", { name: "Reset window" }).first().click();
+  await page.getByRole("button", { name: /^More actions for / }).first().click();
+  await page.getByRole("menuitem", { name: /^Spend 1 banked reset for / }).click();
   await expect(page.locator(".toast.toast-error").first()).toBeVisible();
   await expect(page.locator(".toast").filter({ hasText: "Window reset for" })).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/reset-denied.png`, fullPage: true });

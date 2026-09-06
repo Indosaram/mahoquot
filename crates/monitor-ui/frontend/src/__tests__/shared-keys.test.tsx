@@ -48,6 +48,35 @@ const renderCard = (overrides: Partial<React.ComponentProps<typeof SharedKeysCar
 };
 
 describe("SharedKeysCard", () => {
+  it("R12 omits unlimited top ups without restricting a million-token key and preserves finite top ups", async () => {
+    const user = userEvent.setup();
+    const { onPatchKey } = renderCard({
+      scopedKeys: [
+        activeKey,
+        {
+          ...activeKey,
+          id: "unlimited",
+          name: "Unlimited Partner",
+          token_limit: 0,
+          token_used: 1_000_000,
+        },
+      ],
+    });
+
+    expect(screen.queryByRole("button", { name: "Top up Unlimited Partner" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit Unlimited Partner" })).toBeEnabled();
+    expect(onPatchKey).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Top up Research Partner" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Top up Research Partner" })).getByRole("button", {
+        name: "Add quota",
+      }),
+    );
+    expect(onPatchKey).toHaveBeenCalledTimes(1);
+    expect(onPatchKey).toHaveBeenCalledWith("shk_1", { token_limit: 1_500_000 });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("renders issued scoped keys with usage progress and scope summaries", () => {
     renderCard();
 
@@ -328,5 +357,47 @@ describe("SharedKeysCard", () => {
 
     await user.click(screen.getByRole("button", { name: "Refresh shared keys" }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the issue drawer open with the gateway's reason when creation fails", async () => {
+    const user = userEvent.setup();
+    const onCreateKey = vi
+      .fn()
+      .mockRejectedValue(new Error("gateway refused: name already in use"));
+    renderCard({ onCreateKey });
+
+    await user.click(screen.getByRole("button", { name: /Issue key/i }));
+    const drawer = screen.getByRole("dialog", { name: "Issue scoped remote key" });
+    const nameInput = within(drawer).getByPlaceholderText("Name");
+    await user.type(nameInput, "Duplicate Key");
+    await user.click(within(drawer).getByRole("button", { name: "Create key" }));
+
+    await waitFor(() => expect(onCreateKey).toHaveBeenCalledTimes(1));
+    const alert = await within(drawer).findByRole("alert");
+    expect(alert).toHaveTextContent("gateway refused: name already in use");
+    expect(within(drawer).getByRole("button", { name: "Create key" })).toBeEnabled();
+    expect(screen.queryByText(/mq-sh-new/)).toBeNull();
+
+    await user.type(nameInput, "!");
+    expect(within(drawer).queryByRole("alert")).toBeNull();
+  });
+
+  it("reports a rejected edit without closing the drawer or losing the entered values", async () => {
+    const user = userEvent.setup();
+    const onPatchKey = vi.fn().mockRejectedValue(new Error("gateway refused: key was revoked"));
+    renderCard({ onPatchKey });
+
+    await user.click(screen.getByRole("button", { name: "Edit Research Partner" }));
+    const drawer = screen.getByRole("dialog", { name: "Edit Research Partner" });
+    const nameInput = within(drawer).getByPlaceholderText("Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Renamed Partner");
+    await user.click(within(drawer).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(onPatchKey).toHaveBeenCalledTimes(1));
+    const alert = await within(drawer).findByRole("alert");
+    expect(alert).toHaveTextContent("gateway refused: key was revoked");
+    expect(within(drawer).getByPlaceholderText("Name")).toHaveValue("Renamed Partner");
+    expect(within(drawer).getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
 });

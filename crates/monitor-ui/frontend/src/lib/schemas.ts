@@ -95,6 +95,21 @@ export const QuotaWindowSchema = z.object({
 });
 export type QuotaWindow = z.infer<typeof QuotaWindowSchema>;
 
+/**
+ * One banked rate-limit reset credit.
+ *
+ * Codex credits lapse roughly 30 days after they are granted, so the expiry
+ * decides whether a reset is safe to save or about to be lost. Gateways that
+ * predate this detail omit the list entirely, which is why every field -
+ * including the array itself - is optional.
+ */
+export const ResetCreditSchema = z.object({
+  granted_at_unix: z.number().nullable().optional(),
+  expires_at_unix: z.number().nullable().optional(),
+  status: z.string().nullable().optional(),
+});
+export type ResetCredit = z.infer<typeof ResetCreditSchema>;
+
 export const UsageSchema = z.object({
   plan_type: z.string().nullable().optional(),
   active_limit: z.string().nullable().optional(),
@@ -104,6 +119,7 @@ export const UsageSchema = z.object({
   credits_unlimited: z.boolean().nullable().optional(),
   has_credits: z.boolean().nullable().optional(),
   reset_credits_available: z.number().nullable().optional(),
+  reset_credits: z.array(ResetCreditSchema).optional(),
   observed_at_unix: z.number().nullable().optional(),
   groups: z.array(QuotaGroupSchema).optional(),
   totals: z
@@ -236,6 +252,7 @@ export const LogsResponseSchema = z.object({
   records: z.array(LogRecordSchema).default([]),
   "request-count": z.number().default(0),
   "proxy-count": z.number().default(0),
+  "retained-count": z.number().optional(),
   "latest-timestamp": z.number().optional(),
 });
 export type LogsResponse = z.infer<typeof LogsResponseSchema>;
@@ -274,6 +291,7 @@ export const HistoryTotalsSchema = z.object({
   "input-tokens": z.number().int().nonnegative(),
   "output-tokens": z.number().int().nonnegative(),
   "cached-input-tokens": z.number().int().nonnegative(),
+  "cache-write-tokens": z.number().int().nonnegative().default(0),
   "reasoning-tokens": z.number().int().nonnegative(),
   "total-tokens": z.number().int().nonnegative(),
   "total-latency-ms": z.number().int().nonnegative().optional(),
@@ -311,6 +329,7 @@ export const HistoryEventSchema = z.object({
   "input-tokens": z.number().int().nonnegative(),
   "output-tokens": z.number().int().nonnegative(),
   "cached-input-tokens": z.number().int().nonnegative(),
+  "cache-write-tokens": z.number().int().nonnegative().default(0),
   "reasoning-tokens": z.number().int().nonnegative(),
   "total-tokens": z.number().int().nonnegative(),
   "latency-ms": z.number().int().nonnegative(),
@@ -416,6 +435,21 @@ export const parseLogs = (data: unknown): LogsResponse => {
     throw new Error(`Failed to parse logs response: ${parsed.error.message}`);
   }
   return parsed.data;
+};
+
+/**
+ * Parse one streamed gateway log line. A live stream must survive a malformed
+ * or unparsable line, so this reports `null` instead of throwing.
+ */
+export const parseLogRecordLine = (line: string): LogRecord | null => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const parsed = LogRecordSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
 };
 
 export const parseModelRegistryStatus = (data: unknown): ModelRegistryStatus => {

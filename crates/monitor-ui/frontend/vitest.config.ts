@@ -7,6 +7,20 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    coverage: {
+      provider: "istanbul",
+      all: true,
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.{test,spec}.{ts,tsx}",
+        "src/**/__tests__/**",
+        "src/**/*.d.ts",
+        "src/test-setup.ts",
+        "src/qa/**",
+      ],
+      reporter: ["text", "json", "json-summary", "lcov", "html"],
+      reportsDirectory: "./coverage",
+    },
   },
   resolve: {
     alias: {

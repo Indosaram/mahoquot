@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "dev.mahoquot.monitor",
   "build": {
-    "beforeDevCommand": "cd frontend && bun run dev",
+    "beforeDevCommand": {
+      "script": "bun run dev",
+      "cwd": "frontend"
+    },
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "ui"
   },

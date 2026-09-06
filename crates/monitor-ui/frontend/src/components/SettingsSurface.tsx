@@ -1,5 +1,6 @@
 import {
   ArrowDown,
+  ArrowDownToLine,
   ArrowUp,
   Copy,
   ListOrdered,
@@ -411,7 +412,10 @@ export function SettingsSurface({
             </div>
           </Card>
           <Card className="settings-card">
-            <div className="settings-header">
+            <header className="settings-card-head">
+              <div className="settings-icon">
+                <ArrowDownToLine size={17} />
+              </div>
               <div>
                 <h2>Signed updates</h2>
                 <p>Desktop and bundled gateway update as one verified release unit.</p>
@@ -419,7 +423,7 @@ export function SettingsSurface({
               <Badge tone={updateStatus?.available ? "warn" : "neutral"}>
                 {updateStatus?.available ? updateStatus.version : "Current"}
               </Badge>
-            </div>
+            </header>
             <div className="settings-actions">
               <Button disabled={updateBusy} onClick={onCheckUpdate}>
                 Check for updates
@@ -633,7 +637,8 @@ export function SettingsSurface({
                 <span>
                   <strong>Enable scheduler</strong>
                   <small>
-                    Ranks eligible quota by active reset time; default account priority follows the order set in the Accounts view.
+                    Ranks eligible quota by active reset time; default account priority follows the
+                    order set in the Accounts view.
                   </small>
                 </span>
               </label>
@@ -794,7 +799,7 @@ export function SettingsSurface({
                 </Button>
               </div>
               {draftPrices.map((price, index) => (
-                <div className="proxy-settings-grid" key={price.model}>
+                <div className="model-price-row" key={price.model}>
                   <Field
                     label={`Input price for ${price.model}`}
                     hint="USD per million input tokens."
@@ -811,7 +816,10 @@ export function SettingsSurface({
                       }}
                     />
                   </Field>
-                  <strong>${estimatedSpend(price).toFixed(2)}</strong>
+                  <div className="model-price-estimate">
+                    <small>Estimated spend</small>
+                    <strong>${estimatedSpend(price).toFixed(2)}</strong>
+                  </div>
                   <Button onClick={() => void onSaveModelPrice(price)}>
                     Save {price.model} price
                   </Button>
@@ -844,7 +852,7 @@ export function SettingsSurface({
               </select>
             </Field>
           </Card>
-          <Card className="settings-card advanced-card">
+          <Card className="settings-card">
             <header className="settings-card-head">
               <div className="settings-icon">
                 <TerminalSquare size={17} />
@@ -856,13 +864,15 @@ export function SettingsSurface({
                   secrets.
                 </p>
               </div>
+            </header>
+            <div className="settings-actions">
               <Button
                 disabled={blocks(pending, "config")}
                 onClick={() => void onOpenConfigEditor()}
               >
                 {pending === "config:load" ? "Loading…" : "Open YAML editor"}
               </Button>
-            </header>
+            </div>
           </Card>
         </div>
       </section>

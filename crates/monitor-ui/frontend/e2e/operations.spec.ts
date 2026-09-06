@@ -372,7 +372,8 @@ test("adds from the plus drawer and deletes from the normal account list", async
   await expect(page.getByRole("complementary", { name: "Provider onboarding" })).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/account-list-after-add.png`, fullPage: true });
 
-  await page.getByRole("button", { name: "Remove New DeepSeek" }).click();
+  await page.getByRole("button", { name: "More actions for New DeepSeek" }).click();
+  await page.getByRole("menuitem", { name: "Remove New DeepSeek" }).click();
   await page.screenshot({ path: `${evidenceDir}/account-list-delete-confirm.png`, fullPage: true });
   await page.getByRole("button", { name: "Confirm removing New DeepSeek" }).click();
   await expect.poll(() => deletes).toEqual([writes[0]]);
@@ -406,11 +407,13 @@ test("Kiro onboarding and account disable enable lifecycle", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Kiro", exact: true })).toBeVisible();
   await page.getByLabel("Close onboarding").click();
   await page.getByText("Codex", { exact: true }).click();
-  await page.getByRole("button", { name: /Disable Primary Codex/ }).click();
+  await page.getByRole("button", { name: /More actions for Primary Codex/ }).click();
+  await page.getByRole("menuitem", { name: /Disable Primary Codex/ }).click();
   await expect
     .poll(() => statusWrites)
     .toEqual([{ name: "account@example.com.json", disabled: true }]);
-  await expect(page.getByRole("button", { name: /Enable Primary Codex/ })).toBeVisible();
+  await page.getByRole("button", { name: /More actions for Primary Codex/ }).click();
+  await expect(page.getByRole("menuitem", { name: /Enable Primary Codex/ })).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/account-disabled-lifecycle.png`, fullPage: true });
 });
 
@@ -498,7 +501,8 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await page.route("**/admin/accounts/**/reset", (route) =>
     route.fulfill({ status: 500, body: "deterministic reset failure" }),
   );
-  await page.getByRole("button", { name: "Reset window" }).first().click();
+  await page.getByRole("button", { name: /^More actions for / }).first().click();
+  await page.getByRole("menuitem", { name: /^Spend 1 banked reset for / }).click();
   await expect(page.getByText(/Action failed/)).toBeVisible();
   await page.getByRole("button", { name: "Add account" }).click();
   await openProviderCatalog(page, "Coding plan");
@@ -754,7 +758,7 @@ test("shell scroll ownership on desktop workspace", async ({ page }) => {
     "Root document must not vertically scroll; height must be bounded to viewport",
   ).toBeLessThanOrEqual(shellMetrics.docClientHeight);
 
-  // 4. Logs destination uses dedicated bounded inner scroll container
+  // 4. Logs destination scrolls with the page: one scrollport, not two
   await page.getByRole("button", { name: "Logs" }).click();
   const logWrap = page.locator(".durable-logs-table-wrap");
   await expect(logWrap).toBeVisible();
@@ -762,10 +766,12 @@ test("shell scroll ownership on desktop workspace", async ({ page }) => {
   const logsScrollContract = await page.evaluate(() => {
     const doc = document.documentElement;
     const wrap = document.querySelector(".durable-logs-table-wrap");
+    const main = document.querySelector("main");
     return {
       docScrollHeight: doc.scrollHeight,
       docClientHeight: doc.clientHeight,
       wrapOverflowY: wrap ? window.getComputedStyle(wrap).overflowY : "",
+      mainOverflowY: main ? window.getComputedStyle(main).overflowY : "",
     };
   });
 
@@ -774,9 +780,13 @@ test("shell scroll ownership on desktop workspace", async ({ page }) => {
     "Logs destination must not cause root document vertical scrolling",
   ).toBeLessThanOrEqual(logsScrollContract.docClientHeight);
   expect(
-    ["auto", "scroll"].includes(logsScrollContract.wrapOverflowY),
-    "Logs table wrap must manage its own inner scroll region",
-  ).toBe(true);
+    logsScrollContract.mainOverflowY,
+    "Main workspace stays the single scroll owner on the Logs surface",
+  ).toBe("auto");
+  expect(
+    logsScrollContract.wrapOverflowY,
+    "Logs table must not open a second scrollport inside the page scroller",
+  ).toBe("visible");
 });
 
 test("shell scroll ownership across responsive viewports", async ({ page }) => {

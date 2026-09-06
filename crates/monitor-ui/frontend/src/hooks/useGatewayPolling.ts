@@ -20,6 +20,11 @@ export type LoadState = "loading" | "online" | "starting" | "stopped" | "relay-l
 const POLL_INTERVAL_MS = 10_000;
 const STARTUP_RETRY_MS = 2_000;
 
+/** Log lines pulled per poll. The Logs table reads paginated history; this tail
+ * only backs the proxy view, so an unbounded reply would re-ship the whole
+ * on-disk log on every cycle. */
+const LOG_TAIL_LIMIT = 500;
+
 /** Next poll delay after a round: fast retries until the first success, then
  * a 10s cadence with capped exponential backoff on later failures. Before
  * the first successful stats fetch the freshly spawned gateway is still
@@ -64,6 +69,14 @@ export function useGatewayPolling(clients: GatewayClients) {
   const firstLoad = useRef(true);
   const hasSucceeded = useRef(false);
   const usageRefreshAt = useRef(0);
+  const pollGeneration = useRef(0);
+  const prevClientsRef = useRef(clients);
+  if (prevClientsRef.current !== clients) {
+    prevClientsRef.current = clients;
+    pollGeneration.current += 1;
+    firstLoad.current = true;
+    hasSucceeded.current = false;
+  }
 
   // Mirrors gatewayLifecycle so refresh can read it without becoming a new
   // callback on every lifecycle flip, which remounted the poll effect and
@@ -76,23 +89,27 @@ export function useGatewayPolling(clients: GatewayClients) {
   // The gateway publishes its management wire version on the public /healthz
   // probe; a mismatch means IPC calls may silently misbehave, so the console
   // says so instead of failing feature-by-feature.
-  const checkGatewayVersion = useCallback(async () => {
-    try {
-      const health = await clients.admin.health();
-      if (health.api_schema !== EXPECTED_API_SCHEMA) {
-        setSchemaMismatch(
-          `Gateway ${health.version} speaks management schema ${health.api_schema}, this console expects ${EXPECTED_API_SCHEMA}. Update the gateway or the app.`,
-        );
-      } else {
-        setSchemaMismatch(null);
-      }
-    } catch {
-      // An unreachable gateway is already surfaced through the load state.
-    }
-  }, [clients]);
   useEffect(() => {
-    void checkGatewayVersion();
-  }, [checkGatewayVersion]);
+    let active = true;
+    void clients.admin
+      .health()
+      .then((health) => {
+        if (!active) return;
+        if (health.api_schema !== EXPECTED_API_SCHEMA) {
+          setSchemaMismatch(
+            `Gateway ${health.version} speaks management schema ${health.api_schema}, this console expects ${EXPECTED_API_SCHEMA}. Update the gateway or the app.`,
+          );
+        } else {
+          setSchemaMismatch(null);
+        }
+      })
+      .catch(() => {
+        // An unreachable gateway is already surfaced through the load state.
+      });
+    return () => {
+      active = false;
+    };
+  }, [clients]);
 
   const refreshUsage = useCallback(
     async (force = false) => {
@@ -117,10 +134,12 @@ export function useGatewayPolling(clients: GatewayClients) {
   );
 
   const refresh = useCallback(async (): Promise<boolean> => {
+    const generation = ++pollGeneration.current;
     if (firstLoad.current) setLoadState("loading");
     let succeeded = true;
     try {
       const nextStats = await clients.admin.stats();
+      if (generation !== pollGeneration.current) return false;
       setStats(nextStats);
       const now = Date.now();
       setTelemetry((samples) => {
@@ -132,6 +151,7 @@ export function useGatewayPolling(clients: GatewayClients) {
       setGatewayLifecycle("running");
       firstLoad.current = false;
     } catch (error) {
+      if (generation !== pollGeneration.current) return false;
       succeeded = false;
       setLoadState(
         error instanceof GatewayError && error.status === 401
@@ -143,14 +163,16 @@ export function useGatewayPolling(clients: GatewayClients) {
       firstLoad.current = false;
       return false;
     }
+    if (generation !== pollGeneration.current) return false;
     hasSucceeded.current = true;
     // These are independent so failures in optional services do not strip credentials.
     const [credentialResult, logResult, registryResult, modelsResult] = await Promise.allSettled([
       clients.management.credentials(),
-      clients.management.logs(),
+      clients.management.logs(LOG_TAIL_LIMIT),
       clients.management.modelRegistryStatus(),
       clients.management.models(),
     ]);
+    if (generation !== pollGeneration.current) return false;
     if (credentialResult.status === "fulfilled") {
       setCredentials(credentialResult.value);
       setCredentialsError("");
@@ -223,6 +245,7 @@ export function useGatewayPolling(clients: GatewayClients) {
     void tick();
     return () => {
       cancelled = true;
+      pollGeneration.current += 1;
       window.clearTimeout(timer);
     };
   }, [refresh]);

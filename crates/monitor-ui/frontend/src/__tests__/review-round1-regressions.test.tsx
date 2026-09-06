@@ -68,10 +68,7 @@ describe("review round 1 regressions", () => {
     }
     await waitFor(() => expect(urlInput).toHaveValue("http://127.0.0.1:18801/"));
 
-    expect(
-      migrations - afterMount,
-      "migration re-ran while the operator was still typing",
-    ).toBe(0);
+    expect(migrations - afterMount, "migration re-ran while the operator was still typing").toBe(0);
   });
 
   it("reports entrance completion from every cartesian canvas painter", async () => {

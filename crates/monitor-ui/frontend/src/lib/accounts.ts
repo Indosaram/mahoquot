@@ -1,7 +1,19 @@
 import { normalizeToQuotioProviderId } from "./provider-catalog";
-import type { AccountStats, AuthFileItem, LastError, Usage } from "./schemas";
+import type { AccountStats, AuthFileItem, LastError, ResetCredit, Usage } from "./schemas";
 
-export type AccountHealth = "healthy" | "cooldown" | "degraded" | "error" | "not_loaded";
+/** One banked reset credit, with the dates the gateway could resolve. */
+export interface ResetCreditView {
+  readonly grantedAtUnix: number | null;
+  readonly expiresAtUnix: number | null;
+}
+
+export type AccountHealth =
+  | "healthy"
+  | "cooldown"
+  | "degraded"
+  | "error"
+  | "not_loaded"
+  | "disabled";
 export type QuotaCapability = "supported" | "unsupported";
 
 export interface NormalizedAccount {
@@ -31,6 +43,14 @@ export interface NormalizedAccount {
   readonly isCredentialOnly: boolean;
   readonly canReset: boolean;
   readonly resetCreditsAvailable: number;
+  /**
+   * Whether this account's provider reports banked resets at all, which is
+   * not the same as having one to spend. Derived from the presence of the
+   * count rather than from the provider id, so a provider that gains reset
+   * support needs no change here.
+   */
+  readonly supportsReset: boolean;
+  readonly resetCredits: readonly ResetCreditView[];
   readonly credentialMeta?:
     | {
         readonly size: number;
@@ -46,7 +66,14 @@ export const extractEmail = (idOrEmail: string): string => {
   if (clean.toLowerCase().startsWith("codex-")) {
     clean = clean.slice("codex-".length);
   }
-  const atIndex = clean.lastIndexOf("@");
+  let atIndex = clean.lastIndexOf("@");
+  if (atIndex < 0) {
+    const match = clean.match(/^([a-zA-Z0-9._%+-]+)_([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?:-.*)?$/);
+    if (match?.[1] && match[2]) {
+      clean = `${match[1]}@${match[2]}`;
+      atIndex = clean.lastIndexOf("@");
+    }
+  }
   if (atIndex > 0) {
     const prefix = clean.slice(0, atIndex);
     let domain = clean.slice(atIndex + 1);
@@ -104,6 +131,9 @@ export const deriveAccountHealth = (
         : "unknown";
 
   const now = Date.now();
+  if (statusStr.includes("disabled")) {
+    return "disabled";
+  }
   if (resetAtUnixMs && resetAtUnixMs > now) {
     return "cooldown";
   }
@@ -140,6 +170,27 @@ export const formatResetTime = (sec: number | null | undefined): string => {
   return `${s}s`;
 };
 
+/**
+ * Order banked reset credits by how soon they lapse.
+ *
+ * The nearest expiry is what decides whether to spend a credit today, so it
+ * leads regardless of the order the gateway sent. A credit with no expiry is
+ * unknown rather than urgent, so it sorts last instead of first.
+ */
+const normalizeResetCredits = (
+  raw: readonly ResetCredit[] | undefined,
+): readonly ResetCreditView[] =>
+  (raw ?? [])
+    .map((credit) => ({
+      grantedAtUnix: credit.granted_at_unix ?? null,
+      expiresAtUnix: credit.expires_at_unix ?? null,
+    }))
+    .sort(
+      (left, right) =>
+        (left.expiresAtUnix ?? Number.POSITIVE_INFINITY) -
+        (right.expiresAtUnix ?? Number.POSITIVE_INFINITY),
+    );
+
 const providerOf = (value: string | undefined): string => normalizeToQuotioProviderId(value || "");
 
 const credentialProvider = (credential: AuthFileItem): string =>
@@ -157,6 +208,17 @@ const sharesProvider = (accountProvider: string, credential: AuthFileItem): bool
   const credProvider = credentialProvider(credential);
   if (!credProvider || !accountProvider) return true;
   return credProvider === accountProvider;
+};
+
+const matchesCredentialName = (credName: string, accountId: string): boolean => {
+  if (credName === accountId) return true;
+  const stem = credName.replace(/\.json$/i, "");
+  if (stem === accountId) return true;
+  const withoutPlan = stem.replace(/-(?:plus|prolite|pro|team|free|enterprise)$/i, "");
+  if (withoutPlan === accountId) return true;
+  const withoutPrefix = withoutPlan.replace(/^[a-zA-Z0-9]+-/, "");
+  if (withoutPrefix === accountId) return true;
+  return false;
 };
 
 /**
@@ -183,7 +245,8 @@ const pairAccountsWithCredentials = (
       if (matched.has(c.name)) return false;
       const credEmail = extractEmail(c.email || c.account || c.name);
       return (
-        sharesProvider(accountProvider, c) && (credEmail === accountEmail || c.name === account.id)
+        sharesProvider(accountProvider, c) &&
+        (credEmail === accountEmail || matchesCredentialName(c.name, account.id))
       );
     });
     if (credential) {
@@ -227,7 +290,14 @@ function cleanAccountLabel(raw: string, provider: string): string {
     if (label.toLowerCase().startsWith("codex-")) {
       label = label.slice("codex-".length);
     }
-    const at = label.lastIndexOf("@");
+    let at = label.lastIndexOf("@");
+    if (at < 0) {
+      const match = label.match(/^([a-zA-Z0-9._%+-]+)_([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?:-.*)?$/);
+      if (match?.[1] && match[2]) {
+        label = `${match[1]}@${match[2]}`;
+        at = label.lastIndexOf("@");
+      }
+    }
     if (at > 0) {
       let prefix = label.slice(0, at);
       const suffix = label
@@ -256,7 +326,13 @@ export const mergeAccountsAndCredentials = (
     const rEmail = extractEmail(r.id);
     const cred = pairing.get(r.id);
 
-    const health = deriveAccountHealth(r.health, r.reset_at_unix_ms, r.ok, r.fails);
+    const isAccountDisabled =
+      (cred?.disabled ?? false) ||
+      (typeof r.health === "object" && (r.health as { status?: string }).status === "disabled") ||
+      r.health === "disabled";
+    const health = isAccountDisabled
+      ? "disabled"
+      : deriveAccountHealth(r.health, r.reset_at_unix_ms, r.ok, r.fails);
     const cooldownRemaining = r.reset_at_unix_ms
       ? Math.max(0, Math.floor((r.reset_at_unix_ms - nowMs) / 1000))
       : null;
@@ -277,7 +353,7 @@ export const mergeAccountsAndCredentials = (
       id: r.id,
       runtimeId: r.id,
       credentialName: cred ? cred.name : null,
-      disabled: cred?.disabled ?? false,
+      disabled: isAccountDisabled,
       authIndex: cred ? cred.auth_index : null,
       provider: providerOf(r.provider || "unknown"),
       plan: r.plan ?? null,
@@ -300,6 +376,8 @@ export const mergeAccountsAndCredentials = (
       isCredentialOnly: false,
       canReset: resetCredits > 0,
       resetCreditsAvailable: resetCredits,
+      supportsReset: r.usage?.reset_credits_available != null,
+      resetCredits: normalizeResetCredits(r.usage?.reset_credits),
       credentialMeta: cred
         ? {
             size: cred.size,
@@ -327,8 +405,8 @@ export const mergeAccountsAndCredentials = (
       plan: null,
       email: cEmail,
       label: cleanAccountLabel(c.label || c.name, providerOf(c.type || c.provider || "unknown")),
-      health: "not_loaded",
-      healthRaw: "Not loaded into pool",
+      health: c.disabled ? "disabled" : "not_loaded",
+      healthRaw: c.disabled ? "Disabled" : "Not loaded into pool",
       cooldownUntilUnixMs: null,
       cooldownRemainingSecs: null,
       ok: 0,
@@ -344,6 +422,8 @@ export const mergeAccountsAndCredentials = (
       isCredentialOnly: true,
       canReset: false,
       resetCreditsAvailable: 0,
+      supportsReset: false,
+      resetCredits: [],
       credentialMeta: {
         size: c.size,
         path: c.path,

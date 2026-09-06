@@ -1,5 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
+const port = Number(process.env.MAHOQUOT_E2E_PORT ?? 18847);
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   // primitive-showcase.spec.ts targets the QA harness artifact; run it with
   // `bunx playwright test -c playwright.qa.config.ts` (serves qa.html on :4188).
@@ -9,13 +12,13 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   workers: 1,
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },
   webServer: {
     command: "bun e2e/server.ts",
-    url: "http://127.0.0.1:4173/management.html",
+    url: `${baseURL}/management.html`,
     reuseExistingServer: false,
   },
 });

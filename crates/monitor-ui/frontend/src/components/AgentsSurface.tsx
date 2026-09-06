@@ -6,8 +6,8 @@ import type {
   CodexInstance,
   CodexLaunchRequest,
 } from "../lib/native";
-import { Badge, Button, Card } from "./ui";
 import { CodexInstancesCard } from "./CodexInstancesCard";
+import { Badge, Button, Card } from "./ui";
 
 export interface AgentsSurfaceProps {
   readonly agents: readonly CliAgentStatus[];
@@ -30,7 +30,7 @@ const stateCopy = (state: CliAgentStatus["config_state"]): string => {
     case "absent":
       return "No configuration";
     case "unmanaged":
-      return "Unmanaged";
+      return "Not configured yet";
     case "configured":
       return "Configured";
     case "modified":
@@ -40,10 +40,13 @@ const stateCopy = (state: CliAgentStatus["config_state"]): string => {
   }
 };
 
+// Only a file that changed after we wrote it can lose the user's work, so it is
+// the sole state that earns a warning colour. Painting "we have not configured
+// this yet" as a caution made an ordinary first run look like a problem.
 const stateTone = (state: CliAgentStatus["config_state"]): string => {
   if (state === "configured") return "ok";
   if (state === "modified") return "bad";
-  if (state === "unmanaged" || state === "removed") return "warn";
+  if (state === "removed") return "warn";
   return "neutral";
 };
 
@@ -128,6 +131,10 @@ export function AgentsSurface({
                 ) : null}
                 {preview ? (
                   <section className="agent-preview" aria-label="Pending configuration">
+                    {/* What this write does is per-file data, so it belongs in the
+                        list beside the byte count. The backup and no-clobber
+                        promises are constant policy and are stated once in the
+                        intro card rather than repeated on every agent. */}
                     <dl>
                       <div>
                         <dt>Writes</dt>
@@ -135,14 +142,15 @@ export function AgentsSurface({
                           {preview.format} · {preview.app_written_bytes.length} bytes
                         </dd>
                       </div>
+                      <div>
+                        <dt>Replaces</dt>
+                        <dd>
+                          {preview.replaced_keys.length > 0
+                            ? preview.replaced_keys.join(", ")
+                            : "Nothing"}
+                        </dd>
+                      </div>
                     </dl>
-                    {preview.replaced_keys.length > 0 ? (
-                      <p role="alert" className="agent-conflict">
-                        Replaces existing settings: {preview.replaced_keys.join(", ")}
-                      </p>
-                    ) : (
-                      <p>No existing setting changes value.</p>
-                    )}
                     {preview.preserves_unrelated_settings ? null : (
                       <p role="alert" className="agent-conflict">
                         This write also changes settings Mahoquot does not own.

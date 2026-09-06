@@ -141,7 +141,8 @@ export const CRATES = [
 ] as const;
 
 export const INSTALL_STEPS = [
-  { label: "Build the workspace", cmd: "cargo build --release --workspace" },
-  { label: "Start the gateway", cmd: "cargo run -p mahoquot-gateway" },
+  { label: "Clone the proxy (Rust)", cmd: "git clone https://github.com/indosaram/mahoquot-proxy.git" },
+  { label: "Start the proxy", cmd: '(cd mahoquot-proxy && mkdir -p "$HOME/.mahoquot/auth" && cargo run --release -p mahoquot-gateway -- --auth-dir "$HOME/.mahoquot/auth" --port 18801)' },
   { label: "Point any client at it", cmd: "export OPENAI_BASE_URL=http://127.0.0.1:18801/v1" },
+  { label: "Optional desktop (Bun)", cmd: "git clone https://github.com/indosaram/mahoquot.git && (cd mahoquot && bun install && bun run dev)" },
 ] as const;

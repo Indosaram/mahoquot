@@ -51,7 +51,67 @@ const stats = {
   ],
 };
 
+/**
+ * Reset, enable/disable, re-auth, and remove live behind each account card's
+ * overflow trigger, so a test drives them the way a user does: open, then pick.
+ */
+const openAccountMenu = async (label: string) => {
+  fireEvent.click(await screen.findByRole("button", { name: `More actions for ${label}` }));
+};
+
+const clickAccountMenuItem = async (label: string, item: string | RegExp) => {
+  await openAccountMenu(label);
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+};
+
+/** Spending a banked reset dispatches immediately from the menu. */
+const spendBankedReset = async (label: string) => {
+  await clickAccountMenuItem(label, `Spend 1 banked reset for ${label}`);
+};
+
 describe("operations console", () => {
+  it("R10 falls back when the stored provider no longer exists", async () => {
+    sessionStorage.setItem("mahoquot.provider", "deleted-provider");
+    await act(async () => {
+      render(<App />);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
+    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+    expect(document.querySelectorAll(".account-card")).toHaveLength(1);
+  });
+
+  it("R10 falls back after the selected provider's last account disappears", async () => {
+    const firstAccount = stats.accounts[0];
+    if (!firstAccount) throw new Error("Missing account fixture");
+    let current = {
+      ...stats,
+      accounts: [...stats.accounts, { ...firstAccount, id: "claude-fixture", provider: "claude" }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (input: RequestInfo | URL) =>
+          new Response(
+            JSON.stringify(
+              String(input).includes("/admin/stats") ? current : { files: [], ok: true },
+            ),
+          ),
+      ),
+    );
+    await act(async () => {
+      render(<App />);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
+    fireEvent.click(screen.getByRole("radio", { name: "codex 1 account" }));
+    fireEvent.click(screen.getByRole("radio", { name: "claude 1 account" }));
+    current = { ...stats, accounts: [...stats.accounts] };
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
+    });
+    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+    expect(document.querySelectorAll(".account-card")).toHaveLength(1);
+  });
+
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
     localStorage.removeItem("mahoquot.theme");
@@ -278,6 +338,55 @@ describe("operations console", () => {
     expect(content.api_key).toBe("sk-clb-secret");
     expect(content.plan).toBe("opus-standard");
     await waitFor(() => expect(requests.every(({ url }) => !url.includes("generic-"))).toBe(true));
+  });
+
+  it("discovers models from custom provider endpoint and updates suggested models", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs")) {
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        }
+        if (url.includes("/v1/models")) {
+          return new Response(
+            JSON.stringify({
+              data: [{ id: "custom-gpt-5" }, { id: "custom-gpt-mini" }],
+            }),
+          );
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    (await screen.findAllByText("Requests"))[0];
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "API" }));
+    fireEvent.change(await screen.findByLabelText("Search providers"), {
+      target: { value: "Custom API" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Custom API/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add custom endpoint" }));
+
+    const discoverBtn = screen.getByRole("button", { name: "Discover models" });
+    expect(discoverBtn).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Provider endpoint"), {
+      target: { value: "https://api.custom-ai.com" },
+    });
+    expect(discoverBtn).not.toBeDisabled();
+
+    fireEvent.click(discoverBtn);
+    await waitFor(() => {
+      expect(screen.getByText("Discovered 2 models from provider endpoint.")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/custom-gpt-5, custom-gpt-mini/)).toBeInTheDocument();
   });
 
   it("detects provider approval without a manual status click", async () => {
@@ -624,8 +733,9 @@ describe("operations console", () => {
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
 
     // A refused log read must not strip the credential inventory.
-    expect(await screen.findByRole("button", { name: "Remove pooled" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Re-authenticate pooled" })).toBeInTheDocument();
+    await openAccountMenu("pooled");
+    expect(await screen.findByRole("menuitem", { name: "Remove pooled" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Re-authenticate pooled" })).toBeInTheDocument();
   });
 
   it("manages a subscription account with re-auth and confirmed removal", async () => {
@@ -674,12 +784,13 @@ describe("operations console", () => {
     // The imported subscription is one manageable account, not a runtime card plus a
     // phantom "not loaded" credential card.
     expect(await screen.findByLabelText("claude 1 account")).toBeInTheDocument();
+    await openAccountMenu("claude-local");
     expect(
-      screen.getByRole("button", { name: "Re-authenticate claude-local" }),
+      screen.getByRole("menuitem", { name: "Re-authenticate claude-local" }),
     ).toBeInTheDocument();
 
     // Removal takes two deliberate clicks so one stray click cannot destroy a credential.
-    fireEvent.click(screen.getByRole("button", { name: "Remove claude-local" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove claude-local" }));
     expect(requests.some((request) => request.method === "DELETE")).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm removing claude-local" }));
@@ -743,7 +854,7 @@ describe("operations console", () => {
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
     fireEvent.click(await screen.findByLabelText("deepseek 1 account"));
     expect(await screen.findByText("deepseek-main")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Re-authenticate deepseek-main" }));
+    await clickAccountMenuItem("deepseek-main", "Re-authenticate deepseek-main");
 
     expect(await screen.findByText("DeepSeek")).toBeInTheDocument();
     expect(screen.getByLabelText("Provider API key")).toBeInTheDocument();
@@ -1124,8 +1235,8 @@ describe("operations console", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Configure Claude Code" }));
 
       const panel = await screen.findByRole("region", { name: "Pending configuration" });
-      expect(within(panel).getByRole("alert")).toHaveTextContent(
-        "Replaces existing settings: env.ANTHROPIC_BASE_URL",
+      expect(within(panel).getByText("Replaces").nextElementSibling).toHaveTextContent(
+        "env.ANTHROPIC_BASE_URL",
       );
       expect(invoke.mock.calls.some(([command]) => command === "configure_cli_agent")).toBe(false);
 
@@ -1411,7 +1522,7 @@ describe("operations console", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     expect(await screen.findByRole("button", { name: "Kiro" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close onboarding" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Disable runtime-id@example.com" }));
+    await clickAccountMenuItem("runtime-id@example.com", "Disable runtime-id@example.com");
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toEqual({
       url: "http://127.0.0.1:18801/v0/management/auth-files/status",
@@ -1866,8 +1977,7 @@ describe("reset quota toast flows", () => {
     const accountsTab = (await screen.findAllByText("Accounts"))[0];
     fireEvent.click(accountsTab);
 
-    const resetButton = await screen.findByRole("button", { name: "Reset window" });
-    fireEvent.click(resetButton);
+    await spendBankedReset("runtime-id@example.com");
 
     expect(await screen.findByText(/Window reset for/)).toBeInTheDocument();
   });
@@ -1905,8 +2015,7 @@ describe("reset quota toast flows", () => {
     const accountsTab = (await screen.findAllByText("Accounts"))[0];
     fireEvent.click(accountsTab);
 
-    const resetButton = await screen.findByRole("button", { name: "Reset window" });
-    fireEvent.click(resetButton);
+    await spendBankedReset("runtime-id@example.com");
 
     expect(
       await screen.findByText(/Action failed: no reset credits available/),
@@ -1916,5 +2025,53 @@ describe("reset quota toast flows", () => {
         /Window reset for long-runtime-id@example\.com — refreshed quota active\./,
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not dispatch requests to an uncommitted gateway URL when typing in settings", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(resettableStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        if (url.includes("config.yaml")) {
+          return new Response("port: 18801\n", {
+            headers: { "Content-Type": "application/yaml" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    const settingsTab = (await screen.findAllByText("Settings"))[0];
+    fireEvent.click(settingsTab);
+
+    const gatewayUrlInput = await screen.findByLabelText("Gateway URL");
+    fireEvent.change(gatewayUrlInput, { target: { value: "http://127.0.0.1:19999" } });
+
+    // Ensure requests have not been dispatched to the draft URL
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      requestedUrls.some((url) => url.startsWith("http://127.0.0.1:19999")),
+      "Draft URL must not receive requests before Save & reconnect",
+    ).toBe(false);
+
+    // Save & reconnect now commits the URL
+    const saveButton = screen.getByRole("button", { name: "Save & reconnect" });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(
+        requestedUrls.some((url) => url.startsWith("http://127.0.0.1:19999")),
+        "Committed URL must receive requests after Save & reconnect",
+      ).toBe(true);
+    });
   });
 });

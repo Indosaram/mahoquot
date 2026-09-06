@@ -12,6 +12,7 @@
     "format": "biome format --write src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:artifact": "vitest run src/__tests__/artifact.test.ts",
     "test:e2e": "playwright test"
@@ -39,6 +40,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-istanbul": "3.2.7",
     "autoprefixer": "^10.4.21",
     "axe-core": "^4.13.0",
     "jsdom": "^26.0.0",

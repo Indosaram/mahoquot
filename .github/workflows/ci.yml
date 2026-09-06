@@ -33,7 +33,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: crates/monitor-ui/frontend
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Typecheck frontend
         working-directory: crates/monitor-ui/frontend
@@ -46,3 +46,37 @@ jobs:
       - name: Test frontend
         working-directory: crates/monitor-ui/frontend
         run: bun run test
+
+  desktop-browser:
+    runs-on: ubuntu-latest
+    env:
+      MAHOQUOT_E2E_PORT: "18847"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - working-directory: crates/monitor-ui/frontend
+        run: bun install --frozen-lockfile
+      - working-directory: crates/monitor-ui/frontend
+        run: bunx playwright install --with-deps chromium
+      - working-directory: crates/monitor-ui/frontend
+        run: bun run build
+      - working-directory: crates/monitor-ui/frontend
+        run: bun run test:artifact
+      - working-directory: crates/monitor-ui/frontend
+        run: bun run test:e2e
+
+  site-browser:
+    runs-on: ubuntu-latest
+    env:
+      MAHOQUOT_SITE_QA_PORT: "18848"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - working-directory: site
+        run: bun install --frozen-lockfile
+      - working-directory: site
+        run: bunx playwright install --with-deps chromium
+      - working-directory: site
+        run: bun run build
+      - working-directory: site
+        run: bunx playwright test

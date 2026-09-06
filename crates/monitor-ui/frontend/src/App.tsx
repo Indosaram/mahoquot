@@ -29,7 +29,7 @@ import { Button } from "./components/ui";
 import { useGatewayPolling } from "./hooks/useGatewayPolling";
 import { useTotpVault } from "./hooks/useTotpVault";
 import { type NormalizedAccount, mergeAccountsAndCredentials } from "./lib/accounts";
-import { createGatewayClients } from "./lib/api";
+import { createGatewayClients, discoverProviderModels } from "./lib/api";
 import type { HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
 import {
@@ -176,6 +176,7 @@ export default function App() {
   const [providerSearch, setProviderSearch] = useState("");
   const [confirmRemove, setConfirmRemove] = useState("");
   const [step, setStep] = useState<OnboardingStep>(ACCOUNT_KIND_STEP);
+  const [discoveringModels, setDiscoveringModels] = useState(false);
   const [onboardingScope, setOnboardingScope] = useState<OnboardingScope>("api");
   const [dragging, setDragging] = useState("");
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
@@ -209,7 +210,7 @@ export default function App() {
   const [nativeSettingsBusy, setNativeSettingsBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const totp = useTotpVault(baseUrl);
+  const totp = useTotpVault(committedBaseUrl);
 
   const reloadCliAgents = useCallback(async () => {
     const agents = await listCliAgents();
@@ -288,7 +289,10 @@ export default function App() {
     };
   }, [onboardingOpen, configOpen]);
 
-  const clients = useMemo(() => createGatewayClients(baseUrl, relayKey), [baseUrl, relayKey]);
+  const clients = useMemo(
+    () => createGatewayClients(committedBaseUrl, relayKey),
+    [committedBaseUrl, relayKey],
+  );
 
   const reloadScopedKeys = useCallback(async () => {
     try {
@@ -439,10 +443,10 @@ export default function App() {
   const agentRequest = useCallback(
     (agentId: CliAgentId) => ({
       agent_id: agentId,
-      gateway_url: baseUrl || DEFAULT_GATEWAY_URL,
+      gateway_url: committedBaseUrl || DEFAULT_GATEWAY_URL,
       models: gatewayModels.map((model) => model.id),
     }),
-    [baseUrl, gatewayModels],
+    [committedBaseUrl, gatewayModels],
   );
 
   const previewAgent = useCallback(
@@ -549,7 +553,7 @@ export default function App() {
     // notch renders its empty ring even though accounts exist.
     if (surface !== "notch" && surface !== "tray") return;
     let active = true;
-    void readDesktopSecret(baseUrl, "default", "management_key")
+    void readDesktopSecret(committedBaseUrl, "default", "management_key")
       .then((value) => {
         if (active) setRelayKeyState(value ?? "");
       })
@@ -560,7 +564,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [baseUrl, surface]);
+  }, [committedBaseUrl, surface]);
 
   useEffect(() => {
     if (surface === "notch" || surface === "tray") return;
@@ -644,7 +648,7 @@ export default function App() {
     () => [...new Set(accounts.map((account) => account.provider))].sort(),
     [accounts],
   );
-  const selectedProvider = provider === "all" ? providers[0] : provider;
+  const selectedProvider = providers.includes(provider) ? provider : providers[0];
   const visibleAccounts = accounts.filter((account) => account.provider === selectedProvider);
 
   const runAccountAction = async (action: "warm" | "reset", account: NormalizedAccount) => {
@@ -694,6 +698,9 @@ export default function App() {
           credential.name === account.credentialName ? { ...credential, disabled } : credential,
         ),
       );
+      if (!disabled) {
+        await refreshUsage(true);
+      }
       await refresh();
       setNotice(`${account.label} ${disabled ? "disabled" : "enabled"}.`);
     } catch (reason) {
@@ -702,6 +709,11 @@ export default function App() {
       setPending("");
     }
   };
+
+  const handleAccountRefresh = useCallback(async () => {
+    await refreshUsage(true);
+    await refresh();
+  }, [refreshUsage, refresh]);
 
   const moveCredential = async (account: NormalizedAccount, direction: -1 | 1) => {
     if (!account.credentialName) return;
@@ -863,6 +875,33 @@ export default function App() {
       setNotice(actionFailed(error));
     } finally {
       setPending("");
+    }
+  };
+
+  const handleDiscoverModels = async () => {
+    if (step.kind !== "generic") return;
+    setDiscoveringModels(true);
+    try {
+      const discovered = await discoverProviderModels(
+        step.baseUrl.trim(),
+        step.apiKey.trim() || undefined,
+        step.provider.staticHeaders,
+      );
+      setStep((current) => {
+        if (current.kind !== "generic") return current;
+        return {
+          ...current,
+          provider: {
+            ...current.provider,
+            models: discovered,
+          },
+        };
+      });
+      setNotice(`Discovered ${discovered.length} models from provider endpoint.`);
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setDiscoveringModels(false);
     }
   };
 
@@ -1151,7 +1190,7 @@ export default function App() {
     return (
       <TrayPanel
         accounts={accounts}
-        proxyUrl={baseUrl || "Same-origin gateway"}
+        proxyUrl={committedBaseUrl || "Same-origin gateway"}
         online={loadState === "online"}
         gatewayLifecycle={gatewayLifecycle}
         refreshing={refreshing}
@@ -1258,13 +1297,14 @@ export default function App() {
             providers={providers}
             selectedProvider={selectedProvider}
             visibleAccounts={visibleAccounts}
+            showRemaining={showRemaining}
             pending={pending}
             credentialsError={credentialsError}
             dragging={dragging}
             confirmRemove={confirmRemove}
             onSelectProvider={setProvider}
             onRunAccountAction={runAccountAction}
-            onRefresh={() => void refresh()}
+            onRefresh={handleAccountRefresh}
             onSetCredentialDisabled={setCredentialDisabled}
             onReauthenticate={reauthenticate}
             onRemoveCredential={removeCredential}
@@ -1386,7 +1426,12 @@ export default function App() {
                 setSecretStoreError(null);
               }}
               onRelayKeyBlur={() => {
-                void writeDesktopSecret(baseUrl, "default", "management_key", relayKey.trim())
+                void writeDesktopSecret(
+                  committedBaseUrl,
+                  "default",
+                  "management_key",
+                  relayKey.trim(),
+                )
                   .then(() => setSecretStoreError(null))
                   .catch((error: unknown) => {
                     const typed =
@@ -1638,6 +1683,13 @@ export default function App() {
                     />
                   </label>
                 ) : null}
+                <Button
+                  type="button"
+                  disabled={!step.baseUrl.trim() || discoveringModels}
+                  onClick={() => void handleDiscoverModels()}
+                >
+                  {discoveringModels ? "Discovering…" : "Discover models"}
+                </Button>
                 <Button
                   disabled={
                     blocks(pending, "onboarding") ||

@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import { useTotpVault } from "../hooks/useTotpVault";
 import { createGatewayClients } from "../lib/api";
+import * as native from "../lib/native";
 
 const stats = {
   uptime_secs: 3600,
@@ -15,6 +17,63 @@ const stats = {
 };
 
 describe("connection settings robustness", () => {
+  it("R09 binds TOTP reads only to the saved Gateway URL", async () => {
+    const read = vi.spyOn(native, "readDesktopSecret").mockResolvedValue(null);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ...stats, files: [] }))),
+    );
+    await act(async () => {
+      render(<App />);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    read.mockClear();
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Gateway URL"), {
+        target: { value: "http://127.0.0.1:18849" },
+      });
+    });
+    expect(read).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save & reconnect" }));
+    });
+    expect(read).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:18849", "default", "totp");
+  });
+
+  it.each(["success", "failure"])(
+    "R09 ignores stale vault reload %s after endpoint switch",
+    async (outcome) => {
+      let resolve!: (value: string | null) => void;
+      let reject!: (reason: Error) => void;
+      const old = new Promise<string | null>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      vi.spyOn(native, "readDesktopSecret").mockImplementation((endpoint) =>
+        endpoint.endsWith("18848") ? old : Promise.resolve(null),
+      );
+      const { result, rerender } = renderHook(({ endpoint }) => useTotpVault(endpoint), {
+        initialProps: { endpoint: "http://127.0.0.1:18848" },
+      });
+      await act(async () => {
+        rerender({ endpoint: "http://127.0.0.1:18849" });
+      });
+      // Make the newer reload's state distinguishable without crypto/timer dependencies.
+      vi.mocked(native.readDesktopSecret).mockResolvedValue("invalid-new-vault");
+      await act(async () => {
+        await result.current.reload();
+      });
+      expect(result.current.error).toBe("TOTP vault data is invalid.");
+      await act(async () => {
+        if (outcome === "success") resolve(null);
+        else reject(new Error("old endpoint failed"));
+        await old.catch(() => undefined);
+      });
+      expect(result.current.error).toBe("TOTP vault data is invalid.");
+      expect(result.current.entries).toEqual([]);
+    },
+  );
+
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
     sessionStorage.clear();

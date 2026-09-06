@@ -280,4 +280,66 @@ describe("Account Normalization and Quota Capability", () => {
     expect(merged[0]?.email).toBe("zqvm9mzp@doloffer.shop");
     expect(merged[0]?.label).toBe("ZqvM9mzp@doloffer.shop");
   });
+
+  it("classifies disabled credential file as disabled rather than not_loaded", () => {
+    const creds: AuthFileItem[] = [
+      {
+        name: "codex-buzzi8434_gmail.com-pro.json",
+        size: 256,
+        auth_index: "d1a3a2",
+        path: "/auth/codex-buzzi8434_gmail.com-pro.json",
+        label: "codex-buzzi8434_gmail.com-pro",
+        disabled: true,
+        unavailable: false,
+        runtime_only: false,
+        type: "codex",
+        email: "buzzi8434@gmail.com",
+      },
+    ];
+
+    const normalized = mergeAccountsAndCredentials([], creds);
+    expect(normalized.length).toBe(1);
+    const acc = normalized[0] as NormalizedAccount;
+    expect(acc.disabled).toBe(true);
+    expect(acc.health).toBe("disabled");
+    expect(acc.healthRaw).toBe("Disabled");
+  });
+
+  it("pairs runtime account and credential when email domain uses underscore and preserves disabled status", () => {
+    const stats: AdminStats["accounts"] = [
+      {
+        id: "buzzi8434_gmail.com",
+        provider: "codex",
+        health: { status: "disabled" },
+        ok: 10,
+        fails: 0,
+        reset_at_unix_ms: null,
+        last_error: null,
+        ttft: null,
+        usage: null,
+      },
+    ];
+    const creds: AuthFileItem[] = [
+      {
+        name: "codex-buzzi8434_gmail.com-pro.json",
+        size: 256,
+        auth_index: "d1a3a2",
+        path: "/auth/codex-buzzi8434_gmail.com-pro.json",
+        label: "codex-buzzi8434_gmail.com-pro",
+        disabled: true,
+        unavailable: false,
+        runtime_only: false,
+        type: "codex",
+        email: "buzzi8434@gmail.com",
+      },
+    ];
+
+    const normalized = mergeAccountsAndCredentials(stats, creds);
+    expect(normalized.length).toBe(1);
+    const acc = normalized[0] as NormalizedAccount;
+    expect(acc.runtimeId).toBe("buzzi8434_gmail.com");
+    expect(acc.credentialName).toBe("codex-buzzi8434_gmail.com-pro.json");
+    expect(acc.disabled).toBe(true);
+    expect(acc.health).toBe("disabled");
+  });
 });

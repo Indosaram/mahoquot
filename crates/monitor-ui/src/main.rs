@@ -1487,6 +1487,14 @@ fn read_secret(
     config: tauri::State<'_, Config>,
     request: SecretRequest,
 ) -> Result<Option<String>, secrets::SecretStoreError> {
+    read_secret_inner(&store, &config, request)
+}
+
+fn read_secret_inner(
+    store: &DesktopSecretStore,
+    config: &Config,
+    request: SecretRequest,
+) -> Result<Option<String>, secrets::SecretStoreError> {
     if let Some(val) = store.read(&secret_ref(
         &request.endpoint,
         &request.profile,
@@ -1494,7 +1502,11 @@ fn read_secret(
     ))? {
         return Ok(Some(val));
     }
-    if request.kind == secrets::SecretKind::ManagementKey && !config.api_key.is_empty() {
+    if request.kind == secrets::SecretKind::ManagementKey
+        && !config.api_key.is_empty()
+        && secrets::normalize_endpoint(&request.endpoint)
+            == secrets::normalize_endpoint(&config.base_url)
+    {
         return Ok(Some(config.api_key.clone()));
     }
     Ok(None)
@@ -1529,6 +1541,14 @@ fn migrate_legacy_secret(
     config: tauri::State<'_, Config>,
     request: MigrateLegacySecretRequest,
 ) -> Result<secrets::MigrationOutcome, secrets::SecretStoreError> {
+    migrate_legacy_secret_inner(&store, &config, request)
+}
+
+fn migrate_legacy_secret_inner(
+    store: &DesktopSecretStore,
+    config: &Config,
+    request: MigrateLegacySecretRequest,
+) -> Result<secrets::MigrationOutcome, secrets::SecretStoreError> {
     let outcome = store.migrate_legacy(
         &secret_ref(&request.endpoint, &request.profile, request.kind),
         request.legacy_value.as_deref(),
@@ -1539,8 +1559,13 @@ fn migrate_legacy_secret(
     }
 
     // If no secret was saved in keychain or legacy storage, fall back to the
-    // master API key configured for this gateway so the UI is automatically unlocked.
-    if request.kind == secrets::SecretKind::ManagementKey && !config.api_key.is_empty() {
+    // master API key configured for this gateway so the UI is automatically unlocked,
+    // but only when the requested endpoint matches this gateway's configured base URL.
+    if request.kind == secrets::SecretKind::ManagementKey
+        && !config.api_key.is_empty()
+        && secrets::normalize_endpoint(&request.endpoint)
+            == secrets::normalize_endpoint(&config.base_url)
+    {
         let master = &config.api_key;
         let _ = store.write(
             &secret_ref(&request.endpoint, &request.profile, request.kind),

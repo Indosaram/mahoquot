@@ -2,36 +2,48 @@ import {
   AlertTriangle,
   ChevronDown,
   GripVertical,
+  KeyRound,
+  MoreHorizontal,
+  Power,
   RefreshCw,
   RotateCcw,
   Sparkles,
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, type MouseEvent, useState } from "react";
+import { Fragment, type MouseEvent, type ReactNode, useEffect, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
+import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { Badge, Button, Card } from "./ui";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
-  const tone = account.health === "healthy" ? "ok" : account.health === "cooldown" ? "warn" : "bad";
+  const tone =
+    account.health === "healthy"
+      ? "ok"
+      : account.health === "cooldown"
+        ? "warn"
+        : account.health === "disabled"
+          ? "neutral"
+          : "bad";
   return <Badge tone={tone}>{account.health.replace("_", " ")}</Badge>;
 };
 
 export interface AccountCardProps {
   readonly account: NormalizedAccount;
   readonly pending: string;
+  readonly showRemaining?: boolean;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
   readonly onRunAccountAction: (
     action: "warm" | "reset",
     account: NormalizedAccount,
   ) => void | Promise<void>;
-  readonly onRefresh: () => void | Promise<void>;
+  readonly onRefresh: (account?: NormalizedAccount) => void | Promise<void>;
   readonly onSetCredentialDisabled: (
     account: NormalizedAccount,
     disabled: boolean,
@@ -54,9 +66,99 @@ const formatTokenCount = (tokens: number): string =>
     maximumFractionDigits: 1,
   }).format(tokens);
 
+interface OverflowAction {
+  readonly key: string;
+  readonly label: string;
+  readonly ariaLabel: string;
+  readonly icon: ReactNode;
+  readonly disabled: boolean;
+  readonly danger?: boolean;
+  readonly title?: string;
+  readonly run: () => void;
+}
+
+/**
+ * The lifecycle actions a card offers outnumber the width its header can spend
+ * on labels, so the rare ones live behind one trigger. Keeping them in a menu
+ * rather than shrinking every button is what stops the title from being
+ * squeezed into an unreadable stub.
+ */
+const AccountOverflowMenu = ({
+  label,
+  actions,
+}: { readonly label: string; readonly actions: readonly OverflowAction[] }) => {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = () => setOpen(false);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (actions.length === 0) return null;
+
+  return (
+    <span className="account-overflow">
+      <Button
+        size="sm"
+        className="button-icon"
+        aria-label={`More actions for ${label}`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        // The window dismiss handler would otherwise close on pointerdown and
+        // let the click immediately reopen the menu.
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <MoreHorizontal size={14} />
+      </Button>
+      {open ? (
+        <div
+          className="account-overflow-menu"
+          role="menu"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {actions.map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              role="menuitem"
+              className="account-overflow-item"
+              data-danger={action.danger ? "true" : undefined}
+              aria-label={action.ariaLabel}
+              title={action.title}
+              disabled={action.disabled}
+              onClick={() => {
+                setOpen(false);
+                action.run();
+              }}
+            >
+              {action.icon}
+              <span>{action.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </span>
+  );
+};
+
 export const AccountCard = ({
   account,
   pending,
+  showRemaining = true,
   dragging,
   confirmRemove,
   onRunAccountAction,
@@ -105,6 +207,63 @@ export const AccountCard = ({
     return d;
   };
 
+  // Warm up and Refresh stay in the row because they are the routine actions;
+  // everything below is rare or destructive and does not deserve permanent
+  // header width.
+  const overflowActions: OverflowAction[] = [];
+  if (account.supportsReset) {
+    // The label names the price, not just the outcome: "Reset window" left it
+    // ambiguous whether the item reported banked credits or spent one.
+    const canSpendReset = account.canReset;
+    overflowActions.push({
+      key: "reset",
+      label: canSpendReset ? "Spend 1 banked reset" : "No banked resets",
+      ariaLabel: canSpendReset
+        ? `Spend 1 banked reset for ${account.label}`
+        : `No banked resets for ${account.label}`,
+      icon: <RotateCcw size={13} />,
+      title: canSpendReset
+        ? `Spends one of ${account.resetCreditsAvailable} banked resets to start a fresh quota window`
+        : "No banked resets available",
+      disabled: !account.runtimeId || isPending || !canSpendReset,
+      run: () => void onRunAccountAction("reset", account),
+    });
+  }
+  if (account.credentialName) {
+    overflowActions.push(
+      {
+        key: "status",
+        label:
+          pending === `status:${account.id}`
+            ? "Saving…"
+            : account.disabled
+              ? "Enable account"
+              : "Disable account",
+        ariaLabel: `${account.disabled ? "Enable" : "Disable"} ${account.label}`,
+        icon: <Power size={13} />,
+        disabled: isPending,
+        run: () => void onSetCredentialDisabled(account, !account.disabled),
+      },
+      {
+        key: "auth",
+        label: pending === `auth:${account.provider}` ? "Starting…" : "Re-authenticate",
+        ariaLabel: `Re-authenticate ${account.label}`,
+        icon: <KeyRound size={13} />,
+        disabled: isPending || blocks(pending, "onboarding"),
+        run: () => void onReauthenticate(account),
+      },
+      {
+        key: "remove",
+        label: "Remove account",
+        ariaLabel: `Remove ${account.label}`,
+        icon: <Trash2 size={13} />,
+        danger: true,
+        disabled: isPending,
+        run: () => onSetConfirmRemove(account.id),
+      },
+    );
+  }
+
   const rawDetail = account.runtimeId ?? account.credentialName ?? "Credential only";
   const detail = cleanDetail(rawDetail);
   const detailRedundant =
@@ -115,6 +274,7 @@ export const AccountCard = ({
   return (
     <Card
       className="account-card"
+      data-disabled={account.disabled ? "true" : undefined}
       draggable={Boolean(account.credentialName) && !isPending}
       data-dragging={dragging === account.credentialName ? "true" : undefined}
       onDragStart={(event) => {
@@ -166,82 +326,56 @@ export const AccountCard = ({
             <div>
               <strong title={account.label}>{account.label}</strong>
               <HealthBadge account={account} />
+              <AccountResetCredits account={account} />
             </div>
             {detailRedundant ? null : <span title={detail}>{detail}</span>}
           </div>
         </div>
         <div className="account-actions">
           <Button
+            size="sm"
             disabled={!account.runtimeId || isPending}
             onClick={() => void onRunAccountAction("warm", account)}
           >
-            <Sparkles size={14} />
+            <Sparkles size={12} />
             {pending === `warm:${account.id}` ? "Warming…" : "Warm up"}
           </Button>
           <Button
+            size="sm"
             aria-label="Refresh quota"
-            disabled={!account.runtimeId || isPending || refreshing}
+            disabled={(!account.runtimeId && !account.credentialName) || isPending || refreshing}
             onClick={() => void handleRefresh()}
           >
-            <RefreshCw size={14} className={refreshing ? "spin" : ""} /> Refresh
+            <RefreshCw size={12} className={refreshing ? "spin" : ""} /> Refresh
           </Button>
-          {account.canReset ? (
-            <Button
-              disabled={!account.runtimeId || isPending}
-              onClick={() => void onRunAccountAction("reset", account)}
-            >
-              <RotateCcw size={14} />
-              {pending === `reset:${account.id}` ? "Resetting…" : "Reset window"}
-            </Button>
-          ) : null}
-          {account.credentialName ? (
+          {confirmRemove === account.id ? (
             <>
               <Button
-                aria-label={`${account.disabled ? "Enable" : "Disable"} ${account.label}`}
+                size="sm"
+                variant="danger"
+                aria-label={`Confirm removing ${account.label}`}
                 disabled={isPending}
-                onClick={() => void onSetCredentialDisabled(account, !account.disabled)}
+                onClick={() => void onRemoveCredential(account)}
               >
-                {pending === `status:${account.id}`
-                  ? "Saving…"
-                  : account.disabled
-                    ? "Enable"
-                    : "Disable"}
+                <Trash2 size={12} />
+                {pending === `remove:${account.id}` ? "Removing…" : "Confirm"}
               </Button>
               <Button
-                aria-label={`Re-authenticate ${account.label}`}
-                disabled={isPending || blocks(pending, "onboarding")}
-                onClick={() => void onReauthenticate(account)}
+                size="sm"
+                variant="ghost"
+                aria-label={`Cancel removing ${account.label}`}
+                onClick={() => onSetConfirmRemove("")}
               >
-                {pending === `auth:${account.provider}` ? "Starting…" : "Re-auth"}
+                <X size={12} /> Cancel
               </Button>
-              {confirmRemove === account.id ? (
-                <>
-                  <Button
-                    aria-label={`Confirm removing ${account.label}`}
-                    disabled={isPending}
-                    onClick={() => void onRemoveCredential(account)}
-                  >
-                    <Trash2 size={14} />
-                    {pending === `remove:${account.id}` ? "Removing…" : "Confirm"}
-                  </Button>
-                  <Button
-                    aria-label={`Cancel removing ${account.label}`}
-                    onClick={() => onSetConfirmRemove("")}
-                  >
-                    Cancel
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  aria-label={`Remove ${account.label}`}
-                  disabled={isPending}
-                  onClick={() => onSetConfirmRemove(account.id)}
-                >
-                  <Trash2 size={14} /> Remove
-                </Button>
-              )}
             </>
-          ) : null}
+          ) : pending === `reset:${account.id}` ? (
+            <Button size="sm" disabled>
+              <RotateCcw size={12} className="spin" /> Resetting…
+            </Button>
+          ) : (
+            <AccountOverflowMenu label={account.label} actions={overflowActions} />
+          )}
         </div>
       </div>
       <div className="token-usage" aria-label="Token usage">
@@ -323,18 +457,25 @@ export const AccountCard = ({
         {rows.length ? (
           <div className="quota-list">
             {rows.map((row, index, list) => {
-              const remaining = Math.max(0, 100 - row.usedPercent);
+              const percent = showRemaining ? Math.max(0, 100 - row.usedPercent) : row.usedPercent;
               const startsGroup = row.group !== null && row.group !== list[index - 1]?.group;
               return (
                 <Fragment key={`${row.group ?? ""}-${row.name}-${index}`}>
                   {startsGroup ? <div className="quota-group">{row.group}</div> : null}
                   <div className="quota-row">
                     <span className="quota-name">{row.name}</span>
-                    <span className="quota-track">
-                      <i style={{ width: `${Math.min(100, remaining)}%` }} />
+                    <span
+                      className="quota-track"
+                      role="meter"
+                      aria-label={`${row.name} ${showRemaining ? "remaining" : "used"}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.min(100, percent)}
+                    >
+                      <i style={{ width: `${Math.min(100, percent)}%` }} />
                     </span>
                     <span className="quota-meta">
-                      <strong>{formatQuotaPercent(remaining)}%</strong>
+                      <strong>{formatQuotaPercent(percent)}%</strong>
                       {row.resetSeconds !== null ? (
                         <small>{formatResetTime(row.resetSeconds)}</small>
                       ) : null}
@@ -364,11 +505,9 @@ export const AccountCard = ({
           </button>
         </div>
       ) : null}
-      {!account.runtimeId ? (
+      {!account.runtimeId && !account.disabled ? (
         <div className="restart-note">
-          {account.disabled
-            ? "Disabled — enable this account to load it into the runtime pool."
-            : "Credential saved but the gateway could not load it into the runtime pool."}
+          Credential saved but the gateway could not load it into the runtime pool.
         </div>
       ) : null}
     </Card>

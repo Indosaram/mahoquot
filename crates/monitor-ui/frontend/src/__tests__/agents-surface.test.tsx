@@ -127,10 +127,17 @@ describe("Agents surface and typed native IPC", () => {
   it("names every configuration state it can render", () => {
     render(surface());
     expect(screen.getAllByRole("article")).toHaveLength(4);
-    expect(screen.getByText("Unmanaged")).toBeInTheDocument();
+    expect(screen.getByText("Not configured yet")).toBeInTheDocument();
     expect(screen.getByText("Changed after setup")).toBeInTheDocument();
     expect(screen.getByText("Configured")).toBeInTheDocument();
     expect(screen.getByText("Configuration deleted")).toBeInTheDocument();
+  });
+
+  it("reserves the caution badge for a file that changed after setup", () => {
+    render(surface());
+    // An untouched user file is an ordinary starting point, not a warning.
+    expect(screen.getByText("Not configured yet").className).toContain("badge-neutral");
+    expect(screen.getByText("Changed after setup").className).toContain("badge-bad");
   });
 
   it("requires a preview before it writes anything", async () => {
@@ -156,10 +163,13 @@ describe("Agents surface and typed native IPC", () => {
       }),
     );
 
+    // Replacing a setting Mahoquot owns is the expected result of configuring,
+    // so it is disclosed as data; only an unowned setting raises an alert.
     const panel = screen.getByRole("region", { name: "Pending configuration" });
-    expect(within(panel).getByRole("alert")).toHaveTextContent(
-      "Replaces existing settings: model_provider",
+    expect(within(panel).getByText("Replaces").nextElementSibling).toHaveTextContent(
+      "model_provider",
     );
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Apply Codex CLI configuration" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledWith("codex_cli", true));
@@ -172,9 +182,19 @@ describe("Agents surface and typed native IPC", () => {
       }),
     );
     const panel = screen.getByRole("region", { name: "Pending configuration" });
-    expect(
-      within(panel).getByText("This write also changes settings Mahoquot does not own."),
-    ).toBeInTheDocument();
+    expect(within(panel).getByRole("alert")).toHaveTextContent(
+      "This write also changes settings Mahoquot does not own.",
+    );
+  });
+
+  it("reports a write that replaces nothing without prose or an alert", () => {
+    render(surface({ pendingPreview: preview({ replaced_keys: [] }) }));
+
+    const panel = screen.getByRole("region", { name: "Pending configuration" });
+    expect(within(panel).getByText("Replaces").nextElementSibling).toHaveTextContent("Nothing");
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+    // The backup promise is stated once in the intro, never per agent.
+    expect(within(panel).queryByText(/backed up/)).not.toBeInTheDocument();
   });
 
   it("offers taking ownership as the only way out of a conflict", async () => {

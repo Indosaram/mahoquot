@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createGatewayClients } from "../lib/api";
+import { createGatewayClients, discoverProviderModels } from "../lib/api";
 import { RawCredentialDocumentSchema } from "../lib/schemas";
 
 describe("credential order resync and raw import guard", () => {
@@ -208,5 +208,107 @@ describe("unified gateway auth boundary", () => {
       provider: "codex",
     });
     expect(calls).toEqual(["/v0/management/get-auth-status?state=state%20with%20spaces"]);
+  });
+});
+
+describe("discoverProviderModels", () => {
+  it("discovers models from OpenAI shape and attaches auth header", async () => {
+    let capturedUrl = "";
+    let capturedHeaders: HeadersInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        capturedUrl = String(input);
+        capturedHeaders = init?.headers;
+        return new Response(
+          JSON.stringify({
+            data: [{ id: "gpt-4" }, { id: "gpt-3.5" }],
+          }),
+        );
+      }),
+    );
+
+    const models = await discoverProviderModels("http://example.com", "key");
+    expect(models).toEqual(["gpt-4", "gpt-3.5"]);
+    expect(capturedUrl).toBe("http://example.com/v1/models");
+    expect(new Headers(capturedHeaders).get("Authorization")).toBe("Bearer key");
+  });
+
+  it("normalizes baseUrl ending in /v1 by appending /models", async () => {
+    let capturedUrl = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        capturedUrl = String(input);
+        return new Response(JSON.stringify({ data: [{ id: "model-1" }] }));
+      }),
+    );
+
+    await discoverProviderModels("http://example.com/v1///", "key");
+    expect(capturedUrl).toBe("http://example.com/v1/models");
+  });
+
+  it("passes static headers when provided", async () => {
+    let capturedHeaders: HeadersInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        capturedHeaders = init?.headers;
+        return new Response(JSON.stringify({ data: [] }));
+      }),
+    );
+
+    await discoverProviderModels("http://example.com", "key", { "X-Custom-Header": "custom-val" });
+    const headers = new Headers(capturedHeaders);
+    expect(headers.get("Authorization")).toBe("Bearer key");
+    expect(headers.get("X-Custom-Header")).toBe("custom-val");
+  });
+
+  it("extracts models from direct array shape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(["m1", "m2"]))),
+    );
+
+    const models = await discoverProviderModels("http://example.com");
+    expect(models).toEqual(["m1", "m2"]);
+  });
+
+  it("extracts models from Gemini shape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [{ id: "gemini-pro" }],
+            }),
+          ),
+      ),
+    );
+
+    const models = await discoverProviderModels("http://example.com");
+    expect(models).toEqual(["gemini-pro"]);
+  });
+
+  it("throws on HTTP 4xx error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 })),
+    );
+
+    await expect(discoverProviderModels("http://example.com", "bad-key")).rejects.toThrow();
+  });
+
+  it("throws on HTTP 5xx error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Internal Server Error" }), { status: 500 }),
+      ),
+    );
+
+    await expect(discoverProviderModels("http://example.com")).rejects.toThrow();
   });
 });

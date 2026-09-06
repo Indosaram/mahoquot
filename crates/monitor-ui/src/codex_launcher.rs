@@ -192,10 +192,18 @@ impl CodexLauncher {
             format!("{{\"account_id\":{:?}}}\n", request.account_id),
         )
         .map_err(io_error)?;
-        let child = Command::new(binary)
+        let mut command = Command::new(binary);
+        if binary
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n == "codex" || n == "codex.exe")
+        {
+            command.arg("app-server");
+        }
+        let child = command
             .env("CODEX_HOME", &codex_home)
             .env("MAHOQUOT_CODEX_ACCOUNT", &request.account_id)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -451,6 +459,72 @@ mod tests {
         let error = launcher.launch(request("a", "account-a")).unwrap_err();
         assert!(error.to_string().contains("Codex executable"));
         assert!(error.to_string().contains("not found"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn codex_named_binary_receives_app_server_argument() {
+        let root = temp();
+        #[cfg(not(windows))]
+        let binary = root.join("codex");
+        #[cfg(windows)]
+        let binary = root.join("codex.cmd");
+
+        #[cfg(not(windows))]
+        let script = r#"#!/bin/sh
+if [ "$1" != "app-server" ]; then
+    echo "missing app-server arg" >&2
+    exit 99
+fi
+trap 'exit 0' TERM INT
+while :; do sleep 1; done
+"#;
+        #[cfg(windows)]
+        let script = r#"@echo off
+if "%~1" neq "app-server" exit /b 99
+:loop
+ping 127.0.0.1 -n 2 >nul
+goto loop
+"#;
+
+        fs::write(&binary, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+
+        let launcher = CodexLauncher::new(binary, root.join("instances"));
+        let launched = launcher
+            .launch(request("app-server-test", "account-test"))
+            .unwrap();
+        assert_eq!(launched.state, InstanceState::Running);
+        launcher.reap().unwrap();
+        assert_eq!(
+            launcher.state("app-server-test"),
+            Some(InstanceState::Running)
+        );
+        launcher.stop_all().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn real_codex_binary_launches_without_crashing_if_installed() {
+        let real_binary = default_codex_binary();
+        if !real_binary.is_file() {
+            return;
+        }
+        let root = temp();
+        let launcher = CodexLauncher::new(real_binary, root.join("instances"));
+        let launched = launcher
+            .launch(request("real-test", "account-real"))
+            .unwrap();
+        assert_eq!(launched.state, InstanceState::Running);
+        // Let it run briefly and ensure it didn't exit immediately with "stdin is not a terminal"
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        launcher.reap().unwrap();
+        assert_eq!(launcher.state("real-test"), Some(InstanceState::Running));
+        launcher.stop_all().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }

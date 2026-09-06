@@ -44,11 +44,14 @@ export function Install() {
         <div className="grid grid-cols-1 gap-14 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
           <div>
             <h2 className="text-[clamp(1.9rem,3.2vw,2.6rem)] font-medium leading-[1.12] tracking-[-0.01em] text-ink">
-              Run it locally in three commands.
+              Run the proxy. Add the desktop if you need it.
             </h2>
             <p className="mt-4 max-w-[44ch] text-[16px] leading-relaxed text-ink-muted">
-              No cloud and no telemetry to anyone else's server. The gateway runs
-              on your machine and your credentials never leave it.
+              Start in a directory for both checkouts. The proxy needs Rust; the
+              optional desktop needs Bun and the Tauri system prerequisites.
+              Keep the proxy running and configure your client in another terminal.
+              The auth directory stores your provider accounts; add an account
+              before sending model requests.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <ButtonLink

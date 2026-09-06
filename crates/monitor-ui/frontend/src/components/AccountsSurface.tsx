@@ -99,6 +99,7 @@ export interface AccountsSurfaceProps {
   readonly selectedProvider?: string | undefined;
   readonly visibleAccounts: readonly NormalizedAccount[];
   readonly pending: string;
+  readonly showRemaining?: boolean;
   readonly credentialsError?: string | undefined;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
@@ -107,7 +108,7 @@ export interface AccountsSurfaceProps {
     action: "warm" | "reset",
     account: NormalizedAccount,
   ) => void | Promise<void>;
-  readonly onRefresh: () => void | Promise<void>;
+  readonly onRefresh: (account?: NormalizedAccount) => void | Promise<void>;
   readonly onSetCredentialDisabled: (
     account: NormalizedAccount,
     disabled: boolean,
@@ -130,6 +131,7 @@ export const AccountsSurface = ({
   selectedProvider,
   visibleAccounts,
   pending,
+  showRemaining = true,
   credentialsError,
   dragging,
   confirmRemove,
@@ -191,6 +193,7 @@ export const AccountsSurface = ({
             key={account.id}
             account={account}
             pending={pending}
+            showRemaining={showRemaining}
             dragging={dragging}
             confirmRemove={confirmRemove}
             onRunAccountAction={onRunAccountAction}

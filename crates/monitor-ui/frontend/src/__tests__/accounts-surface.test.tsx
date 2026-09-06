@@ -34,7 +34,11 @@ const mockAccount: NormalizedAccount = {
   isCredentialOnly: false,
   canReset: true,
   resetCreditsAvailable: 1,
+  supportsReset: true,
+  resetCredits: [],
 };
+
+const DAY_SECONDS = 86_400;
 
 const createProps = (overrides?: Partial<AccountsSurfaceProps>): AccountsSurfaceProps => ({
   accounts: [mockAccount],
@@ -56,7 +60,28 @@ const createProps = (overrides?: Partial<AccountsSurfaceProps>): AccountsSurface
   ...overrides,
 });
 
+/** Rare lifecycle actions live behind the card's overflow trigger. */
+const openOverflowMenu = (label = "dev@example.com") => {
+  fireEvent.click(screen.getByRole("button", { name: `More actions for ${label}` }));
+};
+
+/** Spending a banked reset dispatches immediately from the menu. */
+const spendBankedReset = (label = "dev@example.com") => {
+  openOverflowMenu(label);
+  fireEvent.click(screen.getByRole("menuitem", { name: `Spend 1 banked reset for ${label}` }));
+};
+
 describe("AccountsSurface component", () => {
+  it("R11 switches quota numbers and bar widths between used and remaining", () => {
+    const props = { ...createProps(), showRemaining: false };
+    const { container, rerender } = render(<AccountsSurface {...props} />);
+    expect(screen.getByText("25%")).toBeInTheDocument();
+    expect(container.querySelector(".quota-track i")).toHaveStyle({ width: "25%" });
+    rerender(<AccountsSurface {...props} showRemaining={true} />);
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(container.querySelector(".quota-track i")).toHaveStyle({ width: "75%" });
+  });
+
   it("folds token usage and reveals input, output, and total on expand", () => {
     render(<AccountsSurface {...createProps()} />);
 
@@ -94,6 +119,62 @@ describe("AccountsSurface component", () => {
     expect(screen.getByTestId("account-plan")).toHaveTextContent("Standard");
   });
 
+  it("reports banked resets by count, nearest expiry, and per-credit dates", () => {
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const account = {
+      ...mockAccount,
+      resetCreditsAvailable: 2,
+      resetCredits: [
+        { grantedAtUnix: nowUnix - 25 * DAY_SECONDS, expiresAtUnix: nowUnix + 5 * DAY_SECONDS },
+        { grantedAtUnix: nowUnix - 10 * DAY_SECONDS, expiresAtUnix: nowUnix + 20 * DAY_SECONDS },
+      ],
+    } as NormalizedAccount;
+    render(
+      <AccountsSurface {...createProps({ accounts: [account], visibleAccounts: [account] })} />,
+    );
+
+    const trigger = screen.getByTestId("account-reset-credits");
+    expect(trigger).toHaveTextContent("2");
+    expect(trigger).toHaveAttribute("data-urgency", "warn");
+    expect(screen.queryByTestId("account-reset-credits-list")).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const rows = screen.getByTestId("account-reset-credits-list").querySelectorAll("li");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("5 days left");
+    expect(rows[1]).toHaveTextContent("20 days left");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("account-reset-credits-list")).not.toBeInTheDocument();
+  });
+
+  it("keeps the reset control in place but disabled once no credit is banked", () => {
+    const account = {
+      ...mockAccount,
+      canReset: false,
+      resetCreditsAvailable: 0,
+    } as NormalizedAccount;
+    render(
+      <AccountsSurface {...createProps({ accounts: [account], visibleAccounts: [account] })} />,
+    );
+
+    openOverflowMenu();
+    // The item stays visible and names why it cannot run, rather than vanishing.
+    expect(
+      screen.getByRole("menuitem", { name: "No banked resets for dev@example.com" }),
+    ).toBeDisabled();
+    expect(screen.queryByTestId("account-reset-credits")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("account-reset-credits-list")).not.toBeInTheDocument();
+  });
+
+  it("spends a banked reset directly when clicked from the menu", () => {
+    const onRunAccountAction = vi.fn();
+    render(<AccountsSurface {...createProps({ onRunAccountAction })} />);
+
+    spendBankedReset();
+    expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
+  });
+
   it("renders provider tabs, count badges, and account cards", () => {
     render(<AccountsSurface {...createProps()} />);
     expect(screen.getByText("Codex")).toBeInTheDocument();
@@ -127,14 +208,28 @@ describe("AccountsSurface component", () => {
     expect(onRunAccountAction).toHaveBeenCalledWith("warm", mockAccount);
     fireEvent.click(screen.getByRole("button", { name: "Refresh quota" }));
     expect(onRefresh).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Reset window" }));
+
+    // The menu closes after each choice, so every overflow action reopens it.
+    spendBankedReset();
     expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
-    fireEvent.click(screen.getByRole("button", { name: "Disable dev@example.com" }));
+    openOverflowMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Disable dev@example.com" }));
     expect(onSetCredentialDisabled).toHaveBeenCalledWith(mockAccount, true);
-    fireEvent.click(screen.getByRole("button", { name: "Re-authenticate dev@example.com" }));
+    openOverflowMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Re-authenticate dev@example.com" }));
     expect(onReauthenticate).toHaveBeenCalledWith(mockAccount);
-    fireEvent.click(screen.getByRole("button", { name: "Remove dev@example.com" }));
+    openOverflowMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove dev@example.com" }));
     expect(onSetConfirmRemove).toHaveBeenCalledWith("codex-1");
+  });
+
+  it("closes the overflow menu on Escape", () => {
+    render(<AccountsSurface {...createProps()} />);
+
+    openOverflowMenu();
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("dispatches keyboard and drag-and-drop reorder events and context menu", () => {
@@ -249,7 +344,7 @@ describe("AccountsSurface component", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Reset window" }));
+    spendBankedReset();
     expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
   });
 
@@ -262,7 +357,7 @@ describe("AccountsSurface component", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Reset window" }));
+    spendBankedReset();
     expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
   });
 });

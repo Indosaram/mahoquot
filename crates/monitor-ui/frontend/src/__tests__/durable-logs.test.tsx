@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DurableLogs, type DurableLogsProps } from "../components/DurableLogs";
+import type { HistoryEventsResponse } from "../lib/schemas";
 
 const totals = {
   requests: 2,
@@ -9,6 +10,7 @@ const totals = {
   "input-tokens": 120,
   "output-tokens": 30,
   "cached-input-tokens": 0,
+  "cache-write-tokens": 0,
   "reasoning-tokens": 0,
   "total-tokens": 150,
   "estimated-cost-usd": 0.42,
@@ -27,6 +29,7 @@ const durableEvents = [
     "input-tokens": 90,
     "output-tokens": 30,
     "cached-input-tokens": 0,
+    "cache-write-tokens": 0,
     "reasoning-tokens": 0,
     "total-tokens": 120,
     "latency-ms": 87,
@@ -45,6 +48,7 @@ const durableEvents = [
     "input-tokens": 40,
     "output-tokens": 10,
     "cached-input-tokens": 0,
+    "cache-write-tokens": 0,
     "reasoning-tokens": 0,
     "total-tokens": 50,
     "latency-ms": 140,
@@ -139,7 +143,6 @@ describe("Durable logs surface", () => {
     expect(within(summary).getByText("150")).toBeInTheDocument();
   });
 
-
   it("keeps a provider-filtered page when a slower background request resolves late", async () => {
     let releaseStale = () => {};
     const stalePending = new Promise<void>((resolve) => {
@@ -147,21 +150,77 @@ describe("Durable logs surface", () => {
     });
     const loadHistory = vi.fn(async (query: { providers?: string[] }) => {
       if (query.providers?.[0] === "anthropic") {
-        return { events: [{"event-id":"FRESH-ANTHROPIC","occurred-at-ms":1_788_192_000_000,account:"acct","provider":"anthropic","model":"claude","key-label":"k",status:200,succeeded:true,"input-tokens":1,"output-tokens":1,"cached-input-tokens":0,"reasoning-tokens":0,"total-tokens":2,"latency-ms":5,"estimated-cost-usd":0.1,"price-version":"2026-09"}] as never, "next-cursor": null, totals };
+        return {
+          events: [
+            {
+              "event-id": "FRESH-ANTHROPIC",
+              "occurred-at-ms": 1_788_192_000_000,
+              account: "acct",
+              provider: "anthropic",
+              model: "claude",
+              "key-label": "k",
+              status: 200,
+              succeeded: true,
+              "input-tokens": 1,
+              "output-tokens": 1,
+              "cached-input-tokens": 0,
+              "cache-write-tokens": 0,
+              "reasoning-tokens": 0,
+              "total-tokens": 2,
+              "latency-ms": 5,
+              "estimated-cost-usd": 0.1,
+              "price-version": "2026-09",
+            },
+          ] as never,
+          "next-cursor": null,
+          totals,
+        };
       }
       if (loadHistory.mock.calls.length > 1) {
         await stalePending;
-        return { events: [{"event-id":"STALE-ALL","occurred-at-ms":1_788_192_000_000,account:"acct","provider":"codex","model":"gpt","key-label":"k",status:200,succeeded:true,"input-tokens":1,"output-tokens":1,"cached-input-tokens":0,"reasoning-tokens":0,"total-tokens":2,"latency-ms":5,"estimated-cost-usd":0.1,"price-version":"2026-09"}] as never, "next-cursor": 9, totals };
+        return {
+          events: [
+            {
+              "event-id": "STALE-ALL",
+              "occurred-at-ms": 1_788_192_000_000,
+              account: "acct",
+              provider: "codex",
+              model: "gpt",
+              "key-label": "k",
+              status: 200,
+              succeeded: true,
+              "input-tokens": 1,
+              "output-tokens": 1,
+              "cached-input-tokens": 0,
+              "cache-write-tokens": 0,
+              "reasoning-tokens": 0,
+              "total-tokens": 2,
+              "latency-ms": 5,
+              "estimated-cost-usd": 0.1,
+              "price-version": "2026-09",
+            },
+          ] as never,
+          "next-cursor": 9,
+          totals,
+        };
       }
       return { events: durableEvents as never, "next-cursor": 2, totals };
     });
     const { rerender } = render(
-      <DurableLogs records={requestRecords as never} loadHistory={loadHistory as never} liveTick={0} />,
+      <DurableLogs
+        records={requestRecords as never}
+        loadHistory={loadHistory as never}
+        liveTick={0}
+      />,
     );
     expect(await screen.findByText("req-success")).toBeInTheDocument();
 
     rerender(
-      <DurableLogs records={requestRecords as never} loadHistory={loadHistory as never} liveTick={1} />,
+      <DurableLogs
+        records={requestRecords as never}
+        loadHistory={loadHistory as never}
+        liveTick={1}
+      />,
     );
     await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(2));
 
@@ -170,9 +229,10 @@ describe("Durable logs surface", () => {
     });
     expect(await screen.findByText("FRESH-ANTHROPIC")).toBeInTheDocument();
 
-    releaseStale();
-    await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(3));
-    await new Promise((r) => setTimeout(r, 0));
+    await act(async () => {
+      releaseStale();
+      await stalePending;
+    });
 
     expect(screen.queryByText("STALE-ALL")).not.toBeInTheDocument();
     expect(screen.getByText("FRESH-ANTHROPIC")).toBeInTheDocument();
@@ -226,6 +286,106 @@ describe("Durable logs surface", () => {
 });
 
 describe("DurableLogs stale response ordering", () => {
+  it("R08 does not let an older filter completion clear the newer filter pending state", async () => {
+    let releaseOld!: () => void;
+    let releaseNew!: () => void;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    const newGate = new Promise<void>((resolve) => {
+      releaseNew = resolve;
+    });
+    const initial = { events: [...durableEvents], "next-cursor": 2, totals };
+    const loadHistory = vi
+      .fn<NonNullable<DurableLogsProps["loadHistory"]>>()
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(async () => {
+        await oldGate;
+        return initial;
+      })
+      .mockImplementationOnce(async () => {
+        await newGate;
+        return { ...initial, events: [durableEvents[1]] };
+      });
+    render(<DurableLogs records={[]} loadHistory={loadHistory} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Log provider filter"), { target: { value: "codex" } });
+    fireEvent.change(screen.getByLabelText("Log provider filter"), {
+      target: { value: "anthropic" },
+    });
+    await act(async () => {
+      releaseOld();
+      await oldGate;
+    });
+    expect(screen.getByRole("button", { name: "Next history page" })).toBeDisabled();
+    await act(async () => {
+      releaseNew();
+      await newGate;
+    });
+    expect(screen.getByRole("button", { name: "Next history page" })).toBeEnabled();
+    expect(screen.queryByText("req-success")).not.toBeInTheDocument();
+    expect(screen.getByText("req-failed")).toBeInTheDocument();
+  });
+
+  for (const action of ["page", "filter"] as const) {
+    for (const first of ["background", "action"] as const) {
+      it(`R08 preserves ${action} results and pending ownership when ${first} completes first`, async () => {
+        const deferred = () => {
+          let resolve!: (value: HistoryEventsResponse) => void;
+          const promise = new Promise<Parameters<typeof resolve>[0]>((done) => {
+            resolve = done;
+          });
+          return { promise, resolve };
+        };
+        const user = deferred();
+        const background = deferred();
+        const initial = { events: [...durableEvents], "next-cursor": 2, totals };
+        const loadHistory = vi
+          .fn<NonNullable<DurableLogsProps["loadHistory"]>>()
+          .mockResolvedValueOnce(initial)
+          .mockImplementationOnce(() => user.promise)
+          .mockImplementationOnce(() => background.promise);
+        const view = render(<DurableLogs records={[]} loadHistory={loadHistory} />);
+        await act(async () => {});
+        if (action === "page")
+          fireEvent.click(screen.getByRole("button", { name: "Next history page" }));
+        else
+          fireEvent.change(screen.getByLabelText("Log provider filter"), {
+            target: { value: "anthropic" },
+          });
+        view.rerender(<DurableLogs records={[]} loadHistory={loadHistory} liveTick={1} />);
+        expect(loadHistory).toHaveBeenCalledTimes(3);
+        expect(loadHistory.mock.calls[1][0]).toEqual(
+          action === "page"
+            ? { providers: undefined, limit: 50, cursor: 2 }
+            : { providers: ["anthropic"], limit: 50 },
+        );
+        const result = {
+          ...initial,
+          events: [{ ...durableEvents[1], "event-id": "explicit-result" }],
+        };
+        const finish = async (which: "background" | "action") => {
+          await act(async () => {
+            const gate = which === "action" ? user : background;
+            gate.resolve(which === "action" ? result : initial);
+            await gate.promise;
+          });
+        };
+        await finish(first);
+        expect(screen.getByRole("button", { name: "Next history page" })).toHaveProperty(
+          "disabled",
+          first === "background",
+        );
+        await finish(first === "background" ? "action" : "background");
+        expect(screen.getByText("explicit-result")).toBeInTheDocument();
+        expect(screen.queryByText("req-success")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Next history page" })).toBeEnabled();
+        if (action === "page")
+          expect(screen.getByRole("button", { name: "Previous history page" })).toBeEnabled();
+      });
+    }
+  }
+
   it("does not let a slow earlier request overwrite a newer one", async () => {
     // The initial load and the liveTick refresh both call loadHistory. Without a
     // sequencing guard the slower FIRST response lands last and overwrites the
@@ -257,11 +417,7 @@ describe("DurableLogs stale response ordering", () => {
     });
 
     const view = render(
-      <DurableLogs
-        records={[] as never}
-        loadHistory={loadHistory}
-        loadHistoryDetail={vi.fn()}
-      />,
+      <DurableLogs records={[] as never} loadHistory={loadHistory} loadHistoryDetail={vi.fn()} />,
     );
 
     // The newer refresh resolves first.
@@ -276,8 +432,10 @@ describe("DurableLogs stale response ordering", () => {
     await waitFor(() => expect(screen.getByText("FRESH-MODEL")).toBeTruthy());
 
     // Now the original, older request finally resolves.
-    releaseFirst?.();
-    await waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      releaseFirst?.();
+      await firstGate;
+    });
 
     await waitFor(() => {
       expect(

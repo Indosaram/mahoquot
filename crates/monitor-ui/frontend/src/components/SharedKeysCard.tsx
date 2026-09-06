@@ -482,15 +482,17 @@ export function SharedKeysCard({
                     <Button aria-label={`Edit ${key.name}`} onClick={() => openEditDrawer(key)}>
                       Edit
                     </Button>
-                    <Button
-                      aria-label={`Top up ${key.name}`}
-                      onClick={() => {
-                        setTopUpAmount("500000");
-                        setTopUpKey(key);
-                      }}
-                    >
-                      Top up
-                    </Button>
+                    {capped ? (
+                      <Button
+                        aria-label={`Top up ${key.name}`}
+                        onClick={() => {
+                          setTopUpAmount("500000");
+                          setTopUpKey(key);
+                        }}
+                      >
+                        Top up
+                      </Button>
+                    ) : null}
                     <Button
                       aria-label={key.is_active ? `Pause ${key.name}` : `Resume ${key.name}`}
                       onClick={() => void onPatchKey(key.id, { is_active: !key.is_active })}

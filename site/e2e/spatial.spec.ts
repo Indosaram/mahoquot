@@ -14,7 +14,8 @@ test.describe("Spatial Layout Contract", () => {
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto("./");
-      await page.waitForLoadState("networkidle");
+      await expect(page.locator("[data-marquee-track]")).toBeVisible();
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
       const { scrollWidth, innerWidth } = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,
@@ -32,7 +33,8 @@ test.describe("Spatial Layout Contract", () => {
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto("./");
-      await page.waitForLoadState("networkidle");
+      await expect(page.locator("[data-marquee-track]")).toBeVisible();
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
       const result = await page.evaluate(() => {
         const innerWidth = window.innerWidth;
@@ -118,7 +120,8 @@ test.describe("Spatial Layout Contract", () => {
   // (c) Body overflow-x clamped to hidden or clip
   test("(c) body overflow-x is clamped to hidden or clip", async ({ page }) => {
     await page.goto("./");
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-marquee-track]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
     const overflowX = await page.evaluate(
       () => getComputedStyle(document.body).overflowX,
@@ -135,7 +138,8 @@ test.describe("Spatial Layout Contract", () => {
     // Ensure prefers-reduced-motion is "no-preference"
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("./");
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-marquee-track]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
     const seamResult = await page.evaluate(async () => {
       const track = document.querySelector<HTMLElement>("[data-marquee-track]");
@@ -162,7 +166,7 @@ test.describe("Spatial Layout Contract", () => {
         animations[0] ??
         document
           .getAnimations()
-          .find((a) => (a as CSSAnimation).animationName === "marquee");
+          .find((a) => a instanceof CSSAnimation && a.animationName === "marquee");
 
       if (!anim) {
         throw new Error("Marquee animation not found via getAnimations()");

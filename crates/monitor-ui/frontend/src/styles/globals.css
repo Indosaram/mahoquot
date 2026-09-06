@@ -324,6 +324,13 @@ h2 {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  /* A label must never wrap inside a button: a squeezed row would otherwise
+     render the same control at two different heights on two different cards. */
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.button > svg {
+  flex: none;
 }
 .button:hover:not(:disabled) {
   border-color: var(--fg-faint);
@@ -332,6 +339,26 @@ h2 {
 .button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.button-sm {
+  min-height: 0;
+  height: 22px;
+  padding: 0 8px;
+  gap: 5px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+.button-sm > svg {
+  width: 11px;
+  height: 11px;
+}
+.button-ghost {
+  background: none;
+  border-color: transparent;
+}
+.button-ghost:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--panel-2);
 }
 .content {
   padding-top: 22px;
@@ -342,7 +369,8 @@ h2 {
   min-width: 0;
   min-inline-size: 0;
 }
-.content.logs-surface {
+.content.logs-surface,
+.content.settings-surface {
   max-width: none;
   margin: 0;
   width: 100%;
@@ -1127,17 +1155,57 @@ h2 {
 .logs-surface {
   width: 100%;
   max-width: 100%;
-  min-height: calc(100vh - 110px);
   align-content: start;
+}
+/* Full-bleed: cancel the shell's inline padding so the log table spans the
+   whole surface instead of sitting inside a card inset. */
+.content.logs-surface {
+  margin-inline: -28px;
+  width: calc(100% + 56px);
+  max-width: calc(100% + 56px);
+}
+.durable-logs-head,
+.durable-logs-tabs,
+.durable-logs-summary,
+.durable-logs-pagination,
+.durable-logs-console > .caveat,
+.durable-logs-console > .state-panel {
+  padding-inline: 28px;
+}
+.durable-logs-table th:first-child,
+.durable-logs-table td:first-child {
+  padding-left: 28px;
+}
+.durable-logs-table th:last-child,
+.durable-logs-table td:last-child {
+  padding-right: 28px;
+}
+.logs-live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.logs-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.logs-live-dot.active {
+  box-shadow: 0 0 0 4px var(--ok-dim);
 }
 .durable-logs {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
-  gap: 16px;
+  gap: 0;
 }
 .durable-logs:has(.durable-log-detail) {
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.36fr);
+  gap: 16px;
 }
 .durable-logs-console {
   min-width: 0;
@@ -1147,7 +1215,6 @@ h2 {
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   padding: 0;
-  overflow: hidden;
 }
 .durable-logs-head {
   min-width: 0;
@@ -1156,7 +1223,7 @@ h2 {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 17px 17px 0;
+  padding-top: 17px;
 }
 .durable-logs-head > div:first-child {
   min-width: 0;
@@ -1241,13 +1308,12 @@ h2 {
 .durable-logs-summary strong.warn {
   color: var(--warn);
 }
+/* The Logs surface scrolls with the page: `main` is the only scroll owner, so
+   the table must not open a second scrollport. */
 .durable-logs-table-wrap {
   min-width: 0;
   max-width: 100%;
-  min-height: 260px;
-  max-height: min(52vh, 560px);
-  overflow-x: auto;
-  overflow-y: auto;
+  overflow: visible;
 }
 .durable-logs-table {
   width: 100%;
@@ -1292,8 +1358,15 @@ h2 {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+.durable-logs-table th:last-child,
+.durable-logs-table td:last-child {
+  width: 100%;
+}
 .durable-log-detail-trigger {
-  max-width: 140px;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  text-align: left;
   padding: 0;
   overflow: hidden;
   border: 0;
@@ -1747,16 +1820,22 @@ h2 {
 }
 .account-title {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  min-width: 0;
+  /* The identity cluster is the row's reason to exist, so it claims the free
+     space and keeps a floor: the actions are a fixed, small set of controls,
+     and shrinking the label past this width is never the right trade. */
+  flex: 1 1 auto;
+  min-width: 260px;
 }
 .account-card[data-dragging="true"] {
   opacity: 0.45;
 }
+.account-card[data-disabled="true"] {
+  opacity: 0.65;
+}
 .account-drag-handle {
   flex: 0 0 auto;
-  margin-top: 9px;
   border: 0;
   background: none;
   padding: 0;
@@ -1833,6 +1912,13 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+/* Status chips report at a glance; a truncated "Hea" reports nothing, so they
+   keep their intrinsic width and the label ellipsizes instead. */
+.account-id > div > .badge,
+.account-id > div > .reset-credits {
+  flex: 0 0 auto;
 }
 .account-id strong {
   overflow: hidden;
@@ -1847,20 +1933,66 @@ h2 {
 }
 .account-actions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
+  align-items: center;
+  /* Only the two routine actions plus one overflow trigger live here, so the
+     cluster holds its natural width without ever needing to wrap. */
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   justify-content: flex-end;
 }
-.account-actions .button {
-  min-height: 18px;
-  padding: 2px 5px;
-  gap: 4px;
-  border-radius: 5px;
-  font-size: 10px;
+.button-icon {
+  padding-inline: 8px;
 }
-.account-actions .button svg {
-  width: 10px;
-  height: 10px;
+.account-overflow {
+  position: relative;
+  display: inline-flex;
+}
+.account-overflow-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 194px;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+.account-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.account-overflow-item:hover:not(:disabled) {
+  background: var(--panel-3);
+}
+.account-overflow-item:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+}
+.account-overflow-item[data-danger="true"]:not(:disabled) {
+  color: var(--bad);
+}
+.account-overflow-item svg {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
+.account-overflow-item[data-danger="true"]:not(:disabled) svg {
+  color: inherit;
 }
 .usage-section {
   display: grid;
@@ -1994,6 +2126,128 @@ h2 {
   color: var(--fg-faint);
   padding: 8px 0 2px;
 }
+.reset-credits {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+.reset-credits-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.reset-credits-trigger strong {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.reset-credits-trigger:hover {
+  border-color: var(--fg-faint);
+  background: var(--panel-3);
+}
+.reset-credits-trigger[data-urgency="warn"] {
+  border-color: var(--warn);
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+.reset-credits-trigger[data-urgency="warn"] strong,
+.reset-credits-trigger[data-urgency="bad"] strong {
+  color: inherit;
+}
+.reset-credits-trigger[data-urgency="bad"] {
+  border-color: var(--bad);
+  background: var(--bad-dim);
+  color: var(--bad);
+}
+.reset-credits-popover {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 236px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+.reset-credits-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.reset-credits-popover-head strong {
+  margin-left: auto;
+  color: var(--fg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.reset-credits-popover ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 0 0;
+  list-style: none;
+}
+.reset-credits-popover li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reset-credits-popover li i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--ok);
+}
+.reset-credits-popover li strong {
+  justify-self: end;
+  color: var(--ok);
+}
+.reset-credits-popover li[data-urgency="warn"] i,
+.reset-credits-popover li[data-urgency="warn"] strong {
+  background: none;
+  color: var(--warn);
+}
+.reset-credits-popover li[data-urgency="warn"] i {
+  background: var(--warn);
+}
+.reset-credits-popover li[data-urgency="bad"] i {
+  background: var(--bad);
+}
+.reset-credits-popover li[data-urgency="bad"] strong {
+  color: var(--bad);
+}
+.reset-credits-popover li[data-urgency="unknown"] i {
+  background: var(--panel-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.reset-credits-popover li[data-urgency="unknown"] strong {
+  color: var(--fg-faint);
+}
 .account-error,
 .restart-note {
   grid-column: 1 / -1;
@@ -2047,9 +2301,7 @@ h2 {
 .settings-card-head p {
   color: var(--fg-dim);
   margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .connection-fields {
   display: grid;
@@ -2264,6 +2516,44 @@ h2 {
 }
 .settings-card-head .button {
   white-space: nowrap;
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.field-error,
+.field small.field-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--bad);
+  overflow-wrap: anywhere;
+}
+.field-error button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.model-price-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 12px;
+}
+.model-price-estimate {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 9px;
+}
+.model-price-estimate small {
+  color: var(--fg-faint);
 }
 .connection-orb,
 .settings-icon {
@@ -3527,6 +3817,9 @@ h2 {
     align-items: stretch;
     flex-direction: column;
   }
+  .account-title {
+    min-width: 0;
+  }
   .account-actions {
     justify-content: flex-start;
   }
@@ -3548,14 +3841,16 @@ h2 {
   .settings-card-head > div:nth-child(2) {
     flex: 1 1 calc(100% - 48px);
   }
-  .settings-card-head p {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-  }
   .connection-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+  .model-price-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .model-price-estimate {
+    padding-bottom: 0;
   }
 }
 

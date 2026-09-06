@@ -118,7 +118,22 @@ pub struct Usage {
     pub credits_unlimited: Option<bool>,
     pub has_credits: Option<bool>,
     pub reset_credits_available: Option<i64>,
+    #[serde(default)]
+    pub reset_credits: Vec<ResetCredit>,
     pub observed_at_unix: Option<i64>,
+}
+
+/// One banked rate-limit reset credit as the gateway reports it.
+///
+/// Codex credits lapse (~30 days after they are granted), so the count alone
+/// cannot tell the operator whether a reset is safe to save or about to be
+/// lost. Every field is optional because a gateway that predates this detail
+/// simply omits the list.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct ResetCredit {
+    pub granted_at_unix: Option<i64>,
+    pub expires_at_unix: Option<i64>,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -153,6 +168,8 @@ pub struct AccountView {
     pub credits_balance: Option<f64>,
     pub credits_unlimited: Option<bool>,
     pub reset_credits_available: Option<i64>,
+    #[serde(default)]
+    pub reset_credits: Vec<ResetCredit>,
     pub can_reset: bool,
     pub primary: WindowView,
     pub secondary: WindowView,
@@ -199,19 +216,32 @@ fn status_is_degraded(status: &str) -> bool {
 
 /// Resolve a window to a countdown, preferring the absolute reset timestamp
 /// because the relative one ages while the snapshot sits in gateway memory.
-fn window_view(w: &QuotaWindow, observed_at: Option<i64>, now_secs: i64) -> WindowView {
-    let reset_in_secs = if let Some(at) = w.reset_at_unix.filter(|v| *v > 0) {
+fn reset_countdown(
+    reset_at_unix: Option<i64>,
+    reset_after_seconds: Option<i64>,
+    observed_at: Option<i64>,
+    now_secs: i64,
+) -> Option<i64> {
+    if let Some(at) = reset_at_unix.filter(|v| *v > 0) {
         Some((at - now_secs).max(0))
     } else {
-        w.reset_after_seconds
+        reset_after_seconds
             .filter(|v| *v > 0)
             .zip(observed_at)
             .map(|(after, obs)| (after - (now_secs - obs)).max(0))
-    };
+    }
+}
+
+fn window_view(w: &QuotaWindow, observed_at: Option<i64>, now_secs: i64) -> WindowView {
     WindowView {
         used_percent: w.used_percent,
         window_minutes: w.window_minutes,
-        reset_in_secs,
+        reset_in_secs: reset_countdown(
+            w.reset_at_unix,
+            w.reset_after_seconds,
+            observed_at,
+            now_secs,
+        ),
     }
 }
 
@@ -243,6 +273,7 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
             credits_balance: a.usage.credits_balance,
             credits_unlimited: a.usage.credits_unlimited,
             reset_credits_available: a.usage.reset_credits_available,
+            reset_credits: a.usage.reset_credits.clone(),
             can_reset: a.usage.reset_credits_available.unwrap_or(0) > 0,
             primary: window_view(
                 &a.usage.primary,
@@ -268,10 +299,12 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
                             name: bucket.display_name.clone(),
                             window: bucket.window.clone(),
                             used_percent: bucket.used_percent,
-                            reset_in_secs: bucket
-                                .reset_at_unix
-                                .filter(|v| *v > 0)
-                                .map(|at| (at - now_unix_ms / 1000).max(0)),
+                            reset_in_secs: reset_countdown(
+                                bucket.reset_at_unix,
+                                bucket.reset_after_seconds,
+                                a.usage.observed_at_unix,
+                                now_unix_ms / 1000,
+                            ),
                         })
                         .collect(),
                 })
@@ -500,6 +533,53 @@ mod tests {
         assert_eq!(v.accounts[1].p50_ms, 50.0);
         assert_eq!(v.accounts[1].p99_ms, 70.0);
         assert_eq!(v.accounts[1].samples, 5);
+    }
+
+    #[test]
+    fn group_relative_reset_uses_observation_and_preserves_unknown() {
+        for provider in ["gemini", "antigravity"] {
+            for (absolute, relative, observed, now_ms, expected) in [
+                (None, Some(3600), Some(1000), 1_060_000, Some(3540)),
+                (None, Some(3600), None, 1_060_000, None),
+                (None, Some(3600), Some(1000), 5_000_000, Some(0)),
+                (Some(2000), Some(3600), Some(1000), 1_060_000, Some(940)),
+                (Some(2000), Some(3600), None, 1_060_000, Some(940)),
+                (Some(100), Some(3600), Some(1000), 1_060_000, Some(0)),
+                (Some(0), Some(3600), Some(1000), 1_060_000, Some(3540)),
+                (None, None, Some(1000), 1_060_000, None),
+                (None, Some(0), Some(1000), 1_060_000, None),
+                (None, Some(-1), Some(1000), 1_060_000, None),
+            ] {
+                let reset = serde_json::json!({
+                    "reset_at_unix": absolute, "reset_after_seconds": relative
+                });
+                let credits = serde_json::json!([
+                    {"granted_at_unix": 900, "expires_at_unix": 9000, "status": "available"}
+                ]);
+                let stats: AdminStats = serde_json::from_value(serde_json::json!({
+                    "accounts": [{"id": "fixture", "provider": provider, "usage": {
+                        "observed_at_unix": observed,
+                        "primary": reset, "secondary": reset,
+                        "reset_credits_available": 1, "reset_credits": credits,
+                        "groups": [{"display_name": null, "models": null, "buckets": [reset]}]
+                    }}]
+                }))
+                .expect("loader-valid grouped quota fixture");
+                let view = build_view(&stats, now_ms);
+                let account = &view.accounts[0];
+                assert_eq!(account.primary.reset_in_secs, expected);
+                assert_eq!(account.secondary.reset_in_secs, expected);
+                assert_eq!(account.groups[0].buckets[0].reset_in_secs, expected,
+                    "provider={provider} absolute={absolute:?} relative={relative:?} observed={observed:?} now_ms={now_ms}");
+                let wire = serde_json::to_value(&view).expect("serialize native view");
+                assert_eq!(
+                    wire["accounts"][0]["groups"][0]["buckets"][0]["reset_in_secs"],
+                    serde_json::json!(expected)
+                );
+                assert_eq!(wire["accounts"][0]["reset_credits"], credits);
+                assert!(account.can_reset);
+            }
+        }
     }
 
     #[test]

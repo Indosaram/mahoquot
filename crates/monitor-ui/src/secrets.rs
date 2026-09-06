@@ -108,6 +108,11 @@ impl PlainFileBackend {
         })
     }
 
+    #[cfg(test)]
+    pub fn for_path(path: std::path::PathBuf) -> Self {
+        Self { path }
+    }
+
     fn load_from(
         path: &std::path::Path,
     ) -> Result<std::collections::HashMap<String, String>, SecretStoreError> {
@@ -306,7 +311,7 @@ pub struct MigrationOutcome {
     pub reconnect: bool,
 }
 
-fn normalize_endpoint(endpoint: &str) -> String {
+pub fn normalize_endpoint(endpoint: &str) -> String {
     endpoint.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
@@ -508,6 +513,7 @@ mod tests {
         Unavailable,
         Write,
         ReadbackMismatch,
+        ReadbackError,
     }
 
     #[derive(Clone, Default)]
@@ -529,6 +535,9 @@ mod tests {
                 Some(Failure::Unavailable) => Err(SecretStoreError::Unavailable),
                 Some(Failure::ReadbackMismatch) if self.values.borrow().contains_key(account) => {
                     Ok(Some("different-value".to_string()))
+                }
+                Some(Failure::ReadbackError) if self.values.borrow().contains_key(account) => {
+                    Err(SecretStoreError::Backend("readback failed".to_string()))
                 }
                 _ => Ok(self.values.borrow().get(account).cloned()),
             }
@@ -707,5 +716,138 @@ mod tests {
         assert_eq!(error.action(), SecretRecoveryAction::Reenter);
         assert_eq!(legacy, "still-in-browser");
         assert!(backend.values.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_readback_failure_rolls_the_migration_back_instead_of_half_storing_it() {
+        // given a store whose readback fails after the write lands
+        let backend = FakeBackend::default();
+        backend.fail_with(Failure::ReadbackError);
+        let store = SecretStore::new(backend.clone());
+        let secret = management("https://gateway.example.test", "primary");
+
+        // when a legacy value is migrated
+        let error = store
+            .migrate_legacy(&secret, Some("still-in-browser"))
+            .unwrap_err();
+
+        // then the caller is told to re-enter and nothing is left behind
+        assert_eq!(
+            error,
+            SecretStoreError::Backend("readback failed".to_string())
+        );
+        assert_eq!(error.action(), SecretRecoveryAction::Reenter);
+        assert!(backend.values.borrow().is_empty());
+    }
+
+    #[test]
+    fn nothing_to_migrate_leaves_the_store_untouched_and_asks_for_no_reconnect() {
+        // given an empty store
+        let backend = FakeBackend::default();
+        let store = SecretStore::new(backend.clone());
+        let secret = management("https://gateway.example.test", "primary");
+
+        // when there is no legacy value, or only an empty one
+        for legacy in [None, Some(""), Some("")] {
+            let outcome = store.migrate_legacy(&secret, legacy).unwrap();
+
+            // then no secret is invented and the session is left alone
+            assert_eq!(
+                outcome,
+                MigrationOutcome {
+                    value: None,
+                    remove_legacy: false,
+                    reconnect: false,
+                }
+            );
+        }
+        assert!(backend.values.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_stage_cleanup_failure_still_reports_the_original_cause() {
+        // given a replacement that fails after the staged file is already gone
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.json");
+        let original = br#"{"a":"A"}"#;
+        std::fs::write(&path, original).unwrap();
+        let map = [("b".to_string(), "B".to_string())].into_iter().collect();
+
+        // when the save cannot clean its own stage up either
+        let result = PlainFileBackend::save_to(&path, &map, |stage| {
+            std::fs::remove_file(stage)?;
+            Err(std::io::Error::other("injected replacement failure"))
+        });
+
+        // then both causes survive in one error and the vault is untouched
+        let SecretStoreError::Backend(message) = result.unwrap_err() else {
+            panic!("a failed replacement must surface as a backend error");
+        };
+        assert!(
+            message.contains("injected replacement failure"),
+            "{message}"
+        );
+        assert!(
+            message.len() > "injected replacement failure".len(),
+            "the cleanup cause must survive too: {message}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn every_store_failure_is_distinct_and_keeps_its_backend_detail() {
+        let messages = [
+            SecretStoreError::Locked,
+            SecretStoreError::Unavailable,
+            SecretStoreError::VerificationFailed,
+            SecretStoreError::Backend("disk is on fire".to_string()),
+        ]
+        .map(|error| error.to_string());
+
+        assert!(messages.iter().all(|message| !message.is_empty()));
+        assert_eq!(
+            messages
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            messages.len(),
+            "{messages:?}"
+        );
+        assert!(messages[3].contains("disk is on fire"), "{messages:?}");
+    }
+
+    #[cfg(not(feature = "isolated-secret-tests"))]
+    #[test]
+    fn keyring_failures_map_to_the_action_the_user_can_actually_take() {
+        let mapped = |error| map_keyring_error(error);
+        let locked = mapped(KeyringError::NoStorageAccess(Box::new(
+            std::io::Error::other("the keychain is locked"),
+        )));
+        let unavailable = mapped(KeyringError::NoStorageAccess(Box::new(
+            std::io::Error::other("no secret service is running"),
+        )));
+        let platform_locked = mapped(KeyringError::PlatformFailure(Box::new(
+            std::io::Error::other("Keychain Locked"),
+        )));
+        let platform_other = mapped(KeyringError::PlatformFailure(Box::new(
+            std::io::Error::other("errSecInternal"),
+        )));
+
+        assert_eq!(locked, SecretStoreError::Locked);
+        assert_eq!(unavailable, SecretStoreError::Unavailable);
+        assert_eq!(platform_locked, SecretStoreError::Locked);
+        assert!(
+            matches!(platform_other, SecretStoreError::Backend(ref detail) if detail.contains("errSecInternal"))
+        );
+
+        assert_eq!(locked.action(), SecretRecoveryAction::Retry);
+        assert_eq!(unavailable.action(), SecretRecoveryAction::Retry);
+        assert_eq!(platform_locked.action(), SecretRecoveryAction::Retry);
+        assert_eq!(platform_other.action(), SecretRecoveryAction::Reenter);
+        assert_eq!(
+            mapped(KeyringError::NoEntry).action(),
+            SecretRecoveryAction::Reenter
+        );
     }
 }

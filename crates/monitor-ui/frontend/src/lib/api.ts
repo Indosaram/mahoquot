@@ -15,6 +15,7 @@ import {
   HistoryHealthSchema,
   type HistoryStatsResponse,
   HistoryStatsResponseSchema,
+  type LogRecord,
   type LogsResponse,
   type ModelPrice,
   ModelPriceSchema,
@@ -30,6 +31,7 @@ import {
   parseAdminStats,
   parseAuthFiles,
   parseGatewayModels,
+  parseLogRecordLine,
   parseLogs,
   parseModelRegistryStatus,
   parseScopedKeys,
@@ -116,7 +118,9 @@ export interface GatewayClients {
   };
   readonly management: {
     credentials(): Promise<readonly AuthFileItem[]>;
-    logs(): Promise<LogsResponse>;
+    logs(limit?: number): Promise<LogsResponse>;
+    /** Live gateway log lines. Returns an unsubscribe callback. */
+    subscribeLogs(onRecord: (record: LogRecord) => void): () => void;
     schedulerSettings(): Promise<SchedulerSettings>;
     schedulerStatus(): Promise<SchedulerStatus>;
     saveSchedulerSettings(patch: Partial<SchedulerSettings>): Promise<SchedulerStatus>;
@@ -281,7 +285,24 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
     management: {
       credentials: async () =>
         parseAuthFiles(await requestJson(`${base}/v0/management/auth-files`, authHeaders)).files,
-      logs: async () => parseLogs(await requestJson(`${base}/v0/management/logs`, authHeaders)),
+      logs: async (limit) =>
+        parseLogs(
+          await requestJson(
+            `${base}/v0/management/logs${limit === undefined ? "" : `?limit=${limit}`}`,
+            authHeaders,
+          ),
+        ),
+      // EventSource cannot carry an Authorization header, so the gateway's
+      // query-parameter key form is used for the stream only.
+      subscribeLogs: (onRecord) => {
+        const url = `${base}/v0/management/logs/stream${apiKey ? `?key=${encodeURIComponent(apiKey)}` : ""}`;
+        const source = new EventSource(url);
+        source.onmessage = (event: MessageEvent<string>) => {
+          const record = parseLogRecordLine(event.data);
+          if (record) onRecord(record);
+        };
+        return () => source.close();
+      },
       schedulerSettings: async () =>
         SchedulerSettingsSchema.parse(
           await requestJson(`${base}/v0/management/scheduler/settings`, authHeaders),
@@ -582,4 +603,60 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       },
     },
   };
+};
+
+const extractModelIds = (payload: unknown): readonly string[] => {
+  let rawList: unknown[] = [];
+  if (Array.isArray(payload)) {
+    rawList = payload;
+  } else if (payload && typeof payload === "object") {
+    const candidate = payload as { data?: unknown; models?: unknown };
+    if (Array.isArray(candidate.data)) {
+      rawList = candidate.data;
+    } else if (Array.isArray(candidate.models)) {
+      rawList = candidate.models;
+    }
+  }
+
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const item of rawList) {
+    let id: string | undefined;
+    if (typeof item === "string" && item.trim()) {
+      id = item.trim();
+    } else if (item && typeof item === "object") {
+      const entry = item as { id?: unknown; name?: unknown };
+      if (typeof entry.id === "string" && entry.id.trim()) {
+        id = entry.id.trim();
+      } else if (typeof entry.name === "string" && entry.name.trim()) {
+        id = entry.name.trim();
+      }
+    }
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
+};
+
+export const discoverProviderModels = async (
+  baseUrl: string,
+  apiKey?: string,
+  staticHeaders?: Readonly<Record<string, string>>,
+): Promise<readonly string[]> => {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  const url = cleanBase.endsWith("/v1") ? `${cleanBase}/models` : `${cleanBase}/v1/models`;
+  const headers: Record<string, string> = {
+    ...staticHeaders,
+  };
+  if (apiKey?.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`;
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new GatewayError(await describeFailure(response), response.status);
+  }
+  const data = (await response.json()) as unknown;
+  return extractModelIds(data);
 };

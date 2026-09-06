@@ -46,6 +46,7 @@ const totals = {
   "input-tokens": 3_500_000,
   "output-tokens": 250_000,
   "cached-input-tokens": 1_200_000,
+  "cache-write-tokens": 0,
   "reasoning-tokens": 125_000,
   "total-tokens": 3_750_000,
   "estimated-cost-usd": 7.5,
@@ -91,6 +92,7 @@ const historyEventFixtures = [
     "input-tokens": 3_000_000,
     "output-tokens": 250_000,
     "cached-input-tokens": 1_200_000,
+    "cache-write-tokens": 0,
     "reasoning-tokens": 125_000,
     "total-tokens": 3_250_000,
     "latency-ms": 90,
@@ -109,6 +111,7 @@ const historyEventFixtures = [
     "input-tokens": 500_000,
     "output-tokens": 0,
     "cached-input-tokens": 0,
+    "cache-write-tokens": 0,
     "reasoning-tokens": 0,
     "total-tokens": 500_000,
     "latency-ms": 210,
@@ -539,7 +542,7 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0] as HTMLElement);
     const scheduler = await screen.findByRole("region", { name: "Account scheduling" });
-    expect(within(scheduler).getByLabelText("Enable scheduler")).toBeChecked();
+    expect(await within(scheduler).findByLabelText("Enable scheduler")).toBeChecked();
     expect(within(scheduler).queryByLabelText("Scheduling rule")).not.toBeInTheDocument();
     expect(
       within(scheduler).queryByText("Exhaust at 3% · recover above 5%"),
