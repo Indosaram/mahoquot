@@ -191,7 +191,33 @@ fn read_secret_falls_back_to_master_key_only_for_matching_endpoint() {
     .unwrap();
     assert_eq!(with_slash, Some("master-api-key".into()));
 
-    // 3. Foreign endpoint: must NOT fall back to config.api_key
+    // 3. Empty endpoint: defaults to config.base_url and falls back
+    let empty_ep = read_secret_inner(
+        &store,
+        &config,
+        SecretRequest {
+            endpoint: "".into(),
+            profile: "default".into(),
+            kind: secrets::SecretKind::ManagementKey,
+        },
+    )
+    .unwrap();
+    assert_eq!(empty_ep, Some("master-api-key".into()));
+
+    // 4. Localhost loopback: matches 127.0.0.1 loopback and falls back
+    let localhost_ep = read_secret_inner(
+        &store,
+        &config,
+        SecretRequest {
+            endpoint: "http://localhost:18801".into(),
+            profile: "default".into(),
+            kind: secrets::SecretKind::ManagementKey,
+        },
+    )
+    .unwrap();
+    assert_eq!(localhost_ep, Some("master-api-key".into()));
+
+    // 5. Foreign endpoint: must NOT fall back to config.api_key
     let foreign = read_secret_inner(
         &store,
         &config,
@@ -244,4 +270,18 @@ fn migrate_legacy_secret_falls_back_and_persists_only_for_matching_endpoint() {
     .unwrap();
     assert_eq!(matching_outcome.value, Some("master-api-key".into()));
     assert!(matching_outcome.reconnect);
+
+    // Empty endpoint migration defaults to config.base_url and reads the already persisted key
+    let empty_outcome = migrate_legacy_secret_inner(
+        &store,
+        &config,
+        MigrateLegacySecretRequest {
+            endpoint: "".into(),
+            profile: "default".into(),
+            kind: secrets::SecretKind::ManagementKey,
+            legacy_value: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(empty_outcome.value, Some("master-api-key".into()));
 }

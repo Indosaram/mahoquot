@@ -50,7 +50,7 @@ const LEGACY_RELAY_KEY_NAMES = ["mahoquot.key", "mahoquot.mgmt"] as const;
 export const getLegacyRelayKey = (): string | null => {
   for (const name of LEGACY_RELAY_KEY_NAMES) {
     const value = localStorage.getItem(name);
-    if (value !== null) return value;
+    if (value && value.trim() !== "") return value.trim();
   }
   return null;
 };

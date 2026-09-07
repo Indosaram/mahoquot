@@ -1454,8 +1454,43 @@ fn restore_cli_agent(
     cli_config_manager(&state)?.restore(agent_id)
 }
 
-fn secret_ref(endpoint: &str, profile: &str, kind: secrets::SecretKind) -> secrets::SecretRef {
-    secrets::SecretRef::new(endpoint, profile, kind)
+fn secret_ref(
+    endpoint: &str,
+    profile: &str,
+    kind: secrets::SecretKind,
+    default_base_url: &str,
+) -> secrets::SecretRef {
+    let ep = if endpoint.trim().is_empty() {
+        default_base_url
+    } else {
+        endpoint
+    };
+    secrets::SecretRef::new(ep, profile, kind)
+}
+
+fn parse_loopback(s: &str) -> Option<(u16, &str)> {
+    let stripped = s.strip_prefix("http://")?;
+    let (host_port, path) = stripped.split_once('/').unwrap_or((stripped, ""));
+    let (host, port_str) = host_port.split_once(':').unwrap_or((host_port, "80"));
+    let port: u16 = port_str.parse().ok()?;
+    if host == "127.0.0.1" || host == "localhost" {
+        Some((port, path))
+    } else {
+        None
+    }
+}
+
+fn is_matching_gateway_endpoint(request_endpoint: &str, config_base_url: &str) -> bool {
+    let req = secrets::normalize_endpoint(request_endpoint);
+    let cfg = secrets::normalize_endpoint(config_base_url);
+    if req == cfg || req.is_empty() {
+        return true;
+    }
+    // Loopback equivalence: http://localhost:PORT and http://127.0.0.1:PORT
+    if let (Some((p1, path1)), Some((p2, path2))) = (parse_loopback(&req), parse_loopback(&cfg)) {
+        return p1 == p2 && path1 == path2;
+    }
+    false
 }
 
 #[derive(serde::Deserialize)]
@@ -1499,13 +1534,13 @@ fn read_secret_inner(
         &request.endpoint,
         &request.profile,
         request.kind,
+        &config.base_url,
     ))? {
         return Ok(Some(val));
     }
     if request.kind == secrets::SecretKind::ManagementKey
         && !config.api_key.is_empty()
-        && secrets::normalize_endpoint(&request.endpoint)
-            == secrets::normalize_endpoint(&config.base_url)
+        && is_matching_gateway_endpoint(&request.endpoint, &config.base_url)
     {
         return Ok(Some(config.api_key.clone()));
     }
@@ -1515,10 +1550,16 @@ fn read_secret_inner(
 #[tauri::command]
 fn write_secret(
     store: tauri::State<'_, DesktopSecretStore>,
+    config: tauri::State<'_, Config>,
     request: WriteSecretRequest,
 ) -> Result<(), secrets::SecretStoreError> {
     store.write(
-        &secret_ref(&request.endpoint, &request.profile, request.kind),
+        &secret_ref(
+            &request.endpoint,
+            &request.profile,
+            request.kind,
+            &config.base_url,
+        ),
         &request.value,
     )
 }
@@ -1526,12 +1567,14 @@ fn write_secret(
 #[tauri::command]
 fn delete_secret(
     store: tauri::State<'_, DesktopSecretStore>,
+    config: tauri::State<'_, Config>,
     request: SecretRequest,
 ) -> Result<(), secrets::SecretStoreError> {
     store.delete(&secret_ref(
         &request.endpoint,
         &request.profile,
         request.kind,
+        &config.base_url,
     ))
 }
 
@@ -1550,7 +1593,12 @@ fn migrate_legacy_secret_inner(
     request: MigrateLegacySecretRequest,
 ) -> Result<secrets::MigrationOutcome, secrets::SecretStoreError> {
     let outcome = store.migrate_legacy(
-        &secret_ref(&request.endpoint, &request.profile, request.kind),
+        &secret_ref(
+            &request.endpoint,
+            &request.profile,
+            request.kind,
+            &config.base_url,
+        ),
         request.legacy_value.as_deref(),
     )?;
 
@@ -1563,12 +1611,16 @@ fn migrate_legacy_secret_inner(
     // but only when the requested endpoint matches this gateway's configured base URL.
     if request.kind == secrets::SecretKind::ManagementKey
         && !config.api_key.is_empty()
-        && secrets::normalize_endpoint(&request.endpoint)
-            == secrets::normalize_endpoint(&config.base_url)
+        && is_matching_gateway_endpoint(&request.endpoint, &config.base_url)
     {
         let master = &config.api_key;
         let _ = store.write(
-            &secret_ref(&request.endpoint, &request.profile, request.kind),
+            &secret_ref(
+                &request.endpoint,
+                &request.profile,
+                request.kind,
+                &config.base_url,
+            ),
             master,
         );
         return Ok(secrets::MigrationOutcome {

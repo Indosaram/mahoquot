@@ -151,7 +151,8 @@ export default function App() {
   // The Gateway URL input edits `baseUrl` per keystroke; secret work must key
   // off the value the operator actually committed with Save & reconnect.
   const [committedBaseUrl, setCommittedBaseUrl] = useState(getGatewayBaseUrl);
-  const [relayKey, setRelayKeyState] = useState("");
+  const [relayKey, setRelayKeyState] = useState(() => getLegacyRelayKey() ?? "");
+  const [secretResolved, setSecretResolved] = useState(() => Boolean(getLegacyRelayKey()));
   const [secretStoreError, setSecretStoreError] = useState<SecretStoreError | null>(null);
   const [secretRetry, setSecretRetry] = useState(0);
   const [showRemaining, setShowRemainingState] = useState(getQuotaShowRemaining());
@@ -210,7 +211,7 @@ export default function App() {
   const [nativeSettingsBusy, setNativeSettingsBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const totp = useTotpVault(committedBaseUrl);
+  const totp = useTotpVault(committedBaseUrl || DEFAULT_GATEWAY_URL);
 
   const reloadCliAgents = useCallback(async () => {
     const agents = await listCliAgents();
@@ -290,7 +291,7 @@ export default function App() {
   }, [onboardingOpen, configOpen]);
 
   const clients = useMemo(
-    () => createGatewayClients(committedBaseUrl, relayKey),
+    () => createGatewayClients(committedBaseUrl || DEFAULT_GATEWAY_URL, relayKey),
     [committedBaseUrl, relayKey],
   );
 
@@ -553,13 +554,17 @@ export default function App() {
     // notch renders its empty ring even though accounts exist.
     if (surface !== "notch" && surface !== "tray") return;
     let active = true;
-    void readDesktopSecret(committedBaseUrl, "default", "management_key")
+    void readDesktopSecret(committedBaseUrl || DEFAULT_GATEWAY_URL, "default", "management_key")
       .then((value) => {
-        if (active) setRelayKeyState(value ?? "");
+        if (active) {
+          setRelayKeyState(value ?? "");
+          setSecretResolved(true);
+        }
       })
       .catch(() => {
         // These surfaces have no settings UI to recover in; the console owns
         // surfacing secret-store failures.
+        if (active) setSecretResolved(true);
       });
     return () => {
       active = false;
@@ -571,12 +576,18 @@ export default function App() {
     void secretRetry;
     let active = true;
     const legacyValue = getLegacyRelayKey();
-    void migrateLegacyDesktopSecret(committedBaseUrl, "default", "management_key", legacyValue)
+    void migrateLegacyDesktopSecret(
+      committedBaseUrl || DEFAULT_GATEWAY_URL,
+      "default",
+      "management_key",
+      legacyValue,
+    )
       .then((outcome) => {
         if (!active) return;
         if (outcome.remove_legacy) removeLegacyRelayKey();
         setRelayKeyState(outcome.value ?? "");
         setSecretStoreError(null);
+        setSecretResolved(true);
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -586,6 +597,7 @@ export default function App() {
             : new SecretStoreError({ kind: "backend", detail: String(error) });
         setSecretStoreError(typed);
         setNotice(typed.message);
+        setSecretResolved(true);
       });
     return () => {
       active = false;
@@ -1283,7 +1295,7 @@ export default function App() {
           ))}
         </div>
 
-        {loadState === "relay-locked" ? (
+        {loadState === "relay-locked" && secretResolved ? (
           <div className="state-panel warning">
             <KeyRound /> API key required to load gateway telemetry and management data.
           </div>
@@ -1427,7 +1439,7 @@ export default function App() {
               }}
               onRelayKeyBlur={() => {
                 void writeDesktopSecret(
-                  committedBaseUrl,
+                  committedBaseUrl || DEFAULT_GATEWAY_URL,
                   "default",
                   "management_key",
                   relayKey.trim(),
