@@ -342,4 +342,38 @@ describe("Account Normalization and Quota Capability", () => {
     expect(acc.disabled).toBe(true);
     expect(acc.health).toBe("disabled");
   });
+
+  it("normalizes claude account label with underscore or at-sign email and preserves non-email labels", () => {
+    const creds: AuthFileItem[] = [
+      {
+        name: "claude-sookyoung91_gmail.com.json",
+        size: 256,
+        auth_index: "claude-1",
+        path: "/auth/claude-sookyoung91_gmail.com.json",
+        label: "claude-sookyoung91_gmail.com",
+        disabled: false,
+        unavailable: false,
+        runtime_only: false,
+        type: "claude",
+        email: "sookyoung91@gmail.com",
+      },
+      {
+        name: "claude-ccapi.json",
+        size: 256,
+        auth_index: "claude-2",
+        path: "/auth/claude-ccapi.json",
+        label: "claude-ccapi",
+        disabled: false,
+        unavailable: false,
+        runtime_only: false,
+        type: "claude",
+        email: "claude-ccapi",
+      },
+    ];
+
+    const normalized = mergeAccountsAndCredentials([], creds);
+    expect(normalized).toHaveLength(2);
+    expect(normalized[0]?.label).toBe("sookyoung91@gmail.com");
+    expect(normalized[1]?.label).toBe("claude-ccapi");
+  });
 });

@@ -82,20 +82,9 @@ describe("AccountsSurface component", () => {
     expect(container.querySelector(".quota-track i")).toHaveStyle({ width: "75%" });
   });
 
-  it("folds token usage and reveals input, output, and total on expand", () => {
+  it("does not render token usage accordion in accounts surface", () => {
     render(<AccountsSurface {...createProps()} />);
-
-    const usage = screen.getByLabelText("Token usage");
-    expect(usage).toHaveTextContent("1.7K");
-    expect(usage).not.toHaveTextContent("1.3K");
-
-    fireEvent.click(screen.getByRole("button", { name: /Tokens/ }));
-    expect(usage).toHaveTextContent("1.3K");
-    expect(usage).toHaveTextContent("430");
-    expect(usage).toHaveTextContent("1.7K");
-
-    fireEvent.click(screen.getByRole("button", { name: /Tokens/ }));
-    expect(usage).not.toHaveTextContent("1.3K");
+    expect(screen.queryByLabelText("Token usage")).not.toBeInTheDocument();
   });
 
   it("renders relay window deltas and the plan chip only for accounts that carry them", () => {

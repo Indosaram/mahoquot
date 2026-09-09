@@ -95,4 +95,68 @@ describe("useGatewayPolling generation guard", () => {
     // Ensure Client A's stale response did NOT overwrite Client B's state
     expect(result.current.stats.uptime_secs).toBe(999);
   });
+
+  it("R4 regression: clears telemetry and stats when switching gateway clients", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("18801") && url.includes("/admin/stats")) {
+          return new Response(
+            JSON.stringify({
+              ...baseStats,
+              uptime_secs: 100,
+              history: [
+                {
+                  minute_unix: 1_800,
+                  requests: 4,
+                  successes: 4,
+                  failures: 0,
+                  input_tokens: 120,
+                  output_tokens: 30,
+                  providers: [],
+                  accounts: [],
+                },
+              ],
+            }),
+          );
+        }
+        if (url.includes("18802") && url.includes("/admin/stats")) {
+          return new Response(
+            JSON.stringify({
+              ...baseStats,
+              uptime_secs: 200,
+              history: [],
+            }),
+          );
+        }
+        if (url.includes("/healthz")) {
+          return new Response(JSON.stringify({ status: "ok", version: "1.0", api_schema: 1 }));
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    const clientA = createGatewayClients("http://127.0.0.1:18801", "keyA");
+    const clientB = createGatewayClients("http://127.0.0.1:18802", "keyB");
+
+    const { result, rerender } = renderHook(({ clients }) => useGatewayPolling(clients), {
+      initialProps: { clients: clientA },
+    });
+
+    await waitFor(() => {
+      expect(result.current.telemetry).toHaveLength(1);
+      expect(result.current.telemetry[0].inputTokens).toBe(120);
+    });
+
+    // Switch to client B
+    act(() => {
+      rerender({ clients: clientB });
+    });
+
+    await waitFor(() => {
+      expect(result.current.stats.uptime_secs).toBe(200);
+      expect(result.current.telemetry).toHaveLength(0);
+    });
+  });
 });

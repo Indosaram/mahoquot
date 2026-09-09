@@ -61,6 +61,38 @@ struct StartupContext {
     login_start: bool,
 }
 
+#[derive(Default)]
+struct ZcodeCallback(std::sync::Mutex<Option<url::Url>>);
+
+fn take_matching_zcode_callback(
+    callback: &mut Option<url::Url>,
+    expected_state: &str,
+) -> Option<String> {
+    let matches = callback.as_ref().is_some_and(|url| {
+        let mut states = url.query_pairs().filter(|(key, _)| key == "state");
+        !expected_state.is_empty()
+            && url.scheme() == "zcode"
+            && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("oauth"))
+            && url.path().eq_ignore_ascii_case("/callback")
+            && states.next().is_some_and(|(_, state)| state == expected_state)
+            && states.next().is_none()
+    });
+    if matches {
+        callback.take().map(String::from)
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+fn take_zcode_callback(
+    callback: tauri::State<'_, ZcodeCallback>,
+    expected_state: String,
+) -> Result<Option<String>, String> {
+    let mut callback = callback.0.lock().map_err(|error| error.to_string())?;
+    Ok(take_matching_zcode_callback(&mut callback, &expected_state))
+}
+
 impl GatewayProcess {
     fn pid(&self) -> i32 {
         self.pid.load(std::sync::atomic::Ordering::SeqCst)
@@ -1797,6 +1829,7 @@ fn main() {
         .manage(gateway)
         .manage(NativeStateObserver::default())
         .manage(StartupContext { login_start })
+        .manage(ZcodeCallback::default())
         .manage(tunnel::TunnelManager::new(
             tunnel::default_cloudflared_path().expect("cannot initialize tunnel home"),
         ))
@@ -1828,6 +1861,7 @@ fn main() {
             gateway_url,
             open_console,
             open_external_url,
+            take_zcode_callback,
             quit_app,
             gateway_status,
             start_gateway,
@@ -1900,6 +1934,19 @@ fn main() {
     // ours is overwritten during setup and SIGTERM strands the gateway.
     install_gateway_signal_guard();
     app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { ref urls } = event {
+            for url in urls.iter().filter(|url| url.scheme() == "zcode") {
+                match app.state::<ZcodeCallback>().0.lock() {
+                    Ok(mut callback) => *callback = Some(url.clone()),
+                    Err(error) => tracing::error!(%error, "failed to receive ZCode callback"),
+                }
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }
         // A macOS Dock click arrives as a Reopen event: reveal the hidden
         // console window so clicking the icon feels like "open the app".
         #[cfg(target_os = "macos")]

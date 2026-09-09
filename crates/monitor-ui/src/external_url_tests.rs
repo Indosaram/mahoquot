@@ -35,3 +35,33 @@ fn https_only_urls_reach_platform_opener() {
         println!("native external opener dispatched: {url}");
     }
 }
+
+#[test]
+fn zcode_callbacks_are_consumed_only_by_the_matching_login() {
+    let mut callback =
+        Some(url::Url::parse("zcode://oauth/callback?code=fixture&state=current").unwrap());
+    assert_eq!(
+        super::take_matching_zcode_callback(&mut callback, "other"),
+        None
+    );
+    assert!(callback.is_some());
+    assert_eq!(
+        super::take_matching_zcode_callback(&mut callback, "current"),
+        Some("zcode://oauth/callback?code=fixture&state=current".into())
+    );
+    assert_eq!(
+        super::take_matching_zcode_callback(&mut callback, "current"),
+        None
+    );
+}
+
+#[test]
+fn zcode_callbacks_with_duplicate_state_are_not_delivered() {
+    let mut callback = Some(
+        url::Url::parse("zcode://oauth/callback?code=fixture&state=current&state=other").unwrap(),
+    );
+    assert_eq!(
+        super::take_matching_zcode_callback(&mut callback, "current"),
+        None
+    );
+}

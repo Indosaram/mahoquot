@@ -49,6 +49,11 @@ const providerAuthStatusSchema = z.object({
 });
 
 export type ProviderAuthStatus = z.infer<typeof providerAuthStatusSchema>;
+const zcodeAuthResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok") }),
+  z.object({ status: z.literal("pending"), url: z.string().url() }),
+]);
+export type ZcodeAuthResult = z.infer<typeof zcodeAuthResultSchema>;
 export type ScalarValue = string | number | boolean;
 
 export interface HistoryStatsQuery {
@@ -140,7 +145,7 @@ export interface GatewayClients {
     removeCredential(name: string): Promise<void>;
     setCredentialDisabled(name: string, disabled: boolean): Promise<void>;
     createZcodeCredential(email: string, apiKey: string): Promise<void>;
-    completeZcodeAuth(state: string, callbackUrl: string): Promise<void>;
+    completeZcodeAuth(state: string, callbackUrl: string): Promise<ZcodeAuthResult>;
     createGenericCredential(input: {
       readonly provider: string;
       readonly label: string;
@@ -534,11 +539,12 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         );
       },
       completeZcodeAuth: async (state, callbackUrl) => {
-        await requestJson(`${base}/v0/management/zcode-callback`, authHeaders, {
+        const result = await requestJson(`${base}/v0/management/zcode-callback`, authHeaders, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ state, callback_url: callbackUrl }),
         });
+        return zcodeAuthResultSchema.parse(result);
       },
       providerAuthStatus: async (state) =>
         providerAuthStatusSchema.parse(

@@ -12,6 +12,11 @@ export interface AccountTotal {
   readonly requests: number;
   readonly successes: number;
   readonly failures: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly totalTokens?: number;
+  readonly hasRawInput?: boolean;
+  readonly hasRawOutput?: boolean;
 }
 
 export interface TelemetrySample {
@@ -23,6 +28,9 @@ export interface TelemetrySample {
   readonly inFlight: number;
   readonly p50Ms: number;
   readonly p90Ms: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly totalTokens?: number;
   /**
    * Cumulative per-provider counters as reported by the gateway. Kept
    * cumulative because the next sample subtracts against them to derive its
@@ -35,6 +43,8 @@ export interface TelemetrySample {
    */
   readonly providerDeltas?: readonly ProviderTotal[];
   readonly accounts: readonly AccountTotal[];
+  readonly cumulativeAccounts?: readonly AccountTotal[];
+  readonly tokensDerivedFromAccounts?: boolean;
 }
 
 export type TelemetryRange = "30m" | "1h" | "1d" | "7d" | "30d";
@@ -89,16 +99,90 @@ export const appendTelemetrySample = (
     const failures = counterDelta(provider.failures, prior?.failures);
     return { provider: provider.provider, requests: successes + failures, successes, failures };
   });
-  const previousAccounts = new Map(
-    previous?.accounts.map((account) => [account.id, account]) ?? [],
+  const previousCumulativeAccounts = new Map(
+    previous?.cumulativeAccounts?.map((account) => [account.id, account]) ?? [],
   );
-  const accounts = stats.accounts.map((account) => {
-    const successes = counterDelta(account.ok, previousAccounts.get(account.id)?.successes);
-    const failures = counterDelta(account.fails, previousAccounts.get(account.id)?.failures);
-    return { id: account.id, requests: successes + failures, successes, failures };
+  const accounts: AccountTotal[] = stats.accounts.map((account) => {
+    const prev = previousCumulativeAccounts.get(account.id);
+    const successes = counterDelta(account.ok, prev?.successes);
+    const failures = counterDelta(account.fails, prev?.failures);
+    const hasCurrentInput = account.input_tokens !== undefined;
+    const hasCurrentOutput = account.output_tokens !== undefined;
+    const hasTokens = hasCurrentInput || hasCurrentOutput;
+
+    // Check if this account or token field was observed in the immediate previous sample.
+    // If not (e.g. first observation or reappearing after an omission gap), re-establish baseline
+    // so historical counter changes across the gap are not attributed to this single interval.
+    const priorInSample = previous?.accounts.some((a) => a.id === account.id);
+    const wasAccountOmitted = previous !== undefined && !priorInSample;
+    const wasInputOmitted =
+      wasAccountOmitted || (previous !== undefined && !prev?.hasRawInput);
+    const wasOutputOmitted =
+      wasAccountOmitted || (previous !== undefined && !prev?.hasRawOutput);
+    const isNewInput = prev?.inputTokens === undefined || wasInputOmitted;
+    const isNewOutput = prev?.outputTokens === undefined || wasOutputOmitted;
+
+    const accountRequests = successes + failures;
+    const inputTokens = account.input_tokens !== undefined
+      ? isNewInput
+        ? accountRequests > 0
+          ? undefined
+          : 0
+        : counterDelta(account.input_tokens, prev?.inputTokens)
+      : undefined;
+
+    const outputTokens = account.output_tokens !== undefined
+      ? isNewOutput
+        ? accountRequests > 0
+          ? undefined
+          : 0
+        : counterDelta(account.output_tokens, prev?.outputTokens)
+      : undefined;
+
+    const totalTokens = hasTokens ? (inputTokens ?? 0) + (outputTokens ?? 0) : undefined;
+    return {
+      id: account.id,
+      requests: accountRequests,
+      successes,
+      failures,
+      ...(hasTokens ? { inputTokens, outputTokens, totalTokens } : {}),
+    };
   });
+
+  // Preserve cumulative baselines per-account and per-field across historical polls
+  // so temporary omission of a field or account does not reset counter baseline.
+  const cumulativeAccountsMap = new Map(previousCumulativeAccounts);
+  for (const account of stats.accounts) {
+    const prev = cumulativeAccountsMap.get(account.id);
+    const inTok = account.input_tokens ?? prev?.inputTokens;
+    const outTok = account.output_tokens ?? prev?.outputTokens;
+    const hasTok = inTok !== undefined || outTok !== undefined;
+    cumulativeAccountsMap.set(account.id, {
+      id: account.id,
+      requests: account.ok + account.fails,
+      successes: account.ok,
+      failures: account.fails,
+      inputTokens: inTok,
+      outputTokens: outTok,
+      totalTokens: hasTok ? (inTok ?? 0) + (outTok ?? 0) : undefined,
+      hasRawInput: account.input_tokens !== undefined,
+      hasRawOutput: account.output_tokens !== undefined,
+    });
+  }
+  const cumulativeAccounts = [...cumulativeAccountsMap.values()];
+
   const successes = providerDeltas.reduce((sum, provider) => sum + provider.successes, 0);
   const failures = providerDeltas.reduce((sum, provider) => sum + provider.failures, 0);
+  const hasAnyInput = accounts.some((a) => a.inputTokens !== undefined);
+  const hasAnyOutput = accounts.some((a) => a.outputTokens !== undefined);
+  const hasAnyTokens = hasAnyInput || hasAnyOutput;
+  const inputTokens = hasAnyInput
+    ? accounts.reduce((sum, account) => sum + (account.inputTokens ?? 0), 0)
+    : undefined;
+  const outputTokens = hasAnyOutput
+    ? accounts.reduce((sum, account) => sum + (account.outputTokens ?? 0), 0)
+    : undefined;
+  const totalTokens = hasAnyTokens ? (inputTokens ?? 0) + (outputTokens ?? 0) : undefined;
   const currentLatency = latency(stats);
   const next: TelemetrySample = {
     timestamp,
@@ -109,9 +193,12 @@ export const appendTelemetrySample = (
     inFlight: stats.in_flight,
     p50Ms: currentLatency.p50Ms,
     p90Ms: currentLatency.p90Ms,
+    ...(hasAnyTokens ? { inputTokens, outputTokens, totalTokens } : {}),
     providers,
     providerDeltas,
     accounts,
+    cumulativeAccounts,
+    tokensDerivedFromAccounts: hasAnyTokens,
   };
   return [...samples, next].slice(-43_200);
 };
@@ -119,25 +206,50 @@ export const appendTelemetrySample = (
 export const persistedTelemetrySamples = (
   buckets: readonly TelemetryBucket[],
 ): readonly TelemetrySample[] =>
-  buckets.map((bucket) => ({
-    timestamp: bucket.minute_unix * 1000,
-    served: bucket.requests,
-    requests: bucket.requests,
-    successes: bucket.successes,
-    failures: bucket.failures,
-    inFlight: 0,
-    p50Ms: 0,
-    p90Ms: 0,
-    providers: bucket.providers,
-    // Persisted buckets are already per-minute deltas, so both views coincide.
-    providerDeltas: bucket.providers,
-    accounts: bucket.accounts.map((account) => ({
-      id: account.account,
-      requests: account.requests,
-      successes: account.successes,
-      failures: account.failures,
-    })),
-  }));
+  buckets.map((bucket) => {
+    const bucketInput = bucket.input_tokens;
+    const bucketOutput = bucket.output_tokens;
+    const hasBucketTokens = bucketInput !== undefined || bucketOutput !== undefined;
+    const accounts = bucket.accounts.map((account) => {
+      const inTok = account.input_tokens;
+      const outTok = account.output_tokens;
+      const hasAccTokens = inTok !== undefined || outTok !== undefined;
+      return {
+        id: account.account,
+        requests: account.requests,
+        successes: account.successes,
+        failures: account.failures,
+        ...(hasAccTokens
+          ? {
+              inputTokens: inTok,
+              outputTokens: outTok,
+              totalTokens: (inTok ?? 0) + (outTok ?? 0),
+            }
+          : {}),
+      };
+    });
+    return {
+      timestamp: bucket.minute_unix * 1000,
+      served: bucket.requests,
+      requests: bucket.requests,
+      successes: bucket.successes,
+      failures: bucket.failures,
+      inFlight: 0,
+      p50Ms: 0,
+      p90Ms: 0,
+      ...(hasBucketTokens
+        ? {
+            inputTokens: bucketInput,
+            outputTokens: bucketOutput,
+            totalTokens: (bucketInput ?? 0) + (bucketOutput ?? 0),
+          }
+        : {}),
+      providers: bucket.providers,
+      // Persisted buckets are already per-minute deltas, so both views coincide.
+      providerDeltas: bucket.providers,
+      accounts,
+    };
+  });
 
 export const filterTelemetryRange = <T extends { readonly timestamp: number }>(
   samples: readonly T[],
@@ -150,15 +262,106 @@ export const filterTelemetryRange = <T extends { readonly timestamp: number }>(
   );
 };
 
+export interface TokenTotals {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+  readonly isInputSupported?: boolean;
+  readonly isOutputSupported?: boolean;
+  readonly isPartial?: boolean;
+}
+
+export interface AccountTokenTotal {
+  readonly id: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly totalTokens: number;
+  readonly isInputSupported?: boolean;
+  readonly isOutputSupported?: boolean;
+  readonly isPartial?: boolean;
+}
+
 export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
   const providers = new Map<string, ProviderTotal>();
+  interface AccountAccumulator {
+    id: string;
+    sumInput: number;
+    sumOutput: number;
+    totalTokens: number;
+    hasInput: boolean;
+    hasOutput: boolean;
+    hasMissingField: boolean;
+  }
+  const accounts = new Map<string, AccountAccumulator>();
   let requests = 0;
   let successes = 0;
   let failures = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let hasInputTokens = false;
+  let hasOutputTokens = false;
+  let hasMissingTokenRequest = false;
+
   for (const sample of samples) {
     requests += sample.requests;
     successes += sample.successes;
     failures += sample.failures;
+
+    const sampleAccounts = sample.accounts;
+    const accInputSum = sampleAccounts.reduce((sum, a) => sum + (a.inputTokens ?? 0), 0);
+    const accOutputSum = sampleAccounts.reduce((sum, a) => sum + (a.outputTokens ?? 0), 0);
+    const hasAccInput = sampleAccounts.some((a) => a.inputTokens !== undefined);
+    const hasAccOutput = sampleAccounts.some((a) => a.outputTokens !== undefined);
+
+    let sampleHasInput = false;
+    let sampleHasOutput = false;
+
+    if (sample.inputTokens !== undefined) {
+      inputTokens += sample.inputTokens;
+      hasInputTokens = true;
+      sampleHasInput = true;
+    } else if (hasAccInput) {
+      inputTokens += accInputSum;
+      hasInputTokens = true;
+      sampleHasInput = true;
+    }
+
+    if (sample.outputTokens !== undefined) {
+      outputTokens += sample.outputTokens;
+      hasOutputTokens = true;
+      sampleHasOutput = true;
+    } else if (hasAccOutput) {
+      outputTokens += accOutputSum;
+      hasOutputTokens = true;
+      sampleHasOutput = true;
+    }
+
+    // If a field is derived from accounts (i.e. omitted at the bucket level OR from polling sample),
+    // check if any account that handled requests lacked that specific token field.
+    const isInputDerivedFromAccounts =
+      (sample.tokensDerivedFromAccounts || sample.inputTokens === undefined) && hasAccInput;
+    const hasMissingDerivedInput =
+      isInputDerivedFromAccounts &&
+      sampleAccounts.some((a) => a.requests > 0 && a.inputTokens === undefined);
+
+    const isOutputDerivedFromAccounts =
+      (sample.tokensDerivedFromAccounts || sample.outputTokens === undefined) && hasAccOutput;
+    const hasMissingDerivedOutput =
+      isOutputDerivedFromAccounts &&
+      sampleAccounts.some((a) => a.requests > 0 && a.outputTokens === undefined);
+
+    const accountRequestsSum = sampleAccounts.reduce((sum, a) => sum + a.requests, 0);
+    const hasUncoveredRequests =
+      (isInputDerivedFromAccounts || isOutputDerivedFromAccounts) &&
+      sample.requests > accountRequestsSum;
+
+    if (
+      sample.requests > 0 &&
+      (!sampleHasInput || !sampleHasOutput || hasMissingDerivedInput || hasMissingDerivedOutput || hasUncoveredRequests)
+    ) {
+      hasMissingTokenRequest = true;
+    }
+
     for (const provider of sample.providerDeltas ?? sample.providers) {
       const current = providers.get(provider.provider) ?? {
         provider: provider.provider,
@@ -173,11 +376,71 @@ export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
         failures: current.failures + provider.failures,
       });
     }
+
+    for (const account of sampleAccounts) {
+      const inTok = account.inputTokens;
+      const outTok = account.outputTokens;
+      const current = accounts.get(account.id);
+
+      const hasInput = (current?.hasInput ?? false) || inTok !== undefined;
+      const hasOutput = (current?.hasOutput ?? false) || outTok !== undefined;
+      const hasMissingField =
+        (current?.hasMissingField ?? false) ||
+        (account.requests > 0 && (inTok === undefined || outTok === undefined));
+      const sumInput = (current?.sumInput ?? 0) + (inTok ?? 0);
+      const sumOutput = (current?.sumOutput ?? 0) + (outTok ?? 0);
+      const totTok = account.totalTokens ?? (inTok ?? 0) + (outTok ?? 0);
+      const totalTokens = (current?.totalTokens ?? 0) + totTok;
+
+      accounts.set(account.id, {
+        id: account.id,
+        totalTokens,
+        hasInput,
+        hasOutput,
+        hasMissingField,
+        sumInput,
+        sumOutput,
+      });
+    }
   }
+
+  const accountTokens: AccountTokenTotal[] = [...accounts.values()]
+    .filter((acc) => acc.hasInput || acc.hasOutput || acc.totalTokens > 0)
+    .map((acc) => {
+      const isInputSupported = acc.hasInput;
+      const isOutputSupported = acc.hasOutput;
+      const isPartial =
+        (acc.hasInput || acc.hasOutput) &&
+        (acc.hasMissingField || !acc.hasInput || !acc.hasOutput);
+      return {
+        id: acc.id,
+        inputTokens: acc.hasInput ? acc.sumInput : undefined,
+        outputTokens: acc.hasOutput ? acc.sumOutput : undefined,
+        totalTokens: acc.totalTokens,
+        isInputSupported,
+        isOutputSupported,
+        isPartial,
+      };
+    })
+    .sort((a, b) => b.totalTokens - a.totalTokens || a.id.localeCompare(b.id));
+
+  const hasTokenData = hasInputTokens || hasOutputTokens;
+  const isPartial = hasTokenData && (hasMissingTokenRequest || !hasInputTokens || !hasOutputTokens);
+
   return {
     requests,
     successes,
     failures,
+    tokenTotals: {
+      inputTokens: hasInputTokens ? inputTokens : 0,
+      outputTokens: hasOutputTokens ? outputTokens : 0,
+      totalTokens: (hasInputTokens ? inputTokens : 0) + (hasOutputTokens ? outputTokens : 0),
+      isInputSupported: hasInputTokens,
+      isOutputSupported: hasOutputTokens,
+      isPartial,
+    },
+    accountTokens,
+    hasTokenData,
     providers: [...providers.values()].sort(
       (a, b) => b.requests - a.requests || a.provider.localeCompare(b.provider),
     ),

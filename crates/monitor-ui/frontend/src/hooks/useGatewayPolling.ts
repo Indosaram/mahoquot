@@ -78,6 +78,14 @@ export function useGatewayPolling(clients: GatewayClients) {
     hasSucceeded.current = false;
   }
 
+  useEffect(() => {
+    // Reset server-bound state when clients change to isolate gateways.
+    setStats(emptyStats);
+    setTelemetry([]);
+    setFetchedAt(null);
+    setLoadState("loading");
+  }, [clients]);
+
   // Mirrors gatewayLifecycle so refresh can read it without becoming a new
   // callback on every lifecycle flip, which remounted the poll effect and
   // duplicated in-flight polls.
@@ -143,11 +151,13 @@ export function useGatewayPolling(clients: GatewayClients) {
       setStats(nextStats);
       const now = Date.now();
       setTelemetry((samples) => {
-        const persisted = persistedTelemetrySamples(nextStats.history ?? []);
-        return persisted.length ? persisted : appendTelemetrySample(samples, nextStats, now);
+        if (Array.isArray(nextStats.history)) {
+          return persistedTelemetrySamples(nextStats.history);
+        }
+        return appendTelemetrySample(samples, nextStats, now);
       });
       setLoadState("online");
-      setFetchedAt(Date.now());
+      setFetchedAt(now);
       setGatewayLifecycle("running");
       firstLoad.current = false;
     } catch (error) {

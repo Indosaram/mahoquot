@@ -286,6 +286,61 @@ describe("operations console", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("forwards the authorize page paste to the gateway for code recovery", async () => {
+    const callbackBodies: Array<Record<string, unknown>> = [];
+    const authorizePage =
+      "https://chat.z.ai/auth/oauth/authorize?response_type=code&client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=zcode://oauth/callback&state=s1";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) {
+          return new Response(JSON.stringify(stats));
+        }
+        if (url.includes("auth-files")) {
+          return new Response(JSON.stringify({ files: [] }));
+        }
+        if (url.includes("/logs")) {
+          return new Response(JSON.stringify({ lines: [] }));
+        }
+        if (url.includes("get-auth-status")) {
+          return new Response(JSON.stringify({ status: "pending" }));
+        }
+        if (url.includes("zcode-auth-url")) {
+          return new Response(
+            JSON.stringify({
+              url: "https://chat.z.ai/api/oauth/authorize?response_type=code",
+              state: "s1",
+            }),
+          );
+        }
+        if (url.includes("zcode-callback")) {
+          callbackBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+          return new Response(JSON.stringify({ status: "ok" }));
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with ZCode" }));
+
+    const field = await screen.findByLabelText("ZCode redirect URL");
+    fireEvent.change(field, { target: { value: authorizePage } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
+
+    // No inline block: the paste goes to the gateway, which recovers the
+    // code/state from the page address.
+    await waitFor(() =>
+      expect(callbackBodies).toEqual([{ state: "s1", callback_url: authorizePage }]),
+    );
+  });
+
   it("saves a custom relay target as a claude credential with the chosen plan", async () => {
     const requests: Array<{ url: string; body: string }> = [];
     vi.stubGlobal(

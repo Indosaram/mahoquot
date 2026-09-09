@@ -32,6 +32,12 @@ export const startManagedGateway = (): Promise<GatewayLifecycleStatus> =>
 export const stopManagedGateway = (): Promise<GatewayLifecycleStatus> =>
   invokeLifecycle("stop_gateway");
 
+export const takeZcodeCallback = async (expectedState: string): Promise<string | null> => {
+  const native = internals();
+  if (!native) return null;
+  return native.invoke<string | null>("take_zcode_callback", { expectedState });
+};
+
 export type NotificationServiceStatus = "available" | "permission_denied" | "service_unavailable";
 
 export interface NativeSettingsState {

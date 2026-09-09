@@ -1,5 +1,6 @@
 import { DitherArea } from "@/components/dither-area";
 import { useMemo, useState } from "react";
+import type { NormalizedAccount } from "../lib/accounts";
 import { providerColor } from "../lib/provider-colors";
 import type { AdminStats } from "../lib/schemas";
 import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
@@ -10,6 +11,7 @@ import {
   summarizeTelemetry,
   telemetrySeries,
 } from "../lib/telemetry";
+import { OverviewTokenUsage } from "./OverviewTokenUsage";
 import { Cluster, IntrinsicGrid, Stack } from "./layout";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -23,16 +25,33 @@ const latency = (stats: AdminStats, pick: "p50_ms" | "p90_ms"): string => {
 const providerName = (provider: string): string =>
   provider === "antigravity" ? "Antigravity" : provider.charAt(0).toUpperCase() + provider.slice(1);
 
+export interface OverviewDashboardProps {
+  readonly stats: AdminStats;
+  readonly samples: readonly TelemetrySample[];
+  readonly accounts?: readonly NormalizedAccount[];
+  readonly range?: TelemetryRange;
+  readonly onRangeChange?: (range: TelemetryRange) => void;
+  readonly asOfMs?: number;
+}
+
 export const OverviewDashboard = ({
   stats,
   samples,
-}: {
-  readonly stats: AdminStats;
-  readonly samples: readonly TelemetrySample[];
-}) => {
-  const [range, setRange] = useState<TelemetryRange>(getTelemetryRange);
-  const filtered = useMemo(() => filterTelemetryRange(samples, range), [range, samples]);
-  const series = useMemo(() => telemetrySeries(filtered, range), [filtered, range]);
+  accounts = [],
+  range: controlledRange,
+  onRangeChange,
+  asOfMs,
+}: OverviewDashboardProps) => {
+  const [localRange, setLocalRange] = useState<TelemetryRange>(getTelemetryRange);
+  const range = controlledRange ?? localRange;
+  const filtered = useMemo(
+    () => filterTelemetryRange(samples, range, asOfMs),
+    [asOfMs, range, samples],
+  );
+  const series = useMemo(
+    () => telemetrySeries(filtered, range, asOfMs),
+    [asOfMs, filtered, range],
+  );
   const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
   const outcomes = summary.successes + summary.failures;
   const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
@@ -40,6 +59,86 @@ export const OverviewDashboard = ({
     1,
     summary.providers.reduce((sum, provider) => sum + provider.requests, 0),
   );
+
+  const { isGlobalInputSupported, isGlobalOutputSupported } = useMemo(() => {
+    let hasInput = false;
+    let hasOutput = false;
+
+    if (Array.isArray(stats.history)) {
+      for (const b of stats.history) {
+        if (
+          b.input_tokens !== undefined ||
+          b.accounts.some((a) => a.input_tokens !== undefined)
+        ) {
+          hasInput = true;
+        }
+        if (
+          b.output_tokens !== undefined ||
+          b.accounts.some((a) => a.output_tokens !== undefined)
+        ) {
+          hasOutput = true;
+        }
+      }
+      if (stats.history.length === 0 && asOfMs) {
+        return { isGlobalInputSupported: true, isGlobalOutputSupported: true };
+      }
+    }
+    for (const s of samples) {
+      if (
+        s.inputTokens !== undefined ||
+        s.accounts.some((a) => a.inputTokens !== undefined)
+      ) {
+        hasInput = true;
+      }
+      if (
+        s.outputTokens !== undefined ||
+        s.accounts.some((a) => a.outputTokens !== undefined)
+      ) {
+        hasOutput = true;
+      }
+    }
+    return { isGlobalInputSupported: hasInput, isGlobalOutputSupported: hasOutput };
+  }, [asOfMs, samples, stats.history]);
+
+  const hasActiveTokens = filtered.some((s) => {
+    if (s.requests === 0) return false;
+    // Authoritative server totals covering active requests
+    if (
+      !s.tokensDerivedFromAccounts &&
+      (s.inputTokens !== undefined || s.outputTokens !== undefined)
+    ) {
+      return true;
+    }
+    // Account-derived: must have at least one account that itself had requests and measured tokens
+    return s.accounts.some(
+      (a) => a.requests > 0 && (a.inputTokens !== undefined || a.outputTokens !== undefined),
+    );
+  });
+
+  const isGlobalTelemetrySupported = isGlobalInputSupported || isGlobalOutputSupported;
+  const hasTokenDataForWindow =
+    summary.requests > 0 ? hasActiveTokens : isGlobalTelemetrySupported;
+
+  const effectiveTokenTotals = useMemo(() => {
+    if (summary.hasTokenData) {
+      return summary.tokenTotals;
+    }
+    return {
+      ...summary.tokenTotals,
+      isInputSupported: isGlobalInputSupported,
+      isOutputSupported: isGlobalOutputSupported,
+      isPartial: isGlobalInputSupported !== isGlobalOutputSupported,
+    };
+  }, [isGlobalInputSupported, isGlobalOutputSupported, summary.hasTokenData, summary.tokenTotals]);
+
+  const handleRangeChange = (nextRange: TelemetryRange) => {
+    if (onRangeChange) {
+      onRangeChange(nextRange);
+    } else {
+      setLocalRange(nextRange);
+      setTelemetryRange(nextRange);
+    }
+  };
 
   return (
     <Stack className="content overview operations-dashboard minimal-dashboard">
@@ -51,10 +150,7 @@ export const OverviewDashboard = ({
               name="telemetry-range"
               value={item}
               checked={range === item}
-              onChange={() => {
-                setRange(item);
-                setTelemetryRange(item);
-              }}
+              onChange={() => handleRangeChange(item)}
             />
             <span>{item}</span>
           </label>
@@ -139,6 +235,14 @@ export const OverviewDashboard = ({
           )}
         </Cluster>
       </section>
+
+      <OverviewTokenUsage
+        range={range}
+        tokenTotals={effectiveTokenTotals}
+        accountTokens={summary.accountTokens}
+        accounts={accounts}
+        hasTokenData={hasTokenDataForWindow}
+      />
     </Stack>
   );
 };

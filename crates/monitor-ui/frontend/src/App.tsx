@@ -63,6 +63,7 @@ import {
   stopCodexInstance,
   stopManagedGateway,
   stopTunnel,
+  takeZcodeCallback,
   writeDesktopSecret,
 } from "./lib/native";
 import {
@@ -87,16 +88,19 @@ import {
   type SchedulerSettings,
   type SchedulerStatus,
 } from "./lib/schemas";
+import { type TelemetryRange } from "./lib/telemetry";
 import {
   DEFAULT_GATEWAY_URL,
   getGatewayBaseUrl,
   getLegacyRelayKey,
   getQuotaShowRemaining,
+  getTelemetryRange,
   getTheme,
   setTheme as persistTheme,
   removeLegacyRelayKey,
   setGatewayBaseUrl,
   setQuotaShowRemaining,
+  setTelemetryRange,
   validateGatewayBaseUrl,
 } from "./lib/storage";
 
@@ -656,6 +660,12 @@ export default function App() {
     () => mergeAccountsAndCredentials(stats.accounts, credentials),
     [stats, credentials],
   );
+
+  const [overviewRange, setOverviewRangeState] = useState<TelemetryRange>(getTelemetryRange);
+  const handleOverviewRangeChange = useCallback((nextRange: TelemetryRange) => {
+    setOverviewRangeState(nextRange);
+    setTelemetryRange(nextRange);
+  }, []);
   const providers = useMemo(
     () => [...new Set(accounts.map((account) => account.provider))].sort(),
     [accounts],
@@ -983,7 +993,14 @@ export default function App() {
     setPending(pendingKey.auth("zcode-callback"));
     setNotice("");
     try {
-      await clients.management.completeZcodeAuth(authorization.state, callbackUrl);
+      const result = await clients.management.completeZcodeAuth(authorization.state, callbackUrl);
+      if (result.status === "pending") {
+        await openExternalUrl(result.url);
+        setAuthorization({ ...authorization, status: "pending" });
+        setZcodeCallbackUrl("");
+        setNotice("Approve in the browser. Mahoquot will receive the ZCode callback automatically.");
+        return;
+      }
       setAuthorization({ ...authorization, status: "ok" });
       setZcodeCallbackUrl("");
       setNotice("ZCode authorization completed.");
@@ -1030,8 +1047,27 @@ export default function App() {
     [finishOnboarding, refresh, refreshUsage, setNotice],
   );
 
-  // Approval happens in a separate browser window the console cannot observe,
-  // so the session polls itself instead of stranding the user on "Pending".
+  const readAuthorization = useCallback(
+    async (session: AuthorizationSession): Promise<ProviderAuthStatus> => {
+      if (session.provider === "zcode") {
+        const callbackUrl = await takeZcodeCallback(session.state);
+        if (callbackUrl) {
+          setZcodeCallbackUrl(callbackUrl);
+          try {
+            const result = await clients.management.completeZcodeAuth(session.state, callbackUrl);
+            return { status: result.status };
+          } catch (error) {
+            setNotice(actionFailed(error));
+            throw error;
+          }
+        }
+      }
+      return clients.management.providerAuthStatus(session.state);
+    },
+    [clients],
+  );
+
+  // The same poller receives native callbacks and observes provider approval.
   const authPending = authorization?.status === "pending";
   const authProvider = authorization?.provider ?? "";
   const authState = authorization?.state ?? "";
@@ -1041,7 +1077,7 @@ export default function App() {
     let cancelled = false;
     const timer = window.setInterval(async () => {
       try {
-        const result = await clients.management.providerAuthStatus(session.state);
+        const result = await readAuthorization(session);
         if (cancelled || result.status === "pending") return;
         await settleAuthorization(session, result);
       } catch {
@@ -1053,14 +1089,14 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [authPending, authProvider, authState, clients, settleAuthorization]);
+  }, [authPending, authProvider, authState, readAuthorization, settleAuthorization]);
 
   const checkAuthorization = async () => {
     if (!authorization) return;
     const session = authorization;
     setPending(pendingKey.authStatus(session.provider));
     try {
-      const result = await clients.management.providerAuthStatus(session.state);
+      const result = await readAuthorization(session);
       await settleAuthorization(session, result);
       if (result.status === "pending") {
         setNotice("Authorization still pending. Approve in the provider window.");
@@ -1301,7 +1337,16 @@ export default function App() {
           </div>
         ) : null}
 
-        {surface === "overview" ? <OverviewDashboard stats={stats} samples={telemetry} /> : null}
+        {surface === "overview" ? (
+          <OverviewDashboard
+            stats={stats}
+            samples={telemetry}
+            accounts={accounts}
+            range={overviewRange}
+            onRangeChange={handleOverviewRangeChange}
+            asOfMs={fetchedAt ?? undefined}
+          />
+        ) : null}
 
         {surface === "accounts" ? (
           <AccountsSurface
@@ -1823,8 +1868,8 @@ export default function App() {
                 authorization.status === "pending" ? (
                   <div className="zcode-field">
                     <span>
-                      The browser lands on a zcode:// address. Paste that full address here to
-                      finish sign-in.
+                      Paste the sign-in page URL, the zcode:// callback, or the code.
+                      Browser callbacks return to Mahoquot automatically.
                     </span>
                     <input
                       aria-label="ZCode redirect URL"

@@ -1152,6 +1152,130 @@ h2 {
   color: var(--fg-dim);
   font-weight: 600;
 }
+.minimal-token-usage {
+  min-width: 0;
+  padding-top: 6px;
+}
+.minimal-token-usage > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.minimal-token-usage h2 {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.minimal-token-usage header span {
+  color: var(--fg-faint);
+  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.overview-token-header-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.overview-token-partial-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-fg, #d96b0b);
+  background: var(--line-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.minimal-token-kpis {
+  margin-bottom: 14px;
+}
+.overview-token-accounts {
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.overview-token-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+}
+.overview-token-table {
+  width: 100%;
+  min-width: 360px;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.overview-token-table th,
+.overview-token-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.overview-token-table tr:last-child td {
+  border-bottom: none;
+}
+.overview-token-table thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  background: var(--panel-3);
+  padding: 6px 12px;
+}
+.overview-token-col-account {
+  text-align: left;
+  min-width: 130px;
+}
+.overview-token-col-num {
+  text-align: right;
+  color: var(--fg-dim);
+  width: 75px;
+}
+.overview-token-total {
+  color: var(--fg);
+  font-weight: 600;
+}
+.overview-token-account-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.overview-token-account-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+  font-weight: 500;
+  max-width: 160px;
+}
+.overview-token-row-unclassified td {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+.overview-token-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: 12px;
+  border: 1px dashed var(--line-soft);
+  border-radius: 6px;
+}
+.live-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-fg, #d96b0b);
+  background: var(--line-soft);
+}
 .logs-surface {
   width: 100%;
   max-width: 100%;

@@ -286,9 +286,16 @@ function cleanAccountLabel(raw: string, provider: string): string {
   if (provider === "antigravity" && label.startsWith("antigravity-")) {
     label = label.slice("antigravity-".length);
   }
-  if (provider === "codex" || provider === "openai") {
-    if (label.toLowerCase().startsWith("codex-")) {
-      label = label.slice("codex-".length);
+  if (
+    provider === "codex" ||
+    provider === "openai" ||
+    provider === "claude" ||
+    provider === "anthropic"
+  ) {
+    const isClaude = provider === "claude" || provider === "anthropic";
+    const prefix = isClaude ? "claude-" : "codex-";
+    if (label.toLowerCase().startsWith(prefix)) {
+      label = label.slice(prefix.length);
     }
     let at = label.lastIndexOf("@");
     if (at < 0) {
@@ -299,15 +306,17 @@ function cleanAccountLabel(raw: string, provider: string): string {
       }
     }
     if (at > 0) {
-      let prefix = label.slice(0, at);
+      let prefixPart = label.slice(0, at);
       const suffix = label
         .slice(at + 1)
         .replace(/-(?:plus|prolite|pro|team|free|enterprise)(?:\.json)?$/i, "");
-      const hyphenIdx = prefix.indexOf("-");
-      if (hyphenIdx > 0 && hyphenIdx < prefix.length - 1) {
-        prefix = prefix.slice(hyphenIdx + 1);
+      const hyphenIdx = prefixPart.indexOf("-");
+      if (hyphenIdx > 0 && hyphenIdx < prefixPart.length - 1) {
+        prefixPart = prefixPart.slice(hyphenIdx + 1);
       }
-      label = `${prefix}@${suffix}`;
+      label = `${prefixPart}@${suffix}`;
+    } else if (isClaude) {
+      label = raw;
     }
   }
   return label;

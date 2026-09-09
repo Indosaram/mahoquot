@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  ChevronDown,
   GripVertical,
   KeyRound,
   MoreHorizontal,
@@ -59,12 +58,6 @@ export interface AccountCardProps {
   readonly onSetDragging: (credentialName: string) => void;
   readonly onContextMenu: (event: MouseEvent, account: NormalizedAccount) => void;
 }
-
-const formatTokenCount = (tokens: number): string =>
-  new Intl.NumberFormat("en-US", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(tokens);
 
 interface OverflowAction {
   readonly key: string;
@@ -176,7 +169,6 @@ export const AccountCard = ({
   // sibling card, or a settings save, leaves it interactive.
   const isPending = blocks(pending, "account", account.id);
   const rows = quotaRows(account);
-  const [tokensOpen, setTokensOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
 
@@ -377,42 +369,6 @@ export const AccountCard = ({
             <AccountOverflowMenu label={account.label} actions={overflowActions} />
           )}
         </div>
-      </div>
-      <div className="token-usage" aria-label="Token usage">
-        <button
-          type="button"
-          className="token-usage-toggle"
-          aria-expanded={tokensOpen}
-          onClick={() => setTokensOpen((open) => !open)}
-        >
-          <ChevronDown size={13} aria-hidden="true" />
-          <span>Tokens</span>
-          <strong title={account.totalTokens.toLocaleString()}>
-            {formatTokenCount(account.totalTokens)}
-          </strong>
-        </button>
-        {tokensOpen ? (
-          <div className="token-usage-summary">
-            <div>
-              <span>Input</span>
-              <strong title={account.inputTokens.toLocaleString()}>
-                {formatTokenCount(account.inputTokens)}
-              </strong>
-            </div>
-            <div>
-              <span>Output</span>
-              <strong title={account.outputTokens.toLocaleString()}>
-                {formatTokenCount(account.outputTokens)}
-              </strong>
-            </div>
-            <div>
-              <span>Total tokens</span>
-              <strong title={account.totalTokens.toLocaleString()}>
-                {formatTokenCount(account.totalTokens)}
-              </strong>
-            </div>
-          </div>
-        ) : null}
       </div>
       <div className="usage-section">
         {account.usage?.totals ? (
