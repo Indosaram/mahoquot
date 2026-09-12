@@ -51,6 +51,22 @@ const stats = {
   ],
 };
 
+const emptyHistoryStats = {
+  totals: {
+    requests: 0,
+    "successful-requests": 0,
+    "failed-requests": 0,
+    "input-tokens": 0,
+    "output-tokens": 0,
+    "cached-input-tokens": 0,
+    "cache-write-tokens": 0,
+    "reasoning-tokens": 0,
+    "total-tokens": 0,
+    "estimated-cost-usd": 0,
+  },
+  groups: [],
+};
+
 /**
  * Reset, enable/disable, re-auth, and remove live behind each account card's
  * overflow trigger, so a test drives them the way a user does: open, then pick.
@@ -127,6 +143,7 @@ describe("operations console", () => {
           return new Response(
             JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
           );
+        if (url.includes("/history/stats")) return new Response(JSON.stringify(emptyHistoryStats));
         if (url.includes("config.yaml")) {
           return new Response("port: 18801\n", {
             headers: { "Content-Type": "application/yaml" },
@@ -953,8 +970,40 @@ describe("operations console", () => {
     render(<App />);
     expect(await screen.findByText("93")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "30m" }));
-    expect(await screen.findByText("3")).toBeInTheDocument();
+    expect((await screen.findAllByText("3"))[0]).toBeInTheDocument();
     expect(screen.queryByText("93")).not.toBeInTheDocument();
+  });
+
+  it("rendering the app on the Overview surface issues at least one request whose URL contains /v0/management/history/stats", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(stats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        if (url.includes("/history/stats")) return new Response(JSON.stringify(emptyHistoryStats));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    render(<App />);
+    await waitFor(() => {
+      expect(calls.some((url) => url.includes("/v0/management/history/stats"))).toBe(true);
+    });
+  });
+
+  it("clicking the 'Model' group-by radio persists 'model' to localStorage key 'mahoquot.overview.dimension'", async () => {
+    localStorage.removeItem("mahoquot.overview.dimension");
+    render(<App />);
+    (await screen.findAllByText("Requests"))[0];
+    const modelRadio = screen.getByRole("radio", { name: "Model" });
+    fireEvent.click(modelRadio);
+    expect(localStorage.getItem("mahoquot.overview.dimension")).toBe("model");
   });
 
   it("restores the selected telemetry range after remount", async () => {
@@ -1978,6 +2027,7 @@ it("warns when the gateway speaks a different management schema", async () => {
       if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
       if (url.includes("/logs"))
         return new Response(JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }));
+      if (url.includes("/history/stats")) return new Response(JSON.stringify(emptyHistoryStats));
       return new Response(JSON.stringify({ ok: true }));
     }),
   );

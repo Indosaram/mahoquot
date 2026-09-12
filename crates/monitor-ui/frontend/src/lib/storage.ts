@@ -73,6 +73,34 @@ export const setTelemetryRange = (range: StoredTelemetryRange): void => {
   localStorage.setItem("mahoquot.telemetry-range", range);
 };
 
+export type StoredOverviewDimension = "provider" | "model" | "account";
+
+const isOverviewDimension = (value: string | null): value is StoredOverviewDimension =>
+  value === "provider" || value === "model" || value === "account";
+
+export const getOverviewDimension = (): StoredOverviewDimension => {
+  const saved = localStorage.getItem("mahoquot.overview.dimension");
+  return isOverviewDimension(saved) ? saved : "provider";
+};
+
+export const setOverviewDimension = (value: StoredOverviewDimension): void => {
+  localStorage.setItem("mahoquot.overview.dimension", value);
+};
+
+export type StoredOverviewMetric = "requests" | "tokens";
+
+const isOverviewMetric = (value: string | null): value is StoredOverviewMetric =>
+  value === "requests" || value === "tokens";
+
+export const getOverviewMetric = (): StoredOverviewMetric => {
+  const saved = localStorage.getItem("mahoquot.overview.metric");
+  return isOverviewMetric(saved) ? saved : "requests";
+};
+
+export const setOverviewMetric = (value: StoredOverviewMetric): void => {
+  localStorage.setItem("mahoquot.overview.metric", value);
+};
+
 export const getTheme = (): "dark" | "light" => {
   const saved = localStorage.getItem("mahoquot.theme");
   if (saved === "light" || saved === "dark") {

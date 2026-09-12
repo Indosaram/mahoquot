@@ -15,6 +15,9 @@ export const providerColors: Readonly<Record<string, string>> = {
   ccapi: "#D29922",
   straitly: "#A78BFA",
   unknown: "#71717A",
+  zcode: "#22B8CF",
+  cline: "#4ADE80",
+  generic: "#94A3B8",
 };
 
 const FALLBACK = "#8E8E93";

@@ -1,22 +1,28 @@
-import { DitherArea } from "@/components/dither-area";
 import { useMemo, useState } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
-import { providerColor } from "../lib/provider-colors";
+import { dimensionColor } from "../lib/dimension-colors";
+import type {
+  OverviewAnalytics,
+  OverviewDimension,
+  OverviewMetric,
+} from "../lib/overview-analytics";
+import { telemetryAnalytics } from "../lib/overview-analytics";
 import type { AdminStats } from "../lib/schemas";
-import { getTelemetryRange, setTelemetryRange } from "../lib/storage";
 import {
-  type TelemetryRange,
-  type TelemetrySample,
-  filterTelemetryRange,
-  summarizeTelemetry,
-  telemetrySeries,
-} from "../lib/telemetry";
-import { OverviewTokenUsage } from "./OverviewTokenUsage";
+  getOverviewDimension,
+  getOverviewMetric,
+  getTelemetryRange,
+  setOverviewDimension,
+  setOverviewMetric,
+  setTelemetryRange,
+} from "../lib/storage";
+import type { TelemetryRange, TelemetrySample } from "../lib/telemetry";
+import { OverviewBreakdownChart } from "./OverviewBreakdownChart";
+import { OverviewBreakdownTable } from "./OverviewBreakdownTable";
 import { Cluster, IntrinsicGrid, Stack } from "./layout";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
-// Persisted buckets carry no latency, so percentiles come from live stats.
 const latency = (stats: AdminStats, pick: "p50_ms" | "p90_ms"): string => {
   const value = typeof stats.ttft === "number" ? stats.ttft : stats.ttft?.[pick];
   return value === undefined || value <= 0 ? "—" : `${Math.round(value)} ms`;
@@ -32,6 +38,12 @@ export interface OverviewDashboardProps {
   readonly range?: TelemetryRange;
   readonly onRangeChange?: (range: TelemetryRange) => void;
   readonly asOfMs?: number;
+  readonly analytics?: OverviewAnalytics;
+  readonly dimension?: OverviewDimension;
+  readonly onDimensionChange?: (dimension: OverviewDimension) => void;
+  readonly metric?: OverviewMetric;
+  readonly onMetricChange?: (metric: OverviewMetric) => void;
+  readonly analyticsError?: string;
 }
 
 export const OverviewDashboard = ({
@@ -41,95 +53,21 @@ export const OverviewDashboard = ({
   range: controlledRange,
   onRangeChange,
   asOfMs,
+  analytics,
+  dimension: controlledDimension,
+  onDimensionChange,
+  metric: controlledMetric,
+  onMetricChange,
+  analyticsError,
 }: OverviewDashboardProps) => {
   const [localRange, setLocalRange] = useState<TelemetryRange>(getTelemetryRange);
   const range = controlledRange ?? localRange;
-  const filtered = useMemo(
-    () => filterTelemetryRange(samples, range, asOfMs),
-    [asOfMs, range, samples],
-  );
-  const series = useMemo(
-    () => telemetrySeries(filtered, range, asOfMs),
-    [asOfMs, filtered, range],
-  );
-  const summary = useMemo(() => summarizeTelemetry(filtered), [filtered]);
-  const outcomes = summary.successes + summary.failures;
-  const successRate = outcomes > 0 ? (summary.successes / outcomes) * 100 : 100;
-  const totalProviderRequests = Math.max(
-    1,
-    summary.providers.reduce((sum, provider) => sum + provider.requests, 0),
-  );
 
-  const { isGlobalInputSupported, isGlobalOutputSupported } = useMemo(() => {
-    let hasInput = false;
-    let hasOutput = false;
+  const [localDimension, setLocalDimension] = useState<OverviewDimension>(getOverviewDimension);
+  const dimension = controlledDimension ?? analytics?.dimension ?? localDimension;
 
-    if (Array.isArray(stats.history)) {
-      for (const b of stats.history) {
-        if (
-          b.input_tokens !== undefined ||
-          b.accounts.some((a) => a.input_tokens !== undefined)
-        ) {
-          hasInput = true;
-        }
-        if (
-          b.output_tokens !== undefined ||
-          b.accounts.some((a) => a.output_tokens !== undefined)
-        ) {
-          hasOutput = true;
-        }
-      }
-      if (stats.history.length === 0 && asOfMs) {
-        return { isGlobalInputSupported: true, isGlobalOutputSupported: true };
-      }
-    }
-    for (const s of samples) {
-      if (
-        s.inputTokens !== undefined ||
-        s.accounts.some((a) => a.inputTokens !== undefined)
-      ) {
-        hasInput = true;
-      }
-      if (
-        s.outputTokens !== undefined ||
-        s.accounts.some((a) => a.outputTokens !== undefined)
-      ) {
-        hasOutput = true;
-      }
-    }
-    return { isGlobalInputSupported: hasInput, isGlobalOutputSupported: hasOutput };
-  }, [asOfMs, samples, stats.history]);
-
-  const hasActiveTokens = filtered.some((s) => {
-    if (s.requests === 0) return false;
-    // Authoritative server totals covering active requests
-    if (
-      !s.tokensDerivedFromAccounts &&
-      (s.inputTokens !== undefined || s.outputTokens !== undefined)
-    ) {
-      return true;
-    }
-    // Account-derived: must have at least one account that itself had requests and measured tokens
-    return s.accounts.some(
-      (a) => a.requests > 0 && (a.inputTokens !== undefined || a.outputTokens !== undefined),
-    );
-  });
-
-  const isGlobalTelemetrySupported = isGlobalInputSupported || isGlobalOutputSupported;
-  const hasTokenDataForWindow =
-    summary.requests > 0 ? hasActiveTokens : isGlobalTelemetrySupported;
-
-  const effectiveTokenTotals = useMemo(() => {
-    if (summary.hasTokenData) {
-      return summary.tokenTotals;
-    }
-    return {
-      ...summary.tokenTotals,
-      isInputSupported: isGlobalInputSupported,
-      isOutputSupported: isGlobalOutputSupported,
-      isPartial: isGlobalInputSupported !== isGlobalOutputSupported,
-    };
-  }, [isGlobalInputSupported, isGlobalOutputSupported, summary.hasTokenData, summary.tokenTotals]);
+  const [localMetric, setLocalMetric] = useState<OverviewMetric>(getOverviewMetric);
+  const metric = controlledMetric ?? analytics?.metric ?? localMetric;
 
   const handleRangeChange = (nextRange: TelemetryRange) => {
     if (onRangeChange) {
@@ -139,6 +77,50 @@ export const OverviewDashboard = ({
       setTelemetryRange(nextRange);
     }
   };
+
+  const handleDimensionChange = (nextDimension: OverviewDimension) => {
+    if (onDimensionChange) {
+      onDimensionChange(nextDimension);
+    }
+    if (controlledDimension === undefined) {
+      setLocalDimension(nextDimension);
+      setOverviewDimension(nextDimension);
+    }
+  };
+
+  const handleMetricChange = (nextMetric: OverviewMetric) => {
+    if (onMetricChange) {
+      onMetricChange(nextMetric);
+    }
+    if (controlledMetric === undefined) {
+      setLocalMetric(nextMetric);
+      setOverviewMetric(nextMetric);
+    }
+  };
+
+  const derivedAnalytics = useMemo(() => {
+    if (analytics) return analytics;
+    return telemetryAnalytics({
+      samples,
+      dimension,
+      metric,
+      range,
+      nowMs: asOfMs ?? Date.now(),
+      accounts,
+    });
+  }, [accounts, analytics, asOfMs, dimension, metric, range, samples]);
+
+  const effectiveAnalytics = analytics ?? derivedAnalytics;
+
+  const outcomes = effectiveAnalytics.totals.successes + effectiveAnalytics.totals.failures;
+  const successRate = outcomes > 0 ? (effectiveAnalytics.totals.successes / outcomes) * 100 : 100;
+
+  const mixTitle =
+    effectiveAnalytics.dimension === "model"
+      ? "Model mix"
+      : effectiveAnalytics.dimension === "account"
+        ? "Account mix"
+        : "Provider mix";
 
   return (
     <Stack className="content overview operations-dashboard minimal-dashboard">
@@ -156,10 +138,52 @@ export const OverviewDashboard = ({
           </label>
         ))}
       </Cluster>
+
+      <Cluster className="overview-dimension-selector" role="radiogroup" aria-label="Group by">
+        {(
+          [
+            { id: "provider", label: "Provider" },
+            { id: "model", label: "Model" },
+            { id: "account", label: "Account" },
+          ] as const
+        ).map((item) => (
+          <label key={item.id}>
+            <input
+              type="radio"
+              name="overview-dimension"
+              value={item.id}
+              checked={dimension === item.id}
+              onChange={() => handleDimensionChange(item.id)}
+            />
+            <span>{item.label}</span>
+          </label>
+        ))}
+      </Cluster>
+
+      <Cluster className="overview-metric-selector" role="radiogroup" aria-label="Metric">
+        {(
+          [
+            { id: "requests", label: "Requests" },
+            { id: "tokens", label: "Tokens" },
+          ] as const
+        ).map((item) => (
+          <label key={item.id}>
+            <input
+              type="radio"
+              name="overview-metric"
+              value={item.id}
+              checked={metric === item.id}
+              onChange={() => handleMetricChange(item.id)}
+            />
+            <span>{item.label}</span>
+          </label>
+        ))}
+      </Cluster>
+
       <IntrinsicGrid className="minimal-kpis">
         <div>
           <span>Requests</span>
-          <strong>{compact.format(summary.requests)}</strong>
+          <strong>{compact.format(effectiveAnalytics.totals.requests)}</strong>
         </div>
         <div>
           <span>Success</span>
@@ -167,7 +191,7 @@ export const OverviewDashboard = ({
         </div>
         <div>
           <span>Failed</span>
-          <strong>{compact.format(summary.failures)}</strong>
+          <strong>{compact.format(effectiveAnalytics.totals.failures)}</strong>
         </div>
         <div>
           <span>In flight</span>
@@ -188,61 +212,54 @@ export const OverviewDashboard = ({
           <h2>Request activity</h2>
           <span>{range}</span>
         </header>
-        <div className="minimal-request-chart">
-          {series.some((point) => point.requests > 0) ? (
-            <DitherArea
-              values={series.map((point) => point.requests)}
-              seed={{ fill: [240, 128, 26], line: [255, 178, 102] }}
-              height={250}
-              ariaLabel="Request activity over time"
-            />
-          ) : (
-            <span>No traffic in this window</span>
-          )}
-        </div>
+        <OverviewBreakdownChart analytics={effectiveAnalytics} />
       </section>
 
-      <section className="minimal-provider-mix" aria-label="Provider mix">
+      <section className="minimal-provider-mix" aria-label={mixTitle}>
         <header>
-          <h2>Provider mix</h2>
+          <h2>{mixTitle}</h2>
           <span>{range}</span>
         </header>
         <div className="provider-mix-track" aria-hidden="true">
-          {summary.providers.map((provider) => (
+          {effectiveAnalytics.rows.map((row) => (
             <i
-              key={provider.provider}
+              key={row.key}
               style={{
-                width: `${(provider.requests / totalProviderRequests) * 100}%`,
-                background: providerColor(provider.provider),
+                width: `${row.share * 100}%`,
+                background: dimensionColor(effectiveAnalytics.dimension, row.key, row.provider),
               }}
             />
           ))}
         </div>
         <Cluster className="provider-mix-labels">
-          {summary.providers.length ? (
-            summary.providers.map((provider) => (
-              <span key={provider.provider}>
-                <i
-                  className="provider-mix-dot"
-                  style={{ background: providerColor(provider.provider) }}
-                />
-                <strong>{providerName(provider.provider)}</strong>
-                {Math.round((provider.requests / totalProviderRequests) * 100)}%
-              </span>
-            ))
+          {effectiveAnalytics.rows.length ? (
+            effectiveAnalytics.rows.map((row) => {
+              const color = dimensionColor(effectiveAnalytics.dimension, row.key, row.provider);
+              return (
+                <span key={row.key}>
+                  <i className="provider-mix-dot" style={{ background: color }} />
+                  <strong>
+                    {effectiveAnalytics.dimension === "provider"
+                      ? providerName(row.label)
+                      : row.label}
+                  </strong>
+                  {Math.round(row.share * 100)}%
+                </span>
+              );
+            })
           ) : (
-            <span>No provider traffic</span>
+            <span>No {effectiveAnalytics.dimension} traffic</span>
           )}
         </Cluster>
       </section>
 
-      <OverviewTokenUsage
-        range={range}
-        tokenTotals={effectiveTokenTotals}
-        accountTokens={summary.accountTokens}
-        accounts={accounts}
-        hasTokenData={hasTokenDataForWindow}
-      />
+      <OverviewBreakdownTable analytics={effectiveAnalytics} />
+
+      {analyticsError && analyticsError.trim() !== "" ? (
+        <div className="state-panel warning" role="alert">
+          {analyticsError}
+        </div>
+      ) : null}
     </Stack>
   );
 };

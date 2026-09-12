@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   getGatewayBaseUrl,
   getLegacyRelayKey,
+  getOverviewDimension,
+  getOverviewMetric,
   getTelemetryRange,
   getTheme,
   migrateStoredGatewayUrl,
   removeLegacyRelayKey,
   setGatewayBaseUrl,
+  setOverviewDimension,
+  setOverviewMetric,
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "../lib/storage";
@@ -87,5 +91,26 @@ describe("Storage and Port Migration", () => {
   it("sets and normalizes gateway base url", () => {
     setGatewayBaseUrl("http://localhost:18801/ ");
     expect(getGatewayBaseUrl()).toBe("http://localhost:18801");
+  });
+
+  it("persists overview dimension and falls back on unrecognised stored value", () => {
+    expect(getOverviewDimension()).toBe("provider");
+    setOverviewDimension("model");
+    expect(getOverviewDimension()).toBe("model");
+    expect(localStorage.getItem("mahoquot.overview.dimension")).toBe("model");
+    setOverviewDimension("account");
+    expect(getOverviewDimension()).toBe("account");
+    expect(localStorage.getItem("mahoquot.overview.dimension")).toBe("account");
+    localStorage.setItem("mahoquot.overview.dimension", "invalid-dimension");
+    expect(getOverviewDimension()).toBe("provider");
+  });
+
+  it("persists overview metric and falls back on unrecognised stored value", () => {
+    expect(getOverviewMetric()).toBe("requests");
+    setOverviewMetric("tokens");
+    expect(getOverviewMetric()).toBe("tokens");
+    expect(localStorage.getItem("mahoquot.overview.metric")).toBe("tokens");
+    localStorage.setItem("mahoquot.overview.metric", "invalid-metric");
+    expect(getOverviewMetric()).toBe("requests");
   });
 });

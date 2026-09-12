@@ -982,7 +982,9 @@ h2 {
 .minimal-dashboard {
   gap: 20px;
 }
-.range-selector {
+.range-selector,
+.overview-dimension-selector,
+.overview-metric-selector {
   width: fit-content;
   display: flex;
   align-items: center;
@@ -992,15 +994,21 @@ h2 {
   border-radius: 7px;
   background: var(--panel-2);
 }
-.range-selector label {
+.range-selector label,
+.overview-dimension-selector label,
+.overview-metric-selector label {
   cursor: pointer;
 }
-.range-selector input {
+.range-selector input,
+.overview-dimension-selector input,
+.overview-metric-selector input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
-.range-selector span {
+.range-selector span,
+.overview-dimension-selector span,
+.overview-metric-selector span {
   display: block;
   min-width: 38px;
   padding: 5px 8px;
@@ -1009,13 +1017,21 @@ h2 {
   font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
-.range-selector input:checked + span {
+.range-selector input:checked + span,
+.overview-dimension-selector input:checked + span,
+.overview-metric-selector input:checked + span {
   background: var(--panel-3);
   color: var(--fg);
 }
-.range-selector input:focus-visible + span {
+.range-selector input:focus-visible + span,
+.overview-dimension-selector input:focus-visible + span,
+.overview-metric-selector input:focus-visible + span {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+.overview-breakdown-chart {
+  width: 100%;
+  min-width: 0;
 }
 .minimal-kpis {
   display: grid;
@@ -1152,22 +1168,22 @@ h2 {
   color: var(--fg-dim);
   font-weight: 600;
 }
-.minimal-token-usage {
+.overview-breakdown {
   min-width: 0;
   padding-top: 6px;
 }
-.minimal-token-usage > header {
+.overview-breakdown > header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 12px;
 }
-.minimal-token-usage h2 {
+.overview-breakdown h2 {
   font-size: 13px;
   letter-spacing: -0.01em;
 }
-.minimal-token-usage header span {
+.overview-breakdown header span {
   color: var(--fg-faint);
   font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
@@ -1187,8 +1203,9 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.minimal-token-kpis {
-  margin-bottom: 14px;
+.overview-breakdown-row-other td {
+  color: var(--fg-faint);
+  font-style: italic;
 }
 .overview-token-accounts {
   border: 1px solid var(--line-soft);
@@ -1201,7 +1218,8 @@ h2 {
   -webkit-overflow-scrolling: touch;
   width: 100%;
 }
-.overview-token-table {
+.overview-token-table,
+.overview-breakdown table {
   width: 100%;
   min-width: 360px;
   border-collapse: collapse;
@@ -1209,14 +1227,18 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 .overview-token-table th,
-.overview-token-table td {
+.overview-token-table td,
+.overview-breakdown table th,
+.overview-breakdown table td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line-soft);
 }
-.overview-token-table tr:last-child td {
+.overview-token-table tr:last-child td,
+.overview-breakdown table tr:last-child td {
   border-bottom: none;
 }
-.overview-token-table thead th {
+.overview-token-table thead th,
+.overview-breakdown table thead th {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -4032,13 +4054,19 @@ h2 {
   .provider-mix-labels {
     gap: 7px 13px;
   }
-  .range-selector {
+  .range-selector,
+  .overview-dimension-selector,
+  .overview-metric-selector {
     width: 100%;
   }
-  .range-selector label {
+  .range-selector label,
+  .overview-dimension-selector label,
+  .overview-metric-selector label {
     flex: 1;
   }
-  .range-selector span {
+  .range-selector span,
+  .overview-dimension-selector span,
+  .overview-metric-selector span {
     min-width: 0;
     padding-inline: 4px;
   }

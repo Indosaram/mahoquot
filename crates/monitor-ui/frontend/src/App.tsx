@@ -102,7 +102,13 @@ import {
   setQuotaShowRemaining,
   setTelemetryRange,
   validateGatewayBaseUrl,
+  getOverviewDimension,
+  getOverviewMetric,
+  setOverviewDimension,
+  setOverviewMetric,
 } from "./lib/storage";
+import { useOverviewAnalytics } from "./hooks/useOverviewAnalytics";
+import type { OverviewDimension, OverviewMetric } from "./lib/overview-analytics";
 
 type Surface = "overview" | "accounts" | "agents" | "logs" | "settings" | "notch" | "tray";
 const getInitialSurface = (): Surface => {
@@ -666,6 +672,29 @@ export default function App() {
     setOverviewRangeState(nextRange);
     setTelemetryRange(nextRange);
   }, []);
+
+  const [overviewDimension, setOverviewDimensionState] =
+    useState<OverviewDimension>(getOverviewDimension);
+  const handleOverviewDimensionChange = useCallback((nextDimension: OverviewDimension) => {
+    setOverviewDimensionState(nextDimension);
+    setOverviewDimension(nextDimension);
+  }, []);
+
+  const [overviewMetric, setOverviewMetricState] = useState<OverviewMetric>(getOverviewMetric);
+  const handleOverviewMetricChange = useCallback((nextMetric: OverviewMetric) => {
+    setOverviewMetricState(nextMetric);
+    setOverviewMetric(nextMetric);
+  }, []);
+
+  const { analytics, error } = useOverviewAnalytics({
+    clients,
+    range: overviewRange,
+    dimension: overviewDimension,
+    metric: overviewMetric,
+    accounts,
+    samples: telemetry,
+    enabled: surface === "overview",
+  });
   const providers = useMemo(
     () => [...new Set(accounts.map((account) => account.provider))].sort(),
     [accounts],
@@ -1345,6 +1374,12 @@ export default function App() {
             range={overviewRange}
             onRangeChange={handleOverviewRangeChange}
             asOfMs={fetchedAt ?? undefined}
+            analytics={analytics}
+            dimension={overviewDimension}
+            metric={overviewMetric}
+            onDimensionChange={handleOverviewDimensionChange}
+            onMetricChange={handleOverviewMetricChange}
+            analyticsError={error}
           />
         ) : null}
 
