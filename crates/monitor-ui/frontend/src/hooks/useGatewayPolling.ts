@@ -276,16 +276,21 @@ export function useGatewayPolling(clients: GatewayClients) {
         };
       }
     ).__TAURI__;
-    const onFocusChanged = tauriWindow?.window?.getCurrentWindow?.().onFocusChanged;
-    if (!onFocusChanged) return;
+    const currentWindow = tauriWindow?.window?.getCurrentWindow?.();
+    if (!currentWindow?.onFocusChanged) return;
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void onFocusChanged((event) => {
-      if (event.payload && !document.hidden) void refreshNow();
-    }).then((fn) => {
-      if (disposed) fn?.();
-      else unlisten = fn;
-    });
+    void currentWindow
+      .onFocusChanged((event) => {
+        if (event.payload && !document.hidden) void refreshNow();
+      })
+      .then((fn) => {
+        if (disposed) fn?.();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        // Focus refresh is an optimization; the regular poll remains authoritative.
+      });
     return () => {
       disposed = true;
       unlisten?.();

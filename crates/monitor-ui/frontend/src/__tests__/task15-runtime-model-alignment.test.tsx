@@ -232,8 +232,8 @@ describe("Task 15: Runtime model consumption and catalog metadata alignment", ()
     expect(staleBadge).toHaveTextContent(/catalog stale/i);
   });
 
-  it("preserves 83 onboarding presets and bidirectional aliases", () => {
-    expect(PROVIDER_CATALOG).toHaveLength(83);
+  it("preserves 84 onboarding presets and bidirectional aliases", () => {
+    expect(PROVIDER_CATALOG).toHaveLength(84);
 
     // Bidirectional aliases
     expect(normalizeToQuotioProviderId("openai")).toBe("codex");

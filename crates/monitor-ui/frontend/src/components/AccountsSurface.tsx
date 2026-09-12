@@ -1,6 +1,8 @@
 import { AlertTriangle } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
+import { extractDevinSlug } from "../lib/accounts";
+import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
@@ -103,6 +105,9 @@ export interface AccountsSurfaceProps {
   readonly credentialsError?: string | undefined;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
+  readonly gatewayModels?: readonly GatewayModelEntry[] | undefined;
+  readonly modelRegistryStatus?: ModelRegistryStatus | null | undefined;
+  readonly devinStatusBySlug?: Readonly<Record<string, DevinAccountStatus>> | undefined;
   readonly onSelectProvider: (provider: string) => void;
   readonly onRunAccountAction: (
     action: "warm" | "reset",
@@ -114,6 +119,8 @@ export interface AccountsSurfaceProps {
     disabled: boolean,
   ) => void | Promise<void>;
   readonly onReauthenticate: (account: NormalizedAccount) => void | Promise<void>;
+  readonly onReimportCredential?: (account: NormalizedAccount) => void | Promise<void>;
+  readonly onRefreshDiscovery?: (account: NormalizedAccount) => void | Promise<void>;
   readonly onRemoveCredential: (account: NormalizedAccount) => void | Promise<void>;
   readonly onSetConfirmRemove: (accountId: string) => void;
   readonly onMoveCredential: (
@@ -135,11 +142,14 @@ export const AccountsSurface = ({
   credentialsError,
   dragging,
   confirmRemove,
+  devinStatusBySlug,
   onSelectProvider,
   onRunAccountAction,
   onRefresh,
   onSetCredentialDisabled,
   onReauthenticate,
+  onReimportCredential,
+  onRefreshDiscovery,
   onRemoveCredential,
   onSetConfirmRemove,
   onMoveCredential,
@@ -188,26 +198,55 @@ export const AccountsSurface = ({
         </div>
       ) : null}
       <div className="account-list">
-        {visibleAccounts.map((account) => (
-          <AccountCard
-            key={account.id}
-            account={account}
-            pending={pending}
-            showRemaining={showRemaining}
-            dragging={dragging}
-            confirmRemove={confirmRemove}
-            onRunAccountAction={onRunAccountAction}
-            onRefresh={onRefresh}
-            onSetCredentialDisabled={onSetCredentialDisabled}
-            onReauthenticate={onReauthenticate}
-            onRemoveCredential={onRemoveCredential}
-            onSetConfirmRemove={onSetConfirmRemove}
-            onMoveCredential={onMoveCredential}
-            onDropCredential={onDropCredential}
-            onSetDragging={onSetDragging}
-            onContextMenu={onContextMenu}
-          />
-        ))}
+        {visibleAccounts.map((account) => {
+          const isDevin = account.provider === "devin";
+          const devinSlug = isDevin ? account.identitySlug || extractDevinSlug(account) : "";
+          const statusEntry =
+            isDevin && devinStatusBySlug ? devinStatusBySlug[devinSlug] : undefined;
+          const hasDiscoveryError = Boolean(
+            statusEntry?.error ||
+              (account.lastError && /model|discover/i.test(account.lastError.message)),
+          );
+          const devinModels = isDevin ? (statusEntry?.models ?? account.models) : undefined;
+          const discoveryState = isDevin
+            ? hasDiscoveryError
+              ? ("error" as const)
+              : statusEntry?.status === "stale" || statusEntry?.stale
+                ? ("stale" as const)
+                : statusEntry?.status === "uninitialized"
+                  ? ("never_loaded" as const)
+                  : devinModels === undefined
+                    ? ("unknown" as const)
+                    : devinModels.length === 0
+                      ? ("empty" as const)
+                      : ("available" as const)
+            : undefined;
+
+          return (
+            <AccountCard
+              key={account.id}
+              account={account}
+              pending={pending}
+              showRemaining={showRemaining}
+              dragging={dragging}
+              confirmRemove={confirmRemove}
+              devinModels={devinModels}
+              discoveryState={discoveryState}
+              onRunAccountAction={onRunAccountAction}
+              onRefresh={onRefresh}
+              onSetCredentialDisabled={onSetCredentialDisabled}
+              onReauthenticate={onReauthenticate}
+              onReimportCredential={onReimportCredential}
+              onRefreshDiscovery={onRefreshDiscovery}
+              onRemoveCredential={onRemoveCredential}
+              onSetConfirmRemove={onSetConfirmRemove}
+              onMoveCredential={onMoveCredential}
+              onDropCredential={onDropCredential}
+              onSetDragging={onSetDragging}
+              onContextMenu={onContextMenu}
+            />
+          );
+        })}
       </div>
       {!visibleAccounts.length ? (
         <div className="state-panel">

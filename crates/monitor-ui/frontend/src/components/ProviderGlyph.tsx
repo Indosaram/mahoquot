@@ -65,6 +65,7 @@ export const providerLogos: Readonly<Record<string, string>> = {
   vllm: logo("vllm"),
   "lm-studio": logo("lmstudio"),
   deepseek: logo("deepseek"),
+  devin: logo("devin"),
   cerebras: logo("cerebras"),
   chutes: logo("chutes"),
   deepinfra: logo("deepinfra"),

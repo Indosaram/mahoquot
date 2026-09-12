@@ -204,6 +204,13 @@ describe("Account Normalization and Quota Capability", () => {
     expect(getQuotaCapability("claude", null)).toBe("supported");
     expect(getQuotaCapability("anthropic", null)).toBe("supported");
     expect(getQuotaCapability("kiro", null)).toBe("unsupported");
+    // ClinePass reports grouped windows from usage-limits: buckets present
+    // means supported, empty means unknown (never a fake 0%).
+    expect(
+      getQuotaCapability("cline-pass", {
+        groups: [{ display_name: "ClinePass", buckets: [] }],
+      }),
+    ).toBe("supported");
   });
 
   it("matches canonical provider ids instead of substrings", () => {

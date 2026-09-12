@@ -27,8 +27,13 @@ import { TrayPanel } from "./components/TrayPanel";
 import { AppShell, OverlayLayer } from "./components/layout";
 import { Button } from "./components/ui";
 import { useGatewayPolling } from "./hooks/useGatewayPolling";
+import { useOverviewAnalytics } from "./hooks/useOverviewAnalytics";
 import { useTotpVault } from "./hooks/useTotpVault";
-import { type NormalizedAccount, mergeAccountsAndCredentials } from "./lib/accounts";
+import {
+  type NormalizedAccount,
+  extractDevinSlug,
+  mergeAccountsAndCredentials,
+} from "./lib/accounts";
 import { createGatewayClients, discoverProviderModels } from "./lib/api";
 import type { HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
@@ -76,39 +81,41 @@ import {
   PROVIDER_STEP,
   formStepFor,
 } from "./lib/onboarding";
+import type { OverviewDimension, OverviewMetric } from "./lib/overview-analytics";
 import { blocks, pendingKey } from "./lib/pending";
 import { GENERIC_PROVIDER_OPTIONS } from "./lib/provider-catalog";
 import { RELAY_PLAN_GROUPS, buildRelayCredential, isRelayTarget } from "./lib/relay-plans";
 import type { ScopedApiKey } from "./lib/schemas";
 import {
+  type DevinAccountStatus,
   type HistoryHealth,
   type HistoryStatsResponse,
   type ModelPrice,
   RawCredentialDocumentSchema,
   type SchedulerSettings,
   type SchedulerStatus,
+  devinCredentialFileName,
+  normalizeDevinManualCredential,
 } from "./lib/schemas";
-import { type TelemetryRange } from "./lib/telemetry";
 import {
   DEFAULT_GATEWAY_URL,
   getGatewayBaseUrl,
   getLegacyRelayKey,
+  getOverviewDimension,
+  getOverviewMetric,
   getQuotaShowRemaining,
   getTelemetryRange,
   getTheme,
   setTheme as persistTheme,
   removeLegacyRelayKey,
   setGatewayBaseUrl,
+  setOverviewDimension,
+  setOverviewMetric,
   setQuotaShowRemaining,
   setTelemetryRange,
   validateGatewayBaseUrl,
-  getOverviewDimension,
-  getOverviewMetric,
-  setOverviewDimension,
-  setOverviewMetric,
 } from "./lib/storage";
-import { useOverviewAnalytics } from "./hooks/useOverviewAnalytics";
-import type { OverviewDimension, OverviewMetric } from "./lib/overview-analytics";
+import type { TelemetryRange } from "./lib/telemetry";
 
 type Surface = "overview" | "accounts" | "agents" | "logs" | "settings" | "notch" | "tray";
 const getInitialSurface = (): Surface => {
@@ -515,6 +522,8 @@ export default function App() {
   const {
     proxyUrl,
     setProxyUrl,
+    proxyProviders,
+    updateProxyProviderPolicy,
     routingStrategy,
     setRoutingStrategy,
     requestRetry,
@@ -523,7 +532,33 @@ export default function App() {
     setLoggingToFile,
     setSettingsLoaded,
     saveProxySettings,
+    saveProviderProxySettings,
   } = useConnectionSettings({ clients, loadState, surface, setNotice, setPending });
+
+  const [devinStatusBySlug, setDevinStatusBySlug] = useState<Record<string, DevinAccountStatus>>(
+    {},
+  );
+
+  const fetchDevinStatus = useCallback(async () => {
+    try {
+      const res = await clients.management.getDevinModelsStatus();
+      if (res.accounts && res.accounts.length > 0) {
+        const map: Record<string, DevinAccountStatus> = {};
+        for (const a of res.accounts) {
+          map[a.identity_slug] = a;
+        }
+        setDevinStatusBySlug((prev) => ({ ...prev, ...map }));
+      }
+    } catch {
+      // non-blocking
+    }
+  }, [clients]);
+
+  useEffect(() => {
+    if (surface === "accounts") {
+      void fetchDevinStatus();
+    }
+  }, [surface, fetchDevinStatus]);
 
   const resetOnboarding = useCallback(() => {
     setProviderSearch("");
@@ -724,12 +759,19 @@ export default function App() {
   };
 
   const removeCredential = async (account: NormalizedAccount) => {
-    if (!account.credentialName) return;
+    const credName =
+      account.credentialName ||
+      (account.provider === "devin" ? devinCredentialFileName(extractDevinSlug(account)) : null);
+    if (!credName) return;
     setPending(pendingKey.remove(account.id));
     setNotice("");
     try {
-      await clients.management.removeCredential(account.credentialName);
-      setNotice("Credential removed from the runtime pool.");
+      await clients.management.removeCredential(credName);
+      setNotice(
+        account.provider === "devin"
+          ? `Devin account ${account.label} removed from the runtime pool.`
+          : "Credential removed from the runtime pool.",
+      );
       await refresh();
     } catch (error) {
       setNotice(actionFailed(error));
@@ -740,13 +782,16 @@ export default function App() {
   };
 
   const setCredentialDisabled = async (account: NormalizedAccount, disabled: boolean) => {
-    if (!account.credentialName) return;
+    const credName =
+      account.credentialName ||
+      (account.provider === "devin" ? devinCredentialFileName(extractDevinSlug(account)) : null);
+    if (!credName) return;
     setPending(pendingKey.status(account.id));
     try {
-      await clients.management.setCredentialDisabled(account.credentialName, disabled);
+      await clients.management.setCredentialDisabled(credName, disabled);
       setCredentials((current) =>
         current.map((credential) =>
-          credential.name === account.credentialName ? { ...credential, disabled } : credential,
+          credential.name === credName ? { ...credential, disabled } : credential,
         ),
       );
       if (!disabled) {
@@ -761,10 +806,21 @@ export default function App() {
     }
   };
 
-  const handleAccountRefresh = useCallback(async () => {
-    await refreshUsage(true);
-    await refresh();
-  }, [refreshUsage, refresh]);
+  const handleAccountRefresh = useCallback(
+    async (account?: NormalizedAccount) => {
+      if (account?.provider === "devin") {
+        const slug = extractDevinSlug(account);
+        try {
+          await clients.management.refreshDevinModels(slug);
+        } catch {
+          // Model discovery refresh failure does not block usage polling
+        }
+      }
+      await refreshUsage(true);
+      await refresh();
+    },
+    [clients, refreshUsage, refresh],
+  );
 
   const moveCredential = async (account: NormalizedAccount, direction: -1 | 1) => {
     if (!account.credentialName) return;
@@ -813,7 +869,11 @@ export default function App() {
     try {
       const localImport = LOCAL_IMPORT_METHODS[methodId];
       if (localImport) {
-        await clients.management.importLocalTrae();
+        if (methodId === "cline-import") {
+          await clients.management.importClineLogin();
+        } else {
+          await clients.management.importLocalTrae();
+        }
         setNotice(localImport.notice);
         finishOnboarding(localImport.provider);
         await refreshUsage(true);
@@ -908,6 +968,33 @@ export default function App() {
     try {
       if (form.provider === "command-code") {
         await clients.management.importCommandCode(form.apiKey.trim(), form.label.trim());
+      } else if (form.provider === "cline-pass") {
+        // ClinePass shares the Cline API-key surface: the same pasted key
+        // opens both pay-as-you-go and the subscription quota windows,
+        // distinguished by the model slug sent upstream.
+        await clients.management.createGenericCredential({
+          provider: "cline-pass",
+          label: form.label.trim() || "ClinePass",
+          adapter: "openai-chat",
+          baseUrl: "https://api.cline.bot/api/v1",
+          apiKey: form.apiKey.trim(),
+          models: [
+            "cline-pass/glm-5.3",
+            "cline-pass/glm-5.3-flash",
+            "cline-pass/glm-5.2",
+            "cline-pass/kimi-k3",
+            "cline-pass/kimi-k2.7-code",
+            "cline-pass/kimi-k2.6",
+            "cline-pass/deepseek-v4-pro",
+            "cline-pass/deepseek-v4-flash",
+            "cline-pass/mimo-v2.5",
+            "cline-pass/mimo-v2.5-pro",
+            "cline-pass/minimax-m3",
+            "cline-pass/qwen3.8-max",
+            "cline-pass/qwen3.7-max",
+            "cline-pass/qwen3.7-plus",
+          ],
+        });
       } else {
         await clients.management.createGenericCredential({
           provider: "iflow",
@@ -1027,7 +1114,9 @@ export default function App() {
         await openExternalUrl(result.url);
         setAuthorization({ ...authorization, status: "pending" });
         setZcodeCallbackUrl("");
-        setNotice("Approve in the browser. Mahoquot will receive the ZCode callback automatically.");
+        setNotice(
+          "Approve in the browser. Mahoquot will receive the ZCode callback automatically.",
+        );
         return;
       }
       setAuthorization({ ...authorization, status: "ok" });
@@ -1043,7 +1132,146 @@ export default function App() {
     }
   };
 
+  const submitDevinToken = async () => {
+    if (step.kind !== "devin-token") return;
+    const form = step;
+    setPending(pendingKey.auth("devin-token"));
+    setNotice("");
+    try {
+      const normalized = normalizeDevinManualCredential({
+        identity_slug: form.identity.trim(),
+        ...(form.label.trim() ? { label: form.label.trim() } : {}),
+        access_token: form.token.trim(),
+        ...(form.serverUrl.trim() ? { api_server_url: form.serverUrl.trim() } : {}),
+        disabled: false,
+      });
+      const fileName = form.credentialName || devinCredentialFileName(form.identity.trim());
+      await clients.management.importCredential(fileName, normalized);
+      finishOnboarding("devin");
+      setNotice(
+        form.credentialName
+          ? `Devin account ${form.label || form.identity} updated and live in the runtime pool.`
+          : "Devin account saved and live in the runtime pool.",
+      );
+      await refreshUsage(true);
+      await refresh();
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setPending("");
+    }
+  };
+
+  const submitDevinCliImport = async () => {
+    if (step.kind !== "devin-cli-import") return;
+    const form = step;
+    setPending(pendingKey.auth("devin-cli-import"));
+    setNotice("");
+    try {
+      const identity = form.identity.trim() || "devin-cli";
+      const label = form.label.trim() || "Devin CLI";
+      const res = await clients.management.importDevinCli({ identity, label });
+      if (res.error) {
+        setNotice(`Failed to import Devin CLI credentials: ${res.error}`);
+      } else {
+        finishOnboarding("devin");
+        setNotice("Devin CLI credentials imported from proxy host.");
+        await refreshUsage(true);
+        await refresh();
+      }
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setPending("");
+    }
+  };
+
+  const reimportDevinCredential = async (account: NormalizedAccount) => {
+    const slug = extractDevinSlug(account);
+    setPending(`reimport:${account.id}`);
+    setNotice("");
+    try {
+      const res = await clients.management.importDevinCli({
+        identity: slug,
+        label: account.label,
+      });
+      if (res.error) {
+        setNotice(`Failed to re-import Devin CLI credentials for ${account.label}: ${res.error}`);
+      } else {
+        setNotice(`Devin CLI credentials re-imported for ${account.label}.`);
+        await refreshUsage(true);
+        await refresh();
+      }
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setPending("");
+    }
+  };
+
+  const refreshDevinDiscovery = async (account: NormalizedAccount) => {
+    const slug = extractDevinSlug(account);
+    setPending(`discovery:${account.id}`);
+    setNotice("");
+    try {
+      const resp = await clients.management.refreshDevinModels(slug);
+      for (const a of resp.accounts) {
+        setDevinStatusBySlug((prev) => ({
+          ...prev,
+          [a.identity_slug]: {
+            identity_slug: a.identity_slug,
+            status: a.status === "error" ? "stale" : a.stale ? "stale" : "active",
+            models: a.models,
+            stale: a.stale,
+            last_refresh_at: a.last_refresh_at,
+            error: a.error,
+          },
+        }));
+      }
+      const acc = resp.accounts.find((a) => a.identity_slug === slug);
+      if (acc) {
+        if (acc.status === "error" || acc.error) {
+          setNotice(
+            `Devin model discovery failed for ${account.label}: ${acc.error || "discovery error"}`,
+          );
+        } else if (acc.stale) {
+          setNotice(
+            `Devin models refreshed for ${account.label} (stale models preserved): ${acc.models.length} available.`,
+          );
+        } else {
+          setNotice(`Devin models refreshed for ${account.label}: ${acc.models.length} available.`);
+        }
+      } else if (resp.error || resp.outcome === "error") {
+        setNotice(
+          `Devin model discovery failed for ${account.label}: ${resp.error || "discovery error"}`,
+        );
+      } else {
+        setNotice(
+          `Devin models refreshed for ${account.label}${resp.models?.length ? `: ${resp.models.length} available` : ""}.`,
+        );
+      }
+      await refresh();
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setPending("");
+    }
+  };
+
   const reauthenticate = async (account: NormalizedAccount) => {
+    if (account.provider === "devin") {
+      const rawSlug = extractDevinSlug(account);
+      setStep({
+        kind: "devin-token",
+        identity: rawSlug,
+        label: account.label,
+        token: "",
+        serverUrl: "https://server.codeium.com",
+        credentialName: account.credentialName ?? undefined,
+      });
+      setOnboardingOpen(true);
+      return;
+    }
     const dedicated = ONBOARDING_PROVIDERS.find((provider) => provider.glyph === account.provider);
     setStep(dedicated ? { kind: "methods", provider: dedicated } : PROVIDER_STEP);
     setOnboardingOpen(true);
@@ -1093,7 +1321,7 @@ export default function App() {
       }
       return clients.management.providerAuthStatus(session.state);
     },
-    [clients],
+    [clients, setNotice],
   );
 
   // The same poller receives native callbacks and observes provider approval.
@@ -1394,11 +1622,16 @@ export default function App() {
             credentialsError={credentialsError}
             dragging={dragging}
             confirmRemove={confirmRemove}
+            gatewayModels={gatewayModels}
+            modelRegistryStatus={modelRegistryStatus}
+            devinStatusBySlug={devinStatusBySlug}
             onSelectProvider={setProvider}
             onRunAccountAction={runAccountAction}
             onRefresh={handleAccountRefresh}
             onSetCredentialDisabled={setCredentialDisabled}
             onReauthenticate={reauthenticate}
+            onReimportCredential={reimportDevinCredential}
+            onRefreshDiscovery={refreshDevinDiscovery}
             onRemoveCredential={removeCredential}
             onSetConfirmRemove={setConfirmRemove}
             onMoveCredential={moveCredential}
@@ -1482,6 +1715,9 @@ export default function App() {
               routingStrategy={routingStrategy}
               requestRetry={requestRetry}
               proxyUrl={proxyUrl}
+              proxyProviders={proxyProviders}
+              onUpdateProxyProviderPolicy={updateProxyProviderPolicy}
+              onSaveProviderProxySettings={saveProviderProxySettings}
               loggingToFile={loggingToFile}
               theme={theme}
               showRemaining={showRemaining}
@@ -1670,7 +1906,13 @@ export default function App() {
                 >
                   <ChevronLeft size={15} /> All providers
                 </button>
-                <strong>{step.provider === "command-code" ? "Command Code" : "iFlow"}</strong>
+                <strong>
+                  {step.provider === "command-code"
+                    ? "Command Code"
+                    : step.provider === "cline-pass"
+                      ? "ClinePass"
+                      : "iFlow"}
+                </strong>
                 <label className="zcode-field">
                   <span>Account label</span>
                   <input
@@ -1838,6 +2080,120 @@ export default function App() {
                   {pending === pendingKey.auth("zcode-key") ? "Saving…" : "Save key"}
                 </Button>
               </div>
+            ) : step.kind === "devin-token" ? (
+              <div className="provider-methods">
+                <button
+                  type="button"
+                  className="provider-methods-back"
+                  onClick={() => setStep(PROVIDER_STEP)}
+                >
+                  <ChevronLeft size={15} /> All providers
+                </button>
+                <div className="provider-methods-head">
+                  <span className="provider-option-icon" aria-hidden="true">
+                    <ProviderGlyph provider="devin" />
+                  </span>
+                  <strong>Devin (manual token)</strong>
+                </div>
+                <label className="zcode-field">
+                  <span>Identity slug</span>
+                  <input
+                    aria-label="Devin account identity"
+                    placeholder="e.g. devin-work"
+                    value={step.identity}
+                    onChange={(event) => setStep({ ...step, identity: event.target.value })}
+                  />
+                </label>
+                <label className="zcode-field">
+                  <span>Account label</span>
+                  <input
+                    aria-label="Devin account label"
+                    placeholder="e.g. Devin Work"
+                    value={step.label}
+                    onChange={(event) => setStep({ ...step, label: event.target.value })}
+                  />
+                </label>
+                <label className="zcode-field">
+                  <span>Devin CLI session token</span>
+                  <input
+                    aria-label="Devin CLI session token"
+                    type="password"
+                    placeholder="devin-session-token$..."
+                    value={step.token}
+                    onChange={(event) => setStep({ ...step, token: event.target.value })}
+                  />
+                </label>
+                <label className="zcode-field">
+                  <span>API server URL</span>
+                  <input
+                    aria-label="Devin API server URL"
+                    value={step.serverUrl}
+                    onChange={(event) => setStep({ ...step, serverUrl: event.target.value })}
+                  />
+                </label>
+                <Button
+                  disabled={
+                    blocks(pending, "onboarding") ||
+                    !step.identity.trim() ||
+                    !step.token.trim() ||
+                    /\s/.test(step.token.trim()) ||
+                    Array.from(step.token.trim()).some(
+                      (c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127,
+                    ) ||
+                    step.token.trim().length > 4096
+                  }
+                  onClick={() => void submitDevinToken()}
+                >
+                  {pending === pendingKey.auth("devin-token") ? "Saving…" : "Save account"}
+                </Button>
+              </div>
+            ) : step.kind === "devin-cli-import" ? (
+              <div className="provider-methods">
+                <button
+                  type="button"
+                  className="provider-methods-back"
+                  onClick={() => setStep(PROVIDER_STEP)}
+                >
+                  <ChevronLeft size={15} /> All providers
+                </button>
+                <div className="provider-methods-head">
+                  <span className="provider-option-icon" aria-hidden="true">
+                    <ProviderGlyph provider="devin" />
+                  </span>
+                  <strong>Devin (proxy-host CLI import)</strong>
+                </div>
+                <p className="kicker">
+                  Reads credentials.toml from the proxy host where mahoquot-proxy is running, not
+                  this browser. Running devin auth login access is account-dependent and
+                  experimental.
+                </p>
+                <label className="zcode-field">
+                  <span>Identity slug</span>
+                  <input
+                    aria-label="Devin account identity"
+                    placeholder="devin-cli"
+                    value={step.identity}
+                    onChange={(event) => setStep({ ...step, identity: event.target.value })}
+                  />
+                </label>
+                <label className="zcode-field">
+                  <span>Account label</span>
+                  <input
+                    aria-label="Devin account label"
+                    placeholder="Devin CLI"
+                    value={step.label}
+                    onChange={(event) => setStep({ ...step, label: event.target.value })}
+                  />
+                </label>
+                <Button
+                  disabled={blocks(pending, "onboarding") || !step.identity.trim()}
+                  onClick={() => void submitDevinCliImport()}
+                >
+                  {pending === pendingKey.auth("devin-cli-import")
+                    ? "Importing…"
+                    : "Import from proxy host"}
+                </Button>
+              </div>
             ) : step.kind === "methods" ? (
               <div className="provider-methods">
                 <button
@@ -1903,8 +2259,8 @@ export default function App() {
                 authorization.status === "pending" ? (
                   <div className="zcode-field">
                     <span>
-                      Paste the sign-in page URL, the zcode:// callback, or the code.
-                      Browser callbacks return to Mahoquot automatically.
+                      Paste the sign-in page URL, the zcode:// callback, or the code. Browser
+                      callbacks return to Mahoquot automatically.
                     </span>
                     <input
                       aria-label="ZCode redirect URL"

@@ -10,13 +10,16 @@ export interface ProviderCatalogEntry {
   readonly models: readonly string[];
   readonly keyOptional?: boolean;
   readonly staticHeaders?: Readonly<Record<string, string>>;
+  /** Explicit experimental status for local/dedicated additions not in the reference registry. */
+  readonly experimental?: boolean;
 }
 
 export type ProviderPreset = ProviderCatalogEntry;
 export type ProviderCatalogRow = ProviderCatalogEntry;
 
 /**
- * 83 production provider entries synced from OpenCodex registry.
+ * 83 production provider entries synced from OpenCodex registry,
+ * plus declared local experimental additions (devin).
  */
 export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
   {
@@ -465,6 +468,15 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     adapter: "openai-chat",
     baseUrl: "http://localhost:1234/v1",
     models: [],
+  },
+  {
+    id: "devin",
+    label: "Devin (experimental)",
+    authKind: "local",
+    adapter: "devin",
+    baseUrl: "https://server.codeium.com",
+    models: [],
+    experimental: true,
   },
   {
     id: "deepseek",
@@ -1135,6 +1147,8 @@ export const ONBOARDING_PROVIDER_GLYPHS: readonly string[] = Object.freeze([
   "github-copilot",
   "command-code",
   "vertex",
+  "cline",
+  "cline-pass",
   "iflow",
   "trae",
   "nous",
@@ -1144,6 +1158,7 @@ export const ONBOARDING_PROVIDER_GLYPHS: readonly string[] = Object.freeze([
 
 export const GENERIC_PROVIDER_OPTIONS = PROVIDER_CATALOG.filter(
   (provider) =>
+    provider.id !== "cline-pass" &&
     !ONBOARDING_PROVIDER_GLYPHS.includes(provider.id) &&
     !DEDICATED_ONBOARDING_PROVIDER_IDS.has(provider.id) &&
     provider.authKind !== "oauth",

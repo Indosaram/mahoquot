@@ -158,6 +158,7 @@ export const AccountStatsSchema = z.object({
   last_error: LastErrorSchema.nullable().optional(),
   ttft: z.union([TtftSnapshotSchema, z.number()]).nullable().optional(),
   usage: UsageSchema.nullable().optional(),
+  models: z.array(z.string()).nullable().optional(),
 });
 export type AccountStats = z.infer<typeof AccountStatsSchema>;
 
@@ -213,6 +214,8 @@ export const AuthFileItemSchema = z.object({
   unavailable: z.boolean().default(false),
   runtime_only: z.boolean().default(false),
   type: z.string().optional(),
+  identity_slug: z.string().optional(),
+  identity: z.string().optional(),
   email: z.string().optional(),
   provider: z.string().optional(),
   account: z.string().optional(),
@@ -518,3 +521,147 @@ export const parseScopedKeys = (data: unknown): readonly ScopedApiKey[] => {
   }
   return parsed.data.scoped_keys;
 };
+
+export const ProviderProxyPolicySchema = z.object({
+  enabled: z.boolean().default(false),
+  sticky: z.boolean().default(true),
+  "ttl-secs": z.number().nonnegative().default(0),
+  url: z.string().default(""),
+});
+export type ProviderProxyPolicy = z.infer<typeof ProviderProxyPolicySchema>;
+
+export const ProxyProvidersMapSchema = z.record(z.string(), ProviderProxyPolicySchema);
+export type ProxyProvidersMap = z.infer<typeof ProxyProvidersMapSchema>;
+
+export const parseProxyProviders = (data: unknown): ProxyProvidersMap => {
+  if (typeof data === "object" && data !== null) {
+    if ("proxy-providers" in data) {
+      const inner = (data as Record<string, unknown>)["proxy-providers"];
+      const parsed = ProxyProvidersMapSchema.safeParse(inner);
+      if (parsed.success) return parsed.data;
+    }
+    const direct = ProxyProvidersMapSchema.safeParse(data);
+    if (direct.success) return direct.data;
+  }
+  return {};
+};
+
+export const DevinManualCredentialInputSchema = z.object({
+  identity_slug: z.string().trim().min(1, "Identity slug must not be empty"),
+  label: z.string().trim().optional(),
+  access_token: z
+    .string()
+    .trim()
+    .min(1, "Session token must not be empty")
+    .refine(
+      (val) =>
+        !/\s/.test(val) &&
+        !Array.from(val).some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127),
+      "Session token must not contain whitespace or control characters",
+    )
+    .refine((val) => val.length <= 4096, "Session token must not exceed 4096 characters"),
+  api_server_url: z.string().trim().optional().default("https://server.codeium.com"),
+  disabled: z.boolean().default(false),
+});
+export type DevinManualCredentialInput = z.input<typeof DevinManualCredentialInputSchema>;
+
+export interface DevinNormalizedCredential extends Record<string, unknown> {
+  type: "devin";
+  identity_slug: string;
+  label?: string;
+  access_token: string;
+  api_server_url: string;
+  disabled: boolean;
+}
+
+export const normalizeDevinManualCredential = (
+  input: DevinManualCredentialInput,
+): DevinNormalizedCredential => {
+  const parsed = DevinManualCredentialInputSchema.parse(input);
+  const result: DevinNormalizedCredential = {
+    type: "devin",
+    identity_slug: parsed.identity_slug,
+    access_token: parsed.access_token,
+    api_server_url: parsed.api_server_url || "https://server.codeium.com",
+    disabled: parsed.disabled ?? false,
+  };
+  if (parsed.label) {
+    result.label = parsed.label;
+  }
+  return result;
+};
+
+export const devinCredentialFileName = (identity: string): string => {
+  const clean = identity.trim();
+  if (!clean) return "devin.json";
+  return `devin-${clean}.json`;
+};
+
+export const DevinCliImportPayloadSchema = z.object({
+  identity: z.string().trim().optional(),
+  identity_slug: z.string().trim().optional(),
+  label: z.string().trim().optional(),
+});
+export type DevinCliImportPayload = z.infer<typeof DevinCliImportPayloadSchema>;
+
+export const DevinCliImportResponseSchema = z.object({
+  status: z.string().default("ok"),
+  name: z.string().optional(),
+  error: z.string().optional(),
+});
+export type DevinCliImportResponse = z.infer<typeof DevinCliImportResponseSchema>;
+
+export const DevinAccountStatusSchema = z.object({
+  identity_slug: z.string(),
+  status: z.enum(["active", "stale", "uninitialized"]),
+  models: z.array(z.string()).default([]),
+  stale: z.boolean().default(false),
+  last_refresh_at: z.number().nullable().optional(),
+  error: z.string().nullable().optional(),
+  disabled: z.boolean().optional(),
+});
+export type DevinAccountStatus = z.infer<typeof DevinAccountStatusSchema>;
+
+export const DevinModelsStatusResponseSchema = z.object({
+  status: z.string().default("ok"),
+  models: z.array(z.string()).default([]),
+  accounts: z.array(DevinAccountStatusSchema).default([]),
+  generation: z.number().optional(),
+});
+export type DevinModelsStatusResponse = z.infer<typeof DevinModelsStatusResponseSchema>;
+
+export const DevinAccountRefreshResultSchema = z.object({
+  identity_slug: z.string(),
+  status: z.enum(["success", "error"]),
+  models: z.array(z.string()).default([]),
+  stale: z.boolean().default(false),
+  last_refresh_at: z.number().nullable().optional(),
+  error: z.string().nullable().optional(),
+});
+export type DevinAccountRefreshResult = z.infer<typeof DevinAccountRefreshResultSchema>;
+
+export const DevinModelRefreshResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    models: z.array(z.string()).optional(),
+    outcome: z.enum(["success", "error", "never"]).optional(),
+    error: z.string().nullable().optional(),
+    accounts: z.array(DevinAccountRefreshResultSchema).default([]),
+    generation: z.number().optional(),
+  })
+  .passthrough()
+  .refine(
+    (data) => {
+      const hasContent =
+        data.status !== undefined ||
+        data.outcome !== undefined ||
+        data.models !== undefined ||
+        data.accounts.length > 0;
+      const hasError = typeof data.error === "string" && data.error.length > 0;
+      return hasContent || hasError;
+    },
+    {
+      message: "Devin model refresh response must contain valid status, outcome, models, or error",
+    },
+  );
+export type DevinModelRefreshResponse = z.infer<typeof DevinModelRefreshResponseSchema>;

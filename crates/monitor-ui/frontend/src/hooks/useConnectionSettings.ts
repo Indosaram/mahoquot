@@ -1,6 +1,8 @@
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import type { GatewayClients } from "@/lib/api";
 import { pendingKey } from "@/lib/pending";
+import type { ProviderProxyPolicy, ProxyProvidersMap } from "@/lib/schemas";
+import { parseProxyProviders } from "@/lib/schemas";
 import { useCallback, useEffect, useState } from "react";
 
 type SetText = (value: string) => void;
@@ -26,6 +28,7 @@ export function useConnectionSettings({
   setPending,
 }: ConnectionSettingsArgs) {
   const [proxyUrl, setProxyUrl] = useState("");
+  const [proxyProviders, setProxyProviders] = useState<ProxyProvidersMap>({});
   const [routingStrategy, setRoutingStrategy] = useState("round-robin");
   const [requestRetry, setRequestRetry] = useState("3");
   const [loggingToFile, setLoggingToFile] = useState(false);
@@ -39,8 +42,9 @@ export function useConnectionSettings({
       clients.management.scalar("routing/strategy"),
       clients.management.scalar("request-retry"),
       clients.management.scalar("logging-to-file"),
+      clients.management.scalar("proxy-providers").catch(() => ({})),
     ])
-      .then(([proxy, routing, retry, logging]) => {
+      .then(([proxy, routing, retry, logging, providers]) => {
         if (!active) return;
         if (typeof proxy["proxy-url"] === "string") setProxyUrl(proxy["proxy-url"]);
         if (typeof routing.strategy === "string") setRoutingStrategy(routing.strategy);
@@ -50,6 +54,7 @@ export function useConnectionSettings({
         if (typeof logging["logging-to-file"] === "boolean") {
           setLoggingToFile(logging["logging-to-file"]);
         }
+        setProxyProviders(parseProxyProviders(providers));
         setSettingsLoaded(true);
       })
       .catch((error: unknown) => {
@@ -88,9 +93,49 @@ export function useConnectionSettings({
     }
   }, [clients, loggingToFile, proxyUrl, requestRetry, routingStrategy, setNotice, setPending]);
 
+  const saveProviderProxySettings = useCallback(async () => {
+    setPending(pendingKey.settingsSave);
+    setNotice("");
+    try {
+      await clients.management.saveScalar(
+        "proxy-providers",
+        proxyProviders as unknown as Record<string, unknown>,
+      );
+      setNotice("Provider proxy routing saved and applied live.");
+    } catch (error) {
+      setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setPending("");
+    }
+  }, [clients, proxyProviders, setNotice, setPending]);
+
+  const updateProxyProviderPolicy = useCallback(
+    (provider: string, patch: Partial<ProviderProxyPolicy>) => {
+      setProxyProviders((prev) => {
+        const current = prev[provider] ?? {
+          enabled: false,
+          sticky: true,
+          "ttl-secs": 0,
+          url: "",
+        };
+        return {
+          ...prev,
+          [provider]: {
+            ...current,
+            ...patch,
+          },
+        };
+      });
+    },
+    [],
+  );
+
   return {
     proxyUrl,
     setProxyUrl,
+    proxyProviders,
+    setProxyProviders,
+    updateProxyProviderPolicy,
     routingStrategy,
     setRoutingStrategy,
     requestRetry,
@@ -100,5 +145,6 @@ export function useConnectionSettings({
     settingsLoaded,
     setSettingsLoaded,
     saveProxySettings,
+    saveProviderProxySettings,
   };
 }

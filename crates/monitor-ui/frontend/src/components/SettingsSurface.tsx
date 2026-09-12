@@ -28,7 +28,12 @@ import type {
   SchedulerSettings,
   SchedulerStatus,
 } from "../lib/schemas";
-import type { GatewayModelEntry, ScopedApiKey } from "../lib/schemas";
+import type {
+  GatewayModelEntry,
+  ProviderProxyPolicy,
+  ProxyProvidersMap,
+  ScopedApiKey,
+} from "../lib/schemas";
 import { SharedKeysCard } from "./SharedKeysCard";
 import { TunnelCard } from "./TunnelCard";
 import { Badge, Button, Card, Field, Input } from "./ui";
@@ -44,6 +49,11 @@ export interface SettingsSurfaceProps {
   readonly routingStrategy: string;
   readonly requestRetry: string;
   readonly proxyUrl: string;
+  readonly proxyProviders?: ProxyProvidersMap;
+  readonly onUpdateProxyProviderPolicy?: (
+    provider: string,
+    patch: Partial<ProviderProxyPolicy>,
+  ) => void;
   readonly loggingToFile: boolean;
   readonly theme: "dark" | "light";
   readonly showRemaining: boolean;
@@ -89,6 +99,7 @@ export interface SettingsSurfaceProps {
   readonly onProxyUrlChange: (value: string) => void;
   readonly onLoggingToFileChange: (value: boolean) => void;
   readonly onSaveProxySettings: () => void | Promise<void>;
+  readonly onSaveProviderProxySettings?: () => void | Promise<void>;
   readonly onThemeChange: (theme: "dark" | "light") => void;
   readonly onOpenConfigEditor: () => void | Promise<void>;
   readonly historyHealth: HistoryHealth | null;
@@ -134,6 +145,8 @@ export function SettingsSurface({
   routingStrategy,
   requestRetry,
   proxyUrl,
+  proxyProviders = {},
+  onUpdateProxyProviderPolicy,
   loggingToFile,
   theme,
   onToggleGateway,
@@ -163,6 +176,7 @@ export function SettingsSurface({
   onProxyUrlChange,
   onLoggingToFileChange,
   onSaveProxySettings,
+  onSaveProviderProxySettings,
   onThemeChange,
   onOpenConfigEditor,
   showRemaining,
@@ -522,6 +536,163 @@ export function SettingsSurface({
                 onClick={() => void onSaveProxySettings()}
               >
                 {pending === "settings:save" ? "Saving…" : "Save proxy settings"}
+              </Button>
+            </div>
+          </Card>
+          <Card className="settings-card" aria-label="Per-provider proxy routing">
+            <header className="settings-card-head">
+              <div className="settings-icon">
+                <Network size={17} />
+              </div>
+              <div>
+                <h2>Per-Provider Proxy Routing</h2>
+                <p>
+                  Route provider accounts through rotating or sticky upstream proxies (e.g.
+                  global-egress).
+                </p>
+              </div>
+            </header>
+            <div className="proxy-settings-grid">
+              {(() => {
+                const configuredProviders = Object.keys(proxyProviders);
+                const accountProviders = availableAccounts.map((a) => a.provider.toLowerCase());
+                const standardProviders = [
+                  "cline",
+                  "codex",
+                  "antigravity",
+                  "claude",
+                  "cursor",
+                  "kiro",
+                  "zcode",
+                ];
+                const allProviders = Array.from(
+                  new Set([...configuredProviders, ...accountProviders, ...standardProviders]),
+                ).sort();
+
+                return allProviders.map((provider) => {
+                  const policy = proxyProviders[provider] ?? {
+                    enabled: false,
+                    sticky: true,
+                    "ttl-secs": 0,
+                    url: "",
+                  };
+                  return (
+                    <div
+                      key={provider}
+                      style={{
+                        display: "grid",
+                        gap: "8px",
+                        padding: "12px",
+                        border: "1px solid var(--line)",
+                        borderRadius: "8px",
+                        background: "var(--panel-2)",
+                      }}
+                    >
+                      <label
+                        className="toggle-field"
+                        style={{
+                          minHeight: "auto",
+                          padding: "4px 0",
+                          border: "none",
+                          background: "transparent",
+                        }}
+                      >
+                        <input
+                          aria-label={`Enable proxy for ${provider}`}
+                          type="checkbox"
+                          checked={policy.enabled}
+                          onChange={(e) =>
+                            onUpdateProxyProviderPolicy?.(provider, { enabled: e.target.checked })
+                          }
+                        />
+                        <span>
+                          <strong style={{ textTransform: "capitalize" }}>{provider}</strong>
+                          <small>Enable upstream proxy for {provider} accounts</small>
+                        </span>
+                      </label>
+                      {policy.enabled ? (
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: "8px",
+                            paddingLeft: "24px",
+                            paddingTop: "6px",
+                          }}
+                        >
+                          <label
+                            className="toggle-field"
+                            style={{
+                              minHeight: "auto",
+                              padding: "4px 0",
+                              border: "none",
+                              background: "transparent",
+                            }}
+                          >
+                            <input
+                              aria-label={`Sticky session for ${provider}`}
+                              type="checkbox"
+                              checked={policy.sticky}
+                              onChange={(e) =>
+                                onUpdateProxyProviderPolicy?.(provider, {
+                                  sticky: e.target.checked,
+                                })
+                              }
+                            />
+                            <span>
+                              <strong>Sticky session (per account)</strong>
+                              <small>
+                                Pin each account to a stable session IP (global-egress sess=)
+                              </small>
+                            </span>
+                          </label>
+                          <Field
+                            label="Session TTL (seconds)"
+                            hint="0 = pool default (10m in global-egress). Positive = rotate exit IP every N seconds."
+                          >
+                            <Input
+                              aria-label={`Session TTL for ${provider}`}
+                              type="number"
+                              min="0"
+                              step="60"
+                              value={String(policy["ttl-secs"] ?? 0)}
+                              onChange={(e) =>
+                                onUpdateProxyProviderPolicy?.(provider, {
+                                  "ttl-secs": Math.max(0, parseInt(e.target.value, 10) || 0),
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field
+                            label="Proxy URL override"
+                            hint="Leave blank to use global upstream proxy URL above."
+                          >
+                            <Input
+                              aria-label={`Proxy URL override for ${provider}`}
+                              placeholder="http://127.0.0.1:3128"
+                              value={policy.url ?? ""}
+                              onChange={(e) =>
+                                onUpdateProxyProviderPolicy?.(provider, { url: e.target.value })
+                              }
+                            />
+                          </Field>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="connection-actions">
+              <span>Per-provider proxies apply live without restarting the gateway.</span>
+              <Button
+                disabled={blocks(pending, "settings")}
+                onClick={() =>
+                  void (onSaveProviderProxySettings
+                    ? onSaveProviderProxySettings()
+                    : onSaveProxySettings())
+                }
+              >
+                {pending === "settings:save" ? "Saving…" : "Save provider proxy routing"}
               </Button>
             </div>
           </Card>

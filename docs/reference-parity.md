@@ -41,6 +41,14 @@ Nothing claims a per-provider test that does not exist.
 Two catalog fields deliberately differ from the reference; each is declared with a
 reason in `provider-parity-deviations.json` (`kiro` auth kind, `command-code` label).
 
+## Devin local integration parity
+
+In addition to the 83 OpenCodex reference providers, Devin is integrated as an experimental provider referencing `Arborsm/dsh-plugin-devin-bridge` and `sotayamashita/devin-sse-proxy`.
+
+| Provider | Auth kind | Adapter | Onboarding & Transport | Test owner |
+|---|---|---|---|---|
+| `devin` | `local` | `devin` | Mac host CLI import (`POST /v0/management/devin/import-cli`) or manual session token upload (`DevinAccount`). Connect RPC binary streaming to `https://server.codeium.com`. | `crates/gateway/tests/devin_credentials.rs`, `crates/gateway/tests/devin_wire.rs`, `crates/gateway/tests/devin_relay.rs` |
+
 ## What the gate does and does not prove
 
 `t20_reference_parity` is a coverage map, not a behaviour proof. It verifies that every

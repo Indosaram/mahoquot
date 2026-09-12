@@ -4,6 +4,13 @@ import {
   type AuthFileItem,
   type CreateScopedKeyResponse,
   CreateScopedKeyResponseSchema,
+  type DevinCliImportPayload,
+  type DevinCliImportResponse,
+  DevinCliImportResponseSchema,
+  type DevinModelRefreshResponse,
+  DevinModelRefreshResponseSchema,
+  type DevinModelsStatusResponse,
+  DevinModelsStatusResponseSchema,
   type GatewayHealth,
   GatewayHealthSchema,
   type GatewayModelEntry,
@@ -54,7 +61,7 @@ const zcodeAuthResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("pending"), url: z.string().url() }),
 ]);
 export type ZcodeAuthResult = z.infer<typeof zcodeAuthResultSchema>;
-export type ScalarValue = string | number | boolean;
+export type ScalarValue = string | number | boolean | Record<string, unknown>;
 
 export interface HistoryStatsQuery {
   readonly startMs?: number;
@@ -157,6 +164,10 @@ export interface GatewayClients {
     }): Promise<void>;
     importCommandCode(apiKey: string, label: string): Promise<void>;
     importLocalTrae(): Promise<void>;
+    importClineLogin(): Promise<void>;
+    importDevinCli(payload?: DevinCliImportPayload): Promise<DevinCliImportResponse>;
+    refreshDevinModels(identitySlug?: string): Promise<DevinModelRefreshResponse>;
+    getDevinModelsStatus(): Promise<DevinModelsStatusResponse>;
     importCredential(name: string, content: Record<string, unknown>): Promise<void>;
     importVertexServiceAccount(document: string): Promise<void>;
     saveCredentialOrder(names: readonly string[]): Promise<readonly string[]>;
@@ -478,6 +489,38 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         await requestJson(`${base}/v0/management/trae/import-local`, authHeaders, {
           method: "POST",
         });
+      },
+      importClineLogin: async () => {
+        await requestJson(`${base}/v0/management/cline/import`, authHeaders, {
+          method: "POST",
+        });
+      },
+      importDevinCli: async (payload = {}) => {
+        const body: Record<string, string> = {};
+        if (payload.identity) body.identity = payload.identity;
+        if (payload.identity_slug) body.identity_slug = payload.identity_slug;
+        if (payload.label) body.label = payload.label;
+        const result = await requestJson(`${base}/v0/management/devin/import-cli`, authHeaders, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return DevinCliImportResponseSchema.parse(result);
+      },
+      refreshDevinModels: async (identitySlug?: string) => {
+        const query = identitySlug ? `?identity_slug=${encodeURIComponent(identitySlug)}` : "";
+        const result = await requestJson(
+          `${base}/v0/management/devin/models/refresh${query}`,
+          authHeaders,
+          { method: "POST" },
+        );
+        return DevinModelRefreshResponseSchema.parse(result);
+      },
+      getDevinModelsStatus: async () => {
+        const result = await requestJson(`${base}/v0/management/devin/models/status`, authHeaders, {
+          method: "GET",
+        });
+        return DevinModelsStatusResponseSchema.parse(result);
       },
       importCredential: async (name, content) => {
         await requestJson(`${base}/v0/management/auth-files`, authHeaders, {

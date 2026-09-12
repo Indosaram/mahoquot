@@ -30,7 +30,7 @@ export type OnboardingStep =
     }
   | {
       readonly kind: "key-import";
-      readonly provider: "command-code" | "iflow";
+      readonly provider: "command-code" | "iflow" | "cline-pass";
       readonly label: string;
       readonly apiKey: string;
     }
@@ -41,6 +41,19 @@ export type OnboardingStep =
       readonly apiKey: string;
       readonly baseUrl: string;
       readonly plan: string;
+    }
+  | {
+      readonly kind: "devin-token";
+      readonly identity: string;
+      readonly label: string;
+      readonly token: string;
+      readonly serverUrl: string;
+      readonly credentialName?: string;
+    }
+  | {
+      readonly kind: "devin-cli-import";
+      readonly identity: string;
+      readonly label: string;
     }
   | { readonly kind: "zcode-key"; readonly email: string; readonly key: string };
 
@@ -157,6 +170,28 @@ export const ONBOARDING_PROVIDERS: readonly OnboardingProvider[] = [
     ],
   },
   {
+    glyph: "cline",
+    name: "Cline",
+    methods: [
+      {
+        id: "cline-import",
+        name: "Import Cline CLI login",
+        hint: "Reads the cline CLI OAuth session; free models included.",
+      },
+    ],
+  },
+  {
+    glyph: "cline-pass",
+    name: "ClinePass",
+    methods: [
+      {
+        id: "cline-pass-key",
+        name: "Sign in with ClinePass",
+        hint: "Paste a Cline API key from app.cline.bot; quota shows 5-hour, weekly, monthly.",
+      },
+    ],
+  },
+  {
     glyph: "iflow",
     name: "iFlow",
     methods: [
@@ -204,6 +239,22 @@ export const ONBOARDING_PROVIDERS: readonly OnboardingProvider[] = [
       },
     ],
   },
+  {
+    glyph: "devin",
+    name: "Devin",
+    methods: [
+      {
+        id: "devin-token",
+        name: "Enter session token",
+        hint: "Paste a Devin CLI session token; requires Devin CLI access (experimental).",
+      },
+      {
+        id: "devin-cli-import",
+        name: "Import proxy-host CLI login",
+        hint: "Reads credentials.toml from the proxy host; devin auth login access is experimental and account-dependent.",
+      },
+    ],
+  },
 ];
 
 export const LOCAL_IMPORT_METHODS: Readonly<
@@ -212,6 +263,10 @@ export const LOCAL_IMPORT_METHODS: Readonly<
   "trae-local": {
     provider: "trae",
     notice: "Trae session imported for local quota monitoring.",
+  },
+  "cline-import": {
+    provider: "cline",
+    notice: "Cline CLI login imported with free-model access.",
   },
 };
 
@@ -223,8 +278,29 @@ export const formStepFor = (methodId: string): OnboardingStep | null => {
       return { kind: "raw-credential", provider: "vertex", document: "" };
     case "iflow-key":
       return { kind: "key-import", provider: "iflow", label: "iFlow", apiKey: "" };
+    case "cline-pass-key":
+      return {
+        kind: "key-import",
+        provider: "cline-pass",
+        label: "ClinePass",
+        apiKey: "",
+      };
     case "zcode-key":
       return { kind: "zcode-key", email: "", key: "" };
+    case "devin-token":
+      return {
+        kind: "devin-token",
+        identity: "",
+        label: "",
+        token: "",
+        serverUrl: "https://server.codeium.com",
+      };
+    case "devin-cli-import":
+      return {
+        kind: "devin-cli-import",
+        identity: "devin-cli",
+        label: "Devin CLI",
+      };
     default:
       return null;
   }

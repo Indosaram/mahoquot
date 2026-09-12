@@ -24,12 +24,16 @@ export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }
   const tone =
     account.health === "healthy"
       ? "ok"
-      : account.health === "cooldown"
+      : account.health === "cooldown" || account.health === "auth_required"
         ? "warn"
         : account.health === "disabled"
           ? "neutral"
           : "bad";
-  return <Badge tone={tone}>{account.health.replace("_", " ")}</Badge>;
+  return (
+    <Badge tone={tone}>
+      {account.health === "auth_required" ? "auth required" : account.health.replace("_", " ")}
+    </Badge>
+  );
 };
 
 export interface AccountCardProps {
@@ -38,6 +42,15 @@ export interface AccountCardProps {
   readonly showRemaining?: boolean;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
+  readonly devinModels?: readonly string[] | undefined;
+  readonly discoveryState?:
+    | "never_loaded"
+    | "stale"
+    | "error"
+    | "available"
+    | "empty"
+    | "unknown"
+    | undefined;
   readonly onRunAccountAction: (
     action: "warm" | "reset",
     account: NormalizedAccount,
@@ -48,6 +61,8 @@ export interface AccountCardProps {
     disabled: boolean,
   ) => void | Promise<void>;
   readonly onReauthenticate: (account: NormalizedAccount) => void | Promise<void>;
+  readonly onReimportCredential?: (account: NormalizedAccount) => void | Promise<void>;
+  readonly onRefreshDiscovery?: (account: NormalizedAccount) => void | Promise<void>;
   readonly onRemoveCredential: (account: NormalizedAccount) => void | Promise<void>;
   readonly onSetConfirmRemove: (accountId: string) => void;
   readonly onMoveCredential: (
@@ -154,10 +169,14 @@ export const AccountCard = ({
   showRemaining = true,
   dragging,
   confirmRemove,
+  devinModels,
+  discoveryState,
   onRunAccountAction,
   onRefresh,
   onSetCredentialDisabled,
   onReauthenticate,
+  onReimportCredential,
+  onRefreshDiscovery,
   onRemoveCredential,
   onSetConfirmRemove,
   onMoveCredential,
@@ -190,6 +209,9 @@ export const AccountCard = ({
   const cleanDetail = (raw: string): string => {
     let d = raw;
     if (d.startsWith("codex-")) d = d.slice("codex-".length);
+    if (d.startsWith("cline-")) d = d.slice("cline-".length);
+    if (d.endsWith(".json")) d = d.slice(0, -5);
+    if (d.startsWith("generic-cline-oauth-")) return account.email || "Cline OAuth";
     const at = d.lastIndexOf("@");
     if (at > 0) {
       const p = d.slice(0, at).replace(/^[0-9a-fA-F]{8,}-/, "");
@@ -198,6 +220,20 @@ export const AccountCard = ({
     }
     return d;
   };
+
+  const isDevin = account.provider === "devin";
+  const resolvedModels = devinModels ?? (isDevin ? account.models : undefined);
+  const resolvedDiscoveryState =
+    discoveryState ??
+    (isDevin
+      ? account.lastError && /model|discover/i.test(account.lastError.message)
+        ? ("error" as const)
+        : resolvedModels === undefined
+          ? ("unknown" as const)
+          : resolvedModels.length === 0
+            ? ("empty" as const)
+            : ("available" as const)
+      : undefined);
 
   // Warm up and Refresh stay in the row because they are the routine actions;
   // everything below is rare or destructive and does not deserve permanent
@@ -238,22 +274,49 @@ export const AccountCard = ({
       },
       {
         key: "auth",
-        label: pending === `auth:${account.provider}` ? "Starting…" : "Re-authenticate",
+        label:
+          account.provider === "devin"
+            ? pending === `auth:${account.provider}`
+              ? "Starting…"
+              : "Re-authenticate / Update token"
+            : pending === `auth:${account.provider}`
+              ? "Starting…"
+              : "Re-authenticate",
         ariaLabel: `Re-authenticate ${account.label}`,
         icon: <KeyRound size={13} />,
         disabled: isPending || blocks(pending, "onboarding"),
         run: () => void onReauthenticate(account),
       },
-      {
-        key: "remove",
-        label: "Remove account",
-        ariaLabel: `Remove ${account.label}`,
-        icon: <Trash2 size={13} />,
-        danger: true,
-        disabled: isPending,
-        run: () => onSetConfirmRemove(account.id),
-      },
     );
+    if (account.provider === "devin" && onReimportCredential) {
+      overflowActions.push({
+        key: "reimport-cli",
+        label: pending === `reimport:${account.id}` ? "Importing…" : "Re-import from host CLI",
+        ariaLabel: `Re-import ${account.label} from host CLI`,
+        icon: <RefreshCw size={13} />,
+        disabled: isPending,
+        run: () => void onReimportCredential(account),
+      });
+    }
+    if (account.provider === "devin" && onRefreshDiscovery) {
+      overflowActions.push({
+        key: "refresh-discovery",
+        label: pending === `discovery:${account.id}` ? "Refreshing…" : "Refresh model discovery",
+        ariaLabel: `Refresh model discovery for ${account.label}`,
+        icon: <RefreshCw size={13} />,
+        disabled: isPending,
+        run: () => void onRefreshDiscovery(account),
+      });
+    }
+    overflowActions.push({
+      key: "remove",
+      label: "Remove account",
+      ariaLabel: `Remove ${account.label}`,
+      icon: <Trash2 size={13} />,
+      danger: true,
+      disabled: isPending,
+      run: () => onSetConfirmRemove(account.id),
+    });
   }
 
   const rawDetail = account.runtimeId ?? account.credentialName ?? "Credential only";
@@ -445,6 +508,28 @@ export const AccountCard = ({
           <div className="quota-empty">Not reported by provider</div>
         )}
       </div>
+      {isDevin && resolvedDiscoveryState ? (
+        <div className="account-discovery" data-testid="devin-discovery">
+          <small className="account-discovery-label">Models:</small>{" "}
+          {resolvedDiscoveryState === "error" ? (
+            <Badge tone="bad">Discovery error</Badge>
+          ) : resolvedDiscoveryState === "stale" ? (
+            <Badge tone="warn">Stale models</Badge>
+          ) : resolvedDiscoveryState === "never_loaded" ? (
+            <Badge tone="neutral">Never loaded</Badge>
+          ) : resolvedDiscoveryState === "unknown" ? (
+            <Badge tone="neutral">Unknown</Badge>
+          ) : resolvedDiscoveryState === "empty" ? (
+            <Badge tone="neutral">No models</Badge>
+          ) : (
+            <span className="account-discovery-list">
+              {resolvedModels && resolvedModels.length > 0
+                ? resolvedModels.join(", ")
+                : "Available"}
+            </span>
+          )}
+        </div>
+      ) : null}
       {account.lastError && dismissedErrorKey !== errorKey ? (
         <div className="account-error">
           <AlertTriangle size={14} />

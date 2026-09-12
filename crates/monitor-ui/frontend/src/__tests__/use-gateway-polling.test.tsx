@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useGatewayPolling } from "../hooks/useGatewayPolling";
 import { createGatewayClients } from "../lib/api";
 import type { AdminStats } from "../lib/schemas";
@@ -14,6 +14,10 @@ const baseStats: AdminStats = {
   accounts: [],
   history: [],
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("useGatewayPolling generation guard", () => {
   it("discards slow in-flight stats when a newer client or poll completes first", async () => {
@@ -158,5 +162,30 @@ describe("useGatewayPolling generation guard", () => {
       expect(result.current.stats.uptime_secs).toBe(200);
       expect(result.current.telemetry).toHaveLength(0);
     });
+  });
+
+  it("preserves the Tauri window receiver when subscribing to focus changes", async () => {
+    type FocusHandler = (event: { payload: boolean }) => void;
+    class NativeWindow {
+      unlisten = vi.fn();
+      listen = vi.fn(async (_event: string, _handler: FocusHandler) => this.unlisten);
+
+      async onFocusChanged(handler: FocusHandler): Promise<() => void> {
+        return this.listen("tauri://focus", handler);
+      }
+    }
+
+    const native = new NativeWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    vi.stubGlobal("__TAURI__", { window: { getCurrentWindow: () => native } });
+    const clients = createGatewayClients("http://127.0.0.1:18801", "test-key");
+
+    const { unmount } = renderHook(() => useGatewayPolling(clients));
+    await waitFor(() => expect(native.listen).toHaveBeenCalledOnce());
+    unmount();
+    await waitFor(() => expect(native.unlisten).toHaveBeenCalledOnce());
   });
 });

@@ -1,5 +1,12 @@
 import { normalizeToQuotioProviderId } from "./provider-catalog";
-import type { AccountStats, AuthFileItem, LastError, ResetCredit, Usage } from "./schemas";
+import {
+  type AccountStats,
+  type AuthFileItem,
+  type LastError,
+  type ResetCredit,
+  type Usage,
+  devinCredentialFileName,
+} from "./schemas";
 
 /** One banked reset credit, with the dates the gateway could resolve. */
 export interface ResetCreditView {
@@ -12,6 +19,7 @@ export type AccountHealth =
   | "cooldown"
   | "degraded"
   | "error"
+  | "auth_required"
   | "not_loaded"
   | "disabled";
 export type QuotaCapability = "supported" | "unsupported";
@@ -51,6 +59,8 @@ export interface NormalizedAccount {
    */
   readonly supportsReset: boolean;
   readonly resetCredits: readonly ResetCreditView[];
+  readonly identitySlug?: string | null;
+  readonly models?: readonly string[] | undefined;
   readonly credentialMeta?:
     | {
         readonly size: number;
@@ -61,10 +71,23 @@ export interface NormalizedAccount {
     | undefined;
 }
 
+const KNOWN_PROVIDER_PREFIXES = [
+  "generic-cline-oauth-",
+  "cline-",
+  "antigravity-",
+  "claude-",
+  "codex-",
+  "zcode-",
+  "generic-",
+];
+
 export const extractEmail = (idOrEmail: string): string => {
   let clean = idOrEmail.trim();
-  if (clean.toLowerCase().startsWith("codex-")) {
-    clean = clean.slice("codex-".length);
+  for (const p of KNOWN_PROVIDER_PREFIXES) {
+    if (clean.toLowerCase().startsWith(p)) {
+      clean = clean.slice(p.length);
+      break;
+    }
   }
   let atIndex = clean.lastIndexOf("@");
   if (atIndex < 0) {
@@ -75,14 +98,14 @@ export const extractEmail = (idOrEmail: string): string => {
     }
   }
   if (atIndex > 0) {
-    const prefix = clean.slice(0, atIndex);
+    let prefix = clean.slice(0, atIndex);
     let domain = clean.slice(atIndex + 1);
-    domain = domain.replace(/-(?:plus|prolite|pro|team|free|enterprise)(?:\.json)?$/i, "");
-    const hyphenIdx = prefix.indexOf("-");
-    if (hyphenIdx > 0 && hyphenIdx < prefix.length - 1) {
-      // Return the email without the runtime prefix if present
-      const user = prefix.slice(hyphenIdx + 1);
-      return `${user}@${domain}`.toLowerCase();
+    domain = domain
+      .replace(/-(?:plus|prolite|pro|team|free|enterprise)(?:\.json)?$/i, "")
+      .replace(/\.json$/i, "");
+    const hashMatch = prefix.match(/^[a-f0-9]{8,64}-(.+)$/i);
+    if (hashMatch) {
+      prefix = hashMatch[1];
     }
     return `${prefix}@${domain}`.toLowerCase();
   }
@@ -96,8 +119,9 @@ export const extractEmail = (idOrEmail: string): string => {
 const ALWAYS_QUOTA_PROVIDERS: ReadonlySet<string> = new Set(["codex", "claude"]);
 
 // Antigravity only reports quota once the gateway has observed its per-model
-// buckets; without them the account is unknown, never 0%.
-const GROUPED_QUOTA_PROVIDERS: ReadonlySet<string> = new Set(["antigravity"]);
+// buckets; without them the account is unknown, never 0%. ClinePass likewise
+// reports its 5-hour / weekly / monthly windows as groups from usage-limits.
+const GROUPED_QUOTA_PROVIDERS: ReadonlySet<string> = new Set(["antigravity", "cline-pass"]);
 
 export const getQuotaCapability = (
   provider: string,
@@ -133,6 +157,15 @@ export const deriveAccountHealth = (
   const now = Date.now();
   if (statusStr.includes("disabled")) {
     return "disabled";
+  }
+  if (
+    statusStr.includes("auth") ||
+    statusStr.includes("unauthenticated") ||
+    statusStr.includes("unauth") ||
+    statusStr.includes("token_expired") ||
+    statusStr.includes("reauth")
+  ) {
+    return "auth_required";
   }
   if (resetAtUnixMs && resetAtUnixMs > now) {
     return "cooldown";
@@ -241,13 +274,23 @@ const pairAccountsWithCredentials = (
   for (const account of runtimeAccounts) {
     const accountEmail = extractEmail(account.id);
     const accountProvider = providerOf(account.provider || "unknown");
+    const isDevin = accountProvider === "devin";
     const credential = credentialFiles.find((c) => {
       if (matched.has(c.name)) return false;
+      if (!sharesProvider(accountProvider, c)) return false;
+      if (isDevin) {
+        const credSlug =
+          c.identity_slug || ((c as Record<string, unknown>).identity as string | undefined);
+        if (credSlug) {
+          return credSlug === account.id;
+        }
+        if (c.name === devinCredentialFileName(account.id)) {
+          return true;
+        }
+        return matchesCredentialName(c.name, account.id);
+      }
       const credEmail = extractEmail(c.email || c.account || c.name);
-      return (
-        sharesProvider(accountProvider, c) &&
-        (credEmail === accountEmail || matchesCredentialName(c.name, account.id))
-      );
+      return credEmail === accountEmail || matchesCredentialName(c.name, account.id);
     });
     if (credential) {
       matched.add(credential.name);
@@ -283,8 +326,25 @@ const RUNTIME_CACHE_CREDENTIAL_FILES: ReadonlySet<string> = new Set([
 
 function cleanAccountLabel(raw: string, provider: string): string {
   let label = raw;
+  if (provider === "devin") {
+    let clean = label;
+    if (clean.endsWith(".json")) {
+      clean = clean.slice(0, -5);
+    }
+    return clean || label;
+  }
   if (provider === "antigravity" && label.startsWith("antigravity-")) {
     label = label.slice("antigravity-".length);
+  }
+  if (provider === "cline") {
+    if (label.startsWith("cline-")) {
+      return label.slice("cline-".length);
+    }
+    if (label.startsWith("generic-cline-oauth-")) {
+      const email = extractEmail(label);
+      if (email && email.includes("@")) return email;
+      return label;
+    }
   }
   if (
     provider === "codex" ||
@@ -310,9 +370,14 @@ function cleanAccountLabel(raw: string, provider: string): string {
       const suffix = label
         .slice(at + 1)
         .replace(/-(?:plus|prolite|pro|team|free|enterprise)(?:\.json)?$/i, "");
-      const hyphenIdx = prefixPart.indexOf("-");
-      if (hyphenIdx > 0 && hyphenIdx < prefixPart.length - 1) {
-        prefixPart = prefixPart.slice(hyphenIdx + 1);
+      const hashMatch = prefixPart.match(/^[a-f0-9]{8,64}-(.+)$/i);
+      if (hashMatch) {
+        prefixPart = hashMatch[1];
+      } else {
+        const hyphenIdx = prefixPart.indexOf("-");
+        if (hyphenIdx > 0 && hyphenIdx < prefixPart.length - 1) {
+          prefixPart = prefixPart.slice(hyphenIdx + 1);
+        }
       }
       label = `${prefixPart}@${suffix}`;
     } else if (isClaude) {
@@ -332,16 +397,28 @@ export const mergeAccountsAndCredentials = (
   const pairing = pairAccountsWithCredentials(runtimeAccounts, credentialFiles, matchedCreds);
 
   for (const r of runtimeAccounts) {
-    const rEmail = extractEmail(r.id);
+    const isDevin = providerOf(r.provider || "unknown") === "devin";
+    const rEmail = isDevin ? "" : extractEmail(r.id);
     const cred = pairing.get(r.id);
+    const devinIdentity = isDevin
+      ? (cred?.identity_slug as string | undefined) ||
+        ((cred as Record<string, unknown> | undefined)?.identity as string | undefined) ||
+        r.id
+      : null;
 
     const isAccountDisabled =
       (cred?.disabled ?? false) ||
       (typeof r.health === "object" && (r.health as { status?: string }).status === "disabled") ||
       r.health === "disabled";
+    const hasAuthError =
+      r.last_error?.status === 401 ||
+      (r.last_error?.message &&
+        /unauthenticated|auth.*required|invalid.*token|re-?auth/i.test(r.last_error.message));
     const health = isAccountDisabled
       ? "disabled"
-      : deriveAccountHealth(r.health, r.reset_at_unix_ms, r.ok, r.fails);
+      : hasAuthError
+        ? "auth_required"
+        : deriveAccountHealth(r.health, r.reset_at_unix_ms, r.ok, r.fails);
     const cooldownRemaining = r.reset_at_unix_ms
       ? Math.max(0, Math.floor((r.reset_at_unix_ms - nowMs) / 1000))
       : null;
@@ -358,6 +435,10 @@ export const mergeAccountsAndCredentials = (
     const quotaCap = getQuotaCapability(r.provider, r.usage);
     const resetCredits = r.usage?.reset_credits_available ?? 0;
 
+    const credLabel =
+      cred?.label && !cred.label.startsWith("generic-cline-oauth-") ? cred.label : null;
+    const rawLabel = credLabel || r.id;
+
     result.push({
       id: r.id,
       runtimeId: r.id,
@@ -367,7 +448,7 @@ export const mergeAccountsAndCredentials = (
       provider: providerOf(r.provider || "unknown"),
       plan: r.plan ?? null,
       email: rEmail,
-      label: cleanAccountLabel(cred?.label || r.id, providerOf(r.provider || "unknown")),
+      label: cleanAccountLabel(rawLabel, providerOf(r.provider || "unknown")),
       health,
       healthRaw: typeof r.health === "string" ? r.health : JSON.stringify(r.health),
       cooldownUntilUnixMs: r.reset_at_unix_ms ?? null,
@@ -383,6 +464,8 @@ export const mergeAccountsAndCredentials = (
       usage: r.usage ?? null,
       quotaCapability: quotaCap,
       isCredentialOnly: false,
+      identitySlug: devinIdentity,
+      models: Array.isArray(r.models) ? r.models : undefined,
       canReset: resetCredits > 0,
       resetCreditsAvailable: resetCredits,
       supportsReset: r.usage?.reset_credits_available != null,
@@ -403,7 +486,13 @@ export const mergeAccountsAndCredentials = (
     if (matchedCreds.has(c.name)) continue;
     if (RUNTIME_CACHE_CREDENTIAL_FILES.has(c.name)) continue;
 
-    const cEmail = extractEmail(c.email || c.account || c.name);
+    const isDevin = providerOf(c.type || c.provider || "unknown") === "devin";
+    const cEmail = isDevin ? "" : extractEmail(c.email || c.account || c.name);
+    const devinIdentity = isDevin
+      ? (c.identity_slug as string | undefined) ||
+        ((c as Record<string, unknown>).identity as string | undefined) ||
+        (c.name.endsWith(".json") ? c.name.slice(0, -5) : c.name)
+      : null;
     result.push({
       id: `cred-${c.name}`,
       runtimeId: null,
@@ -429,6 +518,8 @@ export const mergeAccountsAndCredentials = (
       usage: null,
       quotaCapability: "unsupported",
       isCredentialOnly: true,
+      identitySlug: devinIdentity,
+      models: undefined,
       canReset: false,
       resetCreditsAvailable: 0,
       supportsReset: false,
@@ -451,4 +542,17 @@ export const mergeAccountsAndCredentials = (
   result.sort((a, b) => rankOf(a) - rankOf(b));
 
   return result;
+};
+
+export const extractDevinSlug = (account: NormalizedAccount): string => {
+  if (account.identitySlug) {
+    return account.identitySlug;
+  }
+  if (account.runtimeId) {
+    return account.runtimeId;
+  }
+  if (account.credentialName) {
+    return account.credentialName.replace(/\.json$/i, "");
+  }
+  return account.id.replace(/^cred-/, "").replace(/\.json$/i, "");
 };

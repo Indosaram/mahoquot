@@ -59,14 +59,14 @@ describe("provider-catalog", () => {
     expect(missing).toEqual([]);
   });
 
-  it("exports exactly 83 unique production provider IDs", () => {
-    expect(PROVIDER_CATALOG).toHaveLength(83);
-    expect(TOTAL_PROVIDER_COUNT).toBe(83);
-    expect(PROVIDER_IDS).toHaveLength(83);
-    expect(Object.keys(PROVIDER_CATALOG_BY_ID)).toHaveLength(83);
+  it("exports exactly 84 unique production provider IDs (83 reference + devin)", () => {
+    expect(PROVIDER_CATALOG).toHaveLength(84);
+    expect(TOTAL_PROVIDER_COUNT).toBe(84);
+    expect(PROVIDER_IDS).toHaveLength(84);
+    expect(Object.keys(PROVIDER_CATALOG_BY_ID)).toHaveLength(84);
 
     const uniqueIds = new Set(PROVIDER_IDS);
-    expect(uniqueIds.size).toBe(83);
+    expect(uniqueIds.size).toBe(84);
   });
 
   it("ensures every catalog row has strict required fields and valid authKind", () => {
@@ -362,12 +362,15 @@ describe("reference registry parity", () => {
     return found;
   };
 
-  it("exposes exactly the reference providers that are not declared omissions", () => {
+  it("exposes exactly the reference providers that are not declared omissions, plus declared experimental local additions", () => {
+    // Devin is a local-only experimental addition outside the reference snapshot.
+    const declaredExperimentalAdditions = new Set(["devin"]);
     const referenceIds = snapshot.providers
       .map((provider) => provider.id)
       .filter((id) => !omitted.has(id))
       .sort();
-    expect([...PROVIDER_IDS].sort()).toEqual(referenceIds);
+    const catalogIds = PROVIDER_IDS.filter((id) => !declaredExperimentalAdditions.has(id)).sort();
+    expect(catalogIds).toEqual(referenceIds);
   });
 
   it("keeps every omitted provider out of the catalog with a stated reason", () => {
