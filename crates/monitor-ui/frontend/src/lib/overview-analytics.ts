@@ -63,6 +63,45 @@ export interface OverviewAnalytics {
   readonly supportsModelDimension: boolean; // false when source === "telemetry"
 }
 
+/**
+ * Narrows an analytics view to a single breakdown row.
+ *
+ * Totals collapse to that row's own numbers and the series keeps only its
+ * series key, so the chart, the mix bar and the KPI strip all describe the same
+ * one entity instead of disagreeing about scope.
+ *
+ * An unknown key returns the input untouched. Focus outlives a poll, and a
+ * model or account can leave the window between polls; degrading to the full
+ * view is better than rendering an empty dashboard the user cannot explain.
+ */
+export function focusAnalytics(
+  analytics: OverviewAnalytics,
+  focusKey: string | null,
+): OverviewAnalytics {
+  if (!focusKey) return analytics;
+  const row = analytics.rows.find((candidate) => candidate.key === focusKey);
+  if (!row) return analytics;
+  return {
+    ...analytics,
+    totals: {
+      requests: row.requests,
+      successes: row.successes,
+      failures: row.failures,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      totalTokens: row.totalTokens,
+      avgLatencyMs: row.avgLatencyMs,
+      costUsd: row.costUsd,
+    },
+    rows: [{ ...row, share: 1 }],
+    series: analytics.series.map((point) => {
+      const value = point.values[focusKey] ?? 0;
+      return { startMs: point.startMs, total: value, values: { [focusKey]: value } };
+    }),
+    seriesKeys: [focusKey],
+  };
+}
+
 const rangeDurations: Readonly<Record<TelemetryRange, number>> = {
   "30m": 1800000,
   "1h": 3600000,

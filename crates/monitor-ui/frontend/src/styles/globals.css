@@ -982,6 +982,45 @@ h2 {
 .minimal-dashboard {
   gap: 20px;
 }
+/* The three selectors read as one control strip. They wrap only when the
+   surface is too narrow to hold them, so the notch and tray keep working. */
+.overview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.overview-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+.overview-focus-chip:hover {
+  background: var(--panel-3);
+}
+.overview-focus-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.overview-focus-chip b {
+  color: var(--fg-faint);
+  font-weight: 600;
+}
+.overview-focus-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .range-selector,
 .overview-dimension-selector,
 .overview-metric-selector {
@@ -1029,6 +1068,31 @@ h2 {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+.overview-breakdown-row-selectable {
+  cursor: pointer;
+}
+.overview-breakdown-row-selectable:hover {
+  background: var(--panel-2);
+}
+.overview-breakdown-row-selectable.is-focused {
+  background: var(--panel-3);
+}
+/* The name doubles as the keyboard-reachable control for the row click. */
+.overview-breakdown-focus {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.overview-breakdown-focus:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 .overview-breakdown-chart {
   width: 100%;
   min-width: 0;

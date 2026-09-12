@@ -6,7 +6,7 @@ import type {
   OverviewDimension,
   OverviewMetric,
 } from "../lib/overview-analytics";
-import { telemetryAnalytics } from "../lib/overview-analytics";
+import { focusAnalytics, telemetryAnalytics } from "../lib/overview-analytics";
 import type { AdminStats } from "../lib/schemas";
 import {
   getOverviewDimension,
@@ -69,6 +69,11 @@ export const OverviewDashboard = ({
   const [localMetric, setLocalMetric] = useState<OverviewMetric>(getOverviewMetric);
   const metric = controlledMetric ?? analytics?.metric ?? localMetric;
 
+  // Which single row the dashboard is narrowed to, or null for everything. Kept
+  // local and unpersisted: it is a way of reading the current window, not a
+  // setting, and a focus restored days later would point at a vanished key.
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+
   const handleRangeChange = (nextRange: TelemetryRange) => {
     if (onRangeChange) {
       onRangeChange(nextRange);
@@ -79,6 +84,9 @@ export const OverviewDashboard = ({
   };
 
   const handleDimensionChange = (nextDimension: OverviewDimension) => {
+    // Keys are only meaningful within one dimension, so a provider focus must
+    // not survive into the model breakdown.
+    setFocusKey(null);
     if (onDimensionChange) {
       onDimensionChange(nextDimension);
     }
@@ -112,8 +120,16 @@ export const OverviewDashboard = ({
 
   const effectiveAnalytics = analytics ?? derivedAnalytics;
 
-  const outcomes = effectiveAnalytics.totals.successes + effectiveAnalytics.totals.failures;
-  const successRate = outcomes > 0 ? (effectiveAnalytics.totals.successes / outcomes) * 100 : 100;
+  const viewAnalytics = useMemo(
+    () => focusAnalytics(effectiveAnalytics, focusKey),
+    [effectiveAnalytics, focusKey],
+  );
+  const focusedRow = focusKey
+    ? (effectiveAnalytics.rows.find((row) => row.key === focusKey) ?? null)
+    : null;
+
+  const outcomes = viewAnalytics.totals.successes + viewAnalytics.totals.failures;
+  const successRate = outcomes > 0 ? (viewAnalytics.totals.successes / outcomes) * 100 : 100;
 
   const mixTitle =
     effectiveAnalytics.dimension === "model"
@@ -124,6 +140,7 @@ export const OverviewDashboard = ({
 
   return (
     <Stack className="content overview operations-dashboard minimal-dashboard">
+      <Cluster className="overview-controls">
       <Cluster className="range-selector" role="radiogroup" aria-label="Telemetry range">
         {(["30m", "1h", "1d", "7d", "30d"] as const).map((item) => (
           <label key={item}>
@@ -180,10 +197,25 @@ export const OverviewDashboard = ({
         ))}
       </Cluster>
 
+      {focusedRow ? (
+        <button
+          type="button"
+          className="overview-focus-chip"
+          onClick={() => setFocusKey(null)}
+          title={`Showing ${focusedRow.label} only — click to show all`}
+          aria-label={`Clear filter: showing ${focusedRow.label} only`}
+        >
+          <i style={{ background: dimensionColor(effectiveAnalytics.dimension, focusedRow.key, focusedRow.provider) }} />
+          <span>{focusedRow.label}</span>
+          <b aria-hidden="true">×</b>
+        </button>
+      ) : null}
+      </Cluster>
+
       <IntrinsicGrid className="minimal-kpis">
         <div>
           <span>Requests</span>
-          <strong>{compact.format(effectiveAnalytics.totals.requests)}</strong>
+          <strong>{compact.format(viewAnalytics.totals.requests)}</strong>
         </div>
         <div>
           <span>Success</span>
@@ -191,7 +223,7 @@ export const OverviewDashboard = ({
         </div>
         <div>
           <span>Failed</span>
-          <strong>{compact.format(effectiveAnalytics.totals.failures)}</strong>
+          <strong>{compact.format(viewAnalytics.totals.failures)}</strong>
         </div>
         <div>
           <span>In flight</span>
@@ -212,7 +244,7 @@ export const OverviewDashboard = ({
           <h2>Request activity</h2>
           <span>{range}</span>
         </header>
-        <OverviewBreakdownChart analytics={effectiveAnalytics} />
+        <OverviewBreakdownChart analytics={viewAnalytics} />
       </section>
 
       <section className="minimal-provider-mix" aria-label={mixTitle}>
@@ -221,7 +253,7 @@ export const OverviewDashboard = ({
           <span>{range}</span>
         </header>
         <div className="provider-mix-track" aria-hidden="true">
-          {effectiveAnalytics.rows.map((row) => (
+          {viewAnalytics.rows.map((row) => (
             <i
               key={row.key}
               style={{
@@ -232,8 +264,8 @@ export const OverviewDashboard = ({
           ))}
         </div>
         <Cluster className="provider-mix-labels">
-          {effectiveAnalytics.rows.length ? (
-            effectiveAnalytics.rows.map((row) => {
+          {viewAnalytics.rows.length ? (
+            viewAnalytics.rows.map((row) => {
               const color = dimensionColor(effectiveAnalytics.dimension, row.key, row.provider);
               return (
                 <span key={row.key}>
@@ -253,7 +285,11 @@ export const OverviewDashboard = ({
         </Cluster>
       </section>
 
-      <OverviewBreakdownTable analytics={effectiveAnalytics} />
+      <OverviewBreakdownTable
+        analytics={effectiveAnalytics}
+        focusKey={focusKey}
+        onFocusChange={setFocusKey}
+      />
 
       {analyticsError && analyticsError.trim() !== "" ? (
         <div className="state-panel warning" role="alert">

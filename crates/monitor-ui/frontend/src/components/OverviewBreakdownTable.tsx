@@ -31,11 +31,17 @@ const formatCost = (val: number): string =>
 export interface OverviewBreakdownTableProps {
   readonly analytics: OverviewAnalytics;
   readonly maxRows?: number;
+  /** Row key the dashboard is narrowed to, or null when showing everything. */
+  readonly focusKey?: string | null;
+  /** Omitted by callers that want a read-only table. */
+  readonly onFocusChange?: (key: string | null) => void;
 }
 
 export const OverviewBreakdownTable = ({
   analytics,
   maxRows = 8,
+  focusKey = null,
+  onFocusChange,
 }: OverviewBreakdownTableProps): JSX.Element => {
   const [expanded, setExpanded] = useState(false);
 
@@ -93,21 +99,53 @@ export const OverviewBreakdownTable = ({
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row) => (
+                {visibleRows.map((row) => {
+                  // The folded row stands for many entities at once, so there is
+                  // nothing single for it to narrow to.
+                  const canFocus = Boolean(onFocusChange) && !row.isOther;
+                  const isFocused = canFocus && row.key === focusKey;
+                  const toggle = () => onFocusChange?.(isFocused ? null : row.key);
+                  return (
                   <tr
                     key={row.key}
-                    className={
+                    className={[
                       row.isOther
                         ? "overview-breakdown-row-other overview-token-row-unclassified"
-                        : undefined
-                    }
+                        : "",
+                      canFocus ? "overview-breakdown-row-selectable" : "",
+                      isFocused ? "is-focused" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined}
+                    onClick={canFocus ? toggle : undefined}
                   >
                     <td className="overview-token-col-account">
                       <div className="overview-token-account-info">
                         <ProviderGlyph provider={row.provider} />
-                        <span className="overview-token-account-name" title={row.label}>
-                          {row.label}
-                        </span>
+                        {canFocus ? (
+                          <button
+                            type="button"
+                            className="overview-token-account-name overview-breakdown-focus"
+                            title={
+                              isFocused
+                                ? `Showing ${row.label} only — click to show all`
+                                : `Show ${row.label} only`
+                            }
+                            aria-pressed={isFocused}
+                            onClick={(event) => {
+                              // The row handler already toggles; without this the
+                              // click would toggle twice and cancel itself out.
+                              event.stopPropagation();
+                              toggle();
+                            }}
+                          >
+                            {row.label}
+                          </button>
+                        ) : (
+                          <span className="overview-token-account-name" title={row.label}>
+                            {row.label}
+                          </span>
+                        )}
                         {row.isUnlinked ? <span className="badge badge-warn">Unlinked</span> : null}
                       </div>
                     </td>
@@ -145,7 +183,8 @@ export const OverviewBreakdownTable = ({
                       </td>
                     ) : null}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
