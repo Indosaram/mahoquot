@@ -64,4 +64,29 @@ if [[ "$HOST_TARGET" == *apple* ]] && command -v codesign >/dev/null 2>&1; then
   codesign --force --sign - "$DEST"
 fi
 
+echo "==> Building captcha solver sidecar (bun compile)..."
+SOLVER_DIR="$PROXY_DIR/captcha-solver"
+if [[ ! -f "$SOLVER_DIR/package.json" ]]; then
+  echo "Missing captcha solver source at: $SOLVER_DIR" >&2
+  exit 1
+fi
+(
+  cd "$SOLVER_DIR"
+  bun install --frozen-lockfile >/dev/null 2>&1 || bun install
+  bun build --compile index.ts --outfile mahoquot-captcha-solver
+)
+SOLVER_DEST="crates/monitor-ui/gateways/mahoquot-captcha-solver-$HOST_TARGET"
+SOLVER_SOURCE="$SOLVER_DIR/mahoquot-captcha-solver"
+case "$HOST_TARGET" in
+  *windows*)
+    SOLVER_SOURCE="${SOLVER_SOURCE}.exe"
+    SOLVER_DEST="${SOLVER_DEST}.exe"
+    ;;
+esac
+cp "$SOLVER_SOURCE" "$SOLVER_DEST"
+if [[ "$HOST_TARGET" == *apple* ]] && command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$SOLVER_DEST"
+fi
+
 echo "==> Gateway sidecar ready at: $DEST"
+echo "==> Captcha solver sidecar ready at: $SOLVER_DEST"
