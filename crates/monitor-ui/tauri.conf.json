@@ -67,7 +67,8 @@
     "targets": ["app", "dmg", "deb", "rpm", "appimage", "nsis", "msi"],
     "createUpdaterArtifacts": true,
     "externalBin": [
-      "gateways/mahoquot-gateway"
+      "gateways/mahoquot-gateway",
+      "gateways/mahoquot-captcha-solver"
     ],
     "icon": [
       "icons/32x32.png",
