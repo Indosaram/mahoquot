@@ -228,14 +228,14 @@ export const ONBOARDING_PROVIDERS: readonly OnboardingProvider[] = [
       {
         id: "zcode",
         name: "Sign in with ZCode",
-        hint: "Opens Z.AI sign-in; paste the final zcode:// redirect URL back here.",
+        hint: "Opens the Z.AI consent page; the gateway polls for approval and completes the login itself.",
       },
       {
         id: "zcode-key",
-        name: "Paste a provisioned API key",
-        // Z.ai's OAuth redirects to zcode://oauth/callback, a scheme no server
-        // can receive, so the key is entered rather than captured.
-        hint: "Z.ai issues an {id}.{secret} key; paste it directly without signing in.",
+        name: "Paste a plan token (JWT)",
+        // The Start Plan JWT is normally fetched by the gateway's CLI poll flow;
+        // pasting skips the browser round-trip entirely.
+        hint: "Paste the start-plan JWT (e.g. from the ZCode client config) without signing in.",
       },
     ],
   },

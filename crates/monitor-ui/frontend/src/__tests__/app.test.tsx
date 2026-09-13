@@ -239,12 +239,13 @@ describe("operations console", () => {
     expect(localStorage.getItem("mahoquot.theme")).toBe("light");
   });
 
-  it("completes ZCode OAuth by pasting the redirect URL", async () => {
-    const callbackBodies: Array<Record<string, unknown>> = [];
+  it("completes the ZCode CLI flow by polling the gateway session", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let statusCalls = 0;
     const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         calls.push(url);
         if (url.includes("/admin/stats")) {
@@ -257,19 +258,22 @@ describe("operations console", () => {
           return new Response(JSON.stringify({ lines: [] }));
         }
         if (url.includes("get-auth-status")) {
-          return new Response(JSON.stringify({ status: "pending" }));
+          statusCalls += 1;
+          // First poll still pending, the next one completes server-side.
+          return new Response(
+            JSON.stringify(
+              statusCalls > 1 ? { status: "ok", provider: "zcode" } : { status: "pending" },
+            ),
+          );
         }
         if (url.includes("zcode-auth-url")) {
           return new Response(
             JSON.stringify({
-              url: "https://chat.z.ai/api/oauth/authorize?response_type=code",
+              url: "https://zcode.z.ai/authorize?flow=1",
               state: "s1",
+              provider: "zcode",
             }),
           );
-        }
-        if (url.includes("zcode-callback")) {
-          callbackBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-          return new Response(JSON.stringify({ status: "ok" }));
         }
         return new Response(JSON.stringify({ ok: true }));
       }),
@@ -282,80 +286,26 @@ describe("operations console", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
     fireEvent.click(await screen.findByRole("button", { name: "Sign in with ZCode" }));
+    expect(
+      await screen.findByText(/Approve the Z.AI sign-in in your browser/i),
+    ).toBeInTheDocument();
 
-    const field = await screen.findByLabelText("ZCode redirect URL");
-    fireEvent.change(field, {
-      target: { value: "zcode://oauth/callback?code=zc&state=s1" },
+    // No click on "Check authorization status" — the gateway session completes
+    // on the poller tick.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6500);
     });
-    fireEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
-
-    await waitFor(() =>
-      expect(callbackBodies).toEqual([
-        { state: "s1", callback_url: "zcode://oauth/callback?code=zc&state=s1" },
-      ]),
-    );
-    expect(await screen.findByText("ZCode authorization completed.")).toBeInTheDocument();
+    expect(await screen.findByText(/ZCode authorization completed/i)).toBeInTheDocument();
+    expect(calls.some((url) => url.includes("zcode-auth-url"))).toBe(true);
+    expect(statusCalls).toBeGreaterThanOrEqual(2);
+    expect(calls.some((url) => url.includes("zcode-callback"))).toBe(false);
     await waitFor(() =>
       expect(calls.some((url) => url.endsWith("/admin/usage/refresh"))).toBe(true),
     );
     expect(
       screen.queryByRole("complementary", { name: "Provider onboarding" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("forwards the authorize page paste to the gateway for code recovery", async () => {
-    const callbackBodies: Array<Record<string, unknown>> = [];
-    const authorizePage =
-      "https://chat.z.ai/auth/oauth/authorize?response_type=code&client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=zcode://oauth/callback&state=s1";
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/admin/stats")) {
-          return new Response(JSON.stringify(stats));
-        }
-        if (url.includes("auth-files")) {
-          return new Response(JSON.stringify({ files: [] }));
-        }
-        if (url.includes("/logs")) {
-          return new Response(JSON.stringify({ lines: [] }));
-        }
-        if (url.includes("get-auth-status")) {
-          return new Response(JSON.stringify({ status: "pending" }));
-        }
-        if (url.includes("zcode-auth-url")) {
-          return new Response(
-            JSON.stringify({
-              url: "https://chat.z.ai/api/oauth/authorize?response_type=code",
-              state: "s1",
-            }),
-          );
-        }
-        if (url.includes("zcode-callback")) {
-          callbackBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-          return new Response(JSON.stringify({ status: "ok" }));
-        }
-        return new Response(JSON.stringify({ ok: true }));
-      }),
-    );
-    vi.spyOn(window, "open").mockReturnValue(null);
-
-    render(<App />);
-    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
-    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Sign in with ZCode" }));
-
-    const field = await screen.findByLabelText("ZCode redirect URL");
-    fireEvent.change(field, { target: { value: authorizePage } });
-    fireEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
-
-    // No inline block: the paste goes to the gateway, which recovers the
-    // code/state from the page address.
-    await waitFor(() =>
-      expect(callbackBodies).toEqual([{ state: "s1", callback_url: authorizePage }]),
-    );
+    vi.useRealTimers();
   });
 
   it("saves a custom relay target as a claude credential with the chosen plan", async () => {
@@ -621,13 +571,13 @@ describe("operations console", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
     fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
     fireEvent.click(await screen.findByRole("button", { name: "Z.ai" }));
-    fireEvent.click(screen.getByRole("button", { name: "Paste a provisioned API key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Paste a plan token (JWT)" }));
 
     fireEvent.change(screen.getByLabelText("Z.ai account email"), {
       target: { value: "me@example.com" },
     });
     fireEvent.change(screen.getByLabelText("Z.ai provisioned API key"), {
-      target: { value: "keyid.keysecret" },
+      target: { value: "eyJ.plan.jwt" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save key" }));
 
@@ -637,7 +587,7 @@ describe("operations console", () => {
     const written = calls.find((call) => call.url.endsWith("/v0/management/auth-files"));
     expect(JSON.parse(written?.body ?? "{}")).toEqual({
       name: "zcode-me@example.com.json",
-      content: { type: "zcode", access_token: "keyid.keysecret", email: "me@example.com" },
+      content: { type: "zcode", access_token: "eyJ.plan.jwt", email: "me@example.com" },
     });
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/admin/usage/refresh"))).toBe(true),

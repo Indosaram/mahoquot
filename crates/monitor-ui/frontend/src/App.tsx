@@ -68,7 +68,6 @@ import {
   stopCodexInstance,
   stopManagedGateway,
   stopTunnel,
-  takeZcodeCallback,
   writeDesktopSecret,
 } from "./lib/native";
 import {
@@ -202,7 +201,6 @@ export default function App() {
   const [configOpen, setConfigOpen] = useState(false);
   const [scopedKeys, setScopedKeys] = useState<readonly ScopedApiKey[]>([]);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
-  const [zcodeCallbackUrl, setZcodeCallbackUrl] = useState("");
   const [cliAgents, setCliAgents] = useState<CliAgentStatus[]>([]);
   const [busyAgent, setBusyAgent] = useState<CliAgentId | null>(null);
   const [agentPreview, setAgentPreview] = useState<CliConfigPreview | null>(null);
@@ -1102,36 +1100,6 @@ export default function App() {
     }
   };
 
-  const submitZcodeCallback = async () => {
-    if (!authorization) return;
-    const callbackUrl = zcodeCallbackUrl.trim();
-    if (!callbackUrl) return;
-    setPending(pendingKey.auth("zcode-callback"));
-    setNotice("");
-    try {
-      const result = await clients.management.completeZcodeAuth(authorization.state, callbackUrl);
-      if (result.status === "pending") {
-        await openExternalUrl(result.url);
-        setAuthorization({ ...authorization, status: "pending" });
-        setZcodeCallbackUrl("");
-        setNotice(
-          "Approve in the browser. Mahoquot will receive the ZCode callback automatically.",
-        );
-        return;
-      }
-      setAuthorization({ ...authorization, status: "ok" });
-      setZcodeCallbackUrl("");
-      setNotice("ZCode authorization completed.");
-      finishOnboarding("zcode");
-      await refreshUsage(true);
-      await refresh();
-    } catch (error) {
-      setNotice(actionFailed(error));
-    } finally {
-      setPending("");
-    }
-  };
-
   const submitDevinToken = async () => {
     if (step.kind !== "devin-token") return;
     const form = step;
@@ -1305,23 +1273,11 @@ export default function App() {
   );
 
   const readAuthorization = useCallback(
-    async (session: AuthorizationSession): Promise<ProviderAuthStatus> => {
-      if (session.provider === "zcode") {
-        const callbackUrl = await takeZcodeCallback(session.state);
-        if (callbackUrl) {
-          setZcodeCallbackUrl(callbackUrl);
-          try {
-            const result = await clients.management.completeZcodeAuth(session.state, callbackUrl);
-            return { status: result.status };
-          } catch (error) {
-            setNotice(actionFailed(error));
-            throw error;
-          }
-        }
-      }
-      return clients.management.providerAuthStatus(session.state);
-    },
-    [clients, setNotice],
+    // ZCode's CLI flow completes server-side: the gateway polls the plan
+    // gateway on each status query, so there is no browser callback to fetch.
+    async (session: AuthorizationSession): Promise<ProviderAuthStatus> =>
+      clients.management.providerAuthStatus(session.state),
+    [clients],
   );
 
   // The same poller receives native callbacks and observes provider approval.
@@ -2065,10 +2021,10 @@ export default function App() {
                   />
                 </label>
                 <label className="zcode-field">
-                  <span>Provisioned API key</span>
+                  <span>Plan token (JWT)</span>
                   <input
                     aria-label="Z.ai provisioned API key"
-                    placeholder="{id}.{secret}"
+                    placeholder="eyJ… (three segments)"
                     value={step.key}
                     onChange={(event) => setStep({ ...step, key: event.target.value })}
                   />
@@ -2259,23 +2215,9 @@ export default function App() {
                 authorization.status === "pending" ? (
                   <div className="zcode-field">
                     <span>
-                      Paste the sign-in page URL, the zcode:// callback, or the code. Browser
-                      callbacks return to Mahoquot automatically.
+                      Approve the Z.AI sign-in in your browser. The gateway polls the plan
+                      gateway automatically and completes this session on its own.
                     </span>
-                    <input
-                      aria-label="ZCode redirect URL"
-                      placeholder="zcode://oauth/callback?code=…&state=…"
-                      value={zcodeCallbackUrl}
-                      onChange={(event) => setZcodeCallbackUrl(event.target.value)}
-                    />
-                    <Button
-                      disabled={blocks(pending, "onboarding") || !zcodeCallbackUrl.trim()}
-                      onClick={() => void submitZcodeCallback()}
-                    >
-                      {pending === pendingKey.auth("zcode-callback")
-                        ? "Completing…"
-                        : "Complete sign-in"}
-                    </Button>
                   </div>
                 ) : null}
               </div>

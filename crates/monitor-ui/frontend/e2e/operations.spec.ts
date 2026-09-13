@@ -1173,12 +1173,12 @@ test("overlay containment under responsive 390x844 viewport and long content str
 });
 
 // Ported from the deleted zcode-methods.spec.ts (plan D3): the Z.ai tile must
-// offer the desktop-session and OAuth methods and accept the zcode:// redirect.
-test("z.ai tile exposes zcode methods and captures the redirect url", async ({ page }) => {
+// offer the gateway-session sign-in and the plan-JWT paste method.
+test("z.ai tile exposes zcode methods and waits for browser approval", async ({ page }) => {
   await installMocks(page);
   await page.route(/zcode-auth-url$/, (route) =>
     route.fulfill({
-      json: { url: "https://chat.z.ai/api/oauth/authorize?a=1", state: "s1" },
+      json: { url: "https://zcode.z.ai/authorize?a=1", state: "s1", provider: "zcode" },
     }),
   );
   await page.setViewportSize({ width: 1100, height: 720 });
@@ -1192,7 +1192,7 @@ test("z.ai tile exposes zcode methods and captures the redirect url", async ({ p
   await page.getByRole("button", { name: "Z.ai", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in with ZCode" })).toBeVisible();
   await page.getByRole("button", { name: "Sign in with ZCode" }).click();
-  await expect(page.getByLabel("ZCode redirect URL")).toBeVisible();
+  await expect(page.getByText(/Approve the Z.AI sign-in in your browser/i)).toBeVisible();
 });
 
 // Ported from the deleted task18 WCAG audit (plan D3/TEST-1): axe-core now
