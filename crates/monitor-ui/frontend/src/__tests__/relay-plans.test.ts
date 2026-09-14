@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   RELAY_PLAN_GROUPS,
+  RELAY_USAGE_BASE_URL,
   buildRelayCredential,
   isRelayTarget,
   relayPlanLabel,
+  relayUsageOverride,
 } from "../lib/relay-plans";
 
 describe("relay target gating", () => {
@@ -12,6 +14,24 @@ describe("relay target gating", () => {
     expect(isRelayTarget("https://api.ccapi.example.com/v1")).toBe(true);
     expect(isRelayTarget("https://api.anthropic.com")).toBe(false);
     expect(isRelayTarget("")).toBe(false);
+  });
+});
+
+describe("relay usage front door", () => {
+  it("pins ccapi targets to the only host that serves /v1/usage/self", () => {
+    expect(relayUsageOverride("https://ccapi.labs.mengmota.com/anthropic")).toBe(
+      RELAY_USAGE_BASE_URL,
+    );
+  });
+
+  it("leaves nekos targets unpinned because they already serve usage", () => {
+    expect(relayUsageOverride("https://claude.nekos.me")).toBeNull();
+    expect(relayUsageOverride("https://claude.nekos.me/")).toBeNull();
+  });
+
+  it("never pins a non-relay target", () => {
+    expect(relayUsageOverride("https://api.anthropic.com")).toBeNull();
+    expect(relayUsageOverride("")).toBeNull();
   });
 });
 
@@ -42,6 +62,29 @@ describe("relay credential builder", () => {
       plan: "",
     });
     expect("plan" in doc.content).toBe(false);
+  });
+
+  it("pins the usage front door for a ccapi registration so quota can be polled", () => {
+    const doc = buildRelayCredential({
+      label: "AI마스터",
+      apiKey: "sk-clb-secret",
+      baseUrl: "https://ccapi.labs.mengmota.com/anthropic",
+      plan: "opus-max",
+    });
+    expect(doc.content).toMatchObject({
+      upstream_override: "https://ccapi.labs.mengmota.com/anthropic",
+      usage_override: RELAY_USAGE_BASE_URL,
+    });
+  });
+
+  it("omits the usage override when the chat target already serves usage", () => {
+    const doc = buildRelayCredential({
+      label: "claude-nekos",
+      apiKey: "sk-clb-secret",
+      baseUrl: "https://claude.nekos.me",
+      plan: "standard",
+    });
+    expect("usage_override" in doc.content).toBe(false);
   });
 });
 

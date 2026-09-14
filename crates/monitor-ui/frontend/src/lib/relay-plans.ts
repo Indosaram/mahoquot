@@ -3,8 +3,21 @@
 
 export const RELAY_TARGET_MARKERS = ["nekos", "ccapi"] as const;
 
+// The relay publishes `/v1/usage/self` only on the nekos front door; the ccapi
+// front door serves the same accounts for chat but 404s on usage. A credential
+// registered against ccapi therefore pins its usage polling here, leaving chat
+// on the base URL the user entered.
+export const RELAY_USAGE_BASE_URL = "https://claude.nekos.me";
+
 export const isRelayTarget = (baseUrl: string): boolean =>
   RELAY_TARGET_MARKERS.some((marker) => baseUrl.toLowerCase().includes(marker));
+
+export const relayUsageOverride = (baseUrl: string): string | null => {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (!isRelayTarget(trimmed)) return null;
+  if (trimmed.toLowerCase().includes("nekos")) return null;
+  return RELAY_USAGE_BASE_URL;
+};
 
 export interface RelayPlan {
   readonly id: string;
@@ -62,6 +75,7 @@ export const buildRelayCredential = (input: {
   readonly plan: string;
 }): RelayCredentialDoc => {
   const slug = input.label.replace(/[^a-z0-9-]+/gi, "-").toLowerCase() || "relay";
+  const usageOverride = relayUsageOverride(input.baseUrl);
   return {
     name: `claude-${slug}-${Date.now()}.json`,
     content: {
@@ -71,6 +85,7 @@ export const buildRelayCredential = (input: {
       api_key: input.apiKey,
       upstream_override: input.baseUrl,
       disabled: false,
+      ...(usageOverride ? { usage_override: usageOverride } : {}),
       ...(input.plan ? { plan: input.plan } : {}),
     },
   };
