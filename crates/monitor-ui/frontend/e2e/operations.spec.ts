@@ -25,6 +25,7 @@ const stats = {
       usage: {
         primary: { used_percent: 44, reset_after_seconds: 3600 },
         reset_credits_available: 1,
+        totals: { requests: 91, tokens: 1_238_767, total_cost_usd: 12.5 },
       },
     },
     {
@@ -471,14 +472,13 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
     .first()
     .click();
   await page.getByText("Codex", { exact: true }).click();
-  // Token totals fold behind a Tokens disclosure; the collapsed summary shows
-  // the total and the breakdown appears only once it is expanded.
-  await expect(page.getByText("1.2M").first()).toBeVisible();
-  await page
-    .getByRole("button", { name: /Tokens/ })
-    .first()
-    .click();
-  await expect(page.getByText("Total tokens")).toBeVisible();
+  // Cumulative usage rides the card itself: requests, compacted tokens and spend.
+  // The old per-card Tokens disclosure was removed when token usage moved to the
+  // Overview dashboard, so the card is the only surface that still reports totals.
+  const usageTotals = page.getByTestId("account-usage-totals").first();
+  await expect(usageTotals).toContainText("91");
+  await expect(usageTotals).toContainText("1.24M");
+  await expect(usageTotals).toContainText("$12.50");
   await page.getByText("Claude", { exact: true }).click();
   await expect(page.getByText("Not reported by provider").first()).toBeVisible();
   await expect(
