@@ -256,6 +256,13 @@ describe("Account Normalization and Quota Capability", () => {
     expect(deriveAccountHealth({ status: "available" }, null, 10, 0)).toBe("healthy");
     expect(deriveAccountHealth({ status: "cooldown" }, Date.now() + 60000, 1, 5)).toBe("cooldown");
     expect(deriveAccountHealth({ status: "available" }, null, 1, 9)).toBe("degraded");
+    // The gateway never flips Health::Cooldown back to Available; an expired
+    // deadline must read as healthy like Health::is_available does.
+    expect(deriveAccountHealth({ status: "cooldown" }, Date.now() - 60000, 0, 1)).toBe(
+      "healthy",
+    );
+    // Without a deadline there is nothing to expire, so keep showing cooldown.
+    expect(deriveAccountHealth({ status: "cooldown" }, null, 0, 1)).toBe("cooldown");
   });
 
   it("formats reset countdown strings correctly", () => {

@@ -170,6 +170,12 @@ export const deriveAccountHealth = (
   if (resetAtUnixMs && resetAtUnixMs > now) {
     return "cooldown";
   }
+  if (resetAtUnixMs && statusStr.includes("cooldown")) {
+    // The gateway never flips Health::Cooldown back to Available; expiry is
+    // evaluated at routing time via Health::is_available. Mirror that here so
+    // an expired deadline does not pin the Cooldown badge forever.
+    return "healthy";
+  }
   if (statusStr.includes("cooldown")) {
     return "cooldown";
   }
