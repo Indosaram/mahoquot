@@ -14,6 +14,22 @@ import type { HistoryStatsResponse } from "@/lib/schemas";
 import type { TelemetryRange, TelemetrySample } from "@/lib/telemetry";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/// Turns a failed analytics round into something an operator can act on.
+///
+/// The gateway payload is parsed with Zod at the boundary, and a ZodError's
+/// `message` is the serialized issue array. Rendering that verbatim put a JSON
+/// dump of `code`/`expected`/`path` objects in the dashboard where a sentence
+/// belongs, which says nothing about what broke or what to do next.
+const describeAnalyticsFailure = (error: unknown): string => {
+  if (error instanceof Error && error.name === "ZodError") {
+    return "The gateway returned usage data this console does not understand. Update the gateway or the app so both speak the same schema.";
+  }
+  if (error instanceof Error && error.message.trim() !== "") {
+    return error.message;
+  }
+  return "Usage history is unavailable right now.";
+};
+
 export interface UseOverviewAnalyticsArgs {
   readonly clients: GatewayClients;
   readonly range: TelemetryRange;
@@ -372,7 +388,7 @@ export function useOverviewAnalytics({
           return;
         }
 
-        const message = err instanceof Error ? err.message : String(err);
+        const message = describeAnalyticsFailure(err);
         setError(message);
 
         const fallback = telemetryAnalytics({

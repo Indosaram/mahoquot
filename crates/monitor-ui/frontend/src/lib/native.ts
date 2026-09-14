@@ -16,7 +16,7 @@ const internals = (): TauriInternals | null => {
 };
 
 const invokeLifecycle = async (
-  command: "gateway_status" | "start_gateway" | "stop_gateway",
+  command: "gateway_status" | "start_gateway" | "stop_gateway" | "restart_gateway",
 ): Promise<GatewayLifecycleStatus> => {
   const native = internals();
   if (!native) return command === "stop_gateway" ? "stopped" : "running";
@@ -31,6 +31,9 @@ export const startManagedGateway = (): Promise<GatewayLifecycleStatus> =>
 
 export const stopManagedGateway = (): Promise<GatewayLifecycleStatus> =>
   invokeLifecycle("stop_gateway");
+
+export const restartManagedGateway = (): Promise<GatewayLifecycleStatus> =>
+  invokeLifecycle("restart_gateway");
 
 export const takeZcodeCallback = async (expectedState: string): Promise<string | null> => {
   const native = internals();

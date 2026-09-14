@@ -51,6 +51,9 @@ const GATEWAY_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Clone, Default)]
 struct GatewayProcess {
     pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
+    /// Set to `true` when the user or the app deliberately stops the gateway.
+    /// The watchdog skips respawn when this flag is set.
+    stop_intended: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Default)]
@@ -571,6 +574,9 @@ fn clear_gateway_pid(process_pid: &std::sync::atomic::AtomicI32, pid: i32) {
     );
 }
 
+/// Spawn the gateway binary once, returning its pid. The child-wait thread is
+/// a watchdog: if the gateway exits while `stop_intended` is false, it
+/// respawns automatically with exponential backoff.
 fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
     if gateway_target_policy(base_url) == GatewayTargetPolicy::UseConfigured {
         return None;
@@ -596,32 +602,123 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
         }
     };
     let auth_dir = tray::default_auth_dir(home);
-    match std::process::Command::new(&bin)
+
+    // Clear the stop-intended flag for this new lifecycle.
+    process
+        .stop_intended
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+
+    spawn_gateway_child(process, &bin, &auth_dir)
+}
+
+/// Inner spawn that starts the binary and installs the watchdog thread.
+fn spawn_gateway_child(
+    process: &GatewayProcess,
+    bin: &std::path::Path,
+    auth_dir: &std::path::Path,
+) -> Option<i32> {
+    match std::process::Command::new(bin)
         .env("AUTH_DIR", auth_dir)
         .spawn()
     {
-        Ok(mut child) => {
+        Ok(child) => {
             let pid = child.id() as i32;
             tracing::info!(pid, "mahoquot-gateway spawned");
             process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
             GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
             install_gateway_signal_guard();
+
             let process_pid = std::sync::Arc::clone(&process.pid);
+            let stop_intended = std::sync::Arc::clone(&process.stop_intended);
+            let bin = bin.to_path_buf();
+            let auth_dir = auth_dir.to_path_buf();
             std::thread::spawn(move || {
-                let result = child.wait();
-                clear_gateway_pid(&process_pid, pid);
-                match result {
-                    Ok(status) => tracing::info!(pid, %status, "mahoquot-gateway exited"),
-                    Err(error) => {
-                        tracing::error!(pid, %error, "failed to harvest mahoquot-gateway");
-                    }
-                }
+                gateway_watchdog_loop(child, pid, process_pid, stop_intended, bin, auth_dir);
             });
             Some(pid)
         }
         Err(error) => {
             tracing::error!(%error, "failed to spawn mahoquot-gateway");
             None
+        }
+    }
+}
+
+/// Watchdog loop: waits for the gateway to exit, and respawns it unless the
+/// stop was intentional or the backoff policy gives up.
+fn gateway_watchdog_loop(
+    mut child: std::process::Child,
+    mut pid: i32,
+    process_pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
+    stop_intended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    bin: std::path::PathBuf,
+    auth_dir: std::path::PathBuf,
+) {
+    let mut policy = gateway_process::RespawnPolicy::new();
+
+    loop {
+        let spawn_time = std::time::Instant::now();
+        let result = child.wait();
+        let uptime = spawn_time.elapsed();
+        clear_gateway_pid(&process_pid, pid);
+
+        match &result {
+            Ok(status) => tracing::info!(pid, %status, ?uptime, "mahoquot-gateway exited"),
+            Err(error) => {
+                tracing::error!(pid, %error, "failed to harvest mahoquot-gateway");
+            }
+        }
+
+        // If stop was deliberate (user clicked stop, app is exiting, or
+        // restart_gateway killed the old process), do not respawn.
+        if stop_intended.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::info!("gateway stop was intentional; watchdog exiting");
+            return;
+        }
+
+        // Gateway exited unexpectedly — consult the backoff policy.
+        let decision = policy.record_exit(uptime);
+        match decision {
+            gateway_process::RespawnDecision::Respawn { delay } => {
+                tracing::warn!(
+                    ?delay,
+                    consecutive_failures = policy.consecutive_failures(),
+                    "gateway exited unexpectedly; respawning after backoff"
+                );
+                std::thread::sleep(delay);
+
+                // Check again after sleep — the user may have stopped us.
+                if stop_intended.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::info!("gateway stop intended during backoff; watchdog exiting");
+                    return;
+                }
+
+                match std::process::Command::new(&bin)
+                    .env("AUTH_DIR", &auth_dir)
+                    .spawn()
+                {
+                    Ok(new_child) => {
+                        pid = new_child.id() as i32;
+                        tracing::info!(pid, "mahoquot-gateway respawned");
+                        process_pid.store(pid, std::sync::atomic::Ordering::SeqCst);
+                        GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+                        install_gateway_signal_guard();
+                        child = new_child;
+                        // Continue the loop to wait on the new child.
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "failed to respawn mahoquot-gateway; watchdog exiting");
+                        return;
+                    }
+                }
+            }
+            gateway_process::RespawnDecision::GiveUp => {
+                tracing::error!(
+                    consecutive_failures = policy.consecutive_failures(),
+                    "gateway crashed too many times in quick succession; giving up"
+                );
+                return;
+            }
         }
     }
 }
@@ -664,6 +761,10 @@ fn stop_owned_gateway(process: &GatewayProcess, config: Option<&Config>) -> Resu
     if pid <= 1 {
         return Ok(false);
     }
+    // Signal the watchdog thread: this stop is intentional, do not respawn.
+    process
+        .stop_intended
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(config) = config {
         request_gateway_shutdown(config);
         if wait_until(GATEWAY_STOP_TIMEOUT, || !process_is_running(pid)) {
@@ -989,6 +1090,32 @@ fn stop_gateway(
         return Ok(GatewayLifecycleStatus::Running);
     }
     Ok(GatewayLifecycleStatus::Stopped)
+}
+
+/// Restart the gateway: stop the current process (intentionally) then spawn a
+/// fresh one. The watchdog on the old process won't interfere because
+/// `stop_intended` is set during the stop phase.
+#[tauri::command]
+fn restart_gateway(
+    process: tauri::State<'_, GatewayProcess>,
+    config: tauri::State<'_, Config>,
+) -> Result<GatewayLifecycleStatus, String> {
+    if gateway_target_policy(&config.base_url) == GatewayTargetPolicy::UseConfigured {
+        return Err("gateway lifecycle is unavailable for a configured remote URL".to_string());
+    }
+    // Stop the old instance (sets stop_intended, so the old watchdog exits).
+    if process.pid() > 1 {
+        let _ = stop_owned_gateway(&process, Some(&config));
+    }
+    // Spawn a new one (clears stop_intended and starts a fresh watchdog).
+    spawn_gateway(&process, &config.base_url)
+        .ok_or_else(|| "gateway binary unavailable or local port occupied".to_string())?;
+    if wait_for_gateway_ready(&process) {
+        Ok(GatewayLifecycleStatus::Running)
+    } else {
+        let _ = stop_owned_gateway(&process, None);
+        Err("restarted gateway did not begin listening within 5 seconds".to_string())
+    }
 }
 
 fn notched_monitor<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Option<tauri::Monitor>> {
@@ -1870,6 +1997,7 @@ fn main() {
             gateway_status,
             start_gateway,
             stop_gateway,
+            restart_gateway,
             tunnel_status,
             download_cloudflared,
             start_tunnel,
