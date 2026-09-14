@@ -141,75 +141,83 @@ export const OverviewDashboard = ({
   return (
     <Stack className="content overview operations-dashboard minimal-dashboard">
       <Cluster className="overview-controls">
-      <Cluster className="range-selector" role="radiogroup" aria-label="Telemetry range">
-        {(["30m", "1h", "1d", "7d", "30d"] as const).map((item) => (
-          <label key={item}>
-            <input
-              type="radio"
-              name="telemetry-range"
-              value={item}
-              checked={range === item}
-              onChange={() => handleRangeChange(item)}
-            />
-            <span>{item}</span>
-          </label>
-        ))}
-      </Cluster>
+        <Cluster className="range-selector" role="radiogroup" aria-label="Telemetry range">
+          {(["30m", "1h", "1d", "7d", "30d"] as const).map((item) => (
+            <label key={item}>
+              <input
+                type="radio"
+                name="telemetry-range"
+                value={item}
+                checked={range === item}
+                onChange={() => handleRangeChange(item)}
+              />
+              <span>{item}</span>
+            </label>
+          ))}
+        </Cluster>
 
-      <Cluster className="overview-dimension-selector" role="radiogroup" aria-label="Group by">
-        {(
-          [
-            { id: "provider", label: "Provider" },
-            { id: "model", label: "Model" },
-            { id: "account", label: "Account" },
-          ] as const
-        ).map((item) => (
-          <label key={item.id}>
-            <input
-              type="radio"
-              name="overview-dimension"
-              value={item.id}
-              checked={dimension === item.id}
-              onChange={() => handleDimensionChange(item.id)}
-            />
-            <span>{item.label}</span>
-          </label>
-        ))}
-      </Cluster>
+        <Cluster className="overview-dimension-selector" role="radiogroup" aria-label="Group by">
+          {(
+            [
+              { id: "provider", label: "Provider" },
+              { id: "model", label: "Model" },
+              { id: "account", label: "Account" },
+            ] as const
+          ).map((item) => (
+            <label key={item.id}>
+              <input
+                type="radio"
+                name="overview-dimension"
+                value={item.id}
+                checked={dimension === item.id}
+                onChange={() => handleDimensionChange(item.id)}
+              />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </Cluster>
 
-      <Cluster className="overview-metric-selector" role="radiogroup" aria-label="Metric">
-        {(
-          [
-            { id: "requests", label: "Requests" },
-            { id: "tokens", label: "Tokens" },
-          ] as const
-        ).map((item) => (
-          <label key={item.id}>
-            <input
-              type="radio"
-              name="overview-metric"
-              value={item.id}
-              checked={metric === item.id}
-              onChange={() => handleMetricChange(item.id)}
-            />
-            <span>{item.label}</span>
-          </label>
-        ))}
-      </Cluster>
+        <Cluster className="overview-metric-selector" role="radiogroup" aria-label="Metric">
+          {(
+            [
+              { id: "requests", label: "Requests" },
+              { id: "tokens", label: "Tokens" },
+            ] as const
+          ).map((item) => (
+            <label key={item.id}>
+              <input
+                type="radio"
+                name="overview-metric"
+                value={item.id}
+                checked={metric === item.id}
+                onChange={() => handleMetricChange(item.id)}
+              />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </Cluster>
 
-      {focusedRow ? (
-        <button
-          type="button"
-          className="overview-focus-chip"
-          onClick={() => setFocusKey(null)}
-          title={`Showing ${focusedRow.label} only — click to show all`}
-          aria-label={`Clear filter: showing ${focusedRow.label} only`}
-        >
-          <i style={{ background: dimensionColor(effectiveAnalytics.dimension, focusedRow.key, focusedRow.provider) }} />
-          <span>{focusedRow.label}</span>
-          <b aria-hidden="true">×</b>
-        </button>
-      ) : null}
+        {focusedRow ? (
+          <button
+            type="button"
+            className="overview-focus-chip"
+            onClick={() => setFocusKey(null)}
+            title={`Showing ${focusedRow.label} only — click to show all`}
+            aria-label={`Clear filter: showing ${focusedRow.label} only`}
+          >
+            <i
+              style={{
+                background: dimensionColor(
+                  effectiveAnalytics.dimension,
+                  focusedRow.key,
+                  focusedRow.provider,
+                ),
+              }}
+            />
+            <span>{focusedRow.label}</span>
+            <b>×</b>
+          </button>
+        ) : null}
       </Cluster>
 
       <IntrinsicGrid className="minimal-kpis">

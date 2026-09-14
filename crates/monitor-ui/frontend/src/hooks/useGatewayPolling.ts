@@ -78,6 +78,10 @@ export function useGatewayPolling(clients: GatewayClients) {
     hasSucceeded.current = false;
   }
 
+  // `clients` is this hook's own parameter, not an outer-scope value: dropping it
+  // makes the previous gateway's stats and telemetry survive a gateway switch,
+  // which use-gateway-polling.test.tsx pins.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the dep is a hook parameter and is load-bearing
   useEffect(() => {
     // Reset server-bound state when clients change to isolate gateways.
     setStats(emptyStats);

@@ -164,6 +164,76 @@ describe("useGatewayPolling generation guard", () => {
     });
   });
 
+  it("clears the previous gateway's data the moment clients change, before any response lands", async () => {
+    let releaseSecondStats: (response: Response) => void = () => undefined;
+    const pendingSecondStats = new Promise<Response>((resolve) => {
+      releaseSecondStats = resolve;
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("18801") && url.includes("/admin/stats")) {
+          return new Response(
+            JSON.stringify({
+              ...baseStats,
+              uptime_secs: 100,
+              served: 42,
+              history: [
+                {
+                  minute_unix: 1_800,
+                  requests: 4,
+                  successes: 4,
+                  failures: 0,
+                  input_tokens: 120,
+                  output_tokens: 30,
+                  providers: [],
+                  accounts: [],
+                },
+              ],
+            }),
+          );
+        }
+        // The second gateway never answers during the assertion window, so the
+        // only thing that can clear the first gateway's numbers is the reset.
+        if (url.includes("18802") && url.includes("/admin/stats")) {
+          return pendingSecondStats;
+        }
+        if (url.includes("/healthz")) {
+          return new Response(JSON.stringify({ status: "ok", version: "1.0", api_schema: 1 }));
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    const clientA = createGatewayClients("http://127.0.0.1:18801", "keyA");
+    const clientB = createGatewayClients("http://127.0.0.1:18802", "keyB");
+
+    const { result, rerender } = renderHook(({ clients }) => useGatewayPolling(clients), {
+      initialProps: { clients: clientA },
+    });
+
+    await waitFor(() => {
+      expect(result.current.stats.served).toBe(42);
+      expect(result.current.telemetry).toHaveLength(1);
+    });
+
+    act(() => {
+      rerender({ clients: clientB });
+    });
+
+    // One gateway's traffic must never be shown under another gateway's identity,
+    // so the switch itself clears the surface instead of waiting for a response.
+    expect(result.current.stats.served).toBe(0);
+    expect(result.current.stats.uptime_secs).toBe(0);
+    expect(result.current.telemetry).toHaveLength(0);
+    expect(result.current.fetchedAt).toBeNull();
+    expect(result.current.loadState).toBe("loading");
+
+    releaseSecondStats(new Response(JSON.stringify({ ...baseStats, uptime_secs: 200 })));
+  });
+
   it("preserves the Tauri window receiver when subscribing to focus changes", async () => {
     type FocusHandler = (event: { payload: boolean }) => void;
     class NativeWindow {

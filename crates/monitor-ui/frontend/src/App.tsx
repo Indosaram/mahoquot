@@ -2215,8 +2215,8 @@ export default function App() {
                 authorization.status === "pending" ? (
                   <div className="zcode-field">
                     <span>
-                      Approve the Z.AI sign-in in your browser. The gateway polls the plan
-                      gateway automatically and completes this session on its own.
+                      Approve the Z.AI sign-in in your browser. The gateway polls the plan gateway
+                      automatically and completes this session on its own.
                     </span>
                   </div>
                 ) : null}

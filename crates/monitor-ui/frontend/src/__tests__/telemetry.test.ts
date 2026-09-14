@@ -662,7 +662,15 @@ describe("request telemetry sampling", () => {
       failed_over: 0,
       refreshed: 0,
       accounts: [
-        { id: "a", provider: "openai", health: "healthy", ok: 0, fails: 0, input_tokens: 0, output_tokens: 0 },
+        {
+          id: "a",
+          provider: "openai",
+          health: "healthy",
+          ok: 0,
+          fails: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+        },
         { id: "b", provider: "anthropic", health: "healthy", ok: 0, fails: 0 },
       ],
     };
@@ -673,7 +681,15 @@ describe("request telemetry sampling", () => {
       failed_over: 0,
       refreshed: 0,
       accounts: [
-        { id: "a", provider: "openai", health: "healthy", ok: 1, fails: 0, input_tokens: 10, output_tokens: 5 },
+        {
+          id: "a",
+          provider: "openai",
+          health: "healthy",
+          ok: 1,
+          fails: 0,
+          input_tokens: 10,
+          output_tokens: 5,
+        },
         { id: "b", provider: "anthropic", health: "healthy", ok: 1, fails: 0 },
       ],
     };
@@ -694,7 +710,15 @@ describe("request telemetry sampling", () => {
       failed_over: 0,
       refreshed: 0,
       accounts: [
-        { id: "a", provider: "openai", health: "healthy", ok: 1, fails: 0, input_tokens: 1_000, output_tokens: 200 },
+        {
+          id: "a",
+          provider: "openai",
+          health: "healthy",
+          ok: 1,
+          fails: 0,
+          input_tokens: 1_000,
+          output_tokens: 200,
+        },
       ],
     };
     const r1 = appendTelemetrySample([], s1, 1_000);
@@ -769,7 +793,16 @@ describe("request telemetry sampling", () => {
         successes: 1,
         failures: 0,
         providers: [],
-        accounts: [{ account: "acc1", requests: 1, successes: 1, failures: 0, input_tokens: 100, output_tokens: 20 }],
+        accounts: [
+          {
+            account: "acc1",
+            requests: 1,
+            successes: 1,
+            failures: 0,
+            input_tokens: 100,
+            output_tokens: 20,
+          },
+        ],
       },
       {
         minute_unix: 1_860,
@@ -802,7 +835,16 @@ describe("request telemetry sampling", () => {
         successes: 1,
         failures: 0,
         providers: [],
-        accounts: [{ account: "acc1", requests: 1, successes: 1, failures: 0, input_tokens: 100, output_tokens: 20 }],
+        accounts: [
+          {
+            account: "acc1",
+            requests: 1,
+            successes: 1,
+            failures: 0,
+            input_tokens: 100,
+            output_tokens: 20,
+          },
+        ],
       },
     ]);
     const summary2 = summarizeTelemetry(s2);
@@ -819,7 +861,16 @@ describe("request telemetry sampling", () => {
         successes: 1,
         failures: 0,
         providers: [],
-        accounts: [{ account: "acc1", requests: 1, successes: 1, failures: 0, input_tokens: 100, output_tokens: 20 }],
+        accounts: [
+          {
+            account: "acc1",
+            requests: 1,
+            successes: 1,
+            failures: 0,
+            input_tokens: 100,
+            output_tokens: 20,
+          },
+        ],
       },
       {
         minute_unix: 1_860,
@@ -845,7 +896,17 @@ describe("request telemetry sampling", () => {
       served: 1,
       failed_over: 0,
       refreshed: 0,
-      accounts: [{ id: "acc1", provider: "openai", health: "healthy", ok: 1, fails: 0, input_tokens: 100, output_tokens: 20 }],
+      accounts: [
+        {
+          id: "acc1",
+          provider: "openai",
+          health: "healthy",
+          ok: 1,
+          fails: 0,
+          input_tokens: 100,
+          output_tokens: 20,
+        },
+      ],
     };
     const snap2Omitted: AdminStats = {
       uptime_secs: 100,
@@ -861,7 +922,17 @@ describe("request telemetry sampling", () => {
       served: 1,
       failed_over: 0,
       refreshed: 0,
-      accounts: [{ id: "acc1", provider: "openai", health: "healthy", ok: 1, fails: 0, input_tokens: 1_100, output_tokens: 220 }],
+      accounts: [
+        {
+          id: "acc1",
+          provider: "openai",
+          health: "healthy",
+          ok: 1,
+          fails: 0,
+          input_tokens: 1_100,
+          output_tokens: 220,
+        },
+      ],
     };
 
     const p1 = appendTelemetrySample([], snap1, 1_000);
@@ -886,7 +957,17 @@ describe("request telemetry sampling", () => {
       served: 10,
       failed_over: 0,
       refreshed: 0,
-      accounts: [{ id: "acc1", provider: "openai", health: "healthy", ok: 10, fails: 0, input_tokens: 100, output_tokens: 20 }],
+      accounts: [
+        {
+          id: "acc1",
+          provider: "openai",
+          health: "healthy",
+          ok: 10,
+          fails: 0,
+          input_tokens: 100,
+          output_tokens: 20,
+        },
+      ],
     };
     const snap2InputOmitted: AdminStats = {
       uptime_secs: 60,
@@ -894,7 +975,9 @@ describe("request telemetry sampling", () => {
       served: 20,
       failed_over: 0,
       refreshed: 0,
-      accounts: [{ id: "acc1", provider: "openai", health: "healthy", ok: 20, fails: 0, output_tokens: 40 }], // input omitted
+      accounts: [
+        { id: "acc1", provider: "openai", health: "healthy", ok: 20, fails: 0, output_tokens: 40 },
+      ], // input omitted
     };
     const snap3InputReappear: AdminStats = {
       uptime_secs: 120,
@@ -902,7 +985,17 @@ describe("request telemetry sampling", () => {
       served: 20,
       failed_over: 0,
       refreshed: 0,
-      accounts: [{ id: "acc1", provider: "openai", health: "healthy", ok: 20, fails: 0, input_tokens: 1_100, output_tokens: 40 }],
+      accounts: [
+        {
+          id: "acc1",
+          provider: "openai",
+          health: "healthy",
+          ok: 20,
+          fails: 0,
+          input_tokens: 1_100,
+          output_tokens: 40,
+        },
+      ],
     };
     const snap4Normal: AdminStats = {
       uptime_secs: 180,
@@ -910,7 +1003,17 @@ describe("request telemetry sampling", () => {
       served: 21,
       failed_over: 0,
       refreshed: 0,
-      accounts: [{ id: "acc1", provider: "openai", health: "healthy", ok: 21, fails: 0, input_tokens: 1_110, output_tokens: 50 }],
+      accounts: [
+        {
+          id: "acc1",
+          provider: "openai",
+          health: "healthy",
+          ok: 21,
+          fails: 0,
+          input_tokens: 1_110,
+          output_tokens: 50,
+        },
+      ],
     };
 
     const p1 = appendTelemetrySample([], snap1, 1_000);

@@ -657,7 +657,7 @@ export function SettingsSurface({
                               value={String(policy["ttl-secs"] ?? 0)}
                               onChange={(e) =>
                                 onUpdateProxyProviderPolicy?.(provider, {
-                                  "ttl-secs": Math.max(0, parseInt(e.target.value, 10) || 0),
+                                  "ttl-secs": Math.max(0, Number.parseInt(e.target.value, 10) || 0),
                                 })
                               }
                             />

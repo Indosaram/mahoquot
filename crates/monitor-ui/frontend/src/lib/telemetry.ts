@@ -115,29 +115,29 @@ export const appendTelemetrySample = (
     // so historical counter changes across the gap are not attributed to this single interval.
     const priorInSample = previous?.accounts.some((a) => a.id === account.id);
     const wasAccountOmitted = previous !== undefined && !priorInSample;
-    const wasInputOmitted =
-      wasAccountOmitted || (previous !== undefined && !prev?.hasRawInput);
-    const wasOutputOmitted =
-      wasAccountOmitted || (previous !== undefined && !prev?.hasRawOutput);
+    const wasInputOmitted = wasAccountOmitted || (previous !== undefined && !prev?.hasRawInput);
+    const wasOutputOmitted = wasAccountOmitted || (previous !== undefined && !prev?.hasRawOutput);
     const isNewInput = prev?.inputTokens === undefined || wasInputOmitted;
     const isNewOutput = prev?.outputTokens === undefined || wasOutputOmitted;
 
     const accountRequests = successes + failures;
-    const inputTokens = account.input_tokens !== undefined
-      ? isNewInput
-        ? accountRequests > 0
-          ? undefined
-          : 0
-        : counterDelta(account.input_tokens, prev?.inputTokens)
-      : undefined;
+    const inputTokens =
+      account.input_tokens !== undefined
+        ? isNewInput
+          ? accountRequests > 0
+            ? undefined
+            : 0
+          : counterDelta(account.input_tokens, prev?.inputTokens)
+        : undefined;
 
-    const outputTokens = account.output_tokens !== undefined
-      ? isNewOutput
-        ? accountRequests > 0
-          ? undefined
-          : 0
-        : counterDelta(account.output_tokens, prev?.outputTokens)
-      : undefined;
+    const outputTokens =
+      account.output_tokens !== undefined
+        ? isNewOutput
+          ? accountRequests > 0
+            ? undefined
+            : 0
+          : counterDelta(account.output_tokens, prev?.outputTokens)
+        : undefined;
 
     const totalTokens = hasTokens ? (inputTokens ?? 0) + (outputTokens ?? 0) : undefined;
     return {
@@ -357,7 +357,11 @@ export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
 
     if (
       sample.requests > 0 &&
-      (!sampleHasInput || !sampleHasOutput || hasMissingDerivedInput || hasMissingDerivedOutput || hasUncoveredRequests)
+      (!sampleHasInput ||
+        !sampleHasOutput ||
+        hasMissingDerivedInput ||
+        hasMissingDerivedOutput ||
+        hasUncoveredRequests)
     ) {
       hasMissingTokenRequest = true;
     }
@@ -410,8 +414,7 @@ export const summarizeTelemetry = (samples: readonly TelemetrySample[]) => {
       const isInputSupported = acc.hasInput;
       const isOutputSupported = acc.hasOutput;
       const isPartial =
-        (acc.hasInput || acc.hasOutput) &&
-        (acc.hasMissingField || !acc.hasInput || !acc.hasOutput);
+        (acc.hasInput || acc.hasOutput) && (acc.hasMissingField || !acc.hasInput || !acc.hasOutput);
       return {
         id: acc.id,
         inputTokens: acc.hasInput ? acc.sumInput : undefined,

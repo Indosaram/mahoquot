@@ -106,83 +106,101 @@ export const OverviewBreakdownTable = ({
                   const isFocused = canFocus && row.key === focusKey;
                   const toggle = () => onFocusChange?.(isFocused ? null : row.key);
                   return (
-                  <tr
-                    key={row.key}
-                    className={[
-                      row.isOther
-                        ? "overview-breakdown-row-other overview-token-row-unclassified"
-                        : "",
-                      canFocus ? "overview-breakdown-row-selectable" : "",
-                      isFocused ? "is-focused" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ") || undefined}
-                    onClick={canFocus ? toggle : undefined}
-                  >
-                    <td className="overview-token-col-account">
-                      <div className="overview-token-account-info">
-                        <ProviderGlyph provider={row.provider} />
-                        {canFocus ? (
-                          <button
-                            type="button"
-                            className="overview-token-account-name overview-breakdown-focus"
-                            title={
-                              isFocused
-                                ? `Showing ${row.label} only — click to show all`
-                                : `Show ${row.label} only`
+                    <tr
+                      key={row.key}
+                      className={
+                        [
+                          row.isOther
+                            ? "overview-breakdown-row-other overview-token-row-unclassified"
+                            : "",
+                          canFocus ? "overview-breakdown-row-selectable" : "",
+                          isFocused ? "is-focused" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
+                      onClick={canFocus ? toggle : undefined}
+                      onKeyDown={
+                        canFocus
+                          ? (event) => {
+                              // The row is a click target for the whole width; the
+                              // account button inside it is the focusable handle, so
+                              // keyboard activation arrives here only when the row
+                              // itself holds focus.
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                toggle();
+                              }
                             }
-                            aria-pressed={isFocused}
-                            onClick={(event) => {
-                              // The row handler already toggles; without this the
-                              // click would toggle twice and cancel itself out.
-                              event.stopPropagation();
-                              toggle();
-                            }}
-                          >
-                            {row.label}
-                          </button>
-                        ) : (
-                          <span className="overview-token-account-name" title={row.label}>
-                            {row.label}
-                          </span>
-                        )}
-                        {row.isUnlinked ? <span className="badge badge-warn">Unlinked</span> : null}
-                      </div>
-                    </td>
-                    <td className="overview-token-col-num" title={formatExact(row.requests)}>
-                      {compact.format(row.requests)}
-                    </td>
-                    <td
-                      className="overview-token-col-num"
-                      title={row.requests === 0 ? "—" : formatSuccess(row)}
+                          : undefined
+                      }
                     >
-                      {formatSuccess(row)}
-                    </td>
-                    <td className="overview-token-col-num" title={formatExact(row.inputTokens)}>
-                      {compact.format(row.inputTokens)}
-                    </td>
-                    <td className="overview-token-col-num" title={formatExact(row.outputTokens)}>
-                      {compact.format(row.outputTokens)}
-                    </td>
-                    <td
-                      className="overview-token-col-num overview-token-total"
-                      title={formatExact(row.totalTokens)}
-                    >
-                      <strong>
-                        {analytics.isTokenPartial
-                          ? `~${compact.format(row.totalTokens)}`
-                          : compact.format(row.totalTokens)}
-                      </strong>
-                    </td>
-                    <td className="overview-token-col-num" title={formatLatencyExact(row)}>
-                      {formatLatency(row)}
-                    </td>
-                    {analytics.hasCostData ? (
-                      <td className="overview-token-col-num" title={formatCost(row.costUsd)}>
-                        {formatCost(row.costUsd)}
+                      <td className="overview-token-col-account">
+                        <div className="overview-token-account-info">
+                          <ProviderGlyph provider={row.provider} />
+                          {canFocus ? (
+                            <button
+                              type="button"
+                              className="overview-token-account-name overview-breakdown-focus"
+                              title={
+                                isFocused
+                                  ? `Showing ${row.label} only — click to show all`
+                                  : `Show ${row.label} only`
+                              }
+                              aria-pressed={isFocused}
+                              onClick={(event) => {
+                                // The row handler already toggles; without this the
+                                // click would toggle twice and cancel itself out.
+                                event.stopPropagation();
+                                toggle();
+                              }}
+                            >
+                              {row.label}
+                            </button>
+                          ) : (
+                            <span className="overview-token-account-name" title={row.label}>
+                              {row.label}
+                            </span>
+                          )}
+                          {row.isUnlinked ? (
+                            <span className="badge badge-warn">Unlinked</span>
+                          ) : null}
+                        </div>
                       </td>
-                    ) : null}
-                  </tr>
+                      <td className="overview-token-col-num" title={formatExact(row.requests)}>
+                        {compact.format(row.requests)}
+                      </td>
+                      <td
+                        className="overview-token-col-num"
+                        title={row.requests === 0 ? "—" : formatSuccess(row)}
+                      >
+                        {formatSuccess(row)}
+                      </td>
+                      <td className="overview-token-col-num" title={formatExact(row.inputTokens)}>
+                        {compact.format(row.inputTokens)}
+                      </td>
+                      <td className="overview-token-col-num" title={formatExact(row.outputTokens)}>
+                        {compact.format(row.outputTokens)}
+                      </td>
+                      <td
+                        className="overview-token-col-num overview-token-total"
+                        title={formatExact(row.totalTokens)}
+                      >
+                        <strong>
+                          {analytics.isTokenPartial
+                            ? `~${compact.format(row.totalTokens)}`
+                            : compact.format(row.totalTokens)}
+                        </strong>
+                      </td>
+                      <td className="overview-token-col-num" title={formatLatencyExact(row)}>
+                        {formatLatency(row)}
+                      </td>
+                      {analytics.hasCostData ? (
+                        <td className="overview-token-col-num" title={formatCost(row.costUsd)}>
+                          {formatCost(row.costUsd)}
+                        </td>
+                      ) : null}
+                    </tr>
                   );
                 })}
               </tbody>

@@ -348,7 +348,7 @@ function cleanAccountLabel(raw: string, provider: string): string {
     }
     if (label.startsWith("generic-cline-oauth-")) {
       const email = extractEmail(label);
-      if (email && email.includes("@")) return email;
+      if (email?.includes("@")) return email;
       return label;
     }
   }
