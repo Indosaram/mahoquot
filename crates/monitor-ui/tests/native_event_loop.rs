@@ -54,10 +54,9 @@ fn bundled_app_survives_notch_resize_events() {
         "native startup/resize sequence did not finish successfully: {status:?}\n{log}\n{trace}"
     );
     assert!(report.is_file(), "missing native report\n{log}\n{trace}");
-    let report: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&report).expect("native certification report"),
-    )
-    .expect("valid certification JSON");
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).expect("native certification report"))
+            .expect("valid certification JSON");
     assert_eq!(report["status"], "pass", "{report:#}");
     assert_eq!(report["compact_before"]["width"], 8.0);
     assert_eq!(report["expanded"]["width"], 420.0);

@@ -72,9 +72,13 @@ fn take_matching_zcode_callback(
         let mut states = url.query_pairs().filter(|(key, _)| key == "state");
         !expected_state.is_empty()
             && url.scheme() == "zcode"
-            && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("oauth"))
+            && url
+                .host_str()
+                .is_some_and(|host| host.eq_ignore_ascii_case("oauth"))
             && url.path().eq_ignore_ascii_case("/callback")
-            && states.next().is_some_and(|(_, state)| state == expected_state)
+            && states
+                .next()
+                .is_some_and(|(_, state)| state == expected_state)
             && states.next().is_none()
     });
     if matches {
