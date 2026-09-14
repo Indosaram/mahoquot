@@ -1154,6 +1154,7 @@ export const ONBOARDING_PROVIDER_GLYPHS: readonly string[] = Object.freeze([
   "nous",
   "xai",
   "zcode",
+  "devin",
 ]);
 
 export const GENERIC_PROVIDER_OPTIONS = PROVIDER_CATALOG.filter(

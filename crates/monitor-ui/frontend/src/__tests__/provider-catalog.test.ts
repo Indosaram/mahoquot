@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 import { providerLogos } from "../components/ProviderGlyph";
 import { ONBOARDING_PROVIDERS } from "../lib/onboarding";
 import {
+  GENERIC_PROVIDER_OPTIONS,
   OPENCODEX_TO_QUOTIO_ALIASES,
   PROVIDER_CATALOG,
   PROVIDER_CATALOG_BY_ID,
   PROVIDER_IDS,
+  PROVIDER_PICKER_TILE_COUNT,
   QUOTIO_TO_OPENCODEX_ALIASES,
   TOTAL_PROVIDER_COUNT,
   getProviderCatalogEntry,
@@ -28,6 +30,24 @@ interface ReferenceProvider {
   readonly keyOptional?: boolean;
   readonly staticHeaders?: Record<string, string>;
 }
+
+describe("provider picker tile composition", () => {
+  it("offers every plan provider exactly once, never also as a generic API tile", () => {
+    const planGlyphs = ONBOARDING_PROVIDERS.map((provider) => provider.glyph).filter(
+      (glyph) => glyph !== "custom",
+    );
+    const genericIds = GENERIC_PROVIDER_OPTIONS.map((provider) => provider.id);
+    const offeredTwice = planGlyphs.filter((glyph) => genericIds.includes(glyph));
+
+    expect(offeredTwice).toEqual([]);
+  });
+
+  it("counts every rendered picker tile, so the constant matches what the user sees", () => {
+    const planTiles = ONBOARDING_PROVIDERS.filter((provider) => provider.glyph !== "custom").length;
+
+    expect(PROVIDER_PICKER_TILE_COUNT).toBe(planTiles + GENERIC_PROVIDER_OPTIONS.length);
+  });
+});
 
 describe("provider onboarding credential boundaries", () => {
   it("never offers reads from external provider credential stores", () => {
