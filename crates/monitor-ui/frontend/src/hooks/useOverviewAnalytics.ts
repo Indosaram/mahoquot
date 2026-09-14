@@ -39,6 +39,73 @@ interface CachedRawResponses {
   readonly nowMs: number;
 }
 
+/** Inputs that produced the analytics object currently held in state. When a
+ * rebuild would run over exactly these inputs, its result is content-identical
+ * to what is already rendered — only the object identity churns, which resets
+ * the chart entrance animation for nothing (stats polls refresh the `accounts`
+ * identity every cycle without changing its content). */
+interface BuiltFrom {
+  readonly cacheKey: string;
+  readonly metric: OverviewMetric;
+  readonly ranking: HistoryStatsResponse;
+  readonly series: HistoryStatsResponse;
+  readonly totalSeries: HistoryStatsResponse;
+  readonly nowMs: number;
+  readonly accountsKey: string;
+}
+
+// resolveAccountIdentity matches accounts by id/email/credentialName and takes
+// label/provider from the match, so only those fields can change a rebuild's
+// output. Everything else (quota, health, counters) is presentation-only.
+const accountIdentityKey = (accounts: readonly NormalizedAccount[]): string =>
+  accounts
+    .map(
+      (account) =>
+        `${account.id}\n${account.email}\n${account.label}\n${account.provider}\n${account.credentialName ?? ""}`,
+    )
+    .join("\u0000");
+
+const buildsMatch = (last: BuiltFrom | null, built: BuiltFrom): boolean =>
+  last !== null &&
+  last.cacheKey === built.cacheKey &&
+  last.metric === built.metric &&
+  last.ranking === built.ranking &&
+  last.series === built.series &&
+  last.totalSeries === built.totalSeries &&
+  last.nowMs === built.nowMs &&
+  last.accountsKey === built.accountsKey;
+
+const buildCachedAnalytics = (
+  cached: CachedRawResponses,
+  dimension: OverviewDimension,
+  metric: OverviewMetric,
+  range: TelemetryRange,
+  accounts: readonly NormalizedAccount[],
+): { analytics: OverviewAnalytics; built: BuiltFrom } => {
+  const analytics = buildAnalytics({
+    ranking: cached.ranking,
+    series: cached.series,
+    totalSeries: cached.totalSeries,
+    dimension,
+    metric,
+    range,
+    nowMs: cached.nowMs,
+    accounts,
+  });
+  return {
+    analytics,
+    built: {
+      cacheKey: `${range}|${dimension}`,
+      metric,
+      ranking: cached.ranking,
+      series: cached.series,
+      totalSeries: cached.totalSeries,
+      nowMs: cached.nowMs,
+      accountsKey: accountIdentityKey(accounts),
+    },
+  };
+};
+
 const deriveTopKeys = (
   ranking: HistoryStatsResponse,
   dimension: OverviewDimension,
@@ -84,6 +151,10 @@ export function useOverviewAnalytics({
   const cacheRef = useRef<Map<string, CachedRawResponses>>(new Map());
   const generationRef = useRef<number>(0);
   const mountedRef = useRef<boolean>(true);
+  // Null means the current analytics object did not come from a cache build
+  // (initial empty state or a telemetry fallback); every analytics replacement
+  // must either record the inputs it was built from or null this out.
+  const lastBuildRef = useRef<BuiltFrom | null>(null);
 
   const prevClientsRef = useRef(clients);
   if (prevClientsRef.current !== clients) {
@@ -110,18 +181,17 @@ export function useOverviewAnalytics({
     const cached = cacheRef.current.get(cacheKey);
     if (cached) {
       setIsLoading(false);
-      setAnalytics(
-        buildAnalytics({
-          ranking: cached.ranking,
-          series: cached.series,
-          totalSeries: cached.totalSeries,
-          dimension,
-          metric,
-          range,
-          nowMs: cached.nowMs,
-          accounts,
-        }),
+      const { analytics: next, built } = buildCachedAnalytics(
+        cached,
+        dimension,
+        metric,
+        range,
+        accounts,
       );
+      if (!buildsMatch(lastBuildRef.current, built)) {
+        lastBuildRef.current = built;
+        setAnalytics(next);
+      }
     } else {
       if (enabled) {
         setIsLoading(true);
@@ -135,19 +205,19 @@ export function useOverviewAnalytics({
     if (cacheKey === prevCacheKey) {
       const cached = cacheRef.current.get(cacheKey);
       if (cached) {
-        setAnalytics(
-          buildAnalytics({
-            ranking: cached.ranking,
-            series: cached.series,
-            totalSeries: cached.totalSeries,
-            dimension,
-            metric,
-            range,
-            nowMs: cached.nowMs,
-            accounts,
-          }),
+        const { analytics: next, built } = buildCachedAnalytics(
+          cached,
+          dimension,
+          metric,
+          range,
+          accounts,
         );
+        if (!buildsMatch(lastBuildRef.current, built)) {
+          lastBuildRef.current = built;
+          setAnalytics(next);
+        }
       } else if (analytics.source === "telemetry") {
+        lastBuildRef.current = null;
         setAnalytics(
           telemetryAnalytics({
             samples,
@@ -167,19 +237,22 @@ export function useOverviewAnalytics({
     setPrevAccounts(accounts);
     const cached = cacheRef.current.get(cacheKey);
     if (cached) {
-      setAnalytics(
-        buildAnalytics({
-          ranking: cached.ranking,
-          series: cached.series,
-          totalSeries: cached.totalSeries,
-          dimension,
-          metric,
-          range,
-          nowMs: cached.nowMs,
-          accounts,
-        }),
+      // Stats polls replace the accounts identity every cycle; rebuilding over
+      // the same cached responses would churn analytics identity and replay
+      // the chart entrance although nothing changed.
+      const { analytics: next, built } = buildCachedAnalytics(
+        cached,
+        dimension,
+        metric,
+        range,
+        accounts,
       );
+      if (!buildsMatch(lastBuildRef.current, built)) {
+        lastBuildRef.current = built;
+        setAnalytics(next);
+      }
     } else if (analytics.source === "telemetry") {
+      lastBuildRef.current = null;
       setAnalytics(
         telemetryAnalytics({
           samples,
@@ -196,6 +269,7 @@ export function useOverviewAnalytics({
   if (samples !== prevSamples) {
     setPrevSamples(samples);
     if (analytics.source === "telemetry") {
+      lastBuildRef.current = null;
       setAnalytics(
         telemetryAnalytics({
           samples,
@@ -282,17 +356,15 @@ export function useOverviewAnalytics({
         };
         cacheRef.current.set(currentKey, cachedResponses);
 
-        const nextAnalytics = buildAnalytics({
-          ranking: rankingResp,
-          series: seriesResp,
-          totalSeries: totalSeriesResp,
+        const { analytics: nextAnalytics, built } = buildCachedAnalytics(
+          cachedResponses,
           dimension,
-          metric: metricRef.current,
+          metricRef.current,
           range,
-          nowMs: roundNow,
-          accounts: accountsRef.current,
-        });
+          accountsRef.current,
+        );
 
+        lastBuildRef.current = built;
         setAnalytics(nextAnalytics);
         setError("");
       } catch (err) {
@@ -312,6 +384,7 @@ export function useOverviewAnalytics({
           accounts: accountsRef.current,
         });
 
+        lastBuildRef.current = null;
         setAnalytics(fallback);
       } finally {
         if (mountedRef.current && generation === generationRef.current) {
