@@ -410,8 +410,23 @@ mod tests {
             other.try_lock(),
             Err(std::fs::TryLockError::WouldBlock)
         ));
+        // Acquisition blocks on the release itself instead of racing the scheduler with a
+        // bare retry: the waiter is parked on the exact event, and the bounded receive
+        // turns a genuine deadlock into a failure rather than a hung suite.
+        let (acquired, signal) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let outcome = other.lock();
+            let _ = acquired.send(outcome.is_ok());
+            outcome
+        });
         drop(held);
-        other.try_lock().unwrap();
+        assert!(
+            signal
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("independent handle never observed the lock release"),
+            "independent handle failed to acquire the released lock"
+        );
+        waiter.join().unwrap().unwrap();
     }
 
     #[test]

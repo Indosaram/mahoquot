@@ -628,8 +628,10 @@ mod tests {
         );
         let manager = TunnelManager::new(binary);
 
+        // The production budget is what this path must honour; a tighter test-local
+        // deadline only measures how loaded the machine is when the suite runs.
         let status = manager
-            .start_with_timeout("http://127.0.0.1:18840", Duration::from_secs(5))
+            .start_with_timeout("http://127.0.0.1:18840", START_TIMEOUT)
             .unwrap();
         assert_eq!(
             status.public_url.as_deref(),
