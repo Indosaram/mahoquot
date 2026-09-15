@@ -103,7 +103,7 @@ for (const width of [1280, 390]) {
     const close = page.getByRole("button", { name: "Close warm settings" });
     await close.focus();
     await page.keyboard.press("Shift+Tab");
-    await expect(page.getByRole("button", { name: "Reload warmup settings and status" })).toBeFocused();
+    await expect(page.getByRole("button", { name: "Run warmup now" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(close).toBeFocused();
     await mkdir(evidence, { recursive: true });
