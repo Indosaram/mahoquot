@@ -83,32 +83,28 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   ]);
   fireEvent.click(provider.getByRole("checkbox"));
   fireEvent.change(provider.getByLabelText("Model"), { target: { value: "live/model" } });
-  fireEvent.change(provider.getByLabelText("Idle seconds"), { target: { value: "45" } });
-  fireEvent.change(provider.getByLabelText("Minimum interval seconds"), {
-    target: { value: "90" },
-  });
   await act(async () => {
     fireEvent.click(provider.getByRole("button", { name: "Save provider defaults" }));
   });
   expect(settings.providers.codex).toEqual({
     enabled: true,
     model: "live/model",
-    idle_secs: 45,
-    min_interval_secs: 90,
+    idle_secs: 3600,
+    min_interval_secs: 300,
   });
-  fireEvent.change(provider.getByLabelText("Idle seconds"), { target: { value: "77" } });
+  fireEvent.change(provider.getByLabelText("Model"), { target: { value: "live/other" } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Reload warmup settings and status" }));
   });
-  expect(provider.getByLabelText("Idle seconds")).toHaveValue(77);
+  expect(provider.getByLabelText("Model")).toHaveValue("live/other");
   rejectSave = true;
   await act(async () => {
     fireEvent.click(provider.getByRole("button", { name: "Save provider defaults" }));
   });
-  expect(provider.getByLabelText("Idle seconds")).toHaveValue(77);
-  expect(settings.providers.codex?.idle_secs).toBe(45);
+  expect(provider.getByLabelText("Model")).toHaveValue("live/other");
+  expect(settings.providers.codex?.model).toBe("live/model");
   rejectSave = false;
-  fireEvent.change(provider.getByLabelText("Idle seconds"), { target: { value: "45" } });
+  fireEvent.change(provider.getByLabelText("Model"), { target: { value: "live/model" } });
   fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
   fireEvent.click(screen.getByRole("button", { name: "More actions for 1" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Warmup settings for 1" }));
@@ -131,7 +127,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
     });
     expect(settings.accounts["codex-1"]).toEqual(
       type === "custom"
-        ? { type, model: "live/other", idle_secs: 45, min_interval_secs: 90 }
+        ? { type, model: "live/other", idle_secs: 3600, min_interval_secs: 300 }
         : { type },
     );
     await act(async () => {
@@ -186,7 +182,7 @@ it.each(["save", "manual"])("isolates deferred %s responses when the gateway cha
       }
       if (url.pathname === "/v0/management/warmup/settings")
         return Response.json({
-          providers: { codex: { ...policy, idle_secs: url.port === "18841" ? 100 : 200 } },
+          providers: { codex: { ...policy, enabled: url.port === "18841" } },
           accounts: {},
         });
       if (url.pathname === "/v0/management/warmup/status") return Response.json({ accounts: { "codex-1": { source: "inherit", effective: policy, capability: "supported", available_models: [] } } });
@@ -209,7 +205,7 @@ it.each(["save", "manual"])("isolates deferred %s responses when the gateway cha
   let form = within(screen.getByRole("form", { name: "Warmup defaults for codex" }));
   expect(form.getByLabelText("Model")).toHaveValue("removed/model");
   expect(form.getByRole("option", { name: "removed/model (unavailable)" })).toBeDisabled();
-  fireEvent.change(form.getByLabelText("Idle seconds"), { target: { value: "999" } });
+  fireEvent.click(form.getByRole("checkbox"));
   if (operation === "manual") {
     fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Warm settings for 1" }));
@@ -234,12 +230,12 @@ it.each(["save", "manual"])("isolates deferred %s responses when the gateway cha
   });
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
   form = within(screen.getByRole("form", { name: "Warmup defaults for codex" }));
-  expect(form.getByLabelText("Idle seconds")).toHaveValue(200);
+  expect(form.getByRole("checkbox")).not.toBeChecked();
   await act(async () => {
-    resolveSave(Response.json(operation === "save" ? { ...policy, idle_secs: 999 } : { id: "codex-1", provider: "codex", ok: true, status: 200, latency_ms: 1, stream_validated: true }));
+    resolveSave(Response.json(operation === "save" ? { ...policy, enabled: true } : { id: "codex-1", provider: "codex", ok: true, status: 200, latency_ms: 1, stream_validated: true }));
     await saveResponse;
   });
-  expect(form.getByLabelText("Idle seconds")).toHaveValue(200);
+  expect(form.getByRole("checkbox")).not.toBeChecked();
   expect(form.getByRole("button", { name: "Save provider defaults" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Warm settings for 1" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));

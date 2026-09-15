@@ -726,6 +726,8 @@ export const WarmupAccountStatusSchema = z.object({
   last_result: WarmupResultSchema.nullable().default(null),
   last_attempt_at: z.number().int().nullable().default(null),
   next_due_at: z.number().int().nullable().default(null),
+  window_active: z.boolean().default(false),
+  window_reset_at: z.number().int().nullable().default(null),
   skip_reason: z.string().nullable().default(null),
 });
 export type WarmupAccountStatus = z.infer<typeof WarmupAccountStatusSchema>;

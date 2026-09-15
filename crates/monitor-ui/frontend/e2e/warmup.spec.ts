@@ -50,8 +50,6 @@ for (const width of [1280, 390]) {
     await expect(defaults.getByRole("option", { name: "missing/model (unavailable)" })).toHaveJSProperty("disabled", true);
     await defaults.getByRole("checkbox").check();
     await defaults.getByRole("combobox", { name: "Model", exact: true }).selectOption("discovered/model");
-    await defaults.getByLabel("Idle seconds", { exact: true }).fill("45");
-    await defaults.getByLabel("Minimum interval seconds").fill("90");
     const saved = page.waitForResponse((response) => response.url().endsWith("/warmup/settings/provider/codex") && response.request().method() === "PUT");
     await defaults.getByRole("button", { name: "Save provider defaults" }).click();
     await saved;
@@ -59,7 +57,7 @@ for (const width of [1280, 390]) {
     await page.reload();
     await page.getByRole("button", { name: /^accounts$/i }).click();
     await summary.click();
-    await expect(defaults.getByLabel("Idle seconds", { exact: true })).toHaveValue("45");
+    await expect(defaults.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("discovered/model");
     await expect(defaults.getByRole("checkbox")).toBeChecked();
     await page.getByRole("button", { name: "Close warm settings" }).click();
     await expect(summary).toBeFocused();

@@ -6,7 +6,7 @@ import type {
   WarmupStatusResponse,
 } from "../lib/schemas";
 import { WarmupProviderPolicySchema } from "../lib/schemas";
-import { Button, Input } from "./ui";
+import { Button } from "./ui";
 import { useEffect, useRef, type ReactNode } from "react";
 import { OverlayLayer } from "./layout";
 
@@ -92,30 +92,6 @@ const PolicyFields = ({
     {policy.model && !models.includes(policy.model) ? (
       <span className="warmup-warning warmup-span">Configured model unavailable: {policy.model}</span>
     ) : null}
-    <label>
-      Idle seconds
-      <Input
-        type="number"
-        required
-        min={1}
-        max={86400}
-        step={1}
-        value={Number.isNaN(policy.idle_secs) ? "" : policy.idle_secs}
-        onChange={(event) => onChange({ ...policy, idle_secs: event.target.valueAsNumber })}
-      />
-    </label>
-    <label>
-      Minimum interval seconds
-      <Input
-        type="number"
-        required
-        min={1}
-        max={604800}
-        step={1}
-        value={Number.isNaN(policy.min_interval_secs) ? "" : policy.min_interval_secs}
-        onChange={(event) => onChange({ ...policy, min_interval_secs: event.target.valueAsNumber })}
-      />
-    </label>
   </div>
 );
 
@@ -127,6 +103,11 @@ export const WarmupStatus = ({ status }: { status: WarmupAccountStatus | undefin
           <span className={`badge ${status.capability === "supported" ? "badge-ok" : "badge-warn"}`}>{status.capability}</span>
           <span className="badge badge-neutral">policy · {status.source}</span>
           <span className={`badge ${status.effective.enabled ? "badge-ok" : "badge-neutral"}`}>automatic {status.effective.enabled ? "on" : "off"}</span>
+          {status.window_active ? (
+            <span className="badge badge-ok">window active</span>
+          ) : status.effective.enabled ? (
+            <span className="badge badge-warn">window inactive</span>
+          ) : null}
         </div>
         {status.last_result ? (
           <div className="warmup-status-line">
@@ -140,7 +121,15 @@ export const WarmupStatus = ({ status }: { status: WarmupAccountStatus | undefin
           <div className="warmup-status-line">Last attempt: <WarmupTime seconds={status.last_attempt_at} /></div>
         ) : null}
         <div className="warmup-status-line">
-          {status.skip_reason ? <span>Skipped: {status.skip_reason}</span> : status.next_due_at !== null ? <span>Next due: <WarmupTime seconds={status.next_due_at} /></span> : <span>No scheduled warmup.</span>}
+          {status.window_active && status.window_reset_at ? (
+            <span>Window active (resets <WarmupTime seconds={status.window_reset_at} />)</span>
+          ) : status.skip_reason ? (
+            <span>Skipped: {status.skip_reason}</span>
+          ) : status.next_due_at !== null ? (
+            <span>Next due: <WarmupTime seconds={status.next_due_at} /></span>
+          ) : (
+            <span>No scheduled warmup.</span>
+          )}
         </div>
       </>
     ) : (
@@ -174,7 +163,7 @@ export const ProviderWarmupControls = ({
               warmup.onProviderChange(provider, { ...policy, enabled: event.target.checked })
             }
           />
-          <span>Enable automatic warmup</span>
+          <span>Enable automatic window warmup</span>
         </label>
         <PolicyFields
           policy={policy}
