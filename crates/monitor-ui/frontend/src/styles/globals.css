@@ -3,7 +3,8 @@
 @tailwind utilities;
 
 .accounts .warmup-controls { border-top: 1px solid var(--line-soft); padding: 12px; min-width: 0; }
-.accounts .warmup-controls summary { cursor: pointer; color: var(--fg-dim); font-size: 13px; }
+.warmup-dialog { width: min(600px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; border-color: var(--line); color: var(--fg); margin: auto; }
+.warmup-dialog h2 { overflow-wrap: anywhere; }
 .accounts .warmup-controls fieldset { border: 0; padding: 12px 0 0; min-width: 0; display: grid; gap: 12px; }
 .accounts .warmup-controls legend { font-size: 13px; color: var(--fg-dim); padding-top: 12px; }
 .accounts .warmup-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }

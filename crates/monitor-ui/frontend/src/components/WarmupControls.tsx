@@ -7,8 +7,14 @@ import type {
 } from "../lib/schemas";
 import { WarmupProviderPolicySchema } from "../lib/schemas";
 import { Button, Input } from "./ui";
+import { useEffect, useRef, type ReactNode } from "react";
+import { OverlayLayer } from "./layout";
 
 export interface WarmupControlsState {
+  selection: { type: "provider" | "account"; id: string } | null;
+  onOpen: (type: "provider" | "account", id: string) => void;
+  onClose: () => void;
+  returnFocus: HTMLElement | null;
   settings: WarmupSettings | null;
   status: WarmupStatusResponse | null;
   error: string;
@@ -21,6 +27,29 @@ export interface WarmupControlsState {
 }
 
 export const defaultWarmupPolicy = WarmupProviderPolicySchema.parse({});
+
+export const WarmupDialog = ({ title, onClose, children, returnFocus }: { title: string; onClose: () => void; children: ReactNode; returnFocus: HTMLElement | null }) => {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const previous = returnFocus ?? document.activeElement;
+    ref.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, []);
+  return <OverlayLayer className="history-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <dialog ref={ref} open aria-modal="true" aria-label={title} className="history-dialog warmup-dialog" onKeyDown={(event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
+      if (event.key === "Tab") {
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')).filter((element) => !element.closest("fieldset:disabled"));
+        const first = items[0], last = items.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    }}>
+      <div className="section-head"><h2>{title}</h2><Button aria-label="Close warm settings" onClick={onClose}>Close</Button></div>
+      {children}
+    </dialog>
+  </OverlayLayer>;
+};
 
 const WarmupTime = ({ seconds }: { seconds: number }) => {
   const date = new Date(seconds * 1000);
@@ -132,8 +161,7 @@ export const ProviderWarmupControls = ({
 }: { provider: string; models: readonly string[]; warmup: WarmupControlsState }) => {
   const policy = warmup.settings?.providers[provider] ?? defaultWarmupPolicy;
   return (
-    <details className="warmup-controls provider-configuration">
-      <summary>Provider configuration · Automatic warmup</summary>
+    <div className="warmup-controls">
       <form
         aria-label={`Warmup defaults for ${provider}`}
         onSubmit={(event) => {
@@ -163,7 +191,7 @@ export const ProviderWarmupControls = ({
           </Button>
         </fieldset>
       </form>
-    </details>
+    </div>
   );
 };
 
@@ -172,15 +200,11 @@ export const AccountWarmupControls = ({
   label,
   provider,
   warmup,
-  open,
-  onToggle,
 }: {
   id: string | null;
   label: string;
   provider: string;
   warmup: WarmupControlsState;
-  open: boolean;
-  onToggle: (open: boolean) => void;
 }) => {
   const policy: WarmupAccountPolicy = id
     ? (warmup.settings?.accounts[id] ?? { type: "inherit" })
@@ -188,12 +212,7 @@ export const AccountWarmupControls = ({
   const status = id ? warmup.status?.accounts[id] : undefined;
   const defaults = warmup.settings?.providers[provider] ?? defaultWarmupPolicy;
   return (
-    <details
-      className="warmup-controls"
-      open={open}
-      onToggle={(event) => onToggle(event.currentTarget.open)}
-    >
-      <summary>Automatic warmup · {policy.type}</summary>
+    <div className="warmup-controls">
       <WarmupStatus status={status} />
       {!id ? <p>Account must be loaded in the runtime to configure warmup.</p> : null}
       <form
@@ -245,6 +264,6 @@ export const AccountWarmupControls = ({
           </Button>
         </fieldset>
       </form>
-    </details>
+    </div>
   );
 };

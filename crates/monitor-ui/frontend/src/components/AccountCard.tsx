@@ -19,7 +19,7 @@ import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { Badge, Button, Card } from "./ui";
-import { AccountWarmupControls, type WarmupControlsState } from "./WarmupControls";
+import { type WarmupControlsState } from "./WarmupControls";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -192,7 +192,6 @@ export const AccountCard = ({
   const isPending = blocks(pending, "account", account.id);
   const rows = quotaRows(account);
   const [refreshing, setRefreshing] = useState(false);
-  const [warmupOpen, setWarmupOpen] = useState(false);
   const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
 
   const errorKey = account.lastError
@@ -245,7 +244,7 @@ export const AccountCard = ({
   const overflowActions: OverflowAction[] = [];
   if (warmup) overflowActions.push({
     key: "warmup-settings", label: "Warmup settings", ariaLabel: `Warmup settings for ${account.label}`,
-    icon: <Sparkles size={13} />, disabled: false, run: () => setWarmupOpen(true),
+    icon: <Sparkles size={13} />, disabled: false, run: () => warmup.onOpen("account", account.id),
   });
   if (account.supportsReset) {
     // The label names the price, not just the outcome: "Reset window" left it
@@ -397,11 +396,13 @@ export const AccountCard = ({
         <div className="account-actions">
           <Button
             size="sm"
-            disabled={!account.runtimeId || isPending || (warmup !== undefined && (!warmup.status || warmup.status.accounts[account.runtimeId]?.capability !== "supported"))}
-            onClick={() => void onRunAccountAction("warm", account)}
+            data-warm-account={account.id}
+            aria-label={warmup ? `Warm settings for ${account.label}` : undefined}
+            disabled={warmup ? false : !account.runtimeId || isPending}
+            onClick={() => warmup ? warmup.onOpen("account", account.id) : void onRunAccountAction("warm", account)}
           >
             <Sparkles size={12} />
-            {pending === `warm:${account.id}` ? "Warming…" : "Warm up"}
+            {warmup ? "Warm settings" : pending === `warm:${account.id}` ? "Warming…" : "Warm up"}
           </Button>
           <Button
             size="sm"
@@ -441,7 +442,6 @@ export const AccountCard = ({
           )}
         </div>
       </div>
-      {warmup ? <AccountWarmupControls id={account.runtimeId} label={account.label} provider={account.provider} warmup={warmup} open={warmupOpen} onToggle={setWarmupOpen} /> : null}
       <div className="usage-section">
         {account.usage?.totals ? (
           <div className="usage-totals" data-testid="account-usage-totals">

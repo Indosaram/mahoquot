@@ -40,10 +40,12 @@ for (const width of [1280, 390]) {
     });
     await page.goto("/management.html");
     await page.getByRole("button", { name: /^accounts$/i }).click();
-    const summary = page.locator(".provider-configuration summary");
+    await expect(page.locator(".accounts form")).toHaveCount(0);
+    const summary = page.getByRole("button", { name: "Warm settings for provider codex" });
     await summary.focus();
     await page.keyboard.press("Enter");
     const defaults = page.getByRole("form", { name: "Warmup defaults for codex" });
+    expect(manual).toBe(false);
     await expect(defaults.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("missing/model");
     await expect(defaults.getByRole("option", { name: "missing/model (unavailable)" })).toHaveJSProperty("disabled", true);
     await defaults.getByRole("checkbox").check();
@@ -59,13 +61,20 @@ for (const width of [1280, 390]) {
     await summary.click();
     await expect(defaults.getByLabel("Idle seconds", { exact: true })).toHaveValue("45");
     await expect(defaults.getByRole("checkbox")).toBeChecked();
+    await page.getByRole("button", { name: "Close warm settings" }).click();
+    await expect(summary).toBeFocused();
     await page.getByRole("button", { name: "More actions for fixture" }).click();
     const menu = page.getByRole("menuitem", { name: "Warmup settings for fixture" });
     await menu.focus();
     await page.keyboard.press("Enter");
     const form = page.getByRole("form", { name: "Automatic warmup for fixture" });
     await expect(form).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Warm settings for fixture", exact: true })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(form).toBeVisible();
     await form.getByLabel("Warmup mode").focus();
+    expect(manual).toBe(false);
     await page.keyboard.press("Tab");
     await expect(form.getByRole("button", { name: "Save account policy" })).toBeFocused();
     for (const type of ["custom", "off", "inherit"]) {
@@ -79,17 +88,38 @@ for (const width of [1280, 390]) {
       await expect(form.getByLabel("Warmup mode")).toHaveValue(type);
       await expect(form.getByRole("button")).toBeEnabled();
     }
-    await page.getByRole("button", { name: "Warm up", exact: true }).click();
+    await page.getByRole("button", { name: "Run warmup now", exact: true }).click();
     await expect(page.getByText(/Action failed: warm-up/)).toContainText("empty_stream");
     await expect(page.getByText(/Warm-up succeeded|active now/)).toHaveCount(0);
     await expect(page.locator(".warmup-status")).toContainText("empty_stream");
     await form.getByLabel("Warmup mode").selectOption("custom");
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", width);
+    const bounds = await page.getByRole("dialog").boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(width === 390 ? 844 : 900);
+    const close = page.getByRole("button", { name: "Close warm settings" });
+    await close.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.getByRole("button", { name: "Reload warmup settings and status" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
     await mkdir(evidence, { recursive: true });
-    await page.screenshot({ path: resolve(evidence, `warmup-${width}.png`), fullPage: true });
+    await page.screenshot({ path: resolve(evidence, `popup-warmup-${width}.png`), fullPage: true });
     if (width === 390) {
       await form.getByRole("button").scrollIntoViewIfNeeded();
-      await page.screenshot({ path: resolve(evidence, "warmup-390-account.png"), fullPage: true });
+      await page.screenshot({ path: resolve(evidence, "popup-warmup-390-account.png"), fullPage: true });
     }
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator(".accounts form")).toHaveCount(0);
+    await page.getByRole("button", { name: "Warm settings for fixture", exact: true }).click();
+    await expect(form.getByLabel("Warmup mode")).toHaveValue("custom");
+    await page.locator(".history-dialog-backdrop").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Warm settings for fixture", exact: true })).toBeFocused();
+    await page.screenshot({ path: resolve(evidence, `popup-accounts-${width}.png`), fullPage: true });
   });
 }

@@ -313,6 +313,8 @@ export default function App() {
   const [warmupStatus, setWarmupStatus] = useState<WarmupStatusResponse | null>(null);
   const [warmupError, setWarmupError] = useState("");
   const [warmupPending, setWarmupPending] = useState(false);
+  const warmupReturnFocus = useRef<HTMLElement | null>(null);
+  const [warmupPopup, setWarmupPopup] = useState<{ type: "provider" | "account"; id: string } | null>(null);
   const clients = useMemo(
     () => createGatewayClients(committedBaseUrl || DEFAULT_GATEWAY_URL, relayKey),
     [committedBaseUrl, relayKey],
@@ -324,6 +326,7 @@ export default function App() {
     setWarmupStatus(null);
     setWarmupProviderDrafts({});
     setWarmupAccountDrafts({});
+    setWarmupPopup(null);
     setWarmupError("");
     setWarmupPending(false);
     setPending((current) => current.startsWith("warm:") ? "" : current);
@@ -1657,6 +1660,13 @@ export default function App() {
         {surface === "accounts" ? (
           <AccountsSurface
             warmup={{
+              selection: warmupPopup,
+              onOpen: (type, id) => {
+                warmupReturnFocus.current = type === "account" ? Array.from(document.querySelectorAll<HTMLElement>("[data-warm-account]")).find((element) => element.dataset.warmAccount === id) ?? null : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                setWarmupPopup({ type, id });
+              },
+              returnFocus: warmupReturnFocus.current,
+              onClose: () => setWarmupPopup(null),
               settings: warmupSettings ? { providers: { ...warmupSettings.providers, ...warmupProviderDrafts }, accounts: { ...warmupSettings.accounts, ...warmupAccountDrafts } } : null,
               status: warmupStatus, error: warmupError, pending: warmupPending,
               onProviderChange: (id: string, policy: WarmupProviderPolicy) => setWarmupProviderDrafts((current) => ({ ...current, [id]: policy })),
