@@ -737,7 +737,7 @@ describe("AccountsSurface component", () => {
     });
   });
 
-  it("renders Warmed badge on account card when quota window is active", () => {
+  it("renders Warmed badge on account card when quota window is active and account is healthy, hides it on cooldown", () => {
     const props = createProps();
     const warmup = {
       selection: null,
@@ -769,9 +769,21 @@ describe("AccountsSurface component", () => {
       onSaveAccount: vi.fn(),
       onReload: vi.fn(),
     };
-    render(<AccountsSurface {...props} warmup={warmup} />);
+    const { rerender } = render(<AccountsSurface {...props} warmup={warmup} />);
     const badge = screen.getByText("Warmed");
     expect(badge).toBeInTheDocument();
     expect(badge.closest(".badge")).toHaveClass("badge-ok");
+
+    // When account is in cooldown, Warmed badge MUST NOT be rendered
+    const cooldownAccount = { ...mockAccount, health: "cooldown" as const };
+    rerender(
+      <AccountsSurface
+        {...props}
+        accounts={[cooldownAccount]}
+        visibleAccounts={[cooldownAccount]}
+        warmup={warmup}
+      />,
+    );
+    expect(screen.queryByText("Warmed")).not.toBeInTheDocument();
   });
 });

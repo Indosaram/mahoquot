@@ -38,8 +38,15 @@ export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }
   );
 };
 
-export const WarmupBadge = ({ status }: { readonly status: WarmupAccountStatus | undefined }) => {
-  if (!status?.window_active) return null;
+export const WarmupBadge = ({
+  status,
+  health,
+}: {
+  readonly status: WarmupAccountStatus | undefined;
+  readonly health?: string;
+}) => {
+  // Only show Warmed badge if quota window is active AND account is in healthy status
+  if (!status?.window_active || health !== "healthy") return null;
   const resetTimeStr = status.window_reset_at
     ? new Date(status.window_reset_at * 1000).toLocaleTimeString()
     : null;
@@ -411,7 +418,7 @@ export const AccountCard = ({
             <div>
               <strong title={account.label}>{account.label}</strong>
               <HealthBadge account={account} />
-              <WarmupBadge status={warmupStatus} />
+              <WarmupBadge status={warmupStatus} health={account.health} />
               <AccountResetCredits account={account} />
             </div>
             {detailRedundant ? null : <span title={detail}>{detail}</span>}

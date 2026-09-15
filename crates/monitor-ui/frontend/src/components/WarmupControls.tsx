@@ -134,6 +134,8 @@ export const WarmupStatus = ({ status }: { status: WarmupAccountStatus | undefin
         <div className="warmup-status-line">
           {status.window_active && status.window_reset_at ? (
             <span>Window active (resets <WarmupTime seconds={status.window_reset_at} />)</span>
+          ) : status.skip_reason === "cooldown_model_quota" ? (
+            <span>Cooldown active (auto-warms when healthy)</span>
           ) : status.skip_reason ? (
             <span>Skipped: {status.skip_reason}</span>
           ) : status.next_due_at !== null ? (

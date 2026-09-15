@@ -267,7 +267,23 @@ export const AccountsSurface = ({
               </>
             ) : popupAccount ? (
               <>
-                <Button size="sm" disabled={!popupAccount.runtimeId || blocks(pending, "account", popupAccount.id) || warmup.status?.accounts[popupAccount.runtimeId]?.capability !== "supported"} onClick={() => void onRunAccountAction("warm", popupAccount)}>Run warmup now</Button>
+                <Button
+                  size="sm"
+                  disabled={
+                    !popupAccount.runtimeId ||
+                    blocks(pending, "account", popupAccount.id) ||
+                    popupAccount.health !== "healthy" ||
+                    warmup.status?.accounts[popupAccount.runtimeId]?.capability !== "supported"
+                  }
+                  title={
+                    popupAccount.health !== "healthy"
+                      ? `Cannot warm up account in ${popupAccount.health} status. It will warm up automatically when healthy.`
+                      : undefined
+                  }
+                  onClick={() => void onRunAccountAction("warm", popupAccount)}
+                >
+                  Run warmup now
+                </Button>
                 <div style={{ display: "flex", gap: "8px" }}>
                   <Button size="sm" variant="ghost" onClick={warmup.onClose}>Cancel</Button>
                   <Button size="sm" disabled={!popupAccount.runtimeId || warmup.pending} onClick={() => popupAccount.runtimeId && warmup.onSaveAccount(popupAccount.runtimeId)}>Save</Button>
