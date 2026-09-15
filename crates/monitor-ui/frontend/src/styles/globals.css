@@ -53,6 +53,8 @@
 .warmup-warning { color: var(--warn); overflow-wrap: anywhere; }
 .warmup-account { display: grid; gap: 14px; }
 .warmup-account .warmup-form { border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.warmup-policy-section { border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.warmup-help-text { font-size: 12px; color: var(--fg-dim); line-height: 1.45; margin: 0; }
 
 :root[data-surface="notch"],
 :root[data-surface="notch"] body {

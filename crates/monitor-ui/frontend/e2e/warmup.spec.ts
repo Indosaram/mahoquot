@@ -44,16 +44,16 @@ for (const width of [1280, 390]) {
     const summary = page.getByRole("button", { name: "Warm settings for provider codex" });
     await summary.focus();
     await page.keyboard.press("Enter");
-    const defaults = page.getByRole("form", { name: "Warmup defaults for codex" });
+    const defaults = page.getByRole("dialog", { name: "Warm settings for provider codex" });
     expect(manual).toBe(false);
     await expect(defaults.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("missing/model");
     await expect(defaults.getByRole("option", { name: "missing/model (unavailable)" })).toHaveJSProperty("disabled", true);
     await defaults.getByRole("checkbox").check();
     await defaults.getByRole("combobox", { name: "Model", exact: true }).selectOption("discovered/model");
     const saved = page.waitForResponse((response) => response.url().endsWith("/warmup/settings/provider/codex") && response.request().method() === "PUT");
-    await defaults.getByRole("button", { name: "Save provider defaults" }).click();
+    await defaults.getByRole("button", { name: "Save" }).click();
     await saved;
-    await expect(defaults.getByRole("button")).toBeEnabled();
+    await expect(defaults.getByRole("button", { name: "Save" })).toBeEnabled();
     await page.reload();
     await page.getByRole("button", { name: /^accounts$/i }).click();
     await summary.click();
@@ -65,7 +65,7 @@ for (const width of [1280, 390]) {
     const menu = page.getByRole("menuitem", { name: "Warmup settings for fixture" });
     await menu.focus();
     await page.keyboard.press("Enter");
-    const form = page.getByRole("form", { name: "Automatic warmup for fixture" });
+    const form = page.getByRole("dialog", { name: "Warm settings for fixture" });
     await expect(form).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Warm settings for fixture", exact: true })).toBeFocused();
@@ -73,18 +73,14 @@ for (const width of [1280, 390]) {
     await expect(form).toBeVisible();
     await form.getByLabel("Warmup mode").focus();
     expect(manual).toBe(false);
-    await page.keyboard.press("Tab");
-    await expect(form.getByRole("button", { name: "Save account policy" })).toBeFocused();
     for (const type of ["custom", "off", "inherit"]) {
       await form.getByLabel("Warmup mode").selectOption(type);
       if (type === "custom") await form.getByRole("combobox", { name: "Model", exact: true }).selectOption("discovered/other");
       const response = page.waitForResponse((value) => value.url().endsWith("/warmup/settings/account/codex-fixture") && value.request().method() === "PUT");
-      await form.getByRole("button", { name: "Save account policy" }).click();
+      await form.getByRole("button", { name: "Save" }).click();
       await response;
-      await expect(form.getByRole("button")).toBeEnabled();
-      await page.getByRole("button", { name: "Reload warmup settings and status" }).click();
+      await expect(form.getByRole("button", { name: "Save" })).toBeEnabled();
       await expect(form.getByLabel("Warmup mode")).toHaveValue(type);
-      await expect(form.getByRole("button")).toBeEnabled();
     }
     await page.getByRole("button", { name: "Run warmup now", exact: true }).click();
     await expect(page.getByText(/Action failed: warm-up/)).toContainText("empty_stream");
@@ -101,13 +97,13 @@ for (const width of [1280, 390]) {
     const close = page.getByRole("button", { name: "Close warm settings" });
     await close.focus();
     await page.keyboard.press("Shift+Tab");
-    await expect(page.getByRole("button", { name: "Run warmup now" })).toBeFocused();
+    await expect(page.getByRole("dialog").getByRole("button", { name: "Save", exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(close).toBeFocused();
     await mkdir(evidence, { recursive: true });
     await page.screenshot({ path: resolve(evidence, `popup-warmup-${width}.png`), fullPage: true });
     if (width === 390) {
-      await form.getByRole("button").scrollIntoViewIfNeeded();
+      await form.getByRole("button", { name: "Save", exact: true }).scrollIntoViewIfNeeded();
       await page.screenshot({ path: resolve(evidence, "popup-warmup-390-account.png"), fullPage: true });
     }
     await page.keyboard.press("Escape");

@@ -255,18 +255,32 @@ export const AccountsSurface = ({
       ) : null}
       {warmup ? <>
         {selectedProvider ? <Button size="sm" aria-label={`Warm settings for provider ${selectedProvider}`} onClick={() => warmup.onOpen("provider", selectedProvider)}>Warm settings · {providerLabel(selectedProvider)}</Button> : null}
-        {popupProvider || popupAccount ? <WarmupDialog title={`Warm settings for ${popupProvider ? `provider ${popupProvider}` : popupAccount?.label}`} onClose={warmup.onClose} returnFocus={warmup.returnFocus}>
+        {popupProvider || popupAccount ? <WarmupDialog
+          title={`Warm settings for ${popupProvider ? `provider ${popupProvider}` : popupAccount?.label}`}
+          onClose={warmup.onClose}
+          returnFocus={warmup.returnFocus}
+          footer={
+            popupProvider ? (
+              <>
+                <Button size="sm" variant="ghost" onClick={warmup.onClose}>Cancel</Button>
+                <Button size="sm" disabled={warmup.pending} onClick={() => warmup.onSaveProvider(popupProvider)}>Save</Button>
+              </>
+            ) : popupAccount ? (
+              <>
+                <Button size="sm" disabled={!popupAccount.runtimeId || blocks(pending, "account", popupAccount.id) || warmup.status?.accounts[popupAccount.runtimeId]?.capability !== "supported"} onClick={() => void onRunAccountAction("warm", popupAccount)}>Run warmup now</Button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <Button size="sm" variant="ghost" onClick={warmup.onClose}>Cancel</Button>
+                  <Button size="sm" disabled={!popupAccount.runtimeId || warmup.pending} onClick={() => popupAccount.runtimeId && warmup.onSaveAccount(popupAccount.runtimeId)}>Save</Button>
+                </div>
+              </>
+            ) : null
+          }
+        >
           <div className="warmup-dialog-body-inner">
             {warmup.error ? <div className="state-panel warning" role="alert">Warmup unavailable: {warmup.error}</div> : null}
             {popupProvider ? <ProviderWarmupControls provider={popupProvider} warmup={warmup} models={[...new Set(accounts.filter((account) => account.provider === popupProvider).flatMap((account) => account.runtimeId ? warmup.status?.accounts[account.runtimeId]?.available_models ?? [] : []))]} /> : null}
             {popupAccount ? <AccountWarmupControls id={popupAccount.runtimeId} label={popupAccount.label} provider={popupAccount.provider} warmup={warmup} /> : null}
           </div>
-          {popupAccount ? <footer className="warmup-dialog-foot">
-            <Button size="sm" variant="ghost" disabled={warmup.pending} onClick={warmup.onReload}>Reload warmup settings and status</Button>
-            <Button size="sm" disabled={!popupAccount.runtimeId || blocks(pending, "account", popupAccount.id) || warmup.status?.accounts[popupAccount.runtimeId]?.capability !== "supported"} onClick={() => void onRunAccountAction("warm", popupAccount)}>Run warmup now</Button>
-          </footer> : <footer className="warmup-dialog-foot">
-            <Button size="sm" variant="ghost" disabled={warmup.pending} onClick={warmup.onReload}>Reload warmup settings and status</Button>
-          </footer>}
         </WarmupDialog> : null}
       </> : null}
       <div className="account-list">

@@ -28,7 +28,7 @@ export interface WarmupControlsState {
 
 export const defaultWarmupPolicy = WarmupProviderPolicySchema.parse({});
 
-export const WarmupDialog = ({ title, onClose, children, returnFocus }: { title: string; onClose: () => void; children: ReactNode; returnFocus: HTMLElement | null }) => {
+export const WarmupDialog = ({ title, onClose, children, returnFocus, footer }: { title: string; onClose: () => void; children: ReactNode; returnFocus: HTMLElement | null; footer?: ReactNode }) => {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = returnFocus ?? document.activeElement;
@@ -47,9 +47,10 @@ export const WarmupDialog = ({ title, onClose, children, returnFocus }: { title:
     }}>
       <header className="warmup-dialog-head">
         <h2>{title}</h2>
-        <Button size="sm" variant="ghost" aria-label="Close warm settings" onClick={onClose}>Close</Button>
+        <Button size="sm" variant="ghost" aria-label="Close warm settings" onClick={onClose}>✕</Button>
       </header>
       <div className="warmup-dialog-body">{children}</div>
+      {footer ? <footer className="warmup-dialog-foot">{footer}</footer> : null}
     </div>
   </OverlayLayer>;
 };
@@ -145,16 +146,8 @@ export const ProviderWarmupControls = ({
 }: { provider: string; models: readonly string[]; warmup: WarmupControlsState }) => {
   const policy = warmup.settings?.providers[provider] ?? defaultWarmupPolicy;
   return (
-    <form
-      className="warmup-form"
-      aria-label={`Warmup defaults for ${provider}`}
-      onSubmit={(event) => {
-        event.preventDefault();
-        warmup.onSaveProvider(provider);
-      }}
-    >
+    <div className="warmup-account">
       <fieldset className="warmup-fieldset" disabled={!warmup.settings || warmup.pending}>
-        <legend className="warmup-legend">Provider defaults</legend>
         <label className="warmup-switch">
           <input
             type="checkbox"
@@ -165,24 +158,22 @@ export const ProviderWarmupControls = ({
           />
           <span>Enable automatic window warmup</span>
         </label>
+        <p className="warmup-help-text">
+          Automatically sends a minimal request when accounts are unprimed to start the 5-hour quota countdown early.
+        </p>
         <PolicyFields
           policy={policy}
           models={models}
           onChange={(value) => warmup.onProviderChange(provider, value)}
         />
-        <div className="warmup-form-actions">
-          <Button type="submit" size="sm">
-            Save provider defaults
-          </Button>
-        </div>
       </fieldset>
-    </form>
+    </div>
   );
 };
 
 export const AccountWarmupControls = ({
   id,
-  label,
+  label: _label,
   provider,
   warmup,
 }: {
@@ -200,16 +191,8 @@ export const AccountWarmupControls = ({
     <div className="warmup-account">
       <WarmupStatus status={status} />
       {!id ? <p className="warmup-status-line">Account must be loaded in the runtime to configure warmup.</p> : null}
-      <form
-        className="warmup-form"
-        aria-label={`Automatic warmup for ${label}`}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (id) warmup.onSaveAccount(id);
-        }}
-      >
+      <div className="warmup-policy-section">
         <fieldset className="warmup-fieldset" disabled={!id || !warmup.settings || warmup.pending}>
-          <legend className="warmup-legend">Account policy</legend>
           <label className="warmup-span">
             Warmup mode
             <select
@@ -245,13 +228,8 @@ export const AccountWarmupControls = ({
               }
             />
           ) : null}
-          <div className="warmup-form-actions">
-            <Button type="submit" size="sm">
-              Save account policy
-            </Button>
-          </div>
         </fieldset>
-      </form>
+      </div>
     </div>
   );
 };

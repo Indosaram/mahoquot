@@ -75,7 +75,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   expect(document.querySelector(".accounts form")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
   expect(screen.getByRole("dialog", { name: "Warm settings for provider codex" })).toBeInTheDocument();
-  let provider = within(screen.getByRole("form", { name: "Warmup defaults for codex" }));
+  let provider = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
   expect(provider.getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual([
     "",
     "live/model",
@@ -84,7 +84,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   fireEvent.click(provider.getByRole("checkbox"));
   fireEvent.change(provider.getByLabelText("Model"), { target: { value: "live/model" } });
   await act(async () => {
-    fireEvent.click(provider.getByRole("button", { name: "Save provider defaults" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
   });
   expect(settings.providers.codex).toEqual({
     enabled: true,
@@ -92,14 +92,10 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
     idle_secs: 3600,
     min_interval_secs: 300,
   });
+  rejectSave = true;
   fireEvent.change(provider.getByLabelText("Model"), { target: { value: "live/other" } });
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Reload warmup settings and status" }));
-  });
-  expect(provider.getByLabelText("Model")).toHaveValue("live/other");
-  rejectSave = true;
-  await act(async () => {
-    fireEvent.click(provider.getByRole("button", { name: "Save provider defaults" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
   });
   expect(provider.getByLabelText("Model")).toHaveValue("live/other");
   expect(settings.providers.codex?.model).toBe("live/model");
@@ -108,7 +104,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
   fireEvent.click(screen.getByRole("button", { name: "More actions for 1" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Warmup settings for 1" }));
-  const account = within(screen.getByRole("form", { name: "Automatic warmup for 1" }));
+  const account = within(screen.getByRole("dialog", { name: "Warm settings for 1" }));
   for (const type of ["custom", "off", "inherit"] as const) {
     fireEvent.change(account.getByLabelText("Warmup mode"), { target: { value: type } });
     if (type === "custom") {
@@ -123,16 +119,13 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
       fireEvent.change(account.getByLabelText("Model"), { target: { value: "live/other" } });
     }
     await act(async () => {
-      fireEvent.click(account.getByRole("button", { name: "Save account policy" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
     expect(settings.accounts["codex-1"]).toEqual(
       type === "custom"
         ? { type, model: "live/other", idle_secs: 3600, min_interval_secs: 300 }
         : { type },
     );
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Reload warmup settings and status" }));
-    });
     expect(account.getByLabelText("Warmup mode")).toHaveValue(type);
   }
   expect(document.querySelector('time[datetime="2024-09-15T14:21:40.000Z"]')).not.toBeNull();
@@ -152,7 +145,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
   });
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  provider = within(screen.getByRole("form", { name: "Warmup defaults for codex" }));
+  provider = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
   expect(provider.getByRole("checkbox")).toBeChecked();
   expect(provider.getByLabelText("Model")).toHaveValue("live/model");
 });
@@ -202,7 +195,7 @@ it.each(["save", "manual"])("isolates deferred %s responses when the gateway cha
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
   });
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  let form = within(screen.getByRole("form", { name: "Warmup defaults for codex" }));
+  let form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
   expect(form.getByLabelText("Model")).toHaveValue("removed/model");
   expect(form.getByRole("option", { name: "removed/model (unavailable)" })).toBeDisabled();
   fireEvent.click(form.getByRole("checkbox"));
@@ -212,7 +205,7 @@ it.each(["save", "manual"])("isolates deferred %s responses when the gateway cha
     expect(screen.getByRole("button", { name: "Run warmup now" })).toBeEnabled();
   }
   await act(async () => {
-    fireEvent.click(operation === "save" ? form.getByRole("button", { name: "Save provider defaults" }) : screen.getByRole("button", { name: "Run warmup now" }));
+    fireEvent.click(operation === "save" ? screen.getByRole("button", { name: "Save" }) : screen.getByRole("button", { name: "Run warmup now" }));
     await saveStarted;
   });
   fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
@@ -229,14 +222,14 @@ it.each(["save", "manual"])("isolates deferred %s responses when the gateway cha
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
   });
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  form = within(screen.getByRole("form", { name: "Warmup defaults for codex" }));
+  form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
   expect(form.getByRole("checkbox")).not.toBeChecked();
   await act(async () => {
     resolveSave(Response.json(operation === "save" ? { ...policy, enabled: true } : { id: "codex-1", provider: "codex", ok: true, status: 200, latency_ms: 1, stream_validated: true }));
     await saveResponse;
   });
   expect(form.getByRole("checkbox")).not.toBeChecked();
-  expect(form.getByRole("button", { name: "Save provider defaults" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Warm settings for 1" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for 1" }));
