@@ -666,3 +666,71 @@ export const DevinModelRefreshResponseSchema = z
     },
   );
 export type DevinModelRefreshResponse = z.infer<typeof DevinModelRefreshResponseSchema>;
+
+export const WarmupProviderPolicySchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().nullable().default(null),
+  idle_secs: z.number().int().min(1).max(86400).default(3600),
+  min_interval_secs: z.number().int().min(1).max(604800).default(300),
+});
+export type WarmupProviderPolicy = z.infer<typeof WarmupProviderPolicySchema>;
+
+export const WarmupInheritAccountPolicySchema = z.object({
+  type: z.literal("inherit"),
+});
+export type WarmupInheritAccountPolicy = z.infer<typeof WarmupInheritAccountPolicySchema>;
+
+export const WarmupOffAccountPolicySchema = z.object({
+  type: z.literal("off"),
+});
+export type WarmupOffAccountPolicy = z.infer<typeof WarmupOffAccountPolicySchema>;
+
+export const WarmupCustomAccountPolicySchema = z.object({
+  type: z.literal("custom"),
+  model: z.string().nullable().default(null),
+  idle_secs: z.number().int().min(1).max(86400),
+  min_interval_secs: z.number().int().min(1).max(604800),
+});
+export type WarmupCustomAccountPolicy = z.infer<typeof WarmupCustomAccountPolicySchema>;
+
+export const WarmupAccountPolicySchema = z.discriminatedUnion("type", [
+  WarmupInheritAccountPolicySchema,
+  WarmupOffAccountPolicySchema,
+  WarmupCustomAccountPolicySchema,
+]);
+export type WarmupAccountPolicy = z.infer<typeof WarmupAccountPolicySchema>;
+
+export const WarmupSettingsSchema = z.object({
+  providers: z.record(z.string(), WarmupProviderPolicySchema).default({}),
+  accounts: z.record(z.string(), WarmupAccountPolicySchema).default({}),
+});
+export type WarmupSettings = z.infer<typeof WarmupSettingsSchema>;
+
+export const WarmupResultSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  ok: z.boolean(),
+  status: z.number().int(),
+  latency_ms: z.number().int().nonnegative(),
+  probed_model: z.string().nullable().default(null),
+  stream_validated: z.boolean(),
+  detail: z.string().nullable().default(null),
+});
+export type WarmupResult = z.infer<typeof WarmupResultSchema>;
+
+export const WarmupAccountStatusSchema = z.object({
+  source: z.enum(["inherit", "custom", "off"]),
+  effective: WarmupProviderPolicySchema,
+  capability: z.enum(["supported", "unsupported"]),
+  available_models: z.array(z.string()).default([]),
+  last_result: WarmupResultSchema.nullable().default(null),
+  last_attempt_at: z.number().int().nullable().default(null),
+  next_due_at: z.number().int().nullable().default(null),
+  skip_reason: z.string().nullable().default(null),
+});
+export type WarmupAccountStatus = z.infer<typeof WarmupAccountStatusSchema>;
+
+export const WarmupStatusResponseSchema = z.object({
+  accounts: z.record(z.string(), WarmupAccountStatusSchema).default({}),
+});
+export type WarmupStatusResponse = z.infer<typeof WarmupStatusResponseSchema>;
