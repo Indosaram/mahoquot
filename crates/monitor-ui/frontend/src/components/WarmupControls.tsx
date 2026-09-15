@@ -33,11 +33,21 @@ export const WarmupDialog = ({ title, onClose, children, returnFocus, footer }: 
   useEffect(() => {
     const previous = returnFocus ?? document.activeElement;
     ref.current?.querySelector<HTMLElement>("button")?.focus();
-    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
   }, []);
   return <OverlayLayer className="history-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={ref} role="dialog" aria-modal="true" aria-label={title} className="warmup-dialog" onKeyDown={(event) => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
       if (event.key === "Tab") {
         const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')).filter((element) => !element.closest("fieldset:disabled"));
         const first = items[0], last = items.at(-1);

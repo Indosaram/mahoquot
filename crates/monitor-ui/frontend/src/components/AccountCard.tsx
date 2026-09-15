@@ -20,6 +20,7 @@ import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { Badge, Button, Card } from "./ui";
 import { type WarmupControlsState } from "./WarmupControls";
+import type { WarmupAccountStatus } from "../lib/schemas";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -33,6 +34,23 @@ export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }
   return (
     <Badge tone={tone}>
       {account.health === "auth_required" ? "auth required" : account.health.replace("_", " ")}
+    </Badge>
+  );
+};
+
+export const WarmupBadge = ({ status }: { readonly status: WarmupAccountStatus | undefined }) => {
+  if (!status?.window_active) return null;
+  const resetTimeStr = status.window_reset_at
+    ? new Date(status.window_reset_at * 1000).toLocaleTimeString()
+    : null;
+  const title = resetTimeStr
+    ? `Warmed: quota window active (resets at ${resetTimeStr})`
+    : "Warmed: quota window active";
+
+  return (
+    <Badge tone="ok" title={title}>
+      <Sparkles size={11} style={{ marginRight: 3, verticalAlign: "-1px" }} />
+      Warmed
     </Badge>
   );
 };
@@ -225,6 +243,11 @@ export const AccountCard = ({
   };
 
   const isDevin = account.provider === "devin";
+  const warmupStatus = account.runtimeId
+    ? warmup?.status?.accounts[account.runtimeId]
+    : account.id
+      ? warmup?.status?.accounts[account.id]
+      : undefined;
   const resolvedModels = devinModels ?? (isDevin ? account.models : undefined);
   const resolvedDiscoveryState =
     discoveryState ??
@@ -388,6 +411,7 @@ export const AccountCard = ({
             <div>
               <strong title={account.label}>{account.label}</strong>
               <HealthBadge account={account} />
+              <WarmupBadge status={warmupStatus} />
               <AccountResetCredits account={account} />
             </div>
             {detailRedundant ? null : <span title={detail}>{detail}</span>}

@@ -29,7 +29,9 @@ for (const width of [1280, 390]) {
       if (path === "/v0/management/warmup/settings") return route.fulfill({ json: { providers: { codex: provider }, accounts: { "codex-fixture": account } } });
       if (path === "/v0/management/warmup/status") return route.fulfill({ json: { accounts: { "codex-fixture": {
         source: account.type, effective: provider, capability: "supported", available_models: ["discovered/model", "discovered/other"],
-        last_result: manual ? result : null, last_attempt_at: manual ? 1726410100 : null, next_due_at: 1726417300, skip_reason: manual ? "empty_stream" : null,
+        last_result: manual ? result : null, last_attempt_at: manual ? 1726410100 : null, next_due_at: 1726417300,
+        window_active: manual ? true : false, window_reset_at: manual ? 1726417300 : null,
+        skip_reason: manual ? "window_active" : null,
       } } } });
       if (path === "/admin/accounts/codex-fixture/warmup") { manual = true; return route.fulfill({ json: result }); }
       if (path === "/admin/stats") return route.fulfill({ json: { uptime_secs: 3600, in_flight: 0, served: 12, failed_over: 0, refreshed: 1, accounts: [{ id: "codex-fixture", provider: "codex", health: { status: "available" }, ok: 12, fails: 0 }], history: [] } });
@@ -86,6 +88,10 @@ for (const width of [1280, 390]) {
     await expect(page.getByText(/Action failed: warm-up/)).toContainText("empty_stream");
     await expect(page.getByText(/Warm-up succeeded|active now/)).toHaveCount(0);
     await expect(page.locator(".warmup-status")).toContainText("empty_stream");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByText("Warmed")).toBeVisible();
+    await page.getByRole("button", { name: "Warm settings for fixture", exact: true }).click();
     await form.getByLabel("Warmup mode").selectOption("custom");
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", width);
     const bounds = await page.getByRole("dialog").boundingBox();

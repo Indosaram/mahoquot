@@ -736,4 +736,42 @@ describe("AccountsSurface component", () => {
       expect(expired).toBe(true);
     });
   });
+
+  it("renders Warmed badge on account card when quota window is active", () => {
+    const props = createProps();
+    const warmup = {
+      selection: null,
+      onOpen: vi.fn(),
+      onClose: vi.fn(),
+      returnFocus: null,
+      settings: null,
+      status: {
+        accounts: {
+          "codex-1": {
+            source: "inherit" as const,
+            effective: { enabled: true, idle_secs: 3600, min_interval_secs: 300, model: null },
+            capability: "supported" as const,
+            available_models: ["gpt-5.6-sol"],
+            last_result: null,
+            last_attempt_at: null,
+            next_due_at: 1789866076,
+            window_active: true,
+            window_reset_at: 1789866076,
+            skip_reason: "window_active",
+          },
+        },
+      },
+      error: "",
+      pending: false,
+      onProviderChange: vi.fn(),
+      onAccountChange: vi.fn(),
+      onSaveProvider: vi.fn(),
+      onSaveAccount: vi.fn(),
+      onReload: vi.fn(),
+    };
+    render(<AccountsSurface {...props} warmup={warmup} />);
+    const badge = screen.getByText("Warmed");
+    expect(badge).toBeInTheDocument();
+    expect(badge.closest(".badge")).toHaveClass("badge-ok");
+  });
 });
