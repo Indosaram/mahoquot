@@ -96,6 +96,8 @@ pub struct QuotaGroup {
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct QuotaBucket {
     #[serde(default, deserialize_with = "null_as_default")]
+    pub bucket_id: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
     pub display_name: Option<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub window: Option<String>,
@@ -209,6 +211,64 @@ fn resolve_cooldown_deadline(
         .filter(|&v| v > 0)
 }
 
+fn cline_glm_cooldown_deadline(usage: &Usage, now_unix_ms: i64) -> Option<(i64, i64, bool)> {
+    let now_secs = now_unix_ms / 1000;
+    let group = usage.groups.iter().find(|g| {
+        g.display_name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Cline Free Limits"))
+    })?;
+
+    let mut expired_match = None;
+    for bucket in &group.buckets {
+        let is_glm = if let Some(id) = bucket.bucket_id.as_deref().filter(|s| !s.is_empty()) {
+            id.to_ascii_lowercase().contains("glm")
+        } else {
+            bucket
+                .display_name
+                .as_deref()
+                .is_some_and(|name| name.to_ascii_lowercase().contains("glm"))
+                || bucket
+                    .window
+                    .as_deref()
+                    .is_some_and(|w| w.to_ascii_lowercase().contains("glm"))
+        };
+        if !is_glm {
+            continue;
+        }
+        if bucket.used_percent.is_none_or(|p| p < 100.0) {
+            continue;
+        }
+        if let Some(at) = bucket.reset_at_unix.filter(|&v| v > 0) {
+            let active = at > now_secs;
+            let until_ms = at * 1000;
+            let remaining_secs = (at - now_secs).max(0);
+            if active {
+                return Some((until_ms, remaining_secs, true));
+            }
+            if expired_match.is_none() {
+                expired_match = Some((until_ms, remaining_secs, false));
+            }
+        } else if let Some((after, obs)) = bucket
+            .reset_after_seconds
+            .filter(|&v| v > 0)
+            .zip(usage.observed_at_unix)
+        {
+            let deadline_secs = obs + after;
+            let active = deadline_secs > now_secs;
+            let until_ms = deadline_secs * 1000;
+            let remaining_secs = (deadline_secs - now_secs).max(0);
+            if active {
+                return Some((until_ms, remaining_secs, true));
+            }
+            if expired_match.is_none() {
+                expired_match = Some((until_ms, remaining_secs, false));
+            }
+        }
+    }
+    expired_match
+}
+
 fn status_of(
     health: &serde_json::Value,
     reset_at_unix_ms: Option<i64>,
@@ -281,68 +341,128 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
     let accounts: Vec<AccountView> = stats
         .accounts
         .iter()
-        .map(|a| AccountView {
-            id: a.id.clone(),
-            provider: if a.provider.is_empty() {
-                "unknown".to_string()
+        .map(|a| {
+            let is_cline = a.provider.eq_ignore_ascii_case("cline");
+            let has_cline_free_group = is_cline
+                && a.usage.groups.iter().any(|g| {
+                    g.display_name
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("Cline Free Limits"))
+                });
+
+            let (status, cooldown_remaining_secs) = if is_cline && has_cline_free_group {
+                let raw_status = a
+                    .health
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_else(|| a.health.as_str().unwrap_or("unknown"));
+
+                let raw_lower = raw_status.to_ascii_lowercase();
+
+                if raw_lower.contains("disabled") {
+                    ("disabled".to_string(), None)
+                } else if raw_lower.contains("auth")
+                    || raw_lower.contains("login")
+                    || raw_lower.contains("token")
+                    || a.last_error.as_ref().is_some_and(|e| {
+                        e.status == 401
+                            || {
+                                let m = e.message.to_ascii_lowercase();
+                                m.contains("unauthenticated")
+                                    || m.contains("auth")
+                                    || m.contains("invalid token")
+                                    || m.contains("re-auth")
+                                    || m.contains("reauth")
+                            }
+                    })
+                {
+                    ("error".to_string(), None)
+                } else if raw_lower.contains("error")
+                    || raw_lower.contains("fail")
+                    || raw_lower.contains("bad")
+                    || raw_lower.eq_ignore_ascii_case("unavailable")
+                {
+                    (raw_status.to_string(), None)
+                } else if let Some((_until_ms, remaining_secs, active)) =
+                    cline_glm_cooldown_deadline(&a.usage, now_unix_ms)
+                {
+                    if active {
+                        ("cooldown".to_string(), Some(remaining_secs))
+                    } else {
+                        ("available".to_string(), Some(0))
+                    }
+                } else {
+                    ("available".to_string(), None)
+                }
             } else {
-                a.provider.clone()
-            },
-            status: status_of(&a.health, a.reset_at_unix_ms, now_unix_ms),
-            ok: a.ok,
-            fails: a.fails,
-            failure_rate: rate(a.fails, a.ok),
-            usage_known: a.usage.observed_at_unix.is_some(),
-            plan_type: a.usage.plan_type.clone(),
-            credits_balance: a.usage.credits_balance,
-            credits_unlimited: a.usage.credits_unlimited,
-            reset_credits_available: a.usage.reset_credits_available,
-            reset_credits: a.usage.reset_credits.clone(),
-            can_reset: a.usage.reset_credits_available.unwrap_or(0) > 0,
-            primary: window_view(
-                &a.usage.primary,
-                a.usage.observed_at_unix,
-                now_unix_ms / 1000,
-            ),
-            secondary: window_view(
-                &a.usage.secondary,
-                a.usage.observed_at_unix,
-                now_unix_ms / 1000,
-            ),
-            groups: a
-                .usage
-                .groups
-                .iter()
-                .map(|group| GroupView {
-                    name: group.display_name.clone(),
-                    models: group.models.clone(),
-                    buckets: group
-                        .buckets
-                        .iter()
-                        .map(|bucket| BucketView {
-                            name: bucket.display_name.clone(),
-                            window: bucket.window.clone(),
-                            used_percent: bucket.used_percent,
-                            reset_in_secs: reset_countdown(
-                                bucket.reset_at_unix,
-                                bucket.reset_after_seconds,
-                                a.usage.observed_at_unix,
-                                now_unix_ms / 1000,
-                            ),
-                        })
-                        .collect(),
-                })
-                .collect(),
-            p50_ms: a.ttft.p50_ms,
-            p99_ms: a.ttft.p99_ms,
-            samples: a.ttft.samples,
-            cooldown_remaining_secs: resolve_cooldown_deadline(&a.health, a.reset_at_unix_ms)
-                .map(|until| ((until - now_unix_ms).max(0)) / 1000),
-            last_error: a
-                .last_error
-                .as_ref()
-                .filter(|e| !e.message.is_empty())
-                .map(|e| format!("{} {}", e.status, e.message)),
+                let st = status_of(&a.health, a.reset_at_unix_ms, now_unix_ms);
+                let cd = resolve_cooldown_deadline(&a.health, a.reset_at_unix_ms)
+                    .map(|until| ((until - now_unix_ms).max(0)) / 1000);
+                (st, cd)
+            };
+
+            AccountView {
+                id: a.id.clone(),
+                provider: if a.provider.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    a.provider.clone()
+                },
+                status,
+                ok: a.ok,
+                fails: a.fails,
+                failure_rate: rate(a.fails, a.ok),
+                usage_known: a.usage.observed_at_unix.is_some(),
+                plan_type: a.usage.plan_type.clone(),
+                credits_balance: a.usage.credits_balance,
+                credits_unlimited: a.usage.credits_unlimited,
+                reset_credits_available: a.usage.reset_credits_available,
+                reset_credits: a.usage.reset_credits.clone(),
+                can_reset: a.usage.reset_credits_available.unwrap_or(0) > 0,
+                primary: window_view(
+                    &a.usage.primary,
+                    a.usage.observed_at_unix,
+                    now_unix_ms / 1000,
+                ),
+                secondary: window_view(
+                    &a.usage.secondary,
+                    a.usage.observed_at_unix,
+                    now_unix_ms / 1000,
+                ),
+                groups: a
+                    .usage
+                    .groups
+                    .iter()
+                    .map(|group| GroupView {
+                        name: group.display_name.clone(),
+                        models: group.models.clone(),
+                        buckets: group
+                            .buckets
+                            .iter()
+                            .map(|bucket| BucketView {
+                                name: bucket.display_name.clone().or_else(|| bucket.bucket_id.clone()),
+                                window: bucket.window.clone(),
+                                used_percent: bucket.used_percent,
+                                reset_in_secs: reset_countdown(
+                                    bucket.reset_at_unix,
+                                    bucket.reset_after_seconds,
+                                    a.usage.observed_at_unix,
+                                    now_unix_ms / 1000,
+                                ),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                p50_ms: a.ttft.p50_ms,
+                p99_ms: a.ttft.p99_ms,
+                samples: a.ttft.samples,
+                cooldown_remaining_secs,
+                last_error: a
+                    .last_error
+                    .as_ref()
+                    .filter(|e| !e.message.is_empty())
+                    .map(|e| format!("{} {}", e.status, e.message)),
+            }
         })
         .collect();
 
@@ -663,7 +783,9 @@ mod tests {
         assert_eq!(before.accounts[0].cooldown_remaining_secs, Some(0));
         assert_eq!(before.accounts[1].status, "cooldown");
         assert!(before.degraded.contains(&"expiring@x.io".to_string()));
-        assert!(before.degraded.contains(&"wire-health-expiring@x.io".to_string()));
+        assert!(before
+            .degraded
+            .contains(&"wire-health-expiring@x.io".to_string()));
 
         // Exact deadline boundary (now == deadline): normalized to available, not degraded.
         let exact = build_view(&s, 10_000);
@@ -671,7 +793,9 @@ mod tests {
         assert_eq!(exact.accounts[0].cooldown_remaining_secs, Some(0));
         assert_eq!(exact.accounts[1].status, "available");
         assert!(!exact.degraded.contains(&"expiring@x.io".to_string()));
-        assert!(!exact.degraded.contains(&"wire-health-expiring@x.io".to_string()));
+        assert!(!exact
+            .degraded
+            .contains(&"wire-health-expiring@x.io".to_string()));
 
         // 1 ms after deadline: available, not degraded.
         let after = build_view(&s, 10_001);
@@ -679,7 +803,9 @@ mod tests {
         assert_eq!(after.accounts[0].cooldown_remaining_secs, Some(0));
         assert_eq!(after.accounts[1].status, "available");
         assert!(!after.degraded.contains(&"expiring@x.io".to_string()));
-        assert!(!after.degraded.contains(&"wire-health-expiring@x.io".to_string()));
+        assert!(!after
+            .degraded
+            .contains(&"wire-health-expiring@x.io".to_string()));
     }
 
     #[test]
@@ -799,8 +925,236 @@ mod tests {
         assert_eq!(ag.groups.len(), 1);
         assert_eq!(ag.groups[0].name.as_deref(), Some("Claude Model Family"));
         assert_eq!(ag.groups[0].models.as_deref(), Some("claude-sonnet-3-5"));
-        assert_eq!(ag.groups[0].buckets[0].name.as_deref(), Some("Claude 3.5 Sonnet"));
+        assert_eq!(
+            ag.groups[0].buckets[0].name.as_deref(),
+            Some("Claude 3.5 Sonnet")
+        );
         assert_eq!(ag.groups[0].buckets[0].used_percent, Some(80.0));
         assert_eq!(ag.groups[0].buckets[0].reset_in_secs, Some(8994)); // 9000 - 6
+    }
+
+    #[test]
+    fn cline_health_derives_strictly_from_glm_free_quota_not_other_models() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [
+                {
+                    "id": "cline-live@example.com",
+                    "provider": "cline",
+                    "health": {"status": "available"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": null,
+                    "usage": {
+                        "groups": [{
+                            "display_name": "Cline Free Limits",
+                            "buckets": [{
+                                "display_name": "z-ai/glm-5.3-flash",
+                                "used_percent": 100.0,
+                                "reset_at_unix": 2000
+                            }]
+                        }]
+                    }
+                },
+                {
+                    "id": "cline-other-model@example.com",
+                    "provider": "cline",
+                    "health": {"status": "cooldown"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": 3000,
+                    "usage": {
+                        "groups": [{
+                            "display_name": "Cline Free Limits",
+                            "buckets": [
+                                {
+                                    "display_name": "z-ai/glm-5.3-flash",
+                                    "used_percent": 20.0,
+                                    "reset_at_unix": 2000
+                                },
+                                {
+                                    "display_name": "moonshot/kimi-k3",
+                                    "used_percent": 100.0,
+                                    "reset_at_unix": 3000
+                                }
+                            ]
+                        }]
+                    }
+                }
+            ]
+        }))
+        .expect("parse cline test stats");
+
+        let v = build_view(&s, 1000 * 1000); // now is 1000s
+
+        // 1. Active exhausted GLM quota -> cooldown with actual deadline (2000 - 1000 = 1000s)
+        let live = &v.accounts[0];
+        assert_eq!(live.status, "cooldown");
+        assert_eq!(live.cooldown_remaining_secs, Some(1000));
+        assert!(v.degraded.contains(&"cline-live@example.com".to_string()));
+
+        // 2. Kimi is exhausted, but GLM is not -> healthy ("available"), not in degraded
+        let other = &v.accounts[1];
+        assert_eq!(other.status, "available");
+        assert_eq!(other.cooldown_remaining_secs, None);
+        assert!(!v
+            .degraded
+            .contains(&"cline-other-model@example.com".to_string()));
+    }
+
+    #[test]
+    fn cline_glm_relative_reset_anchors_to_observed_at_unix_and_expires_beyond_deadline() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [{
+                "id": "cline-rel@example.com",
+                "provider": "cline",
+                "health": {"status": "available"},
+                "ok": 10,
+                "fails": 0,
+                "usage": {
+                    "observed_at_unix": 1000,
+                    "groups": [{
+                        "display_name": "Cline Free Limits",
+                        "buckets": [{
+                            "display_name": "z-ai/glm-5.3-flash",
+                            "used_percent": 100.0,
+                            "reset_after_seconds": 300
+                        }]
+                    }]
+                }
+            }]
+        }))
+        .expect("parse stats");
+
+        // Deadline is 1000 + 300 = 1300s.
+        // Before deadline at now = 1200s (1200_000 ms): active cooldown, 100s remaining
+        let before = build_view(&s, 1200 * 1000);
+        assert_eq!(before.accounts[0].status, "cooldown");
+        assert_eq!(before.accounts[0].cooldown_remaining_secs, Some(100));
+
+        // Advance now to 1400s (1400_000 ms) > fixed deadline 1300s: expired!
+        let after = build_view(&s, 1400 * 1000);
+        assert_eq!(after.accounts[0].status, "available");
+        assert_eq!(after.accounts[0].cooldown_remaining_secs, Some(0));
+    }
+
+    #[test]
+    fn cline_glm_recognizes_stable_bucket_id_in_id_only_fixture() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [{
+                "id": "cline-id-only@example.com",
+                "provider": "cline",
+                "health": {"status": "available"},
+                "ok": 10,
+                "fails": 0,
+                "usage": {
+                    "groups": [{
+                        "display_name": "Cline Free Limits",
+                        "buckets": [{
+                            "bucket_id": "z-ai/glm-5.3-flash",
+                            "used_percent": 100.0,
+                            "reset_at_unix": 2000
+                        }]
+                    }]
+                }
+            }]
+        }))
+        .expect("parse stats");
+
+        let v = build_view(&s, 1000 * 1000);
+        assert_eq!(v.accounts[0].status, "cooldown");
+        assert_eq!(v.accounts[0].cooldown_remaining_secs, Some(1000));
+    }
+
+    #[test]
+    fn cline_error_and_auth_precedence_over_active_exhausted_glm() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [
+                {
+                    "id": "cline-err@example.com",
+                    "provider": "cline",
+                    "health": {"status": "error"},
+                    "ok": 0,
+                    "fails": 5,
+                    "last_error": {"unix_ms": 1000, "status": 500, "message": "server error"},
+                    "usage": {
+                        "groups": [{
+                            "display_name": "Cline Free Limits",
+                            "buckets": [{
+                                "display_name": "z-ai/glm-5.3-flash",
+                                "used_percent": 100.0,
+                                "reset_at_unix": 2000
+                            }]
+                        }]
+                    }
+                },
+                {
+                    "id": "cline-auth@example.com",
+                    "provider": "cline",
+                    "health": {"status": "available"},
+                    "ok": 0,
+                    "fails": 1,
+                    "last_error": {"unix_ms": 1000, "status": 401, "message": "unauthenticated"},
+                    "usage": {
+                        "groups": [{
+                            "display_name": "Cline Free Limits",
+                            "buckets": [{
+                                "display_name": "z-ai/glm-5.3-flash",
+                                "used_percent": 100.0,
+                                "reset_at_unix": 2000
+                            }]
+                        }]
+                    }
+                },
+                {
+                    "id": "cline-dis@example.com",
+                    "provider": "cline",
+                    "health": {"status": "disabled"},
+                    "ok": 0,
+                    "fails": 0,
+                    "usage": {
+                        "groups": [{
+                            "display_name": "Cline Free Limits",
+                            "buckets": [{
+                                "display_name": "z-ai/glm-5.3-flash",
+                                "used_percent": 100.0,
+                                "reset_at_unix": 2000
+                            }]
+                        }]
+                    }
+                }
+            ]
+        }))
+        .expect("parse stats");
+
+        let v = build_view(&s, 1000 * 1000);
+        assert_eq!(v.accounts[0].status, "error");
+        assert_eq!(v.accounts[0].cooldown_remaining_secs, None);
+
+        assert_eq!(v.accounts[1].status, "error");
+        assert_eq!(v.accounts[1].cooldown_remaining_secs, None);
+
+        assert_eq!(v.accounts[2].status, "disabled");
+        assert_eq!(v.accounts[2].cooldown_remaining_secs, None);
+    }
+
+    #[test]
+    fn non_cline_raw_error_with_future_deadline_preserves_cooldown_semantics() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [{
+                "id": "codex-err-cooldown@example.com",
+                "provider": "codex",
+                "health": {"status": "cooldown"},
+                "ok": 10,
+                "fails": 1,
+                "reset_at_unix_ms": 2000 * 1000,
+                "last_error": {"unix_ms": 1000, "status": 500, "message": "server error"},
+            }]
+        }))
+        .expect("parse stats");
+
+        let v = build_view(&s, 1000 * 1000);
+        assert_eq!(v.accounts[0].status, "cooldown");
+        assert_eq!(v.accounts[0].cooldown_remaining_secs, Some(1000));
+        assert!(v.degraded.contains(&"codex-err-cooldown@example.com".to_string()));
     }
 }

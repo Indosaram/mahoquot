@@ -1,6 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AccountsSurface, type AccountsSurfaceProps, quotaRows } from "../components/AccountsSurface";
+import {
+  AccountsSurface,
+  type AccountsSurfaceProps,
+  isClineInferredQuotaExpired,
+  quotaRows,
+} from "../components/AccountsSurface";
 import type { NormalizedAccount } from "../lib/accounts";
 
 const mockAccount: NormalizedAccount = {
@@ -604,6 +609,131 @@ describe("AccountsSurface component", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]?.name).toBe("z-ai/glm-5.3-flash (Daily limit)");
       expect(rows[0]?.usedPercent).toBe(100);
+    });
+
+    it("displays cooldown badge when GLM free quota is exhausted and healthy when only non-GLM models are exhausted", () => {
+      const glmExhaustedCline: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-glm-exhausted@example.com",
+        provider: "cline",
+        label: "cline-glm-exhausted@example.com",
+        health: "cooldown",
+        cooldownUntilUnixMs: (nowUnix + 1800) * 1000,
+        cooldownRemainingSecs: 1800,
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix + 1800,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const { rerender } = render(
+        <AccountsSurface
+          {...createProps({
+            accounts: [glmExhaustedCline],
+            visibleAccounts: [glmExhaustedCline],
+            providers: ["cline"],
+            selectedProvider: "cline",
+          })}
+        />,
+      );
+
+      expect(screen.getByText("cooldown")).toBeInTheDocument();
+
+      const nonGlmExhaustedCline: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-kimi-exhausted@example.com",
+        provider: "cline",
+        label: "cline-kimi-exhausted@example.com",
+        health: "healthy",
+        cooldownUntilUnixMs: null,
+        cooldownRemainingSecs: null,
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: 10,
+                  reset_at_unix: nowUnix + 1800,
+                },
+                {
+                  display_name: "moonshot/kimi-k3 (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix + 3600,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      rerender(
+        <AccountsSurface
+          {...createProps({
+            accounts: [nonGlmExhaustedCline],
+            visibleAccounts: [nonGlmExhaustedCline],
+            providers: ["cline"],
+            selectedProvider: "cline",
+          })}
+        />,
+      );
+
+      expect(screen.getByText("healthy")).toBeInTheDocument();
+      expect(screen.queryByText("cooldown")).not.toBeInTheDocument();
+    });
+
+    it("renders id-only bucket fixture using bucket_id label and honors observed_at_unix relative expiry", () => {
+      const idOnlyCline: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-id-only@example.com",
+        provider: "cline",
+        label: "cline-id-only@example.com",
+        health: "cooldown",
+        usage: {
+          observed_at_unix: nowUnix,
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              buckets: [
+                {
+                  bucket_id: "z-ai/glm-5.3-flash",
+                  used_percent: 100,
+                  reset_after_seconds: 600,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      // Before expiry: row is preserved and labeled with bucket_id
+      const activeRows = quotaRows(idOnlyCline);
+      expect(activeRows).toHaveLength(1);
+      expect(activeRows[0]?.name).toBe("z-ai/glm-5.3-flash");
+      expect(activeRows[0]?.usedPercent).toBe(100);
+
+      // Advance nowMs beyond observed_at_unix + reset_after_seconds (nowUnix + 600)
+      const expired = isClineInferredQuotaExpired(
+        idOnlyCline,
+        "Cline Free Limits",
+        undefined,
+        600,
+        (nowUnix + 700) * 1000,
+      );
+      expect(expired).toBe(true);
     });
   });
 });

@@ -3,6 +3,7 @@ import {
   type NormalizedAccount,
   deriveAccountHealth,
   formatResetTime,
+  getClineGlmQuotaDeadline,
   getQuotaCapability,
   mergeAccountsAndCredentials,
 } from "../lib/accounts";
@@ -441,5 +442,368 @@ describe("Account Normalization and Quota Capability", () => {
     expect(futureAcc?.health).toBe("cooldown");
     expect(futureAcc?.cooldownRemainingSecs).toBeGreaterThan(0);
     expect(futureAcc?.cooldownUntilUnixMs).toBe(now + 300_000);
+  });
+
+  describe("Cline GLM free quota health derivation regression", () => {
+    const now = Date.now();
+    const nowSecs = Math.floor(now / 1000);
+
+    it("derives cooldown with actual deadline from active exhausted GLM free quota even when API health is available", () => {
+      // Live reported issue: API health available, usage.groups Cline Free Limits bucket z-ai/glm-5.3-flash used_percent 100 with future reset -> Cooldown
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-live@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      const acc = merged[0] as NormalizedAccount;
+
+      expect(acc.health).toBe("cooldown");
+      expect(acc.cooldownUntilUnixMs).toBe((nowSecs + 3600) * 1000);
+      expect(acc.cooldownRemainingSecs).toBeGreaterThanOrEqual(3590);
+      expect(acc.cooldownRemainingSecs).toBeLessThanOrEqual(3600);
+    });
+
+    it("derives healthy when other registered models are exhausted but GLM is not exhausted", () => {
+      // User explicitly directs: only GLM free quota determines Healthy vs cooldown; not other registered models
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-other-exhausted@example.com",
+          provider: "cline",
+          health: { status: "cooldown" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: now + 1800_000,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash",
+                    used_percent: 20,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                  {
+                    display_name: "moonshot/kimi-k3",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs + 1800,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      const acc = merged[0] as NormalizedAccount;
+
+      expect(acc.health).toBe("healthy");
+      expect(acc.cooldownRemainingSecs).toBeNull();
+    });
+
+    it("normalizes expired inferred GLM quota to healthy and not exhausted", () => {
+      // Expired inferred quota => unknown, not fabricated zero; unknown must not imply exhausted
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-glm-expired@example.com",
+          provider: "cline",
+          health: { status: "cooldown" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: now - 30_000,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs - 300,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      const acc = merged[0] as NormalizedAccount;
+
+      expect(acc.health).toBe("healthy");
+      expect(acc.cooldownRemainingSecs).toBe(0);
+    });
+
+    it("treats unknown GLM quota without deadline as healthy not exhausted", () => {
+      // Unknown quota must not imply exhausted
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-no-deadline@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    used_percent: 100,
+                    reset_at_unix: null,
+                    reset_after_seconds: null,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      const acc = merged[0] as NormalizedAccount;
+
+      expect(acc.health).toBe("healthy");
+      expect(acc.cooldownUntilUnixMs).toBeNull();
+      expect(acc.cooldownRemainingSecs).toBeNull();
+    });
+
+    it("preserves disabled status and auth error even when GLM quota is exhausted", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-disabled@example.com",
+          provider: "cline",
+          health: { status: "disabled" },
+          ok: 0,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          id: "cline-auth-err@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 0,
+          fails: 1,
+          reset_at_unix_ms: null,
+          last_error: { unix_ms: now, status: 401, message: "unauthenticated" },
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      expect(merged[0]?.health).toBe("disabled");
+      expect(merged[1]?.health).toBe("auth_required");
+    });
+
+    it("anchors relative reset_after_seconds to observed_at_unix and expires when advancing now beyond fixed deadline", () => {
+      // Fixed deadline = observed_at_unix (1000) + reset_after_seconds (300) = 1300s
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-relative@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            observed_at_unix: 1000,
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "z-ai/glm-5.3-flash",
+                    used_percent: 100,
+                    reset_after_seconds: 300,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      // 1. Before fixed deadline: at now = 1200s (< 1300s) -> active cooldown
+      const beforeDeadline = getClineGlmQuotaDeadline(stats[0]?.usage, 1200 * 1000);
+      expect(beforeDeadline).toEqual({
+        untilUnixMs: 1300 * 1000,
+        remainingSecs: 100,
+        active: true,
+      });
+
+      // 2. Beyond fixed deadline: advancing now to 1400s (> 1300s) -> expired, not renewing cooldown
+      const afterDeadline = getClineGlmQuotaDeadline(stats[0]?.usage, 1400 * 1000);
+      expect(afterDeadline).toEqual({
+        untilUnixMs: 1300 * 1000,
+        remainingSecs: 0,
+        active: false,
+      });
+    });
+
+    it("recognizes GLM identity from stable bucket_id in id-only actual bucket fixture", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-id-only@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    bucket_id: "z-ai/glm-5.3-flash",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs + 1800,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const deadline = getClineGlmQuotaDeadline(stats[0]?.usage, now);
+      expect(deadline).not.toBeNull();
+      expect(deadline?.active).toBe(true);
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      expect(merged[0]?.health).toBe("cooldown");
+    });
+
+    it("ensures error health status takes precedence over active exhausted GLM", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-error@example.com",
+          provider: "cline",
+          health: { status: "error" },
+          ok: 5,
+          fails: 5,
+          reset_at_unix_ms: null,
+          last_error: { unix_ms: now, status: 500, message: "Internal server error" },
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    bucket_id: "z-ai/glm-5.3-flash",
+                    used_percent: 100,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      expect(merged[0]?.health).toBe("error");
+      expect(merged[0]?.cooldownRemainingSecs).toBeNull();
+    });
+
+    it("preserves prior cooldown for non-Cline accounts with raw error and future reset deadline", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "codex-error-cooldown@example.com",
+          provider: "codex",
+          health: { status: "error" },
+          ok: 10,
+          fails: 1,
+          reset_at_unix_ms: now + 600_000,
+          last_error: { unix_ms: now, status: 500, message: "upstream service error" },
+          ttft: null,
+          usage: null,
+        },
+      ];
+
+      const derived = deriveAccountHealth(
+        stats[0]?.health,
+        stats[0]?.reset_at_unix_ms,
+        stats[0]?.ok ?? 0,
+        stats[0]?.fails ?? 0,
+        stats[0]?.provider,
+        stats[0]?.usage,
+        now,
+      );
+      expect(derived).toBe("cooldown");
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      expect(merged[0]?.health).toBe("cooldown");
+      expect(merged[0]?.cooldownRemainingSecs).toBeGreaterThan(0);
+      expect(merged[0]?.cooldownUntilUnixMs).toBe(now + 600_000);
+    });
   });
 });

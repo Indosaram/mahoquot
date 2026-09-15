@@ -63,6 +63,9 @@ export const isClineInferredQuotaExpired = (
     return resetAtUnix <= nowSecs;
   }
   if (typeof resetAfterSeconds === "number") {
+    if (typeof account.usage?.observed_at_unix === "number") {
+      return account.usage.observed_at_unix + resetAfterSeconds <= nowSecs;
+    }
     return resetAfterSeconds <= 0;
   }
 
@@ -89,7 +92,11 @@ export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
         return [
           {
             name: windowLabel(
-              bucket.display_name || group.display_name || group.models || `Quota ${index + 1}`,
+              bucket.display_name ||
+                bucket.bucket_id ||
+                group.display_name ||
+                group.models ||
+                `Quota ${index + 1}`,
             ),
             group: group.display_name || group.models || null,
             usedPercent: bucket.used_percent,

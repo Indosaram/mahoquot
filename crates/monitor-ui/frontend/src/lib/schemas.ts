@@ -71,6 +71,7 @@ export const LastErrorSchema = z.object({
 export type LastError = z.infer<typeof LastErrorSchema>;
 
 export const QuotaBucketSchema = z.object({
+  bucket_id: z.string().nullable().optional(),
   display_name: z.string().optional(),
   window: z.string().nullable().optional(),
   used_percent: z.number().nullable().optional(),

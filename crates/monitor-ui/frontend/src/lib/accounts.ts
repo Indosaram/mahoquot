@@ -137,11 +137,79 @@ export const getQuotaCapability = (
   return "unsupported";
 };
 
+export interface ClineGlmQuotaDeadline {
+  readonly untilUnixMs: number;
+  readonly remainingSecs: number;
+  readonly active: boolean;
+}
+
+export const getClineGlmQuotaDeadline = (
+  usage: Usage | null | undefined,
+  nowMs = Date.now(),
+): ClineGlmQuotaDeadline | null => {
+  if (!usage?.groups) return null;
+  const clineGroup = usage.groups.find(
+    (g) =>
+      g.display_name === "Cline Free Limits" ||
+      g.display_name?.toLowerCase() === "cline free limits",
+  );
+  if (!clineGroup) return null;
+
+  const glmBuckets = clineGroup.buckets.filter((b) => {
+    if (b.bucket_id) {
+      return /glm/i.test(b.bucket_id);
+    }
+    return (
+      (typeof b.display_name === "string" && /glm/i.test(b.display_name)) ||
+      (typeof b.window === "string" && /glm/i.test(b.window))
+    );
+  });
+  if (glmBuckets.length === 0) return null;
+
+  const nowSecs = Math.floor(nowMs / 1000);
+  let expiredMatch: ClineGlmQuotaDeadline | null = null;
+
+  for (const bucket of glmBuckets) {
+    if (typeof bucket.used_percent !== "number" || bucket.used_percent < 100) {
+      continue;
+    }
+    if (typeof bucket.reset_at_unix === "number" && bucket.reset_at_unix > 0) {
+      const active = bucket.reset_at_unix > nowSecs;
+      const deadline: ClineGlmQuotaDeadline = {
+        untilUnixMs: bucket.reset_at_unix * 1000,
+        remainingSecs: Math.max(0, bucket.reset_at_unix - nowSecs),
+        active,
+      };
+      if (active) return deadline;
+      expiredMatch ??= deadline;
+    } else if (
+      typeof bucket.reset_after_seconds === "number" &&
+      bucket.reset_after_seconds > 0 &&
+      typeof usage.observed_at_unix === "number"
+    ) {
+      const deadlineSecs = usage.observed_at_unix + bucket.reset_after_seconds;
+      const active = deadlineSecs > nowSecs;
+      const deadline: ClineGlmQuotaDeadline = {
+        untilUnixMs: deadlineSecs * 1000,
+        remainingSecs: Math.max(0, deadlineSecs - nowSecs),
+        active,
+      };
+      if (active) return deadline;
+      expiredMatch ??= deadline;
+    }
+  }
+
+  return expiredMatch;
+};
+
 export const deriveAccountHealth = (
   healthRaw: unknown,
   resetAtUnixMs: number | null | undefined,
   ok: number,
   fails: number,
+  provider?: string,
+  usage?: Usage | null,
+  nowMs = Date.now(),
 ): AccountHealth => {
   const statusStr =
     typeof healthRaw === "string"
@@ -154,7 +222,6 @@ export const deriveAccountHealth = (
           ).toLowerCase()
         : "unknown";
 
-  const now = Date.now();
   if (statusStr.includes("disabled")) {
     return "disabled";
   }
@@ -163,10 +230,46 @@ export const deriveAccountHealth = (
     statusStr.includes("unauthenticated") ||
     statusStr.includes("unauth") ||
     statusStr.includes("token_expired") ||
-    statusStr.includes("reauth")
+    statusStr.includes("reauth") ||
+    statusStr.includes("login") ||
+    statusStr.includes("token")
   ) {
     return "auth_required";
   }
+
+  const isCline = providerOf(provider || "") === "cline";
+  const hasClineFreeGroup =
+    isCline &&
+    usage?.groups?.some(
+      (g) =>
+        g.display_name === "Cline Free Limits" ||
+        g.display_name?.toLowerCase() === "cline free limits",
+    );
+
+  if (isCline && hasClineFreeGroup) {
+    if (
+      statusStr.includes("fail") ||
+      statusStr.includes("error") ||
+      statusStr.includes("bad") ||
+      statusStr === "unavailable"
+    ) {
+      return "error";
+    }
+    const glmDeadline = getClineGlmQuotaDeadline(usage, nowMs);
+    if (glmDeadline?.active) {
+      return "cooldown";
+    }
+    const total = ok + fails;
+    if (total >= 2 && fails / total > 0.5) {
+      return "degraded";
+    }
+    if (statusStr.includes("degraded") || statusStr.includes("warn")) {
+      return "degraded";
+    }
+    return "healthy";
+  }
+
+  const now = nowMs;
   if (resetAtUnixMs && resetAtUnixMs > now) {
     return "cooldown";
   }
@@ -179,7 +282,12 @@ export const deriveAccountHealth = (
   if (statusStr.includes("cooldown")) {
     return "cooldown";
   }
-  if (statusStr.includes("fail") || statusStr.includes("error") || statusStr.includes("bad")) {
+  if (
+    statusStr.includes("fail") ||
+    statusStr.includes("error") ||
+    statusStr.includes("bad") ||
+    statusStr === "unavailable"
+  ) {
     return "error";
   }
   const total = ok + fails;
@@ -412,22 +520,95 @@ export const mergeAccountsAndCredentials = (
         r.id
       : null;
 
-    const isAccountDisabled =
-      (cred?.disabled ?? false) ||
-      (typeof r.health === "object" && (r.health as { status?: string }).status === "disabled") ||
-      r.health === "disabled";
+    const statusStr =
+      typeof r.health === "string"
+        ? r.health.toLowerCase()
+        : r.health && typeof r.health === "object"
+          ? String(
+              (r.health as Record<string, unknown>).status ??
+                Object.values(r.health as Record<string, unknown>)[0] ??
+                "unknown",
+            ).toLowerCase()
+          : "unknown";
+
+    const isAccountDisabled = (cred?.disabled ?? false) || statusStr.includes("disabled");
+
     const hasAuthError =
+      statusStr.includes("auth") ||
+      statusStr.includes("unauthenticated") ||
+      statusStr.includes("unauth") ||
+      statusStr.includes("token_expired") ||
+      statusStr.includes("reauth") ||
+      statusStr.includes("login") ||
+      statusStr.includes("token") ||
       r.last_error?.status === 401 ||
       (r.last_error?.message &&
         /unauthenticated|auth.*required|invalid.*token|re-?auth/i.test(r.last_error.message));
-    const health = isAccountDisabled
-      ? "disabled"
-      : hasAuthError
-        ? "auth_required"
-        : deriveAccountHealth(r.health, r.reset_at_unix_ms, r.ok, r.fails);
-    const cooldownRemaining = r.reset_at_unix_ms
-      ? Math.max(0, Math.floor((r.reset_at_unix_ms - nowMs) / 1000))
-      : null;
+
+    const hasErrorStatus =
+      statusStr.includes("fail") ||
+      statusStr.includes("error") ||
+      statusStr.includes("bad") ||
+      statusStr === "unavailable";
+
+    const providerId = providerOf(r.provider || "unknown");
+    const isCline = providerId === "cline";
+    const hasClineFreeGroup =
+      isCline &&
+      r.usage?.groups?.some(
+        (g) =>
+          g.display_name === "Cline Free Limits" ||
+          g.display_name?.toLowerCase() === "cline free limits",
+      );
+
+    let health: AccountHealth;
+    let cooldownUntilUnixMs: number | null = null;
+    let cooldownRemainingSecs: number | null = null;
+
+    if (isAccountDisabled) {
+      health = "disabled";
+    } else if (hasAuthError) {
+      health = "auth_required";
+    } else if (isCline && hasClineFreeGroup) {
+      if (hasErrorStatus) {
+        health = "error";
+      } else {
+        const glmDeadline = getClineGlmQuotaDeadline(r.usage, nowMs);
+        if (glmDeadline?.active) {
+          health = "cooldown";
+          cooldownUntilUnixMs = glmDeadline.untilUnixMs;
+          cooldownRemainingSecs = glmDeadline.remainingSecs;
+        } else {
+          if (glmDeadline && !glmDeadline.active) {
+            cooldownUntilUnixMs = glmDeadline.untilUnixMs;
+            cooldownRemainingSecs = 0;
+          }
+          health = deriveAccountHealth(
+            r.health,
+            r.reset_at_unix_ms,
+            r.ok,
+            r.fails,
+            r.provider,
+            r.usage,
+            nowMs,
+          );
+        }
+      }
+    } else {
+      health = deriveAccountHealth(
+        r.health,
+        r.reset_at_unix_ms,
+        r.ok,
+        r.fails,
+        r.provider,
+        r.usage,
+        nowMs,
+      );
+      cooldownUntilUnixMs = r.reset_at_unix_ms ?? null;
+      cooldownRemainingSecs = r.reset_at_unix_ms
+        ? Math.max(0, Math.floor((r.reset_at_unix_ms - nowMs) / 1000))
+        : null;
+    }
 
     const total = r.ok + r.fails;
     const failureRate = total > 0 ? r.fails / total : 0;
@@ -457,8 +638,8 @@ export const mergeAccountsAndCredentials = (
       label: cleanAccountLabel(rawLabel, providerOf(r.provider || "unknown")),
       health,
       healthRaw: typeof r.health === "string" ? r.health : JSON.stringify(r.health),
-      cooldownUntilUnixMs: r.reset_at_unix_ms ?? null,
-      cooldownRemainingSecs: cooldownRemaining,
+      cooldownUntilUnixMs,
+      cooldownRemainingSecs,
       ok: r.ok,
       fails: r.fails,
       inputTokens: r.input_tokens ?? 0,
