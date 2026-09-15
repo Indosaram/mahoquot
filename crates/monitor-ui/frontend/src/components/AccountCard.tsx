@@ -19,6 +19,7 @@ import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { Badge, Button, Card } from "./ui";
+import { AccountWarmupControls, type WarmupControlsState } from "./WarmupControls";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -37,6 +38,7 @@ export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }
 };
 
 export interface AccountCardProps {
+  readonly warmup?: WarmupControlsState | undefined;
   readonly account: NormalizedAccount;
   readonly pending: string;
   readonly showRemaining?: boolean;
@@ -164,6 +166,7 @@ const AccountOverflowMenu = ({
 };
 
 export const AccountCard = ({
+  warmup,
   account,
   pending,
   showRemaining = true,
@@ -189,6 +192,7 @@ export const AccountCard = ({
   const isPending = blocks(pending, "account", account.id);
   const rows = quotaRows(account);
   const [refreshing, setRefreshing] = useState(false);
+  const [warmupOpen, setWarmupOpen] = useState(false);
   const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
 
   const errorKey = account.lastError
@@ -239,6 +243,10 @@ export const AccountCard = ({
   // everything below is rare or destructive and does not deserve permanent
   // header width.
   const overflowActions: OverflowAction[] = [];
+  if (warmup) overflowActions.push({
+    key: "warmup-settings", label: "Warmup settings", ariaLabel: `Warmup settings for ${account.label}`,
+    icon: <Sparkles size={13} />, disabled: false, run: () => setWarmupOpen(true),
+  });
   if (account.supportsReset) {
     // The label names the price, not just the outcome: "Reset window" left it
     // ambiguous whether the item reported banked credits or spent one.
@@ -389,7 +397,7 @@ export const AccountCard = ({
         <div className="account-actions">
           <Button
             size="sm"
-            disabled={!account.runtimeId || isPending}
+            disabled={!account.runtimeId || isPending || (warmup !== undefined && (!warmup.status || warmup.status.accounts[account.runtimeId]?.capability !== "supported"))}
             onClick={() => void onRunAccountAction("warm", account)}
           >
             <Sparkles size={12} />
@@ -433,6 +441,7 @@ export const AccountCard = ({
           )}
         </div>
       </div>
+      {warmup ? <AccountWarmupControls id={account.runtimeId} label={account.label} provider={account.provider} warmup={warmup} open={warmupOpen} onToggle={setWarmupOpen} /> : null}
       <div className="usage-section">
         {account.usage?.totals ? (
           <div className="usage-totals" data-testid="account-usage-totals">

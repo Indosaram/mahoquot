@@ -7,6 +7,8 @@ import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
 import { Stack } from "./layout";
+import { ProviderWarmupControls, type WarmupControlsState } from "./WarmupControls";
+import { Button } from "./ui";
 
 export { HealthBadge, ProviderGlyph, providerLabel };
 
@@ -145,6 +147,7 @@ export const accountMenuItems = (account: NormalizedAccount): ContextMenuItem[] 
 };
 
 export interface AccountsSurfaceProps {
+  readonly warmup?: WarmupControlsState | undefined;
   readonly accounts: readonly NormalizedAccount[];
   readonly providers: readonly string[];
   readonly selectedProvider?: string | undefined;
@@ -182,6 +185,7 @@ export interface AccountsSurfaceProps {
 }
 
 export const AccountsSurface = ({
+  warmup,
   accounts,
   providers,
   selectedProvider,
@@ -246,6 +250,11 @@ export const AccountsSurface = ({
           re-authenticating are disabled: {credentialsError}
         </div>
       ) : null}
+      {warmup ? <>
+        {warmup.error ? <div className="state-panel warning" role="alert">Warmup unavailable: {warmup.error}</div> : null}
+        <Button type="button" size="sm" disabled={warmup.pending} onClick={warmup.onReload}>Reload warmup settings and status</Button>
+        {selectedProvider ? <ProviderWarmupControls provider={selectedProvider} warmup={warmup} models={[...new Set(accounts.filter((account) => account.provider === selectedProvider).flatMap((account) => account.runtimeId ? warmup.status?.accounts[account.runtimeId]?.available_models ?? [] : []))]} /> : null}
+      </> : null}
       <div className="account-list">
         {visibleAccounts.map((account) => {
           const isDevin = account.provider === "devin";
@@ -275,6 +284,7 @@ export const AccountsSurface = ({
             <AccountCard
               key={account.id}
               account={account}
+              warmup={warmup}
               pending={pending}
               showRemaining={showRemaining}
               dragging={dragging}

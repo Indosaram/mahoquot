@@ -12,8 +12,10 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountsSurface, accountMenuItems } from "./components/AccountsSurface";
+import type { WarmupAccountPolicy, WarmupProviderPolicy, WarmupSettings, WarmupStatusResponse } from "./lib/schemas";
+import { defaultWarmupPolicy } from "./components/WarmupControls";
 import { AgentsSurface } from "./components/AgentsSurface";
 import { ContextMenu, useContextMenu } from "./components/ContextMenu";
 import { DurableLogs } from "./components/DurableLogs";
@@ -305,10 +307,91 @@ export default function App() {
     };
   }, [onboardingOpen, configOpen]);
 
+  const [warmupSettings, setWarmupSettings] = useState<WarmupSettings | null>(null);
+  const [warmupProviderDrafts, setWarmupProviderDrafts] = useState<Record<string, WarmupProviderPolicy>>({});
+  const [warmupAccountDrafts, setWarmupAccountDrafts] = useState<Record<string, WarmupAccountPolicy>>({});
+  const [warmupStatus, setWarmupStatus] = useState<WarmupStatusResponse | null>(null);
+  const [warmupError, setWarmupError] = useState("");
+  const [warmupPending, setWarmupPending] = useState(false);
   const clients = useMemo(
     () => createGatewayClients(committedBaseUrl || DEFAULT_GATEWAY_URL, relayKey),
     [committedBaseUrl, relayKey],
   );
+  const warmupClient = useRef(clients);
+  warmupClient.current = clients;
+  useEffect(() => {
+    setWarmupSettings(null);
+    setWarmupStatus(null);
+    setWarmupProviderDrafts({});
+    setWarmupAccountDrafts({});
+    setWarmupError("");
+    setWarmupPending(false);
+    setPending((current) => current.startsWith("warm:") ? "" : current);
+  }, [clients]);
+
+  const reloadWarmup = useCallback(async () => {
+    const [settings, status] = await Promise.all([clients.management.warmupSettings(), clients.management.warmupStatus()]);
+    if (warmupClient.current !== clients) return;
+    setWarmupSettings(settings);
+    setWarmupStatus(status);
+    setWarmupError("");
+  }, [clients]);
+
+  const loadWarmup = useCallback(async () => {
+    if (warmupClient.current !== clients) return;
+    setWarmupPending(true);
+    try { await reloadWarmup(); }
+    catch (error) {
+      if (warmupClient.current !== clients) return;
+      setWarmupStatus(null);
+      setWarmupSettings(null);
+      setWarmupError(error instanceof Error ? error.message : "Request failed");
+    } finally { if (warmupClient.current === clients) setWarmupPending(false); }
+  }, [reloadWarmup, clients]);
+
+  useEffect(() => {
+    if (surface !== "accounts") return;
+    void loadWarmup();
+  }, [surface, loadWarmup]);
+
+  useEffect(() => {
+    if (surface !== "accounts") return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void clients.management.warmupStatus().then((status) => {
+        if (active && warmupClient.current === clients) { setWarmupStatus(status); setWarmupError(""); }
+      }).catch((error: unknown) => {
+        if (active && warmupClient.current === clients) { setWarmupStatus(null); setWarmupError(error instanceof Error ? error.message : "Status unavailable"); }
+      });
+    }, 15000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [clients, surface]);
+
+  const saveWarmup = async (target: "provider" | "account", id: string) => {
+    if (!warmupSettings) return;
+    setWarmupPending(true);
+    setWarmupError("");
+    try {
+      if (target === "provider") {
+        const saved = await clients.management.saveWarmupProvider(id, warmupProviderDrafts[id] ?? warmupSettings.providers[id] ?? defaultWarmupPolicy);
+        if (warmupClient.current !== clients) return;
+        setWarmupSettings((current) => current ? { ...current, providers: { ...current.providers, [id]: saved } } : current);
+        setWarmupProviderDrafts(({ [id]: _, ...rest }) => rest);
+      } else {
+        const saved = await clients.management.saveWarmupAccount(id, warmupAccountDrafts[id] ?? warmupSettings.accounts[id] ?? { type: "inherit" });
+        if (warmupClient.current !== clients) return;
+        setWarmupSettings((current) => current ? { ...current, accounts: { ...current.accounts, [id]: saved } } : current);
+        setWarmupAccountDrafts(({ [id]: _, ...rest }) => rest);
+      }
+      await reloadWarmup();
+      if (warmupClient.current !== clients) return;
+      setNotice("Warmup policy saved.");
+    } catch (error) {
+      if (warmupClient.current !== clients) return;
+      setWarmupError(error instanceof Error ? error.message : "Save failed");
+      setNotice(actionFailed(error));
+    } finally { if (warmupClient.current === clients) setWarmupPending(false); }
+  };
 
   const reloadScopedKeys = useCallback(async () => {
     try {
@@ -741,8 +824,11 @@ export default function App() {
     setNotice("");
     try {
       if (action === "warm") {
-        await clients.admin.warm(account.runtimeId);
-        setNotice("Warm-up requested — active now.");
+        const result = await clients.admin.warm(account.runtimeId);
+        if (warmupClient.current !== clients) return;
+        setNotice(result.ok ? `Warm-up succeeded for ${account.label}.` : `Action failed: warm-up for ${account.label}: ${result.detail ?? `HTTP ${result.status}`}`);
+        await loadWarmup();
+        if (warmupClient.current !== clients) return;
       } else {
         await clients.admin.reset(account.runtimeId);
         setNotice(`Window reset for ${account.label} — refreshed quota active.`);
@@ -750,9 +836,10 @@ export default function App() {
       await refresh();
       await refreshUsage();
     } catch (error) {
+      if (action === "warm" && warmupClient.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      setPending("");
+      if (action !== "warm" || warmupClient.current === clients) setPending("");
     }
   };
 
@@ -1569,6 +1656,15 @@ export default function App() {
 
         {surface === "accounts" ? (
           <AccountsSurface
+            warmup={{
+              settings: warmupSettings ? { providers: { ...warmupSettings.providers, ...warmupProviderDrafts }, accounts: { ...warmupSettings.accounts, ...warmupAccountDrafts } } : null,
+              status: warmupStatus, error: warmupError, pending: warmupPending,
+              onProviderChange: (id: string, policy: WarmupProviderPolicy) => setWarmupProviderDrafts((current) => ({ ...current, [id]: policy })),
+              onAccountChange: (id: string, policy: WarmupAccountPolicy) => setWarmupAccountDrafts((current) => ({ ...current, [id]: policy })),
+              onSaveProvider: (id) => void saveWarmup("provider", id),
+              onSaveAccount: (id) => void saveWarmup("account", id),
+              onReload: () => void loadWarmup(),
+            }}
             accounts={accounts}
             providers={providers}
             selectedProvider={selectedProvider}

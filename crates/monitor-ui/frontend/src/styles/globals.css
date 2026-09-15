@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+.accounts .warmup-controls { border-top: 1px solid var(--line-soft); padding: 12px; min-width: 0; }
+.accounts .warmup-controls summary { cursor: pointer; color: var(--fg-dim); font-size: 13px; }
+.accounts .warmup-controls fieldset { border: 0; padding: 12px 0 0; min-width: 0; display: grid; gap: 12px; }
+.accounts .warmup-controls legend { font-size: 13px; color: var(--fg-dim); padding-top: 12px; }
+.accounts .warmup-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+.accounts .warmup-controls label { display: grid; gap: 4px; min-width: 0; font-size: 13px; color: var(--fg-dim); }
+.accounts .warmup-controls label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+.accounts .warmup-controls .input { width: 100%; min-width: 0; }
+.accounts .warmup-status { display: grid; gap: 4px; margin-top: 12px; font-size: 11px; color: var(--fg-dim); overflow-wrap: anywhere; }
+.accounts .warmup-warning { color: var(--warn); overflow-wrap: anywhere; }
+
 :root[data-surface="notch"],
 :root[data-surface="notch"] body {
   background: transparent !important;

@@ -102,6 +102,8 @@ The application exposes exactly four top-level operational destinations plus one
    - Card-based account inventory with provider filter capsules.
    - Supports drag/keyboard reordering, account actions (warm, refresh, reset, re-authenticate, remove), quota progress rows, credential-only badges, and Add Account onboarding.
    - Must NOT use master-detail layout that hides expanded cards. Must NOT introduce a search bar.
+   - Provider configuration contains automatic warmup defaults (enabled, discovered model, idle seconds, minimum interval). Each account's overflow menu opens its inline warmup policy editor (inherit, custom, off); manual Warm up remains a separate action.
+   - Warmup status reports capability, effective source, last result/attempt and next due or skip reason. Unavailable saved models remain visible but cannot be newly selected; failures never imply success. Same-gateway refreshes preserve drafts; changing gateway discards them. Warmup configuration does not appear in Settings.
 3. Logs:
    - First-class operational destination with full-height raw daemon output.
    - Features bounded inner scroll viewport, auto-scroll toggle, log refresh, copy logs button, and gateway status indicators.
