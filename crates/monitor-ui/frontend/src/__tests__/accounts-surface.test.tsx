@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AccountsSurface, type AccountsSurfaceProps } from "../components/AccountsSurface";
+import { AccountsSurface, type AccountsSurfaceProps, quotaRows } from "../components/AccountsSurface";
 import type { NormalizedAccount } from "../lib/accounts";
 
 const mockAccount: NormalizedAccount = {
@@ -348,5 +348,262 @@ describe("AccountsSurface component", () => {
     );
     spendBankedReset();
     expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
+  });
+
+  describe("Cline quota expiry regression", () => {
+    const nowUnix = Math.floor(Date.now() / 1000);
+
+    it("expires Cline inferred 100% quota to unknown (not zero) once reset deadline passes", () => {
+      const expiredClineAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-user@example.com",
+        provider: "cline",
+        label: "cline-user@example.com",
+        health: "healthy",
+        cooldownUntilUnixMs: (nowUnix - 300) * 1000,
+        cooldownRemainingSecs: 0,
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix - 300,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      // In quotaRows: expired Cline inferred quota bucket must NOT be present
+      const rows = quotaRows(expiredClineAccount);
+      expect(rows).toEqual([]);
+
+      // In AccountsSurface UI: shows "Not reported by provider", never 100% and never fabricated 0%
+      render(
+        <AccountsSurface
+          {...createProps({
+            accounts: [expiredClineAccount],
+            visibleAccounts: [expiredClineAccount],
+            providers: ["cline"],
+            selectedProvider: "cline",
+          })}
+        />,
+      );
+
+      expect(screen.getByText("Not reported by provider")).toBeInTheDocument();
+      expect(screen.queryByText("100%")).not.toBeInTheDocument();
+      expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    });
+
+    it("preserves future Cline inferred 100% quota as exhausted", () => {
+      const futureClineAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-user@example.com",
+        provider: "cline",
+        label: "cline-user@example.com",
+        health: "cooldown",
+        cooldownUntilUnixMs: (nowUnix + 3600) * 1000,
+        cooldownRemainingSecs: 3600,
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix + 3600,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(futureClineAccount);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.usedPercent).toBe(100);
+      expect(rows[0]?.resetSeconds).toBeGreaterThan(0);
+
+      const { rerender } = render(
+        <AccountsSurface
+          {...createProps({
+            accounts: [futureClineAccount],
+            visibleAccounts: [futureClineAccount],
+            providers: ["cline"],
+            selectedProvider: "cline",
+            showRemaining: false,
+          })}
+        />,
+      );
+
+      // In used mode (showRemaining: false): displays 100% used
+      expect(screen.getByText("100%")).toBeInTheDocument();
+      expect(screen.getByText("z-ai/glm-5.3-flash (Daily limit)")).toBeInTheDocument();
+      expect(screen.queryByText("Not reported by provider")).not.toBeInTheDocument();
+
+      // In remaining mode (showRemaining: true): displays 0% remaining (exhausted)
+      rerender(
+        <AccountsSurface
+          {...createProps({
+            accounts: [futureClineAccount],
+            visibleAccounts: [futureClineAccount],
+            providers: ["cline"],
+            selectedProvider: "cline",
+            showRemaining: true,
+          })}
+        />,
+      );
+      expect(screen.getByText("0%")).toBeInTheDocument();
+      expect(screen.queryByText("Not reported by provider")).not.toBeInTheDocument();
+    });
+
+    it("isolates expired vs active model buckets within Cline free limits", () => {
+      const mixedClineAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-user@example.com",
+        provider: "cline",
+        label: "cline-user@example.com",
+        health: "healthy",
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix - 600, // expired
+                },
+                {
+                  display_name: "moonshot/kimi-k3 (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix + 1800, // active 30m
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(mixedClineAccount);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("moonshot/kimi-k3 (Daily limit)");
+      expect(rows[0]?.usedPercent).toBe(100);
+    });
+
+    it("does not globally change other providers actual quota presentation", () => {
+      const pastResetCodex: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-past",
+        provider: "codex",
+        usage: {
+          primary: {
+            limit_name: "5 hour",
+            used_percent: 42,
+            reset_at_unix: nowUnix - 300,
+          },
+        },
+      };
+
+      const rows = quotaRows(pastResetCodex);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("5 hour");
+      expect(rows[0]?.usedPercent).toBe(42);
+
+      const pastResetClinePass: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-pass-1",
+        provider: "cline-pass",
+        usage: {
+          groups: [
+            {
+              display_name: "ClinePass",
+              buckets: [
+                {
+                  display_name: "5-Hour Window",
+                  used_percent: 85,
+                  reset_at_unix: nowUnix - 120,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const clinePassRows = quotaRows(pastResetClinePass);
+      expect(clinePassRows).toHaveLength(1);
+      expect(clinePassRows[0]?.name).toBe("5-Hour Window");
+      expect(clinePassRows[0]?.usedPercent).toBe(85);
+
+      // Lead blocker case 1: non-Cline provider with same group label must NOT be modified
+      const nonClineWithClineGroup: NormalizedAccount = {
+        ...mockAccount,
+        id: "generic-oracle",
+        provider: "generic",
+        health: "healthy",
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              buckets: [
+                {
+                  display_name: "custom-model (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix - 300,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const nonClineRows = quotaRows(nonClineWithClineGroup);
+      expect(nonClineRows).toHaveLength(1);
+      expect(nonClineRows[0]?.name).toBe("custom-model (Daily limit)");
+      expect(nonClineRows[0]?.usedPercent).toBe(100);
+    });
+
+    it("preserves Cline reported 100% quota when no explicit deadline is present even if account is healthy", () => {
+      // Lead blocker case 2: account healthy / no bucket deadline is NOT proof of model quota expiry.
+      // Unknown-deadline reported 100 must be preserved unless explicit evidence expires it.
+      const clineHealthyNoDeadline: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-no-deadline@example.com",
+        provider: "cline",
+        label: "cline-no-deadline@example.com",
+        health: "healthy",
+        cooldownUntilUnixMs: null,
+        cooldownRemainingSecs: null,
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: null,
+                  reset_after_seconds: null,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(clineHealthyNoDeadline);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("z-ai/glm-5.3-flash (Daily limit)");
+      expect(rows[0]?.usedPercent).toBe(100);
+    });
   });
 });

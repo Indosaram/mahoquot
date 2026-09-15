@@ -388,4 +388,58 @@ describe("Account Normalization and Quota Capability", () => {
     expect(normalized[0]?.label).toBe("sookyoung91@gmail.com");
     expect(normalized[1]?.label).toBe("claude-ccapi");
   });
+
+  it("regression: expires cooldown to healthy when deadline has passed and preserves future cooldown", () => {
+    const now = Date.now();
+
+    // 1. Expired deadline flips status: cooldown to healthy
+    expect(deriveAccountHealth({ status: "cooldown" }, now - 5000, 5, 0)).toBe("healthy");
+    expect(deriveAccountHealth("cooldown", now - 5000, 5, 0)).toBe("healthy");
+
+    // 2. Future deadline stays cooldown
+    expect(deriveAccountHealth({ status: "cooldown" }, now + 60000, 5, 0)).toBe("cooldown");
+    expect(deriveAccountHealth("cooldown", now + 60000, 5, 0)).toBe("cooldown");
+
+    // 3. Disabled status overrides any cooldown deadline
+    expect(deriveAccountHealth({ status: "disabled" }, now + 60000, 5, 0)).toBe("disabled");
+    expect(deriveAccountHealth("disabled", now - 5000, 5, 0)).toBe("disabled");
+
+    // 4. mergeAccountsAndCredentials with expired cooldown deadline
+    const expiredStats: AdminStats["accounts"] = [
+      {
+        id: "cline-expired@example.com",
+        provider: "cline",
+        health: { status: "cooldown" },
+        ok: 10,
+        fails: 1,
+        reset_at_unix_ms: now - 30_000,
+        last_error: null,
+        ttft: null,
+        usage: null,
+      },
+      {
+        id: "cline-future@example.com",
+        provider: "cline",
+        health: { status: "cooldown" },
+        ok: 10,
+        fails: 1,
+        reset_at_unix_ms: now + 300_000,
+        last_error: null,
+        ttft: null,
+        usage: null,
+      },
+    ];
+
+    const merged = mergeAccountsAndCredentials(expiredStats, []);
+    const expiredAcc = merged.find((a) => a.id === "cline-expired@example.com");
+    const futureAcc = merged.find((a) => a.id === "cline-future@example.com");
+
+    expect(expiredAcc?.health).toBe("healthy");
+    expect(expiredAcc?.cooldownRemainingSecs).toBe(0);
+    expect(expiredAcc?.cooldownUntilUnixMs).toBe(now - 30_000);
+
+    expect(futureAcc?.health).toBe("cooldown");
+    expect(futureAcc?.cooldownRemainingSecs).toBeGreaterThan(0);
+    expect(futureAcc?.cooldownUntilUnixMs).toBe(now + 300_000);
+  });
 });

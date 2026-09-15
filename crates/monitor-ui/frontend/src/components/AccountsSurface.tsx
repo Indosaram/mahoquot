@@ -36,25 +36,67 @@ export const resetSeconds = (resetAtUnix?: number | null, after?: number | null)
   return typeof after === "number" ? Math.max(0, after) : null;
 };
 
+/**
+ * Cline CLI OAuth does not report live quota windows; a 100% bucket is inferred
+ * only while a 429 daily cap cooldown is active under "Cline Free Limits".
+ * Once that explicit deadline lapses, the inferred 100% quota has expired and
+ * becomes unknown (not a fabricated 0%).
+ * Unknown-deadline reported 100 is preserved unless explicit evidence expires it.
+ * Non-Cline providers and other group labels are strictly preserved.
+ */
+export const isClineInferredQuotaExpired = (
+  account: NormalizedAccount,
+  groupDisplayName: string | null | undefined,
+  resetAtUnix?: number | null,
+  resetAfterSeconds?: number | null,
+  nowMs = Date.now(),
+): boolean => {
+  if (account.provider !== "cline") {
+    return false;
+  }
+  if (groupDisplayName !== "Cline Free Limits") {
+    return false;
+  }
+
+  const nowSecs = Math.floor(nowMs / 1000);
+  if (typeof resetAtUnix === "number") {
+    return resetAtUnix <= nowSecs;
+  }
+  if (typeof resetAfterSeconds === "number") {
+    return resetAfterSeconds <= 0;
+  }
+
+  return false;
+};
+
 export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
   const usage = account.usage;
   if (!usage) return [];
   const grouped =
     usage.groups?.flatMap((group) =>
-      group.buckets.flatMap((bucket, index) =>
-        typeof bucket.used_percent === "number"
-          ? [
-              {
-                name: windowLabel(
-                  bucket.display_name || group.display_name || group.models || `Quota ${index + 1}`,
-                ),
-                group: group.display_name || group.models || null,
-                usedPercent: bucket.used_percent,
-                resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
-              },
-            ]
-          : [],
-      ),
+      group.buckets.flatMap((bucket, index) => {
+        if (typeof bucket.used_percent !== "number") return [];
+        if (
+          isClineInferredQuotaExpired(
+            account,
+            group.display_name,
+            bucket.reset_at_unix,
+            bucket.reset_after_seconds,
+          )
+        ) {
+          return [];
+        }
+        return [
+          {
+            name: windowLabel(
+              bucket.display_name || group.display_name || group.models || `Quota ${index + 1}`,
+            ),
+            group: group.display_name || group.models || null,
+            usedPercent: bucket.used_percent,
+            resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
+          },
+        ];
+      }),
     ) ?? [];
   if (grouped.length) return grouped;
   const flat: readonly (QuotaRow | null)[] = [
