@@ -199,12 +199,36 @@ pub struct MonitorView {
     pub degraded: Vec<String>,
 }
 
-fn status_of(health: &serde_json::Value) -> String {
-    health
+fn resolve_cooldown_deadline(
+    health: &serde_json::Value,
+    reset_at_unix_ms: Option<i64>,
+) -> Option<i64> {
+    reset_at_unix_ms
+        .or_else(|| health.get("until_unix_ms").and_then(|v| v.as_i64()))
+        .or_else(|| health.get("reset_at_unix_ms").and_then(|v| v.as_i64()))
+        .filter(|&v| v > 0)
+}
+
+fn status_of(
+    health: &serde_json::Value,
+    reset_at_unix_ms: Option<i64>,
+    now_unix_ms: i64,
+) -> String {
+    let raw = health
         .get("status")
         .and_then(|s| s.as_str())
-        .unwrap_or("unknown")
-        .to_string()
+        .unwrap_or_else(|| health.as_str().unwrap_or("unknown"));
+
+    if raw.eq_ignore_ascii_case("cooldown") {
+        if let Some(until) = resolve_cooldown_deadline(health, reset_at_unix_ms) {
+            if until <= now_unix_ms {
+                return "available".to_string();
+            }
+        }
+        return "cooldown".to_string();
+    }
+
+    raw.to_string()
 }
 
 /// Health strings the gateway may add over time must not silently read as
@@ -264,7 +288,7 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
             } else {
                 a.provider.clone()
             },
-            status: status_of(&a.health),
+            status: status_of(&a.health, a.reset_at_unix_ms, now_unix_ms),
             ok: a.ok,
             fails: a.fails,
             failure_rate: rate(a.fails, a.ok),
@@ -312,8 +336,7 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
             p50_ms: a.ttft.p50_ms,
             p99_ms: a.ttft.p99_ms,
             samples: a.ttft.samples,
-            cooldown_remaining_secs: a
-                .reset_at_unix_ms
+            cooldown_remaining_secs: resolve_cooldown_deadline(&a.health, a.reset_at_unix_ms)
                 .map(|until| ((until - now_unix_ms).max(0)) / 1000),
             last_error: a
                 .last_error
@@ -606,5 +629,178 @@ mod tests {
         assert_eq!(bucket.name.as_deref(), Some("GLM-5.3"));
         assert_eq!(bucket.used_percent, Some(55.0));
         assert_eq!(bucket.reset_in_secs, Some(2000));
+    }
+
+    #[test]
+    fn expired_cooldown_normalizes_to_available_at_boundary_and_clears_degraded() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [
+                {
+                    "id": "expiring@x.io",
+                    "provider": "codex",
+                    "health": {"status": "cooldown"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": 10_000,
+                    "ttft": null
+                },
+                {
+                    "id": "wire-health-expiring@x.io",
+                    "provider": "codex",
+                    "health": {"status": "cooldown", "until_unix_ms": 10_000},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": null,
+                    "ttft": null
+                }
+            ]
+        }))
+        .expect("parse test stats");
+
+        // 1 ms before deadline: strictly in cooldown, degraded flags both.
+        let before = build_view(&s, 9_999);
+        assert_eq!(before.accounts[0].status, "cooldown");
+        assert_eq!(before.accounts[0].cooldown_remaining_secs, Some(0));
+        assert_eq!(before.accounts[1].status, "cooldown");
+        assert!(before.degraded.contains(&"expiring@x.io".to_string()));
+        assert!(before.degraded.contains(&"wire-health-expiring@x.io".to_string()));
+
+        // Exact deadline boundary (now == deadline): normalized to available, not degraded.
+        let exact = build_view(&s, 10_000);
+        assert_eq!(exact.accounts[0].status, "available");
+        assert_eq!(exact.accounts[0].cooldown_remaining_secs, Some(0));
+        assert_eq!(exact.accounts[1].status, "available");
+        assert!(!exact.degraded.contains(&"expiring@x.io".to_string()));
+        assert!(!exact.degraded.contains(&"wire-health-expiring@x.io".to_string()));
+
+        // 1 ms after deadline: available, not degraded.
+        let after = build_view(&s, 10_001);
+        assert_eq!(after.accounts[0].status, "available");
+        assert_eq!(after.accounts[0].cooldown_remaining_secs, Some(0));
+        assert_eq!(after.accounts[1].status, "available");
+        assert!(!after.degraded.contains(&"expiring@x.io".to_string()));
+        assert!(!after.degraded.contains(&"wire-health-expiring@x.io".to_string()));
+    }
+
+    #[test]
+    fn cooldown_lifecycle_preserves_future_missing_disabled_error_and_high_failure() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [
+                {
+                    "id": "future@x.io",
+                    "provider": "codex",
+                    "health": {"status": "cooldown"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": 20_000,
+                    "ttft": null
+                },
+                {
+                    "id": "missing-deadline@x.io",
+                    "provider": "codex",
+                    "health": {"status": "cooldown"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": null,
+                    "ttft": null
+                },
+                {
+                    "id": "disabled@x.io",
+                    "provider": "codex",
+                    "health": {"status": "disabled"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": 10_000,
+                    "ttft": null
+                },
+                {
+                    "id": "error@x.io",
+                    "provider": "codex",
+                    "health": {"status": "error"},
+                    "ok": 10,
+                    "fails": 0,
+                    "reset_at_unix_ms": 10_000,
+                    "last_error": {"unix_ms": 1, "status": 500, "message": "internal error"},
+                    "ttft": null
+                },
+                {
+                    "id": "expired-but-failing@x.io",
+                    "provider": "codex",
+                    "health": {"status": "cooldown"},
+                    "ok": 1,
+                    "fails": 3,
+                    "reset_at_unix_ms": 10_000,
+                    "ttft": null
+                }
+            ]
+        }))
+        .expect("parse lifecycle test stats");
+
+        let v = build_view(&s, 15_000);
+
+        // Future cooldown preserved
+        assert_eq!(v.accounts[0].status, "cooldown");
+        assert_eq!(v.accounts[0].cooldown_remaining_secs, Some(5));
+        assert!(v.degraded.contains(&"future@x.io".to_string()));
+
+        // Missing deadline policy: keep cooldown
+        assert_eq!(v.accounts[1].status, "cooldown");
+        assert_eq!(v.accounts[1].cooldown_remaining_secs, None);
+        assert!(v.degraded.contains(&"missing-deadline@x.io".to_string()));
+
+        // Disabled state preserved and not degraded
+        assert_eq!(v.accounts[2].status, "disabled");
+        assert!(!v.degraded.contains(&"disabled@x.io".to_string()));
+
+        // Error state preserved and remains degraded
+        assert_eq!(v.accounts[3].status, "error");
+        assert!(v.degraded.contains(&"error@x.io".to_string()));
+
+        // Expired cooldown normalizes to available, but high failure rate preserves degraded
+        assert_eq!(v.accounts[4].status, "available");
+        assert_eq!(v.accounts[4].cooldown_remaining_secs, Some(0));
+        assert!(v.degraded.contains(&"expired-but-failing@x.io".to_string()));
+    }
+
+    #[test]
+    fn antigravity_model_group_semantics_preserved_with_expired_cooldown() {
+        let s: AdminStats = serde_json::from_value(serde_json::json!({
+            "accounts": [{
+                "id": "ag-expired",
+                "provider": "antigravity",
+                "health": {"status": "cooldown"},
+                "ok": 10,
+                "fails": 0,
+                "reset_at_unix_ms": 5_000,
+                "usage": {
+                    "observed_at_unix": 1000,
+                    "primary": {"used_percent": 10.0, "window_minutes": 300},
+                    "secondary": {"used_percent": 40.0, "window_minutes": 10080},
+                    "groups": [{
+                        "display_name": "Claude Model Family",
+                        "models": "claude-sonnet-3-5",
+                        "buckets": [{
+                            "display_name": "Claude 3.5 Sonnet",
+                            "window": "daily",
+                            "used_percent": 80.0,
+                            "reset_at_unix": 9000
+                        }]
+                    }]
+                }
+            }]
+        }))
+        .expect("parse antigravity test stats");
+
+        let v = build_view(&s, 6_000);
+        let ag = &v.accounts[0];
+        assert_eq!(ag.status, "available");
+        assert_eq!(ag.cooldown_remaining_secs, Some(0));
+        assert!(!v.degraded.contains(&"ag-expired".to_string()));
+        assert_eq!(ag.groups.len(), 1);
+        assert_eq!(ag.groups[0].name.as_deref(), Some("Claude Model Family"));
+        assert_eq!(ag.groups[0].models.as_deref(), Some("claude-sonnet-3-5"));
+        assert_eq!(ag.groups[0].buckets[0].name.as_deref(), Some("Claude 3.5 Sonnet"));
+        assert_eq!(ag.groups[0].buckets[0].used_percent, Some(80.0));
+        assert_eq!(ag.groups[0].buckets[0].reset_in_secs, Some(8994)); // 9000 - 6
     }
 }
