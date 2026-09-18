@@ -4634,3 +4634,80 @@ h2 {
   background: #fee2e2;
   border-bottom-color: #fca5a5;
 }
+
+/* A gateway that refuses to start is reported here because every in-app
+   diagnostic (logs, management API, stats) travels through the gateway that is
+   down. The banner therefore carries the child's own stderr and the two
+   actions that can recover from it. */
+.gateway-failure {
+  position: sticky;
+  top: 0;
+  z-index: 61;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  color: #ffd9d9;
+  background: #7f1d1d;
+  border-bottom: 1px solid #b91c1c;
+}
+
+.gateway-failure-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.gateway-failure-body strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gateway-failure-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gateway-failure-body summary {
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.gateway-failure-body pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  overflow: auto;
+  padding: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: rgb(0 0 0 / 28%);
+  border-radius: 6px;
+}
+
+.gateway-failure-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.config-drawer-path {
+  display: block;
+  overflow-wrap: anywhere;
+  opacity: 0.7;
+}
+
+:root[data-theme="light"] .gateway-failure {
+  color: #7f1d1d;
+  background: #fee2e2;
+  border-bottom-color: #fca5a5;
+}
+
+:root[data-theme="light"] .gateway-failure-body pre {
+  background: rgb(127 29 29 / 8%);
+}

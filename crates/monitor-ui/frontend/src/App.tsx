@@ -45,12 +45,14 @@ import {
   type CliConfigPreview,
   type CodexInstance,
   type CodexLaunchRequest,
+  type GatewayFailure,
   type NativeSettingsState,
   SecretStoreError,
   type UpdateStatus,
   checkForUpdate,
   configureCliAgent,
   downloadCloudflared,
+  getGatewayFailure,
   getGatewayLifecycle,
   getNativeSettings,
   getTunnelStatus,
@@ -62,7 +64,9 @@ import {
   openExternalUrl,
   previewCliAgent,
   readDesktopSecret,
+  readLocalGatewayConfig,
   requestNativeNotificationPermission,
+  restartManagedGateway,
   restoreCliAgent,
   setLoginStart,
   startManagedGateway,
@@ -71,6 +75,7 @@ import {
   stopManagedGateway,
   stopTunnel,
   writeDesktopSecret,
+  writeLocalGatewayConfig,
 } from "./lib/native";
 import {
   ACCOUNT_KIND_STEP,
@@ -201,6 +206,11 @@ export default function App() {
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
   const [configYaml, setConfigYaml] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
+  // Which writer owns the open editor: the gateway's management API, or the
+  // file directly when the gateway is down and takes that API with it.
+  const [configSource, setConfigSource] = useState<"gateway" | "local">("gateway");
+  const [configPath, setConfigPath] = useState("");
+  const [gatewayFailure, setGatewayFailure] = useState<GatewayFailure | null>(null);
   const [scopedKeys, setScopedKeys] = useState<readonly ScopedApiKey[]>([]);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
   const [cliAgents, setCliAgents] = useState<CliAgentStatus[]>([]);
@@ -667,6 +677,31 @@ export default function App() {
   useEffect(() => {
     void getGatewayLifecycle().then(setGatewayLifecycle);
   }, [setGatewayLifecycle]);
+
+  // When the gateway never came up there is no management API and no logs
+  // endpoint, so the native shell's record is the only available explanation.
+  // The watchdog can also give up seconds after the poll already went degraded,
+  // so this keeps re-reading while degraded and stops once the gateway answers.
+  useEffect(() => {
+    if (loadState === "online") {
+      setGatewayFailure(null);
+      return;
+    }
+    let cancelled = false;
+    const read = () => {
+      void getGatewayFailure()
+        .then((failure) => {
+          if (!cancelled) setGatewayFailure(failure);
+        })
+        .catch(() => undefined);
+    };
+    read();
+    const timer = window.setInterval(read, 3_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadState]);
 
   useEffect(() => {
     if (surface !== "settings") return;
@@ -1495,6 +1530,8 @@ export default function App() {
     setPending(pendingKey.configLoad);
     try {
       setConfigYaml(await clients.management.configYaml());
+      setConfigSource("gateway");
+      setConfigPath("");
       setConfigOpen(true);
     } catch (error) {
       setNotice(actionFailed(error));
@@ -1503,16 +1540,63 @@ export default function App() {
     }
   };
 
+  /** Repair path for a configuration the gateway refused to load: reads and
+   * writes the file through the native shell, which stays reachable while the
+   * gateway and its management API are down. */
+  const openConfigRepair = async () => {
+    setNotice("");
+    setPending(pendingKey.configLoad);
+    try {
+      setConfigYaml(await readLocalGatewayConfig());
+      setConfigSource("local");
+      setConfigPath(gatewayFailure?.config_path ?? "");
+      setConfigOpen(true);
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setPending("");
+    }
+  };
+
+  const retryGateway = async () => {
+    setPending(pendingKey.gateway);
+    setNotice("");
+    try {
+      const next = await startManagedGateway();
+      setGatewayLifecycle(next);
+      setLoadState(next === "running" ? "starting" : "stopped");
+      if (next === "running") await refresh();
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      setGatewayFailure(await getGatewayFailure().catch(() => null));
+      setPending("");
+    }
+  };
+
   const saveConfig = async () => {
     setPending(pendingKey.configSave);
     setNotice("");
     try {
-      await clients.management.saveConfigYaml(configYaml);
-      setNotice("Configuration saved and applied.");
-      setConfigOpen(false);
+      if (configSource === "local") {
+        const backup = await writeLocalGatewayConfig(configYaml);
+        // The gateway only reads config.yaml at startup, and this editor exists
+        // because it is down, so restarting is what applies the edit.
+        const next = await restartManagedGateway();
+        setGatewayLifecycle(next);
+        setLoadState(next === "running" ? "starting" : "stopped");
+        setConfigOpen(false);
+        setNotice(`Configuration saved and the gateway restarted. Backup: ${backup}`);
+        if (next === "running") await refresh();
+      } else {
+        await clients.management.saveConfigYaml(configYaml);
+        setNotice("Configuration saved and applied.");
+        setConfigOpen(false);
+      }
     } catch (error) {
       setNotice(actionFailed(error));
     } finally {
+      setGatewayFailure(await getGatewayFailure().catch(() => null));
       setPending("");
     }
   };
@@ -1565,6 +1649,33 @@ export default function App() {
       {schemaMismatch && (
         <div role="alert" className="schema-banner" data-testid="schema-banner">
           {schemaMismatch}
+        </div>
+      )}
+      {gatewayFailure && (
+        <div role="alert" className="gateway-failure" data-testid="gateway-failure-banner">
+          <div className="gateway-failure-body">
+            <strong>
+              <AlertTriangle size={14} /> The gateway is not running and will not retry on its own.
+            </strong>
+            <p data-testid="gateway-failure-reason">{gatewayFailure.reason}</p>
+            {gatewayFailure.detail ? (
+              <details>
+                <summary>Gateway output</summary>
+                <pre>{gatewayFailure.detail}</pre>
+              </details>
+            ) : null}
+          </div>
+          <div className="gateway-failure-actions">
+            <Button
+              disabled={blocks(pending, "config")}
+              onClick={() => void openConfigRepair()}
+            >
+              {pending === pendingKey.configLoad ? "Opening…" : "Edit config.yaml"}
+            </Button>
+            <Button disabled={blocks(pending, "gateway")} onClick={() => void retryGateway()}>
+              {pending === pendingKey.gateway ? "Starting…" : "Retry start"}
+            </Button>
+          </div>
         </div>
       )}
       <aside className="sidebar">
@@ -2439,8 +2550,11 @@ export default function App() {
           <aside className="drawer config-drawer" aria-label="Advanced configuration editor">
             <div className="section-head">
               <div>
-                <span className="kicker">RAW YAML</span>
+                <span className="kicker">{configSource === "local" ? "LOCAL FILE" : "RAW YAML"}</span>
                 <h2>Gateway configuration</h2>
+                {configSource === "local" && configPath ? (
+                  <small className="config-drawer-path">{configPath}</small>
+                ) : null}
               </div>
               <Button aria-label="Close configuration editor" onClick={() => setConfigOpen(false)}>
                 <X />
@@ -2462,7 +2576,11 @@ export default function App() {
             <div className="drawer-actions">
               <Button onClick={() => setConfigOpen(false)}>Cancel</Button>
               <Button disabled={blocks(pending, "config")} onClick={() => void saveConfig()}>
-                {pending === pendingKey.configSave ? "Saving…" : "Save configuration"}
+                {pending === pendingKey.configSave
+                  ? "Saving…"
+                  : configSource === "local"
+                    ? "Save and restart gateway"
+                    : "Save configuration"}
               </Button>
             </div>
           </aside>

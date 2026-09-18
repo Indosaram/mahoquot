@@ -35,6 +35,46 @@ export const stopManagedGateway = (): Promise<GatewayLifecycleStatus> =>
 export const restartManagedGateway = (): Promise<GatewayLifecycleStatus> =>
   invokeLifecycle("restart_gateway");
 
+/**
+ * A gateway outage the native shell will not recover from on its own. `detail`
+ * is the child's own stderr tail, which is where a rejected `config.yaml`
+ * explains itself. Transient crash-and-respawn is never reported here.
+ */
+export interface GatewayFailure {
+  readonly reason: string;
+  readonly detail: string;
+  readonly config_path: string;
+  readonly at_ms: number;
+}
+
+export const getGatewayFailure = async (): Promise<GatewayFailure | null> => {
+  const native = internals();
+  if (!native) return null;
+  return native.invoke<GatewayFailure | null>("gateway_failure");
+};
+
+const localConfigUnavailable = () =>
+  new Error("Editing the local gateway configuration requires the desktop app.");
+
+/**
+ * Reads `config.yaml` off disk through the native shell. The console's other
+ * configuration editor goes through the gateway's management API, which is
+ * unreachable exactly when a bad configuration stopped the gateway from
+ * starting, so repair has to bypass it.
+ */
+export const readLocalGatewayConfig = async (): Promise<string> => {
+  const native = internals();
+  if (!native) throw localConfigUnavailable();
+  return native.invoke<string>("read_gateway_config");
+};
+
+/** Writes `config.yaml` and resolves with the backup path the shell kept. */
+export const writeLocalGatewayConfig = async (contents: string): Promise<string> => {
+  const native = internals();
+  if (!native) throw localConfigUnavailable();
+  return native.invoke<string>("write_gateway_config", { contents });
+};
+
 export const takeZcodeCallback = async (expectedState: string): Promise<string | null> => {
   const native = internals();
   if (!native) return null;

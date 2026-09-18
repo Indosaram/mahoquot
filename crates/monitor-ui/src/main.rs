@@ -48,12 +48,40 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const GATEWAY_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const GATEWAY_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How many trailing gateway stderr lines the console may show after a failed
+/// start. The child prints its fatal configuration errors only there, so
+/// without a tail the console can say nothing beyond "stopped".
+const GATEWAY_STDERR_TAIL_LINES: usize = 40;
+
+/// A gateway outage nothing will recover from on its own.
+///
+/// Only terminal states are recorded: the watchdog having given up, or a start
+/// that could not even begin. Transient crash-and-respawn is left alone so the
+/// console never reports an outage the app is already fixing. The overwhelming
+/// cause is a `config.yaml` the gateway refuses to load, so the child's own
+/// words are kept verbatim for the console to show.
+#[derive(Clone, Debug, serde::Serialize)]
+struct GatewayFailure {
+    /// One-line headline: the gateway's own error when it printed one.
+    reason: String,
+    /// Trailing stderr of the failed child; empty when it never ran.
+    detail: String,
+    /// The config the gateway rejected, so the repair editor and the user agree
+    /// on which file is at fault.
+    config_path: String,
+    at_ms: u64,
+}
+
 #[derive(Clone, Default)]
 struct GatewayProcess {
     pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
     /// Set to `true` when the user or the app deliberately stops the gateway.
     /// The watchdog skips respawn when this flag is set.
     stop_intended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Last actionable start failure, or `None` while the gateway is healthy.
+    last_failure: std::sync::Arc<std::sync::Mutex<Option<GatewayFailure>>>,
+    /// Rolling stderr tail of the live child, drained into `last_failure`.
+    stderr_tail: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
 }
 
 #[derive(Default)]
@@ -103,6 +131,82 @@ fn take_zcode_callback(
 impl GatewayProcess {
     fn pid(&self) -> i32 {
         self.pid.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn failure(&self) -> Option<GatewayFailure> {
+        self.last_failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn clear_failure(&self) {
+        *self
+            .last_failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    /// Drops the previous child's output so a tail never outlives its process.
+    fn reset_stderr_tail(&self) {
+        self.stderr_tail
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    fn push_stderr_line(&self, line: String) {
+        let mut lines = self
+            .stderr_tail
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if lines.len() >= GATEWAY_STDERR_TAIL_LINES {
+            lines.pop_front();
+        }
+        lines.push_back(line);
+    }
+
+    fn stderr_tail_text(&self) -> String {
+        self.stderr_tail
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Records a failure that happened before any child ran, so there is no
+    /// stderr to quote and `reason` is the whole story.
+    fn record_failure(&self, reason: impl Into<String>) {
+        self.store_failure(reason.into(), String::new());
+    }
+
+    /// Records a failure of a child that did run: its own last error becomes the
+    /// headline, and `fallback` covers a process that died without a word.
+    fn record_child_failure(&self, fallback: impl Into<String>) {
+        let detail = self.stderr_tail_text();
+        let reason = gateway_process::failure_headline(&detail).unwrap_or_else(|| fallback.into());
+        self.store_failure(reason, detail);
+    }
+
+    fn store_failure(&self, reason: String, detail: String) {
+        tracing::error!(%reason, "gateway unavailable");
+        let failure = GatewayFailure {
+            reason,
+            detail,
+            config_path: gateway_config_path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|since| since.as_millis() as u64)
+                .unwrap_or_default(),
+        };
+        *self
+            .last_failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(failure);
     }
 }
 
@@ -581,16 +685,30 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
     if gateway_target_policy(base_url) == GatewayTargetPolicy::UseConfigured {
         return None;
     }
+    // A new attempt supersedes the previous verdict; every path below either
+    // records a fresh failure or leaves the slot empty for a healthy start.
+    process.clear_failure();
     let exe = std::env::current_exe().ok();
-    let bin =
-        tray::resolve_gateway_binary(std::env::var("MAHOQUOT_GATEWAY_BIN").ok(), exe.as_deref())?;
+    let Some(bin) =
+        tray::resolve_gateway_binary(std::env::var("MAHOQUOT_GATEWAY_BIN").ok(), exe.as_deref())
+    else {
+        process.record_failure("Could not work out where the mahoquot-gateway binary lives.");
+        return None;
+    };
     if !gateway_binary_launchable(&bin) {
         tracing::error!(path = %bin.display(), "gateway binary unavailable");
+        process.record_failure(format!(
+            "Gateway binary is missing or not executable: {}",
+            bin.display()
+        ));
         return None;
     }
     let own_gateway_binary = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
     if gateway_listening() && !reclaim_gateway_port(&own_gateway_binary) {
         tracing::warn!("gateway port is occupied by a listener this app does not own");
+        process.record_failure(format!(
+            "Port {GATEWAY_PORT} is held by a process this app does not own, so it will not adopt it."
+        ));
         return None;
     }
 
@@ -598,6 +716,9 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
         Ok(home) => home,
         Err(error) => {
             tracing::error!(%error, "cannot resolve gateway auth directory");
+            process.record_failure(format!(
+                "Cannot resolve the gateway auth directory: {error}"
+            ));
             return None;
         }
     };
@@ -611,34 +732,69 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
     spawn_gateway_child(process, &bin, &auth_dir)
 }
 
+/// Starts the gateway with stderr piped into `process`'s rolling tail.
+///
+/// The child's fatal errors exist only on that stream, and a pipe nobody reads
+/// eventually blocks the writer, so the returned reader thread drains it and
+/// tees every line into the app's own log.
+fn launch_gateway_process(
+    bin: &std::path::Path,
+    auth_dir: &std::path::Path,
+    process: &GatewayProcess,
+) -> std::io::Result<(std::process::Child, Option<std::thread::JoinHandle<()>>)> {
+    process.reset_stderr_tail();
+    let mut child = std::process::Command::new(bin)
+        .env("AUTH_DIR", auth_dir)
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let reader = child.stderr.take().map(|stderr| {
+        let sink = process.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                tracing::info!(target: "mahoquot_gateway_child", "{line}");
+                sink.push_stderr_line(line);
+            }
+        })
+    });
+    Ok((child, reader))
+}
+
 /// Inner spawn that starts the binary and installs the watchdog thread.
 fn spawn_gateway_child(
     process: &GatewayProcess,
     bin: &std::path::Path,
     auth_dir: &std::path::Path,
 ) -> Option<i32> {
-    match std::process::Command::new(bin)
-        .env("AUTH_DIR", auth_dir)
-        .spawn()
-    {
-        Ok(child) => {
+    match launch_gateway_process(bin, auth_dir, process) {
+        Ok((child, stderr_reader)) => {
             let pid = child.id() as i32;
             tracing::info!(pid, "mahoquot-gateway spawned");
             process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
             GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
             install_gateway_signal_guard();
 
-            let process_pid = std::sync::Arc::clone(&process.pid);
-            let stop_intended = std::sync::Arc::clone(&process.stop_intended);
+            let watchdog_process = process.clone();
             let bin = bin.to_path_buf();
             let auth_dir = auth_dir.to_path_buf();
             std::thread::spawn(move || {
-                gateway_watchdog_loop(child, pid, process_pid, stop_intended, bin, auth_dir);
+                gateway_watchdog_loop(
+                    child,
+                    stderr_reader,
+                    pid,
+                    watchdog_process,
+                    bin,
+                    auth_dir,
+                );
             });
             Some(pid)
         }
         Err(error) => {
             tracing::error!(%error, "failed to spawn mahoquot-gateway");
+            process.record_failure(format!("Could not start the gateway process: {error}"));
             None
         }
     }
@@ -648,9 +804,9 @@ fn spawn_gateway_child(
 /// stop was intentional or the backoff policy gives up.
 fn gateway_watchdog_loop(
     mut child: std::process::Child,
+    mut stderr_reader: Option<std::thread::JoinHandle<()>>,
     mut pid: i32,
-    process_pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
-    stop_intended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    process: GatewayProcess,
     bin: std::path::PathBuf,
     auth_dir: std::path::PathBuf,
 ) {
@@ -660,7 +816,12 @@ fn gateway_watchdog_loop(
         let spawn_time = std::time::Instant::now();
         let result = child.wait();
         let uptime = spawn_time.elapsed();
-        clear_gateway_pid(&process_pid, pid);
+        clear_gateway_pid(&process.pid, pid);
+        // The reader ends at pipe EOF, which the exit above guarantees. Joining
+        // it before the tail is read keeps the fatal last line from racing us.
+        if let Some(reader) = stderr_reader.take() {
+            let _ = reader.join();
+        }
 
         match &result {
             Ok(status) => tracing::info!(pid, %status, ?uptime, "mahoquot-gateway exited"),
@@ -671,7 +832,10 @@ fn gateway_watchdog_loop(
 
         // If stop was deliberate (user clicked stop, app is exiting, or
         // restart_gateway killed the old process), do not respawn.
-        if stop_intended.load(std::sync::atomic::Ordering::SeqCst) {
+        if process
+            .stop_intended
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             tracing::info!("gateway stop was intentional; watchdog exiting");
             return;
         }
@@ -688,26 +852,30 @@ fn gateway_watchdog_loop(
                 std::thread::sleep(delay);
 
                 // Check again after sleep — the user may have stopped us.
-                if stop_intended.load(std::sync::atomic::Ordering::SeqCst) {
+                if process
+                    .stop_intended
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
                     tracing::info!("gateway stop intended during backoff; watchdog exiting");
                     return;
                 }
 
-                match std::process::Command::new(&bin)
-                    .env("AUTH_DIR", &auth_dir)
-                    .spawn()
-                {
-                    Ok(new_child) => {
+                match launch_gateway_process(&bin, &auth_dir, &process) {
+                    Ok((new_child, new_reader)) => {
                         pid = new_child.id() as i32;
                         tracing::info!(pid, "mahoquot-gateway respawned");
-                        process_pid.store(pid, std::sync::atomic::Ordering::SeqCst);
+                        process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
                         GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
                         install_gateway_signal_guard();
                         child = new_child;
+                        stderr_reader = new_reader;
                         // Continue the loop to wait on the new child.
                     }
                     Err(error) => {
                         tracing::error!(%error, "failed to respawn mahoquot-gateway; watchdog exiting");
+                        process.record_failure(format!(
+                            "Could not restart the gateway process: {error}"
+                        ));
                         return;
                     }
                 }
@@ -717,6 +885,12 @@ fn gateway_watchdog_loop(
                     consecutive_failures = policy.consecutive_failures(),
                     "gateway crashed too many times in quick succession; giving up"
                 );
+                // Nothing retries after this, so the console is the only place
+                // left that can tell the user why and let them fix it.
+                process.record_child_failure(format!(
+                    "The gateway exited {} times in a row immediately after starting.",
+                    policy.consecutive_failures()
+                ));
                 return;
             }
         }
@@ -1041,6 +1215,61 @@ async fn scheduler_reservation(
     }
 }
 
+/// The gateway's configuration file, owned by the app's auth directory.
+fn gateway_config_path() -> Result<std::path::PathBuf, String> {
+    Ok(tray::default_auth_dir(tray::current_home()?).join("config.yaml"))
+}
+
+#[tauri::command]
+fn gateway_failure(process: tauri::State<'_, GatewayProcess>) -> Option<GatewayFailure> {
+    process.failure()
+}
+
+/// Reads `config.yaml` straight off disk.
+///
+/// The console's other configuration editor goes through the gateway's
+/// management API, which is unreachable precisely when a bad configuration has
+/// stopped the gateway from starting. This path stays available.
+#[tauri::command]
+fn read_gateway_config() -> Result<String, String> {
+    let path = gateway_config_path()?;
+    std::fs::read_to_string(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+}
+
+/// Writes `config.yaml` after keeping a timestamped copy.
+///
+/// This is the recovery path for a file the gateway already rejected, so a
+/// second bad edit must stay reversible; the backup path is returned for the
+/// console to show.
+#[tauri::command]
+fn write_gateway_config(contents: String) -> Result<String, String> {
+    if contents.trim().is_empty() {
+        return Err("refusing to write an empty gateway configuration".to_string());
+    }
+    let path = gateway_config_path()?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default();
+    let backup = path.with_file_name(format!("config.yaml.bak-{stamp}"));
+    match std::fs::copy(&path, &backup) {
+        Ok(_) => {}
+        // A missing original is the first-write case, not a failure.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot back up {} to {}: {error}",
+                path.display(),
+                backup.display()
+            ))
+        }
+    }
+    std::fs::write(&path, contents)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    tracing::info!(path = %path.display(), backup = %backup.display(), "gateway configuration rewritten from the console");
+    Ok(backup.display().to_string())
+}
+
 #[tauri::command]
 fn gateway_status() -> GatewayLifecycleStatus {
     if gateway_listening() {
@@ -1069,6 +1298,7 @@ fn start_gateway(
         Ok(GatewayLifecycleStatus::Running)
     } else {
         let _ = stop_owned_gateway(&process, None);
+        process.record_child_failure("The gateway did not begin listening within 5 seconds.");
         Err("gateway did not begin listening within 5 seconds".to_string())
     }
 }
@@ -1114,6 +1344,7 @@ fn restart_gateway(
         Ok(GatewayLifecycleStatus::Running)
     } else {
         let _ = stop_owned_gateway(&process, None);
+        process.record_child_failure("The restarted gateway did not begin listening within 5 seconds.");
         Err("restarted gateway did not begin listening within 5 seconds".to_string())
     }
 }
@@ -1995,6 +2226,9 @@ fn main() {
             take_zcode_callback,
             quit_app,
             gateway_status,
+            gateway_failure,
+            read_gateway_config,
+            write_gateway_config,
             start_gateway,
             stop_gateway,
             restart_gateway,

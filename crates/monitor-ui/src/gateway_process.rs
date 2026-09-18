@@ -31,6 +31,26 @@ pub fn shutdown_plan(ownership: GatewayOwnership, graceful_exit: bool) -> Vec<Sh
     }
 }
 
+/// Picks the one line the console shows as a failed start's headline.
+///
+/// A gateway that rejects its configuration dies with an anyhow report:
+/// `Error: <cause>` followed by an indented `Caused by:` block. That first
+/// line is the actionable sentence, so it wins; anything else (a panic, a
+/// dynamic loader error) is reported through its last content line instead of
+/// being thrown away.
+pub fn failure_headline(stderr_tail: &str) -> Option<String> {
+    let lines: Vec<&str> = stderr_tail
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines
+        .iter()
+        .find(|line| line.starts_with("Error:"))
+        .or_else(|| lines.last())
+        .map(|line| (*line).to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Respawn policy: exponential backoff with jitter to prevent thundering herds
 // when the gateway keeps crashing.
@@ -226,6 +246,39 @@ mod tests {
                 delay: Duration::from_secs(30)
             }
         );
+    }
+
+    #[test]
+    fn config_rejection_headline_is_the_error_line() {
+        let tail = concat!(
+            "2026-09-18T05:15:48Z  INFO mahoquot_gateway: starting mahoquot-gateway port=18801\n",
+            "2026-09-18T05:15:48Z  WARN mahoquot_gateway::account: skipping credential\n",
+            "Error: registry validation error: alias 'glm-5.3-flash' points to unknown target 'z-ai/glm-5.3'\n",
+            "\n",
+            "Caused by:\n",
+            "    alias 'glm-5.3-flash' points to unknown target 'z-ai/glm-5.3'\n",
+        );
+        assert_eq!(
+            failure_headline(tail).as_deref(),
+            Some(
+                "Error: registry validation error: alias 'glm-5.3-flash' points to unknown target 'z-ai/glm-5.3'"
+            )
+        );
+    }
+
+    #[test]
+    fn headline_falls_back_to_the_last_content_line() {
+        let tail = "dyld[1]: Library not loaded: @rpath/libssl.3.dylib\n  Reason: image not found\n\n";
+        assert_eq!(
+            failure_headline(tail).as_deref(),
+            Some("Reason: image not found")
+        );
+    }
+
+    #[test]
+    fn silent_death_has_no_headline() {
+        assert_eq!(failure_headline(""), None);
+        assert_eq!(failure_headline("   \n\n\t\n"), None);
     }
 
     #[test]
