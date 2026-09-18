@@ -423,24 +423,6 @@ fn observe_monitor_view<R: Runtime>(app: &AppHandle<R>, view: &MonitorView) {
     }
 }
 
-fn observe_history_health<R: Runtime>(app: &AppHandle<R>, health: &serde_json::Value) {
-    let degraded = health
-        .get("degraded")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let detail = health
-        .get("last-error")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("Durable request history is degraded.")
-        .to_string();
-    let state = os_integration::ObservedState::HistoryDegraded { detail };
-    if degraded {
-        emit_observed_state(app, state);
-    } else {
-        clear_observed_state(app, &state);
-    }
-}
-
 fn observe_scheduler_status<R: Runtime>(app: &AppHandle<R>, status: &serde_json::Value) {
     let exhausted = status
         .get("selected")
@@ -479,11 +461,6 @@ fn start_native_state_observer<R: Runtime>(app: AppHandle<R>) {
             if let Ok(response) = get_management("scheduler/status").send().await {
                 if let Ok(status) = response.json::<serde_json::Value>().await {
                     observe_scheduler_status(&app, &status);
-                }
-            }
-            if let Ok(response) = get_management("history/health").send().await {
-                if let Ok(health) = response.json::<serde_json::Value>().await {
-                    observe_history_health(&app, &health);
                 }
             }
             tokio::time::sleep(Duration::from_secs(30)).await;

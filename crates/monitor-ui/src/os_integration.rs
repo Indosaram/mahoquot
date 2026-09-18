@@ -45,17 +45,15 @@ pub struct LoginStartPlan {
 pub enum NotificationCategory {
     AuthIsolated,
     SchedulerAllExhausted,
-    DegradedHistory,
     UpdateReady,
     UpdateFailed,
     TunnelFailed,
 }
 
 impl NotificationCategory {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::AuthIsolated,
         Self::SchedulerAllExhausted,
-        Self::DegradedHistory,
         Self::UpdateReady,
         Self::UpdateFailed,
         Self::TunnelFailed,
@@ -65,7 +63,6 @@ impl NotificationCategory {
         match self {
             Self::AuthIsolated => "auth_isolated",
             Self::SchedulerAllExhausted => "scheduler_all_exhausted",
-            Self::DegradedHistory => "degraded_history",
             Self::UpdateReady => "update_ready",
             Self::UpdateFailed => "update_failed",
             Self::TunnelFailed => "tunnel_failed",
@@ -76,7 +73,6 @@ impl NotificationCategory {
         match self {
             Self::AuthIsolated => "Account isolated",
             Self::SchedulerAllExhausted => "All accounts exhausted",
-            Self::DegradedHistory => "Request history degraded",
             Self::UpdateReady => "Update ready",
             Self::UpdateFailed => "Update failed",
             Self::TunnelFailed => "Public tunnel failed",
@@ -89,7 +85,6 @@ impl NotificationCategory {
             Self::SchedulerAllExhausted => {
                 "No configured account currently has capacity to serve requests."
             }
-            Self::DegradedHistory => "Durable request history is not recording reliably.",
             Self::UpdateReady => "A verified Mahoquot update is ready to install.",
             Self::UpdateFailed => "Mahoquot could not complete the update check or download.",
             Self::TunnelFailed => "The public tunnel stopped unexpectedly.",
@@ -123,7 +118,6 @@ impl NotificationEvent {
 pub enum ObservedState {
     AuthIsolated { account: String },
     SchedulerAllExhausted,
-    HistoryDegraded { detail: String },
     UpdateReady { version: String },
     UpdateFailed { detail: String },
     TunnelFailed { detail: String },
@@ -156,9 +150,6 @@ impl StateObserver {
             ObservedState::SchedulerAllExhausted => {
                 NotificationEvent::category(NotificationCategory::SchedulerAllExhausted)
             }
-            ObservedState::HistoryDegraded { .. } => {
-                NotificationEvent::category(NotificationCategory::DegradedHistory)
-            }
             ObservedState::UpdateReady { .. } => {
                 NotificationEvent::category(NotificationCategory::UpdateReady)
             }
@@ -182,7 +173,6 @@ impl ObservedState {
             (self, other),
             (Self::AuthIsolated { .. }, Self::AuthIsolated { .. })
                 | (Self::SchedulerAllExhausted, Self::SchedulerAllExhausted)
-                | (Self::HistoryDegraded { .. }, Self::HistoryDegraded { .. })
                 | (Self::UpdateReady { .. }, Self::UpdateReady { .. })
                 | (Self::UpdateFailed { .. }, Self::UpdateFailed { .. })
                 | (Self::TunnelFailed { .. }, Self::TunnelFailed { .. })
@@ -339,7 +329,6 @@ pub(crate) mod tests {
         let expected_categories = vec![
             NotificationCategory::AuthIsolated,
             NotificationCategory::SchedulerAllExhausted,
-            NotificationCategory::DegradedHistory,
             NotificationCategory::UpdateReady,
             NotificationCategory::UpdateFailed,
             NotificationCategory::TunnelFailed,
@@ -370,14 +359,6 @@ pub(crate) mod tests {
                 observer.observe(ObservedState::SchedulerAllExhausted),
                 Some(NotificationEvent::category(
                     NotificationCategory::SchedulerAllExhausted
-                ))
-            );
-            assert_eq!(
-                observer.observe(ObservedState::HistoryDegraded {
-                    detail: "SQLite writer unavailable".into(),
-                }),
-                Some(NotificationEvent::category(
-                    NotificationCategory::DegradedHistory
                 ))
             );
             assert_eq!(
