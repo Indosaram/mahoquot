@@ -1572,6 +1572,17 @@ h2 {
 .durable-logs-summary strong.warn {
   color: var(--warn);
 }
+.durable-logs-summary strong.unavailable,
+.model-price-estimate strong.unavailable {
+  color: var(--fg-faint);
+  font-size: 13px;
+  letter-spacing: .02em;
+}
+.cache-coverage-note {
+  color: var(--fg-faint);
+  font-size: 10px;
+  letter-spacing: .04em;
+}
 /* The Logs surface scrolls with the page: `main` is the only scroll owner, so
    the table must not open a second scrollport. */
 .durable-logs-table-wrap {

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
+import { UNAVAILABLE_LABEL, nonCachedInputTokens } from "../lib/cache-usage";
 import { cn } from "../lib/cn";
 import type {
   GatewayLifecycleStatus,
@@ -37,6 +38,14 @@ import type {
 import { SharedKeysCard } from "./SharedKeysCard";
 import { TunnelCard } from "./TunnelCard";
 import { Badge, Button, Card, Field, Input } from "./ui";
+
+function ModelPriceEstimate({ value }: { readonly value: number | null }) {
+  return value === null ? (
+    <strong className="unavailable">{UNAVAILABLE_LABEL}</strong>
+  ) : (
+    <strong>${value.toFixed(2)}</strong>
+  );
+}
 
 export interface SettingsSurfaceProps {
   readonly gatewayLifecycle: GatewayLifecycleStatus;
@@ -277,14 +286,15 @@ export function SettingsSurface({
     void onSaveSchedulerOrder(next);
   };
 
-  const estimatedSpend = (price: ModelPrice): number => {
+  const estimatedSpend = (price: ModelPrice): number | null => {
     const totals = historyStats?.totals;
     const savedPrice = modelPrices.find((item) => item.model === price.model);
     if (!totals || !savedPrice) return 0;
+    const nonCached = nonCachedInputTokens(totals);
+    if (nonCached.state !== "measured") return null;
     return (
       totals["estimated-cost-usd"] +
-      (((totals["input-tokens"] ?? 0) - (totals["cached-input-tokens"] ?? 0)) *
-        (price["input-per-million"] - savedPrice["input-per-million"])) /
+      (nonCached.tokens * (price["input-per-million"] - savedPrice["input-per-million"])) /
         1_000_000
     );
   };
@@ -989,7 +999,7 @@ export function SettingsSurface({
                   </Field>
                   <div className="model-price-estimate">
                     <small>Estimated spend</small>
-                    <strong>${estimatedSpend(price).toFixed(2)}</strong>
+                    <ModelPriceEstimate value={estimatedSpend(price)} />
                   </div>
                   <Button onClick={() => void onSaveModelPrice(price)}>
                     Save {price.model} price

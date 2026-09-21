@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
+import {
+  type CacheTokenReading,
+  aggregateEventCacheTokens,
+  cacheCoverageNote,
+  eventCacheTokens,
+  formatCacheTokens,
+  totalsCacheTokens,
+} from "../lib/cache-usage";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
 import { Button } from "./ui";
 
@@ -39,6 +47,8 @@ const toHistoryEvent = (record: LogRecord, index: number): HistoryEvent => ({
   "output-tokens": record.tokens ?? 0,
   "cached-input-tokens": 0,
   "cache-write-tokens": 0,
+  "cached-input-tokens-known": false,
+  "cache-write-tokens-known": false,
   "reasoning-tokens": 0,
   "total-tokens": record.tokens ?? 0,
   "latency-ms": record["latency-ms"] ?? 0,
@@ -59,17 +69,18 @@ const formatCost = (value: number): string => `$${value.toFixed(2)}`;
 const totalsOf = (events: readonly HistoryEvent[]): HistoryTotals => {
   const latencies = events.map((event) => event["latency-ms"]);
   const totalLatency = latencies.reduce((sum, value) => sum + value, 0);
+  const cachedInput = aggregateEventCacheTokens(events, "cached-input-tokens");
+  const cacheWrite = aggregateEventCacheTokens(events, "cache-write-tokens");
   return {
     requests: events.length,
     "successful-requests": events.filter((event) => event.succeeded).length,
     "failed-requests": events.filter((event) => !event.succeeded).length,
     "input-tokens": 0,
     "output-tokens": events.reduce((sum, event) => sum + event["output-tokens"], 0),
-    "cached-input-tokens": 0,
-    "cache-write-tokens": events.reduce(
-      (sum, event) => sum + (event["cache-write-tokens"] ?? 0),
-      0,
-    ),
+    "cached-input-tokens": cachedInput.state === "unknown" ? 0 : cachedInput.tokens,
+    "cache-write-tokens": cacheWrite.state === "unknown" ? 0 : cacheWrite.tokens,
+    "cached-input-tokens-known-requests": cachedInput.knownRequests,
+    "cache-write-tokens-known-requests": cacheWrite.knownRequests,
     "reasoning-tokens": 0,
     "total-tokens": events.reduce((sum, event) => sum + event["total-tokens"], 0),
     "total-latency-ms": totalLatency,
@@ -77,6 +88,18 @@ const totalsOf = (events: readonly HistoryEvent[]): HistoryTotals => {
     "estimated-cost-usd": events.reduce((sum, event) => sum + event["estimated-cost-usd"], 0),
   };
 };
+
+function CacheTokenValue({ reading }: { readonly reading: CacheTokenReading }) {
+  const note = cacheCoverageNote(reading);
+  return (
+    <>
+      <strong className={reading.state === "unknown" ? "unavailable" : undefined}>
+        {formatCacheTokens(reading)}
+      </strong>
+      {note ? <small className="cache-coverage-note">{note}</small> : null}
+    </>
+  );
+}
 
 export function DurableLogs({
   records,
@@ -277,6 +300,7 @@ export function DurableLogs({
   const activeTotals = totals
     ? { ...totals, "cache-write-tokens": totals["cache-write-tokens"] ?? 0 }
     : totalsOf(visibleEvents);
+  const cacheWriteReading = totalsCacheTokens(activeTotals, "cache-write-tokens");
   const totalCount = activeTotals.requests;
   const firstVisible = visibleEvents.length ? loadedBefore + 1 : 0;
   const lastVisible = loadedBefore + visibleEvents.length;
@@ -372,7 +396,7 @@ export function DurableLogs({
                 </div>
                 <div>
                   <span>Cache Write</span>
-                  <strong>{activeTotals["cache-write-tokens"].toLocaleString("en-US")}</strong>
+                  <CacheTokenValue reading={cacheWriteReading} />
                 </div>
               </section>
             ) : null}
@@ -526,7 +550,7 @@ export function DurableLogs({
             </div>
             <div>
               <dt>Cache write tokens</dt>
-              <dd>{(selected["cache-write-tokens"] ?? 0).toLocaleString("en-US")}</dd>
+              <dd>{formatCacheTokens(eventCacheTokens(selected, "cache-write-tokens"))}</dd>
             </div>
             <div>
               <dt>Latency</dt>
