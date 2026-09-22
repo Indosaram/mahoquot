@@ -37,7 +37,7 @@ Pinned reference links:
 | `--accent-dim` | `rgba(240, 128, 26, 0.15)` | `rgba(217, 107, 11, 0.12)` | Active pill backgrounds |
 | `--ok` | `#3fb950` | `#1a7f37` | Healthy, available, 200 responses |
 | `--ok-dim` | `rgba(63, 185, 80, 0.15)` | `rgba(26, 127, 55, 0.12)` | Healthy pill background |
-| `--warn` | `#d29922` | `#9a6700` | Cooldown, degraded, retry warning |
+| `--warn` | `#d29922` | `#9a6700` | Cooldown, retry warning |
 | `--warn-dim` | `rgba(210, 153, 34, 0.15)` | `rgba(154, 103, 0, 0.12)` | Warning pill background |
 | `--bad` | `#f85149` | `#cf222e` | Errors, failed accounts, locked access |
 | `--bad-dim` | `rgba(248, 81, 73, 0.15)` | `rgba(207, 34, 46, 0.12)` | Error banner background |

@@ -17,7 +17,6 @@ export interface ResetCreditView {
 export type AccountHealth =
   | "healthy"
   | "cooldown"
-  | "degraded"
   | "error"
   | "auth_required"
   | "not_loaded"
@@ -205,8 +204,8 @@ export const getClineGlmQuotaDeadline = (
 export const deriveAccountHealth = (
   healthRaw: unknown,
   resetAtUnixMs: number | null | undefined,
-  ok: number,
-  fails: number,
+  _ok: number,
+  _fails: number,
   provider?: string,
   usage?: Usage | null,
   nowMs = Date.now(),
@@ -259,13 +258,11 @@ export const deriveAccountHealth = (
     if (glmDeadline?.active) {
       return "cooldown";
     }
-    const total = ok + fails;
-    if (total >= 2 && fails / total > 0.5) {
-      return "degraded";
-    }
-    if (statusStr.includes("degraded") || statusStr.includes("warn")) {
-      return "degraded";
-    }
+    // ok/fails are lifetime request counters, not a health verdict: one
+    // infrastructure outage pins every account above 50% failures until
+    // successes catch up, which read as a fleet-wide "degraded" that the
+    // gateway itself never reported. Only gateway-reported states decide
+    // the badge; the counters stay display-only.
     return "healthy";
   }
 
@@ -290,13 +287,7 @@ export const deriveAccountHealth = (
   ) {
     return "error";
   }
-  const total = ok + fails;
-  if (total >= 2 && fails / total > 0.5) {
-    return "degraded";
-  }
-  if (statusStr.includes("degraded") || statusStr.includes("warn")) {
-    return "degraded";
-  }
+  // See the cline branch above: ok/fails never decide the badge.
   if (statusStr.includes("avail") || statusStr.includes("ok") || statusStr.includes("healthy")) {
     return "healthy";
   }
