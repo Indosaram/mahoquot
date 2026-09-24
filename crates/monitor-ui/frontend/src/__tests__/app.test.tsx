@@ -1626,7 +1626,9 @@ describe("operations console", () => {
     expect(screen.getByText("Weekly")).toBeInTheDocument();
     expect(screen.getByText("1h 0m")).toBeInTheDocument();
     expect(screen.getByText("2d 0h")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Warm settings for runtime-id@example.com" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Warm settings for runtime-id@example.com" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh quota" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Search accounts")).not.toBeInTheDocument();
   });

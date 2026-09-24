@@ -268,7 +268,8 @@ mod tests {
 
     #[test]
     fn headline_falls_back_to_the_last_content_line() {
-        let tail = "dyld[1]: Library not loaded: @rpath/libssl.3.dylib\n  Reason: image not found\n\n";
+        let tail =
+            "dyld[1]: Library not loaded: @rpath/libssl.3.dylib\n  Reason: image not found\n\n";
         assert_eq!(
             failure_headline(tail).as_deref(),
             Some("Reason: image not found")

@@ -365,15 +365,14 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
                     || raw_lower.contains("login")
                     || raw_lower.contains("token")
                     || a.last_error.as_ref().is_some_and(|e| {
-                        e.status == 401
-                            || {
-                                let m = e.message.to_ascii_lowercase();
-                                m.contains("unauthenticated")
-                                    || m.contains("auth")
-                                    || m.contains("invalid token")
-                                    || m.contains("re-auth")
-                                    || m.contains("reauth")
-                            }
+                        e.status == 401 || {
+                            let m = e.message.to_ascii_lowercase();
+                            m.contains("unauthenticated")
+                                || m.contains("auth")
+                                || m.contains("invalid token")
+                                || m.contains("re-auth")
+                                || m.contains("reauth")
+                        }
                     })
                 {
                     ("error".to_string(), None)
@@ -440,7 +439,10 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
                             .buckets
                             .iter()
                             .map(|bucket| BucketView {
-                                name: bucket.display_name.clone().or_else(|| bucket.bucket_id.clone()),
+                                name: bucket
+                                    .display_name
+                                    .clone()
+                                    .or_else(|| bucket.bucket_id.clone()),
                                 window: bucket.window.clone(),
                                 used_percent: bucket.used_percent,
                                 reset_in_secs: reset_countdown(
@@ -1155,6 +1157,8 @@ mod tests {
         let v = build_view(&s, 1000 * 1000);
         assert_eq!(v.accounts[0].status, "cooldown");
         assert_eq!(v.accounts[0].cooldown_remaining_secs, Some(1000));
-        assert!(v.degraded.contains(&"codex-err-cooldown@example.com".to_string()));
+        assert!(v
+            .degraded
+            .contains(&"codex-err-cooldown@example.com".to_string()));
     }
 }

@@ -15,12 +15,12 @@ import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
+import type { WarmupAccountStatus } from "../lib/schemas";
 import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
+import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
-import { type WarmupControlsState } from "./WarmupControls";
-import type { WarmupAccountStatus } from "../lib/schemas";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -227,7 +227,9 @@ export const AccountCard = ({
     setRefreshing(true);
     if (errorKey) setDismissedErrorKey(errorKey);
     try {
-      await onRefresh();
+      // The account is passed so the owner can run provider-specific refresh
+      // work (Devin model discovery) for the card that was actually clicked.
+      await onRefresh(account);
     } finally {
       // Keep spinning briefly so the user clearly sees the feedback
       setTimeout(() => setRefreshing(false), 400);
@@ -272,10 +274,15 @@ export const AccountCard = ({
   // everything below is rare or destructive and does not deserve permanent
   // header width.
   const overflowActions: OverflowAction[] = [];
-  if (warmup) overflowActions.push({
-    key: "warmup-settings", label: "Warmup settings", ariaLabel: `Warmup settings for ${account.label}`,
-    icon: <Sparkles size={13} />, disabled: false, run: () => warmup.onOpen("account", account.id),
-  });
+  if (warmup)
+    overflowActions.push({
+      key: "warmup-settings",
+      label: "Warmup settings",
+      ariaLabel: `Warmup settings for ${account.label}`,
+      icon: <Sparkles size={13} />,
+      disabled: false,
+      run: () => warmup.onOpen("account", account.id),
+    });
   if (account.supportsReset) {
     // The label names the price, not just the outcome: "Reset window" left it
     // ambiguous whether the item reported banked credits or spent one.
@@ -430,7 +437,11 @@ export const AccountCard = ({
             data-warm-account={account.id}
             aria-label={warmup ? `Warm settings for ${account.label}` : undefined}
             disabled={warmup ? false : !account.runtimeId || isPending}
-            onClick={() => warmup ? warmup.onOpen("account", account.id) : void onRunAccountAction("warm", account)}
+            onClick={() =>
+              warmup
+                ? warmup.onOpen("account", account.id)
+                : void onRunAccountAction("warm", account)
+            }
           >
             <Sparkles size={12} />
             {warmup ? "Warm settings" : pending === `warm:${account.id}` ? "Warming…" : "Warm up"}

@@ -758,14 +758,7 @@ fn spawn_gateway_child(
             let bin = bin.to_path_buf();
             let auth_dir = auth_dir.to_path_buf();
             std::thread::spawn(move || {
-                gateway_watchdog_loop(
-                    child,
-                    stderr_reader,
-                    pid,
-                    watchdog_process,
-                    bin,
-                    auth_dir,
-                );
+                gateway_watchdog_loop(child, stderr_reader, pid, watchdog_process, bin, auth_dir);
             });
             Some(pid)
         }
@@ -1210,7 +1203,8 @@ fn gateway_failure(process: tauri::State<'_, GatewayProcess>) -> Option<GatewayF
 #[tauri::command]
 fn read_gateway_config() -> Result<String, String> {
     let path = gateway_config_path()?;
-    std::fs::read_to_string(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+    std::fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 /// Writes `config.yaml` after keeping a timestamped copy.
@@ -1321,7 +1315,9 @@ fn restart_gateway(
         Ok(GatewayLifecycleStatus::Running)
     } else {
         let _ = stop_owned_gateway(&process, None);
-        process.record_child_failure("The restarted gateway did not begin listening within 5 seconds.");
+        process.record_child_failure(
+            "The restarted gateway did not begin listening within 5 seconds.",
+        );
         Err("restarted gateway did not begin listening within 5 seconds".to_string())
     }
 }

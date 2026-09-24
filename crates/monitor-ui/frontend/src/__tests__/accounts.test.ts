@@ -529,6 +529,93 @@ describe("Account Normalization and Quota Capability", () => {
       expect(acc.cooldownRemainingSecs).toBeNull();
     });
 
+    it("derives cooldown when both GLM and DeepSeek free models are exhausted (>=99.9% used or 429)", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-both-exhausted@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    bucket_id: "z-ai/glm-5.3-flash",
+                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    used_percent: 99.9,
+                    reset_at_unix: nowSecs + 7200,
+                  },
+                  {
+                    bucket_id: "cline-free/deepseek-v4.1-flash",
+                    display_name: "cline-free/deepseek-v4.1-flash (Daily limit)",
+                    used_percent: 100.0,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      const acc = merged[0] as NormalizedAccount;
+
+      expect(acc.health).toBe("cooldown");
+      // Earliest reset wins (3600s ahead)
+      expect(acc.cooldownUntilUnixMs).toBe((nowSecs + 3600) * 1000);
+      expect(acc.cooldownRemainingSecs).toBeGreaterThanOrEqual(3590);
+      expect(acc.cooldownRemainingSecs).toBeLessThanOrEqual(3600);
+    });
+
+    it("derives healthy when DeepSeek is exhausted but GLM has available quota", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-ds-only-exhausted@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          reset_at_unix_ms: null,
+          last_error: null,
+          ttft: null,
+          usage: {
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    bucket_id: "z-ai/glm-5.3-flash",
+                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    used_percent: 50.0,
+                    reset_at_unix: nowSecs + 7200,
+                  },
+                  {
+                    bucket_id: "cline-free/deepseek-v4.1-flash",
+                    display_name: "cline-free/deepseek-v4.1-flash (Daily limit)",
+                    used_percent: 100.0,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const merged = mergeAccountsAndCredentials(stats, []);
+      const acc = merged[0] as NormalizedAccount;
+
+      expect(acc.health).toBe("healthy");
+      expect(acc.cooldownRemainingSecs).toBeNull();
+    });
+
     it("normalizes expired inferred GLM quota to healthy and not exhausted", () => {
       // Expired inferred quota => unknown, not fabricated zero; unknown must not imply exhausted
       const stats: AdminStats["accounts"] = [

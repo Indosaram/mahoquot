@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "sync:proxy": "cp ../ui/index.html ../../../../mahoquot-proxy/ui/index.html",
+    "sync:proxy": "cp ../ui/index.html ../../../mahoquot-proxy/ui/index.html",
     "lint": "biome check src",
     "format": "biome format --write src",
     "typecheck": "tsc --noEmit",

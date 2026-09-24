@@ -2,14 +2,19 @@ import { AlertTriangle } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
 import { extractDevinSlug } from "../lib/accounts";
+import { blocks } from "../lib/pending";
 import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
+import {
+  AccountWarmupControls,
+  ProviderWarmupControls,
+  type WarmupControlsState,
+  WarmupDialog,
+} from "./WarmupControls";
 import { Stack } from "./layout";
-import { ProviderWarmupControls, AccountWarmupControls, WarmupDialog, type WarmupControlsState } from "./WarmupControls";
 import { Button } from "./ui";
-import { blocks } from "../lib/pending";
 
 export { HealthBadge, ProviderGlyph, providerLabel };
 
@@ -328,7 +333,10 @@ export const AccountsSurface = ({
   onSetDragging,
   onContextMenu,
 }: AccountsSurfaceProps) => {
-  const popupAccount = warmup?.selection?.type === "account" ? accounts.find((account) => account.id === warmup.selection?.id) : undefined;
+  const popupAccount =
+    warmup?.selection?.type === "account"
+      ? accounts.find((account) => account.id === warmup.selection?.id)
+      : undefined;
   const popupProvider = warmup?.selection?.type === "provider" ? warmup.selection.id : undefined;
   const poolSummary = clinePoolQuotaSummary(accounts);
   return (
@@ -371,52 +379,109 @@ export const AccountsSurface = ({
           re-authenticating are disabled: {credentialsError}
         </div>
       ) : null}
-      {warmup ? <>
-        {selectedProvider ? <Button size="sm" aria-label={`Warm settings for provider ${selectedProvider}`} onClick={() => warmup.onOpen("provider", selectedProvider)}>Warm settings · {providerLabel(selectedProvider)}</Button> : null}
-        {popupProvider || popupAccount ? <WarmupDialog
-          title={`Warm settings for ${popupProvider ? `provider ${popupProvider}` : popupAccount?.label}`}
-          onClose={warmup.onClose}
-          returnFocus={warmup.returnFocus}
-          footer={
-            popupProvider ? (
-              <>
-                <Button size="sm" variant="ghost" onClick={warmup.onClose}>Cancel</Button>
-                <Button size="sm" disabled={warmup.pending} onClick={() => warmup.onSaveProvider(popupProvider)}>Save</Button>
-              </>
-            ) : popupAccount ? (
-              <>
-                <Button
-                  size="sm"
-                  disabled={
-                    !popupAccount.runtimeId ||
-                    blocks(pending, "account", popupAccount.id) ||
-                    popupAccount.health !== "healthy" ||
-                    warmup.status?.accounts[popupAccount.runtimeId]?.capability !== "supported"
-                  }
-                  title={
-                    popupAccount.health !== "healthy"
-                      ? `Cannot warm up account in ${popupAccount.health} status. It will warm up automatically when healthy.`
-                      : undefined
-                  }
-                  onClick={() => void onRunAccountAction("warm", popupAccount)}
-                >
-                  Run warmup now
-                </Button>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <Button size="sm" variant="ghost" onClick={warmup.onClose}>Cancel</Button>
-                  <Button size="sm" disabled={!popupAccount.runtimeId || warmup.pending} onClick={() => popupAccount.runtimeId && warmup.onSaveAccount(popupAccount.runtimeId)}>Save</Button>
-                </div>
-              </>
-            ) : null
-          }
-        >
-          <div className="warmup-dialog-body-inner">
-            {warmup.error ? <div className="state-panel warning" role="alert">Warmup unavailable: {warmup.error}</div> : null}
-            {popupProvider ? <ProviderWarmupControls provider={popupProvider} warmup={warmup} models={[...new Set(accounts.filter((account) => account.provider === popupProvider).flatMap((account) => account.runtimeId ? warmup.status?.accounts[account.runtimeId]?.available_models ?? [] : []))]} /> : null}
-            {popupAccount ? <AccountWarmupControls id={popupAccount.runtimeId} label={popupAccount.label} provider={popupAccount.provider} warmup={warmup} /> : null}
-          </div>
-        </WarmupDialog> : null}
-      </> : null}
+      {warmup ? (
+        <>
+          {selectedProvider ? (
+            <Button
+              size="sm"
+              aria-label={`Warm settings for provider ${selectedProvider}`}
+              onClick={() => warmup.onOpen("provider", selectedProvider)}
+            >
+              Warm settings · {providerLabel(selectedProvider)}
+            </Button>
+          ) : null}
+          {popupProvider || popupAccount ? (
+            <WarmupDialog
+              title={`Warm settings for ${popupProvider ? `provider ${popupProvider}` : popupAccount?.label}`}
+              onClose={warmup.onClose}
+              returnFocus={warmup.returnFocus}
+              footer={
+                popupProvider ? (
+                  <>
+                    <Button size="sm" variant="ghost" onClick={warmup.onClose}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={warmup.pending}
+                      onClick={() => warmup.onSaveProvider(popupProvider)}
+                    >
+                      Save
+                    </Button>
+                  </>
+                ) : popupAccount ? (
+                  <>
+                    <Button
+                      size="sm"
+                      disabled={
+                        !popupAccount.runtimeId ||
+                        blocks(pending, "account", popupAccount.id) ||
+                        popupAccount.health !== "healthy" ||
+                        warmup.status?.accounts[popupAccount.runtimeId]?.capability !== "supported"
+                      }
+                      title={
+                        popupAccount.health !== "healthy"
+                          ? `Cannot warm up account in ${popupAccount.health} status. It will warm up automatically when healthy.`
+                          : undefined
+                      }
+                      onClick={() => void onRunAccountAction("warm", popupAccount)}
+                    >
+                      Run warmup now
+                    </Button>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Button size="sm" variant="ghost" onClick={warmup.onClose}>
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={!popupAccount.runtimeId || warmup.pending}
+                        onClick={() =>
+                          popupAccount.runtimeId && warmup.onSaveAccount(popupAccount.runtimeId)
+                        }
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </>
+                ) : null
+              }
+            >
+              <div className="warmup-dialog-body-inner">
+                {warmup.error ? (
+                  <div className="state-panel warning" role="alert">
+                    Warmup unavailable: {warmup.error}
+                  </div>
+                ) : null}
+                {popupProvider ? (
+                  <ProviderWarmupControls
+                    provider={popupProvider}
+                    warmup={warmup}
+                    models={[
+                      ...new Set(
+                        accounts
+                          .filter((account) => account.provider === popupProvider)
+                          .flatMap((account) =>
+                            account.runtimeId
+                              ? (warmup.status?.accounts[account.runtimeId]?.available_models ?? [])
+                              : [],
+                          ),
+                      ),
+                    ]}
+                  />
+                ) : null}
+                {popupAccount ? (
+                  <AccountWarmupControls
+                    id={popupAccount.runtimeId}
+                    label={popupAccount.label}
+                    provider={popupAccount.provider}
+                    warmup={warmup}
+                  />
+                ) : null}
+              </div>
+            </WarmupDialog>
+          ) : null}
+        </>
+      ) : null}
 
       {selectedProvider === "cline" && poolSummary.length > 0 && (
         <div

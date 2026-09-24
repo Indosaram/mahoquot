@@ -9,6 +9,12 @@
   display: grid;
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
+  /* The dialog element carries UA margin/padding/max-width; the overlay grid
+     centers it and the inner sections own the spacing. */
+  margin: 0;
+  padding: 0;
+  max-width: calc(100vw - 32px);
+  color: inherit;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
@@ -24,8 +30,18 @@
   border-bottom: 1px solid var(--line-soft);
   background: var(--panel-2);
 }
-.warmup-dialog-head h2 { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-.warmup-dialog-body { padding: 16px; display: grid; gap: 14px; overflow-y: auto; min-height: 0; }
+.warmup-dialog-head h2 {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.warmup-dialog-body {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
 .warmup-dialog-foot {
   display: flex;
   align-items: center;
@@ -35,26 +51,108 @@
   border-top: 1px solid var(--line-soft);
   background: var(--panel-2);
 }
-.warmup-dialog-body-inner { display: grid; gap: 14px; }
-.warmup-form { display: grid; }
-.warmup-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
-.warmup-legend { font-size: 12px; font-weight: 600; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.04em; padding: 0; margin-bottom: 10px; }
-.warmup-switch { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
-.warmup-switch input { width: 15px; height: 15px; accent-color: var(--accent); }
-.warmup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.warmup-grid .warmup-span { grid-column: 1 / -1; }
-.warmup-grid label { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: var(--fg-dim); }
-.warmup-grid .input { width: 100%; min-width: 0; }
-.warmup-form-actions { display: flex; justify-content: flex-end; }
-.warmup-status { display: grid; gap: 8px; font-size: 12px; color: var(--fg-dim); overflow-wrap: anywhere; }
-.warmup-status-badges { display: flex; flex-wrap: wrap; gap: 6px; }
-.warmup-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.warmup-status-detail { min-width: 0; }
-.warmup-warning { color: var(--warn); overflow-wrap: anywhere; }
-.warmup-account { display: grid; gap: 14px; }
-.warmup-account .warmup-form { border-top: 1px solid var(--line-soft); padding-top: 14px; }
-.warmup-policy-section { border-top: 1px solid var(--line-soft); padding-top: 14px; }
-.warmup-help-text { font-size: 12px; color: var(--fg-dim); line-height: 1.45; margin: 0; }
+.warmup-dialog-body-inner {
+  display: grid;
+  gap: 14px;
+}
+.warmup-form {
+  display: grid;
+}
+.warmup-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+.warmup-legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0;
+  margin-bottom: 10px;
+}
+.warmup-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.warmup-switch input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+.warmup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.warmup-grid .warmup-span {
+  grid-column: 1 / -1;
+}
+.warmup-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.warmup-grid .input {
+  width: 100%;
+  min-width: 0;
+}
+.warmup-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.warmup-status {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+.warmup-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.warmup-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.warmup-status-detail {
+  min-width: 0;
+}
+.warmup-warning {
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+.warmup-account {
+  display: grid;
+  gap: 14px;
+}
+.warmup-account .warmup-form {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+}
+.warmup-policy-section {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+}
+.warmup-help-text {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+  margin: 0;
+}
 
 :root[data-surface="notch"],
 :root[data-surface="notch"] body {
@@ -2419,7 +2517,7 @@ h2 {
 }
 .pool-quota-track i[data-tone="idle"] {
   background: var(--fg-faint);
-  opacity: .35;
+  opacity: 0.35;
 }
 .pool-quota-track i[data-tone="bad"] {
   background: var(--bad);

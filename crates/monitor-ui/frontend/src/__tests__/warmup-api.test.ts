@@ -18,9 +18,10 @@ describe("warmup management boundary", () => {
           "Content-Type": "application/json",
         });
         const value: unknown = JSON.parse(String(init.body));
-        (url.includes("/provider/") ? providers : accounts)[
-          decodeURIComponent(url.split("/").at(-1)!)
-        ] = value;
+        const segments = url.split("/");
+        const key = segments.at(-1);
+        if (key === undefined) throw new Error(`warmup mock saw no key in ${url}`);
+        (url.includes("/provider/") ? providers : accounts)[decodeURIComponent(key)] = value;
         return Response.json(value);
       }
       expect(["/v0/management/warmup/settings", "/v0/management/warmup/status"]).toContain(url);

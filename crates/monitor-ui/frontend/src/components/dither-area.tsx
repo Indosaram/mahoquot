@@ -29,16 +29,20 @@ export function DitherArea({
   useEffect(() => {
     const host = hostRef.current;
     const paint = paintRef.current;
-    const bloom = bloomRef.current;
-    if (!host || !paint || !bloom) return;
+    if (!host || !paint) return;
+    // The bloom layer is optional. Reading it as a hard requirement made the
+    // whole effect bail out whenever `bloom={false}`, leaving a blank chart.
+    const bloomCanvas = bloom ? bloomRef.current : null;
 
     const draw = () => {
       const width = host.clientWidth;
       const { cols, rows } = backingSize(width, height);
       paint.width = cols;
       paint.height = rows;
-      bloom.width = cols;
-      bloom.height = rows;
+      if (bloomCanvas) {
+        bloomCanvas.width = cols;
+        bloomCanvas.height = rows;
+      }
       if (cols < 2 || values.length < 2) return;
 
       const max = Math.max(1, ...values);
@@ -46,16 +50,18 @@ export function DitherArea({
       const columns = resample(fractions, cols);
       const floor = rows - 1;
       const sink = paint.getContext("2d");
-      const bloomSink = bloom.getContext("2d");
-      if (!sink || !bloomSink) return;
+      const bloomSink = bloomCanvas?.getContext("2d") ?? null;
+      if (!sink) return;
       sink.clearRect(0, 0, cols, rows);
-      bloomSink.clearRect(0, 0, cols, rows);
+      bloomSink?.clearRect(0, 0, cols, rows);
       for (let col = 0; col < cols; col += 1) {
         const depth = Math.round(columns[col] * (floor - 1));
         paintColumn(sink, col, floor - depth, floor, seed, { intensity: 0.4 });
-        paintColumn(bloomSink, col, floor - depth, floor, seed, {
-          intensity: 0.7,
-        });
+        if (bloomSink) {
+          paintColumn(bloomSink, col, floor - depth, floor, seed, {
+            intensity: 0.7,
+          });
+        }
       }
     };
 
@@ -63,7 +69,7 @@ export function DitherArea({
     const observer = new ResizeObserver(draw);
     observer.observe(host);
     return () => observer.disconnect();
-  }, [values, seed, height]);
+  }, [values, seed, height, bloom]);
 
   return (
     <div

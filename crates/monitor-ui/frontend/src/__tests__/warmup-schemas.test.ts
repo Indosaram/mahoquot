@@ -59,8 +59,12 @@ describe("Warmup wire schemas and parsing", () => {
 
       expect(WarmupProviderPolicySchema.safeParse({ min_interval_secs: 0 }).success).toBe(false);
       expect(WarmupProviderPolicySchema.safeParse({ min_interval_secs: -10 }).success).toBe(false);
-      expect(WarmupProviderPolicySchema.safeParse({ min_interval_secs: 604801 }).success).toBe(false);
-      expect(WarmupProviderPolicySchema.safeParse({ min_interval_secs: 120.25 }).success).toBe(false);
+      expect(WarmupProviderPolicySchema.safeParse({ min_interval_secs: 604801 }).success).toBe(
+        false,
+      );
+      expect(WarmupProviderPolicySchema.safeParse({ min_interval_secs: 120.25 }).success).toBe(
+        false,
+      );
     });
   });
 

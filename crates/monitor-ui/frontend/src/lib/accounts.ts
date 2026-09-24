@@ -169,7 +169,7 @@ export const getClineGlmQuotaDeadline = (
   let expiredMatch: ClineGlmQuotaDeadline | null = null;
 
   for (const bucket of glmBuckets) {
-    if (typeof bucket.used_percent !== "number" || bucket.used_percent < 100) {
+    if (typeof bucket.used_percent !== "number" || bucket.used_percent < 99.9) {
       continue;
     }
     if (typeof bucket.reset_at_unix === "number" && bucket.reset_at_unix > 0) {
@@ -196,6 +196,81 @@ export const getClineGlmQuotaDeadline = (
       if (active) return deadline;
       expiredMatch ??= deadline;
     }
+  }
+
+  return expiredMatch;
+};
+
+export const getClineFreeQuotaDeadline = (
+  usage: Usage | null | undefined,
+  nowMs = Date.now(),
+): ClineGlmQuotaDeadline | null => {
+  if (!usage?.groups) return null;
+  const clineGroup = usage.groups.find(
+    (g) =>
+      g.display_name === "Cline Free Limits" ||
+      g.display_name?.toLowerCase() === "cline free limits",
+  );
+  if (!clineGroup) return null;
+
+  const freeBuckets = clineGroup.buckets.filter((b) => {
+    const s = `${b.bucket_id ?? ""} ${b.display_name ?? ""} ${b.window ?? ""}`.toLowerCase();
+    return s.includes("glm") || s.includes("deepseek");
+  });
+  if (freeBuckets.length === 0) return null;
+
+  const nowSecs = Math.floor(nowMs / 1000);
+
+  // Group by distinct free model lane: "glm" vs "deepseek"
+  const lanes = new Map<string, { usedPercent: number; resetAtSecs: number }>();
+  for (const b of freeBuckets) {
+    const s = `${b.bucket_id ?? ""} ${b.display_name ?? ""}`.toLowerCase();
+    const laneKey = s.includes("deepseek") ? "deepseek" : "glm";
+    const used = typeof b.used_percent === "number" ? b.used_percent : 0;
+    const reset =
+      typeof b.reset_at_unix === "number" && b.reset_at_unix > 0
+        ? b.reset_at_unix
+        : typeof b.reset_after_seconds === "number" &&
+            b.reset_after_seconds > 0 &&
+            typeof usage.observed_at_unix === "number"
+          ? usage.observed_at_unix + b.reset_after_seconds
+          : 0;
+
+    const existing = lanes.get(laneKey);
+    if (!existing || used > existing.usedPercent) {
+      lanes.set(laneKey, { usedPercent: used, resetAtSecs: reset });
+    }
+  }
+
+  let allExhausted = true;
+  let earliestResetSecs = Number.POSITIVE_INFINITY;
+  let expiredMatch: ClineGlmQuotaDeadline | null = null;
+
+  for (const [, lane] of lanes) {
+    const isExhausted = lane.usedPercent >= 99.9;
+    const isActive = isExhausted && lane.resetAtSecs > nowSecs;
+    if (!isActive) {
+      allExhausted = false;
+      if (isExhausted && lane.resetAtSecs > 0) {
+        expiredMatch ??= {
+          untilUnixMs: lane.resetAtSecs * 1000,
+          remainingSecs: 0,
+          active: false,
+        };
+      }
+      break;
+    }
+    if (lane.resetAtSecs < earliestResetSecs) {
+      earliestResetSecs = lane.resetAtSecs;
+    }
+  }
+
+  if (allExhausted && earliestResetSecs !== Number.POSITIVE_INFINITY) {
+    return {
+      untilUnixMs: earliestResetSecs * 1000,
+      remainingSecs: Math.max(0, earliestResetSecs - nowSecs),
+      active: true,
+    };
   }
 
   return expiredMatch;
@@ -254,8 +329,8 @@ export const deriveAccountHealth = (
     ) {
       return "error";
     }
-    const glmDeadline = getClineGlmQuotaDeadline(usage, nowMs);
-    if (glmDeadline?.active) {
+    const freeDeadline = getClineFreeQuotaDeadline(usage, nowMs);
+    if (freeDeadline?.active) {
       return "cooldown";
     }
     // ok/fails are lifetime request counters, not a health verdict: one
@@ -564,14 +639,14 @@ export const mergeAccountsAndCredentials = (
       if (hasErrorStatus) {
         health = "error";
       } else {
-        const glmDeadline = getClineGlmQuotaDeadline(r.usage, nowMs);
-        if (glmDeadline?.active) {
+        const freeDeadline = getClineFreeQuotaDeadline(r.usage, nowMs);
+        if (freeDeadline?.active) {
           health = "cooldown";
-          cooldownUntilUnixMs = glmDeadline.untilUnixMs;
-          cooldownRemainingSecs = glmDeadline.remainingSecs;
+          cooldownUntilUnixMs = freeDeadline.untilUnixMs;
+          cooldownRemainingSecs = freeDeadline.remainingSecs;
         } else {
-          if (glmDeadline && !glmDeadline.active) {
-            cooldownUntilUnixMs = glmDeadline.untilUnixMs;
+          if (freeDeadline && !freeDeadline.active) {
+            cooldownUntilUnixMs = freeDeadline.untilUnixMs;
             cooldownRemainingSecs = 0;
           }
           health = deriveAccountHealth(

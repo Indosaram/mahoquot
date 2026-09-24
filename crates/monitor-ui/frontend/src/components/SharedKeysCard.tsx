@@ -146,6 +146,7 @@ export function SharedKeysCard({
   const [customLimit, setCustomLimit] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedPrefixId, setCopiedPrefixId] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -390,6 +391,22 @@ export function SharedKeysCard({
     setTopUpKey(null);
   };
 
+  /**
+   * Row actions used to be fire-and-forget `void onPatchKey(...)`, so a rejected
+   * request became an unhandled rejection and the row silently looked unchanged.
+   * Route every row mutation through here so the failure is visible.
+   */
+  const runMutation = async (action: () => Promise<void>) => {
+    setMutationError(null);
+    try {
+      await action();
+    } catch (reason) {
+      setMutationError(
+        reason instanceof Error ? reason.message : "The gateway rejected that change.",
+      );
+    }
+  };
+
   const endpoint = `${(tunnelUrl ?? baseUrl).replace(/\/+$/, "")}/v1`;
 
   const toggle = (
@@ -426,6 +443,20 @@ export function SharedKeysCard({
           </Button>
         </div>
       </header>
+
+      {mutationError ? (
+        <div
+          role="alert"
+          className="field-error"
+          style={{
+            margin: "0.5rem 0 0",
+            color: "var(--color-bad, #ef4444)",
+            fontSize: "0.85rem",
+          }}
+        >
+          {mutationError}
+        </div>
+      ) : null}
 
       {scopedKeys.length === 0 ? (
         <p className="shared-keys-empty">
@@ -495,14 +526,16 @@ export function SharedKeysCard({
                     ) : null}
                     <Button
                       aria-label={key.is_active ? `Pause ${key.name}` : `Resume ${key.name}`}
-                      onClick={() => void onPatchKey(key.id, { is_active: !key.is_active })}
+                      onClick={() =>
+                        void runMutation(() => onPatchKey(key.id, { is_active: !key.is_active }))
+                      }
                     >
                       {key.is_active ? "Pause" : "Resume"}
                     </Button>
                     <Button
                       className="danger"
                       aria-label={`Revoke ${key.name}`}
-                      onClick={() => void onDeleteKey(key.id)}
+                      onClick={() => void runMutation(() => onDeleteKey(key.id))}
                     >
                       <Trash2 size={14} />
                     </Button>
@@ -790,7 +823,7 @@ export function SharedKeysCard({
 
             <div className="drawer-actions">
               <Button onClick={() => setTopUpKey(null)}>Cancel</Button>
-              <Button onClick={() => void handleTopUp()}>Add quota</Button>
+              <Button onClick={() => void runMutation(handleTopUp)}>Add quota</Button>
             </div>
           </dialog>
         </OverlayLayer>

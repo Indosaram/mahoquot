@@ -1,16 +1,6 @@
 import { z } from "zod";
 import {
   type AdminStats,
-  type WarmupProviderPolicy,
-  type WarmupAccountPolicy,
-  type WarmupSettings,
-  type WarmupStatusResponse,
-  type WarmupResult,
-  WarmupProviderPolicySchema,
-  WarmupAccountPolicySchema,
-  WarmupSettingsSchema,
-  WarmupStatusResponseSchema,
-  WarmupResultSchema,
   type AuthFileItem,
   type CreateScopedKeyResponse,
   CreateScopedKeyResponseSchema,
@@ -45,6 +35,16 @@ import {
   type SchedulerStatus,
   SchedulerStatusSchema,
   type ScopedApiKey,
+  type WarmupAccountPolicy,
+  WarmupAccountPolicySchema,
+  type WarmupProviderPolicy,
+  WarmupProviderPolicySchema,
+  type WarmupResult,
+  WarmupResultSchema,
+  type WarmupSettings,
+  WarmupSettingsSchema,
+  type WarmupStatusResponse,
+  WarmupStatusResponseSchema,
   parseAdminStats,
   parseAuthFiles,
   parseGatewayModels,
@@ -136,7 +136,10 @@ export interface GatewayClients {
   readonly management: {
     warmupSettings(): Promise<WarmupSettings>;
     warmupStatus(): Promise<WarmupStatusResponse>;
-    saveWarmupProvider(provider: string, policy: WarmupProviderPolicy): Promise<WarmupProviderPolicy>;
+    saveWarmupProvider(
+      provider: string,
+      policy: WarmupProviderPolicy,
+    ): Promise<WarmupProviderPolicy>;
     saveWarmupAccount(id: string, policy: WarmupAccountPolicy): Promise<WarmupAccountPolicy>;
     credentials(): Promise<readonly AuthFileItem[]>;
     logs(limit?: number): Promise<LogsResponse>;
@@ -296,9 +299,15 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         return GatewayHealthSchema.parse(result);
       },
       warm: async (id) => {
-        return WarmupResultSchema.parse(await requestJson(`${base}/admin/accounts/${encodeURIComponent(id)}/warmup`, authHeaders, {
-          method: "POST",
-        }));
+        return WarmupResultSchema.parse(
+          await requestJson(
+            `${base}/admin/accounts/${encodeURIComponent(id)}/warmup`,
+            authHeaders,
+            {
+              method: "POST",
+            },
+          ),
+        );
       },
       reset: async (id) => {
         await requestJson(`${base}/admin/accounts/${encodeURIComponent(id)}/reset`, authHeaders, {
@@ -307,14 +316,38 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       },
     },
     management: {
-      warmupSettings: async () => WarmupSettingsSchema.parse(await requestJson(`${base}/v0/management/warmup/settings`, authHeaders)),
-      warmupStatus: async () => WarmupStatusResponseSchema.parse(await requestJson(`${base}/v0/management/warmup/status`, authHeaders)),
-      saveWarmupProvider: async (provider, policy) => WarmupProviderPolicySchema.parse(await requestJson(`${base}/v0/management/warmup/settings/provider/${encodeURIComponent(provider)}`, authHeaders, {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(WarmupProviderPolicySchema.parse(policy)),
-      })),
-      saveWarmupAccount: async (id, policy) => WarmupAccountPolicySchema.parse(await requestJson(`${base}/v0/management/warmup/settings/account/${encodeURIComponent(id)}`, authHeaders, {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(WarmupAccountPolicySchema.parse(policy)),
-      })),
+      warmupSettings: async () =>
+        WarmupSettingsSchema.parse(
+          await requestJson(`${base}/v0/management/warmup/settings`, authHeaders),
+        ),
+      warmupStatus: async () =>
+        WarmupStatusResponseSchema.parse(
+          await requestJson(`${base}/v0/management/warmup/status`, authHeaders),
+        ),
+      saveWarmupProvider: async (provider, policy) =>
+        WarmupProviderPolicySchema.parse(
+          await requestJson(
+            `${base}/v0/management/warmup/settings/provider/${encodeURIComponent(provider)}`,
+            authHeaders,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(WarmupProviderPolicySchema.parse(policy)),
+            },
+          ),
+        ),
+      saveWarmupAccount: async (id, policy) =>
+        WarmupAccountPolicySchema.parse(
+          await requestJson(
+            `${base}/v0/management/warmup/settings/account/${encodeURIComponent(id)}`,
+            authHeaders,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(WarmupAccountPolicySchema.parse(policy)),
+            },
+          ),
+        ),
       credentials: async () =>
         parseAuthFiles(await requestJson(`${base}/v0/management/auth-files`, authHeaders)).files,
       logs: async (limit) =>

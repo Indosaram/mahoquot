@@ -74,7 +74,9 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   });
   expect(document.querySelector(".accounts form")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  expect(screen.getByRole("dialog", { name: "Warm settings for provider codex" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("dialog", { name: "Warm settings for provider codex" }),
+  ).toBeInTheDocument();
   let provider = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
   expect(provider.getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual([
     "",
@@ -150,89 +152,123 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   expect(provider.getByLabelText("Model")).toHaveValue("live/model");
 });
 
-it.each(["save", "manual"])("isolates deferred %s responses when the gateway changes", async (operation) => {
-  sessionStorage.clear();
-  localStorage.setItem("mahoquot.base", "http://127.0.0.1:18841");
-  const policy = WarmupProviderPolicySchema.parse({ model: "removed/model" });
-  let resolveSave!: (response: Response) => void;
-  const saveResponse = new Promise<Response>((resolve) => {
-    resolveSave = resolve;
-  });
-  let signalSave!: () => void;
-  const saveStarted = new Promise<void>((resolve) => {
-    signalSave = resolve;
-  });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input));
-      if (
-        (operation === "save" && url.pathname === "/v0/management/warmup/settings/provider/codex" && init?.method === "PUT") ||
-        (operation === "manual" && url.pathname === "/admin/accounts/codex-1/warmup" && init?.method === "POST")
-      ) {
-        signalSave();
-        return saveResponse;
-      }
-      if (url.pathname === "/v0/management/warmup/settings")
-        return Response.json({
-          providers: { codex: { ...policy, enabled: url.port === "18841" } },
-          accounts: {},
-        });
-      if (url.pathname === "/v0/management/warmup/status") return Response.json({ accounts: { "codex-1": { source: "inherit", effective: policy, capability: "supported", available_models: [] } } });
-      if (url.pathname === "/admin/stats")
-        return Response.json({
-          accounts: [{ id: "codex-1", provider: "codex", health: { status: "available" } }],
-        });
-      if (url.pathname.includes("auth-files")) return Response.json({ files: [] });
-      if (url.pathname.includes("/logs")) return Response.json({ records: [] });
-      return Response.json({ ok: true });
-    }),
-  );
-  await act(async () => {
-    render(<App />);
-  });
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  let form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
-  expect(form.getByLabelText("Model")).toHaveValue("removed/model");
-  expect(form.getByRole("option", { name: "removed/model (unavailable)" })).toBeDisabled();
-  fireEvent.click(form.getByRole("checkbox"));
-  if (operation === "manual") {
+it.each(["save", "manual"])(
+  "isolates deferred %s responses when the gateway changes",
+  async (operation) => {
+    sessionStorage.clear();
+    localStorage.setItem("mahoquot.base", "http://127.0.0.1:18841");
+    const policy = WarmupProviderPolicySchema.parse({ model: "removed/model" });
+    let resolveSave!: (response: Response) => void;
+    const saveResponse = new Promise<Response>((resolve) => {
+      resolveSave = resolve;
+    });
+    let signalSave!: () => void;
+    const saveStarted = new Promise<void>((resolve) => {
+      signalSave = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (
+          (operation === "save" &&
+            url.pathname === "/v0/management/warmup/settings/provider/codex" &&
+            init?.method === "PUT") ||
+          (operation === "manual" &&
+            url.pathname === "/admin/accounts/codex-1/warmup" &&
+            init?.method === "POST")
+        ) {
+          signalSave();
+          return saveResponse;
+        }
+        if (url.pathname === "/v0/management/warmup/settings")
+          return Response.json({
+            providers: { codex: { ...policy, enabled: url.port === "18841" } },
+            accounts: {},
+          });
+        if (url.pathname === "/v0/management/warmup/status")
+          return Response.json({
+            accounts: {
+              "codex-1": {
+                source: "inherit",
+                effective: policy,
+                capability: "supported",
+                available_models: [],
+              },
+            },
+          });
+        if (url.pathname === "/admin/stats")
+          return Response.json({
+            accounts: [{ id: "codex-1", provider: "codex", health: { status: "available" } }],
+          });
+        if (url.pathname.includes("auth-files")) return Response.json({ files: [] });
+        if (url.pathname.includes("/logs")) return Response.json({ records: [] });
+        return Response.json({ ok: true });
+      }),
+    );
+    await act(async () => {
+      render(<App />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
+    let form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
+    expect(form.getByLabelText("Model")).toHaveValue("removed/model");
+    expect(form.getByRole("option", { name: "removed/model (unavailable)" })).toBeDisabled();
+    fireEvent.click(form.getByRole("checkbox"));
+    if (operation === "manual") {
+      fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
+      fireEvent.click(screen.getByRole("button", { name: "Warm settings for 1" }));
+      expect(screen.getByRole("button", { name: "Run warmup now" })).toBeEnabled();
+    }
+    await act(async () => {
+      fireEvent.click(
+        operation === "save"
+          ? screen.getByRole("button", { name: "Save" })
+          : screen.getByRole("button", { name: "Run warmup now" }),
+      );
+      await saveStarted;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    });
+    fireEvent.change(screen.getByLabelText("Gateway URL"), {
+      target: { value: "http://127.0.0.1:18842" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save & reconnect" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
+    form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
+    expect(form.getByRole("checkbox")).not.toBeChecked();
+    await act(async () => {
+      resolveSave(
+        Response.json(
+          operation === "save"
+            ? { ...policy, enabled: true }
+            : {
+                id: "codex-1",
+                provider: "codex",
+                ok: true,
+                status: 200,
+                latency_ms: 1,
+                stream_validated: true,
+              },
+        ),
+      );
+      await saveResponse;
+    });
+    expect(form.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Warm settings for 1" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Warm settings for 1" }));
     expect(screen.getByRole("button", { name: "Run warmup now" })).toBeEnabled();
-  }
-  await act(async () => {
-    fireEvent.click(operation === "save" ? screen.getByRole("button", { name: "Save" }) : screen.getByRole("button", { name: "Run warmup now" }));
-    await saveStarted;
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-  });
-  fireEvent.change(screen.getByLabelText("Gateway URL"), {
-    target: { value: "http://127.0.0.1:18842" },
-  });
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Save & reconnect" }));
-  });
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
-  expect(form.getByRole("checkbox")).not.toBeChecked();
-  await act(async () => {
-    resolveSave(Response.json(operation === "save" ? { ...policy, enabled: true } : { id: "codex-1", provider: "codex", ok: true, status: 200, latency_ms: 1, stream_validated: true }));
-    await saveResponse;
-  });
-  expect(form.getByRole("checkbox")).not.toBeChecked();
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Warm settings for 1" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Close warm settings" }));
-  fireEvent.click(screen.getByRole("button", { name: "Warm settings for 1" }));
-  expect(screen.getByRole("button", { name: "Run warmup now" })).toBeEnabled();
-  expect(screen.queryByText(/Warm-up succeeded/)).not.toBeInTheDocument();
-});
+    expect(screen.queryByText(/Warm-up succeeded/)).not.toBeInTheDocument();
+  },
+);

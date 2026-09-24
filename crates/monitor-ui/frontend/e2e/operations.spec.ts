@@ -132,6 +132,31 @@ const installMocks = async (
         json: { status: "ok", url: "https://example.com/authorize", state: "e2e-auth-state" },
       }),
   );
+  await page.route(/\/v0\/management\/warmup\/settings$/, (route) =>
+    route.fulfill({ json: { providers: {}, accounts: {} } }),
+  );
+  await page.route(/\/v0\/management\/warmup\/status$/, (route) => {
+    // Warm-up controls only enable for accounts the gateway reports as
+    // supported, so every mocked account is advertised that way.
+    const accounts = Object.fromEntries(
+      stats.accounts.map((account) => [
+        account.id,
+        {
+          source: "inherit",
+          effective: { enabled: false, model: null, idle_secs: 3600, min_interval_secs: 300 },
+          capability: "supported",
+          available_models: [],
+          last_result: null,
+          last_attempt_at: null,
+          next_due_at: null,
+          window_active: false,
+          window_reset_at: null,
+          skip_reason: null,
+        },
+      ]),
+    );
+    return route.fulfill({ json: { accounts } });
+  });
   await page.route(/\/v0\/management\/get-auth-status\?state=.*/, (route) =>
     route.fulfill({ json: { status: "ok", provider: "codex" } }),
   );
@@ -487,17 +512,47 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await page.getByText("Kiro", { exact: true }).click();
   await expect(page.getByText("Provider authentication failed")).toBeVisible();
   await page.getByText("Codex", { exact: true }).click();
-  let releaseWarm: (() => void) | undefined;
-  await page.route("**/admin/accounts/**/warmup", async (route) => {
-    await new Promise<void>((resolve) => {
-      releaseWarm = resolve;
+  let releaseWarm: { promise: Promise<void>; release: () => void } = (() => {
+    let release: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    await route.fulfill({ json: { ok: true } });
+    return { promise, release };
+  })();
+  await page.route("**/admin/accounts/**/warmup", async (route) => {
+    // Hold the response until the test releases it, and expose the entry signal
+    // so the test never races the handler installation.
+    await releaseWarm.promise;
+    await route.fulfill({
+      json: {
+        id: "warm-fixture",
+        provider: "codex",
+        ok: true,
+        status: 200,
+        latency_ms: 5,
+        probed_model: null,
+        stream_validated: false,
+        detail: null,
+      },
+    });
   });
-  await page.getByRole("button", { name: "Warm up" }).first().click();
-  await expect(page.getByRole("button", { name: "Warming…" })).toBeVisible();
-  releaseWarm?.();
-  await expect(page.getByText("Warm-up requested — active now.")).toBeVisible();
+  const warmRequest = page.waitForRequest("**/admin/accounts/**/warmup");
+  // Manual warm-up lives in the card's warm-settings dialog: the card button
+  // opens it and "Run warmup now" issues the request. Target the account card's
+  // control — the provider-level "Warm settings · <provider>" button sits above
+  // the list and opens a different dialog.
+  await page.locator("[data-warm-account]").first().click();
+  const warmDialog = page.getByRole("dialog", { name: /^Warm settings for (?!provider )/ });
+  await expect(warmDialog).toBeVisible();
+  const runWarm = warmDialog.getByRole("button", { name: "Run warmup now" });
+  await runWarm.click();
+  // The request is genuinely in flight once the route handler has been entered.
+  await warmRequest;
+  await expect(runWarm).toBeDisabled();
+  releaseWarm.release();
+  await expect(page.getByText(/Warm-up succeeded for /)).toBeVisible();
+  await warmDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(warmDialog).toHaveCount(0);
   await page.route("**/admin/accounts/**/reset", (route) =>
     route.fulfill({ status: 500, body: "deterministic reset failure" }),
   );
@@ -970,7 +1025,9 @@ test("overlay containment and focus-order across desktop drawers and context men
   await expect(backdrop).toHaveCount(0);
 
   // 3. Advanced Configuration YAML Drawer Containment
-  await page.getByRole("button", { name: "Settings" }).click();
+  // The nav item's name must be exact: warm-settings controls are also buttons
+  // whose accessible name contains "settings".
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.evaluate(() => {
     const main = document.querySelector("main");
     if (main) main.scrollTop = 200;

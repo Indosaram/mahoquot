@@ -1,3 +1,4 @@
+import { type ReactNode, useEffect, useRef } from "react";
 import type {
   WarmupAccountPolicy,
   WarmupAccountStatus,
@@ -6,9 +7,8 @@ import type {
   WarmupStatusResponse,
 } from "../lib/schemas";
 import { WarmupProviderPolicySchema } from "../lib/schemas";
-import { Button } from "./ui";
-import { useEffect, useRef, type ReactNode } from "react";
 import { OverlayLayer } from "./layout";
+import { Button } from "./ui";
 
 export interface WarmupControlsState {
   selection: { type: "provider" | "account"; id: string } | null;
@@ -28,16 +28,35 @@ export interface WarmupControlsState {
 
 export const defaultWarmupPolicy = WarmupProviderPolicySchema.parse({});
 
-export const WarmupDialog = ({ title, onClose, children, returnFocus, footer }: { title: string; onClose: () => void; children: ReactNode; returnFocus: HTMLElement | null; footer?: ReactNode }) => {
-  const ref = useRef<HTMLDivElement>(null);
+export const WarmupDialog = ({
+  title,
+  onClose,
+  children,
+  returnFocus,
+  footer,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  returnFocus: HTMLElement | null;
+  footer?: ReactNode;
+}) => {
+  const ref = useRef<HTMLDialogElement>(null);
+  // Mount-only focus management: the effect captures the element to restore
+  // focus to and installs the Escape handler once. Re-running it on every
+  // render (the callbacks are inline) would steal focus back into the dialog.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const returnFocusRef = useRef(returnFocus);
+  returnFocusRef.current = returnFocus;
   useEffect(() => {
-    const previous = returnFocus ?? document.activeElement;
+    const previous = returnFocusRef.current ?? document.activeElement;
     ref.current?.querySelector<HTMLElement>("button")?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -46,23 +65,49 @@ export const WarmupDialog = ({ title, onClose, children, returnFocus, footer }: 
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   }, []);
-  return <OverlayLayer className="history-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <div ref={ref} role="dialog" aria-modal="true" aria-label={title} className="warmup-dialog" onKeyDown={(event) => {
-      if (event.key === "Tab") {
-        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')).filter((element) => !element.closest("fieldset:disabled"));
-        const first = items[0], last = items.at(-1);
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-      }
-    }}>
-      <header className="warmup-dialog-head">
-        <h2>{title}</h2>
-        <Button size="sm" variant="ghost" aria-label="Close warm settings" onClick={onClose}>✕</Button>
-      </header>
-      <div className="warmup-dialog-body">{children}</div>
-      {footer ? <footer className="warmup-dialog-foot">{footer}</footer> : null}
-    </div>
-  </OverlayLayer>;
+  return (
+    <OverlayLayer
+      className="history-dialog-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <dialog
+        ref={ref}
+        open
+        aria-modal="true"
+        aria-label={title}
+        className="warmup-dialog"
+        onKeyDown={(event) => {
+          if (event.key === "Tab") {
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
+              ),
+            ).filter((element) => !element.closest("fieldset:disabled"));
+            const first = items[0];
+            const last = items.at(-1);
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        }}
+      >
+        <header className="warmup-dialog-head">
+          <h2>{title}</h2>
+          <Button size="sm" variant="ghost" aria-label="Close warm settings" onClick={onClose}>
+            ✕
+          </Button>
+        </header>
+        <div className="warmup-dialog-body">{children}</div>
+        {footer ? <footer className="warmup-dialog-foot">{footer}</footer> : null}
+      </dialog>
+    </OverlayLayer>
+  );
 };
 
 const WarmupTime = ({ seconds }: { seconds: number }) => {
@@ -101,19 +146,27 @@ const PolicyFields = ({
       </select>
     </label>
     {policy.model && !models.includes(policy.model) ? (
-      <span className="warmup-warning warmup-span">Configured model unavailable: {policy.model}</span>
+      <span className="warmup-warning warmup-span">
+        Configured model unavailable: {policy.model}
+      </span>
     ) : null}
   </div>
 );
 
 export const WarmupStatus = ({ status }: { status: WarmupAccountStatus | undefined }) => (
-  <div className="warmup-status" role="status">
+  <output className="warmup-status">
     {status ? (
       <>
         <div className="warmup-status-badges">
-          <span className={`badge ${status.capability === "supported" ? "badge-ok" : "badge-warn"}`}>{status.capability}</span>
+          <span
+            className={`badge ${status.capability === "supported" ? "badge-ok" : "badge-warn"}`}
+          >
+            {status.capability}
+          </span>
           <span className="badge badge-neutral">policy · {status.source}</span>
-          <span className={`badge ${status.effective.enabled ? "badge-ok" : "badge-neutral"}`}>automatic {status.effective.enabled ? "on" : "off"}</span>
+          <span className={`badge ${status.effective.enabled ? "badge-ok" : "badge-neutral"}`}>
+            automatic {status.effective.enabled ? "on" : "off"}
+          </span>
           {status.window_active ? (
             <span className="badge badge-ok">window active</span>
           ) : status.effective.enabled ? (
@@ -122,24 +175,35 @@ export const WarmupStatus = ({ status }: { status: WarmupAccountStatus | undefin
         </div>
         {status.last_result ? (
           <div className="warmup-status-line">
-            <span className={`badge ${status.last_result.ok ? "badge-ok" : "badge-bad"}`}>{status.last_result.ok ? "succeeded" : "failed"}</span>
-            <span className="warmup-status-detail">{status.last_result.probed_model ?? "No model"} · {status.last_result.latency_ms} ms{status.last_result.detail ? ` · ${status.last_result.detail}` : ""}</span>
+            <span className={`badge ${status.last_result.ok ? "badge-ok" : "badge-bad"}`}>
+              {status.last_result.ok ? "succeeded" : "failed"}
+            </span>
+            <span className="warmup-status-detail">
+              {status.last_result.probed_model ?? "No model"} · {status.last_result.latency_ms} ms
+              {status.last_result.detail ? ` · ${status.last_result.detail}` : ""}
+            </span>
           </div>
         ) : (
           <div className="warmup-status-line">No warmup result yet.</div>
         )}
         {status.last_attempt_at !== null ? (
-          <div className="warmup-status-line">Last attempt: <WarmupTime seconds={status.last_attempt_at} /></div>
+          <div className="warmup-status-line">
+            Last attempt: <WarmupTime seconds={status.last_attempt_at} />
+          </div>
         ) : null}
         <div className="warmup-status-line">
           {status.window_active && status.window_reset_at ? (
-            <span>Window active (resets <WarmupTime seconds={status.window_reset_at} />)</span>
+            <span>
+              Window active (resets <WarmupTime seconds={status.window_reset_at} />)
+            </span>
           ) : status.skip_reason === "cooldown_model_quota" ? (
             <span>Cooldown active (auto-warms when healthy)</span>
           ) : status.skip_reason ? (
             <span>Skipped: {status.skip_reason}</span>
           ) : status.next_due_at !== null ? (
-            <span>Next due: <WarmupTime seconds={status.next_due_at} /></span>
+            <span>
+              Next due: <WarmupTime seconds={status.next_due_at} />
+            </span>
           ) : (
             <span>No scheduled warmup.</span>
           )}
@@ -148,7 +212,7 @@ export const WarmupStatus = ({ status }: { status: WarmupAccountStatus | undefin
     ) : (
       <span>Warmup status unavailable.</span>
     )}
-  </div>
+  </output>
 );
 
 export const ProviderWarmupControls = ({
@@ -171,7 +235,8 @@ export const ProviderWarmupControls = ({
           <span>Enable automatic window warmup</span>
         </label>
         <p className="warmup-help-text">
-          Automatically sends a minimal request when accounts are unprimed to start the 5-hour quota countdown early.
+          Automatically sends a minimal request when accounts are unprimed to start the 5-hour quota
+          countdown early.
         </p>
         <PolicyFields
           policy={policy}
@@ -202,7 +267,11 @@ export const AccountWarmupControls = ({
   return (
     <div className="warmup-account">
       <WarmupStatus status={status} />
-      {!id ? <p className="warmup-status-line">Account must be loaded in the runtime to configure warmup.</p> : null}
+      {!id ? (
+        <p className="warmup-status-line">
+          Account must be loaded in the runtime to configure warmup.
+        </p>
+      ) : null}
       <div className="warmup-policy-section">
         <fieldset className="warmup-fieldset" disabled={!id || !warmup.settings || warmup.pending}>
           <label className="warmup-span">

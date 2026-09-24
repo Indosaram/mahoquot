@@ -99,7 +99,10 @@ export function paintColumn(
 /** Linear-resample a per-index fraction array to `cols` columns. */
 export function resample(src: number[], cols: number): number[] {
   const out = new Array<number>(cols);
-  const last = Math.max(src.length - 1, 1);
+  // A single-sample series has no span to interpolate over: `last` must stay 0
+  // so every column reads index 0. Forcing it to 1 made the final column fall
+  // through to the `?? 0` guard and render a spurious drop to zero.
+  const last = Math.max(src.length - 1, 0);
   for (let c = 0; c < cols; c++) {
     const t = (c / Math.max(cols - 1, 1)) * last;
     const i = Math.floor(t);

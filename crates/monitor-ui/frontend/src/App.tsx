@@ -14,8 +14,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountsSurface, accountMenuItems } from "./components/AccountsSurface";
-import type { WarmupAccountPolicy, WarmupProviderPolicy, WarmupSettings, WarmupStatusResponse } from "./lib/schemas";
-import { defaultWarmupPolicy } from "./components/WarmupControls";
 import { AgentsSurface } from "./components/AgentsSurface";
 import { ContextMenu, useContextMenu } from "./components/ContextMenu";
 import { DurableLogs } from "./components/DurableLogs";
@@ -26,6 +24,7 @@ import { SettingsSurface } from "./components/SettingsSurface";
 import { ToastStack, useToasts } from "./components/Toasts";
 import { TotpVaultSurface } from "./components/TotpVaultSurface";
 import { TrayPanel } from "./components/TrayPanel";
+import { defaultWarmupPolicy } from "./components/WarmupControls";
 import { AppShell, OverlayLayer } from "./components/layout";
 import { Button } from "./components/ui";
 import { useGatewayPolling } from "./hooks/useGatewayPolling";
@@ -91,6 +90,12 @@ import type { OverviewDimension, OverviewMetric } from "./lib/overview-analytics
 import { blocks, pendingKey } from "./lib/pending";
 import { GENERIC_PROVIDER_OPTIONS } from "./lib/provider-catalog";
 import { RELAY_PLAN_GROUPS, buildRelayCredential, isRelayTarget } from "./lib/relay-plans";
+import type {
+  WarmupAccountPolicy,
+  WarmupProviderPolicy,
+  WarmupSettings,
+  WarmupStatusResponse,
+} from "./lib/schemas";
 import type { ScopedApiKey } from "./lib/schemas";
 import {
   type DevinAccountStatus,
@@ -318,19 +323,30 @@ export default function App() {
   }, [onboardingOpen, configOpen]);
 
   const [warmupSettings, setWarmupSettings] = useState<WarmupSettings | null>(null);
-  const [warmupProviderDrafts, setWarmupProviderDrafts] = useState<Record<string, WarmupProviderPolicy>>({});
-  const [warmupAccountDrafts, setWarmupAccountDrafts] = useState<Record<string, WarmupAccountPolicy>>({});
+  const [warmupProviderDrafts, setWarmupProviderDrafts] = useState<
+    Record<string, WarmupProviderPolicy>
+  >({});
+  const [warmupAccountDrafts, setWarmupAccountDrafts] = useState<
+    Record<string, WarmupAccountPolicy>
+  >({});
   const [warmupStatus, setWarmupStatus] = useState<WarmupStatusResponse | null>(null);
   const [warmupError, setWarmupError] = useState("");
   const [warmupPending, setWarmupPending] = useState(false);
   const warmupReturnFocus = useRef<HTMLElement | null>(null);
-  const [warmupPopup, setWarmupPopup] = useState<{ type: "provider" | "account"; id: string } | null>(null);
+  const [warmupPopup, setWarmupPopup] = useState<{
+    type: "provider" | "account";
+    id: string;
+  } | null>(null);
   const clients = useMemo(
     () => createGatewayClients(committedBaseUrl || DEFAULT_GATEWAY_URL, relayKey),
     [committedBaseUrl, relayKey],
   );
   const warmupClient = useRef(clients);
   warmupClient.current = clients;
+  // `clients` is this component's own memo, not an outer-scope value: switching
+  // the committed gateway must drop the previous gateway's warmup drafts and
+  // popup, which the gateway-switch tests pin.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the dep is a memo and is load-bearing
   useEffect(() => {
     setWarmupSettings(null);
     setWarmupStatus(null);
@@ -339,11 +355,14 @@ export default function App() {
     setWarmupPopup(null);
     setWarmupError("");
     setWarmupPending(false);
-    setPending((current) => current.startsWith("warm:") ? "" : current);
+    setPending((current) => (current.startsWith("warm:") ? "" : current));
   }, [clients]);
 
   const reloadWarmup = useCallback(async () => {
-    const [settings, status] = await Promise.all([clients.management.warmupSettings(), clients.management.warmupStatus()]);
+    const [settings, status] = await Promise.all([
+      clients.management.warmupSettings(),
+      clients.management.warmupStatus(),
+    ]);
     if (warmupClient.current !== clients) return;
     setWarmupSettings(settings);
     setWarmupStatus(status);
@@ -353,13 +372,16 @@ export default function App() {
   const loadWarmup = useCallback(async () => {
     if (warmupClient.current !== clients) return;
     setWarmupPending(true);
-    try { await reloadWarmup(); }
-    catch (error) {
+    try {
+      await reloadWarmup();
+    } catch (error) {
       if (warmupClient.current !== clients) return;
       setWarmupStatus(null);
       setWarmupSettings(null);
       setWarmupError(error instanceof Error ? error.message : "Request failed");
-    } finally { if (warmupClient.current === clients) setWarmupPending(false); }
+    } finally {
+      if (warmupClient.current === clients) setWarmupPending(false);
+    }
   }, [reloadWarmup, clients]);
 
   useEffect(() => {
@@ -371,13 +393,25 @@ export default function App() {
     if (surface !== "accounts") return;
     let active = true;
     const timer = window.setInterval(() => {
-      void clients.management.warmupStatus().then((status) => {
-        if (active && warmupClient.current === clients) { setWarmupStatus(status); setWarmupError(""); }
-      }).catch((error: unknown) => {
-        if (active && warmupClient.current === clients) { setWarmupStatus(null); setWarmupError(error instanceof Error ? error.message : "Status unavailable"); }
-      });
+      void clients.management
+        .warmupStatus()
+        .then((status) => {
+          if (active && warmupClient.current === clients) {
+            setWarmupStatus(status);
+            setWarmupError("");
+          }
+        })
+        .catch((error: unknown) => {
+          if (active && warmupClient.current === clients) {
+            setWarmupStatus(null);
+            setWarmupError(error instanceof Error ? error.message : "Status unavailable");
+          }
+        });
     }, 15000);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [clients, surface]);
 
   const saveWarmup = async (target: "provider" | "account", id: string) => {
@@ -386,14 +420,24 @@ export default function App() {
     setWarmupError("");
     try {
       if (target === "provider") {
-        const saved = await clients.management.saveWarmupProvider(id, warmupProviderDrafts[id] ?? warmupSettings.providers[id] ?? defaultWarmupPolicy);
+        const saved = await clients.management.saveWarmupProvider(
+          id,
+          warmupProviderDrafts[id] ?? warmupSettings.providers[id] ?? defaultWarmupPolicy,
+        );
         if (warmupClient.current !== clients) return;
-        setWarmupSettings((current) => current ? { ...current, providers: { ...current.providers, [id]: saved } } : current);
+        setWarmupSettings((current) =>
+          current ? { ...current, providers: { ...current.providers, [id]: saved } } : current,
+        );
         setWarmupProviderDrafts(({ [id]: _, ...rest }) => rest);
       } else {
-        const saved = await clients.management.saveWarmupAccount(id, warmupAccountDrafts[id] ?? warmupSettings.accounts[id] ?? { type: "inherit" });
+        const saved = await clients.management.saveWarmupAccount(
+          id,
+          warmupAccountDrafts[id] ?? warmupSettings.accounts[id] ?? { type: "inherit" },
+        );
         if (warmupClient.current !== clients) return;
-        setWarmupSettings((current) => current ? { ...current, accounts: { ...current.accounts, [id]: saved } } : current);
+        setWarmupSettings((current) =>
+          current ? { ...current, accounts: { ...current.accounts, [id]: saved } } : current,
+        );
         setWarmupAccountDrafts(({ [id]: _, ...rest }) => rest);
       }
       await reloadWarmup();
@@ -403,7 +447,9 @@ export default function App() {
       if (warmupClient.current !== clients) return;
       setWarmupError(error instanceof Error ? error.message : "Save failed");
       setNotice(actionFailed(error));
-    } finally { if (warmupClient.current === clients) setWarmupPending(false); }
+    } finally {
+      if (warmupClient.current === clients) setWarmupPending(false);
+    }
   };
 
   const reloadScopedKeys = useCallback(async () => {
@@ -864,7 +910,11 @@ export default function App() {
       if (action === "warm") {
         const result = await clients.admin.warm(account.runtimeId);
         if (warmupClient.current !== clients) return;
-        setNotice(result.ok ? `Warm-up succeeded for ${account.label}.` : `Action failed: warm-up for ${account.label}: ${result.detail ?? `HTTP ${result.status}`}`);
+        setNotice(
+          result.ok
+            ? `Warm-up succeeded for ${account.label}.`
+            : `Action failed: warm-up for ${account.label}: ${result.detail ?? `HTTP ${result.status}`}`,
+        );
         await loadWarmup();
         if (warmupClient.current !== clients) return;
       } else {
@@ -1666,10 +1716,7 @@ export default function App() {
             ) : null}
           </div>
           <div className="gateway-failure-actions">
-            <Button
-              disabled={blocks(pending, "config")}
-              onClick={() => void openConfigRepair()}
-            >
+            <Button disabled={blocks(pending, "config")} onClick={() => void openConfigRepair()}>
               {pending === pendingKey.configLoad ? "Opening…" : "Edit config.yaml"}
             </Button>
             <Button disabled={blocks(pending, "gateway")} onClick={() => void retryGateway()}>
@@ -1773,15 +1820,31 @@ export default function App() {
             warmup={{
               selection: warmupPopup,
               onOpen: (type, id) => {
-                warmupReturnFocus.current = type === "account" ? Array.from(document.querySelectorAll<HTMLElement>("[data-warm-account]")).find((element) => element.dataset.warmAccount === id) ?? null : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                warmupReturnFocus.current =
+                  type === "account"
+                    ? (Array.from(
+                        document.querySelectorAll<HTMLElement>("[data-warm-account]"),
+                      ).find((element) => element.dataset.warmAccount === id) ?? null)
+                    : document.activeElement instanceof HTMLElement
+                      ? document.activeElement
+                      : null;
                 setWarmupPopup({ type, id });
               },
               returnFocus: warmupReturnFocus.current,
               onClose: () => setWarmupPopup(null),
-              settings: warmupSettings ? { providers: { ...warmupSettings.providers, ...warmupProviderDrafts }, accounts: { ...warmupSettings.accounts, ...warmupAccountDrafts } } : null,
-              status: warmupStatus, error: warmupError, pending: warmupPending,
-              onProviderChange: (id: string, policy: WarmupProviderPolicy) => setWarmupProviderDrafts((current) => ({ ...current, [id]: policy })),
-              onAccountChange: (id: string, policy: WarmupAccountPolicy) => setWarmupAccountDrafts((current) => ({ ...current, [id]: policy })),
+              settings: warmupSettings
+                ? {
+                    providers: { ...warmupSettings.providers, ...warmupProviderDrafts },
+                    accounts: { ...warmupSettings.accounts, ...warmupAccountDrafts },
+                  }
+                : null,
+              status: warmupStatus,
+              error: warmupError,
+              pending: warmupPending,
+              onProviderChange: (id: string, policy: WarmupProviderPolicy) =>
+                setWarmupProviderDrafts((current) => ({ ...current, [id]: policy })),
+              onAccountChange: (id: string, policy: WarmupAccountPolicy) =>
+                setWarmupAccountDrafts((current) => ({ ...current, [id]: policy })),
               onSaveProvider: (id) => void saveWarmup("provider", id),
               onSaveAccount: (id) => void saveWarmup("account", id),
               onReload: () => void loadWarmup(),
@@ -2550,7 +2613,9 @@ export default function App() {
           <aside className="drawer config-drawer" aria-label="Advanced configuration editor">
             <div className="section-head">
               <div>
-                <span className="kicker">{configSource === "local" ? "LOCAL FILE" : "RAW YAML"}</span>
+                <span className="kicker">
+                  {configSource === "local" ? "LOCAL FILE" : "RAW YAML"}
+                </span>
                 <h2>Gateway configuration</h2>
                 {configSource === "local" && configPath ? (
                   <small className="config-drawer-path">{configPath}</small>
