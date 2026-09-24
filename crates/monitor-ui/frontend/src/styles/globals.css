@@ -2401,6 +2401,32 @@ h2 {
   color: var(--fg-faint);
   padding: 8px 0 2px;
 }
+.pool-quota {
+  display: block;
+}
+.pool-quota-row {
+  margin-top: 8px;
+  grid-template-columns: minmax(0, 216px) minmax(80px, 1fr) auto;
+}
+.pool-quota-track {
+  display: flex;
+}
+.pool-quota-track i {
+  border-radius: 0;
+}
+.pool-quota-track i[data-tone="ok"] {
+  background: var(--ok);
+}
+.pool-quota-track i[data-tone="idle"] {
+  background: var(--fg-faint);
+  opacity: .35;
+}
+.pool-quota-track i[data-tone="bad"] {
+  background: var(--bad);
+}
+.pool-quota-track + .quota-meta strong {
+  white-space: nowrap;
+}
 .reset-credits {
   position: relative;
   flex: none;

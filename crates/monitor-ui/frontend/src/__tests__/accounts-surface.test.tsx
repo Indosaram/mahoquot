@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AccountsSurface,
   type AccountsSurfaceProps,
+  clinePoolQuotaSummary,
   isClineInferredQuotaExpired,
   quotaRows,
 } from "../components/AccountsSurface";
@@ -785,5 +786,149 @@ describe("AccountsSurface component", () => {
       />,
     );
     expect(screen.queryByText("Warmed")).not.toBeInTheDocument();
+  });
+});
+
+describe("Cline pool quota summary", () => {
+  const nowUnix = 1_800_000_000;
+  const nowMs = nowUnix * 1000;
+
+  const clineAccount = (
+    id: string,
+    buckets: Array<{ display_name: string; used_percent: number; reset_at_unix: number }>,
+  ): NormalizedAccount => ({
+    ...mockAccount,
+    id,
+    label: id,
+    provider: "cline",
+    usage: {
+      groups: [
+        {
+          display_name: "Cline Free Limits",
+          models: "Cline Free Models",
+          buckets,
+        },
+      ],
+    },
+  });
+
+  it("classifies measured, unmeasured, and exhausted across every cline account", () => {
+    const fresh: NormalizedAccount = { ...clineAccount("c1", []), usage: null };
+    const glmExhausted = clineAccount("c2", [
+      {
+        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        used_percent: 100,
+        reset_at_unix: nowUnix + 3600,
+      },
+      {
+        display_name: "cline-free/deepseek-v4.1-flash (Daily limit)",
+        used_percent: 50,
+        reset_at_unix: nowUnix + 3600,
+      },
+    ]);
+    const deepseekPartial = clineAccount("c3", [
+      {
+        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        used_percent: 25,
+        reset_at_unix: nowUnix + 3600,
+      },
+      {
+        display_name: "deepseek/deepseek-v4.1-flash (Daily limit)",
+        used_percent: 40,
+        reset_at_unix: nowUnix + 3600,
+      },
+    ]);
+    const glmExpired = clineAccount("c4", [
+      {
+        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        used_percent: 100,
+        reset_at_unix: nowUnix - 300,
+      },
+    ]);
+    const nonCline = clineAccount("other", [
+      {
+        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        used_percent: 100,
+        reset_at_unix: nowUnix + 3600,
+      },
+    ]);
+    const foreign: NormalizedAccount = { ...nonCline, provider: "codex" };
+
+    const [glm, deepseek] = clinePoolQuotaSummary(
+      [fresh, glmExhausted, deepseekPartial, glmExpired, foreign],
+      nowMs,
+    );
+
+    expect(glm).toEqual({
+      model: "z-ai/glm-5.3-flash",
+      total: 4,
+      available: 1,
+      unmeasured: 2,
+      exhausted: 1,
+      remainingSumPercent: 75,
+      nextResetAtUnix: nowUnix + 3600,
+    });
+    expect(deepseek).toEqual({
+      model: "cline-free/deepseek-v4.1-flash",
+      total: 4,
+      available: 2,
+      unmeasured: 2,
+      exhausted: 0,
+      remainingSumPercent: 110,
+      nextResetAtUnix: null,
+    });
+  });
+
+  it("renders the pooled summary at the top of the accounts surface", () => {
+    const fresh: NormalizedAccount = { ...clineAccount("c1", []), usage: null };
+    const { container } = render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [fresh],
+          visibleAccounts: [fresh],
+          providers: ["cline"],
+          selectedProvider: "cline",
+        })}
+      />,
+    );
+
+    const panel = screen.getByTestId("cline-pool-quota-summary");
+    expect(panel.textContent).toContain("Pooled quota · all 1 cline accounts · estimated");
+    expect(panel.querySelectorAll(".quota-row")).toHaveLength(2);
+    expect(panel.textContent).toContain("z-ai/glm-5.3-flash");
+    expect(panel.textContent).toContain("cline-free/deepseek-v4.1-flash");
+    expect(panel.textContent).toContain("0 available");
+    expect(panel.textContent).toContain("1 unmeasured · 0 exhausted");
+    const segments = panel.querySelectorAll(".pool-quota-track i");
+    expect(segments).toHaveLength(6);
+    expect(segments[0].getAttribute("data-tone")).toBe("ok");
+    expect(segments[1].getAttribute("data-tone")).toBe("idle");
+    expect(segments[2].getAttribute("data-tone")).toBe("bad");
+    const list = container.querySelector(".account-list");
+    expect(list).not.toBeNull();
+    expect(
+      panel.compareDocumentPosition(list as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const tabs = container.querySelector(".provider-tabs");
+    expect(tabs).not.toBeNull();
+    expect(
+      (tabs as Node).compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("hides the pooled summary on other provider tabs", () => {
+    const foreign: NormalizedAccount = { ...mockAccount, provider: "codex", usage: null };
+    render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [foreign],
+          visibleAccounts: [foreign],
+          providers: ["codex", "cline"],
+          selectedProvider: "codex",
+        })}
+      />,
+    );
+
+    expect(screen.queryByTestId("cline-pool-quota-summary")).not.toBeInTheDocument();
   });
 });
