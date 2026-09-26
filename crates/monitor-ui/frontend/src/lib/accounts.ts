@@ -136,16 +136,18 @@ export const getQuotaCapability = (
   return "unsupported";
 };
 
-export interface ClineGlmQuotaDeadline {
+export interface ClineFreeQuotaDeadline {
   readonly untilUnixMs: number;
   readonly remainingSecs: number;
   readonly active: boolean;
 }
 
-export const getClineGlmQuotaDeadline = (
+export type ClineGlmQuotaDeadline = ClineFreeQuotaDeadline;
+
+export const getClineGeminiQuotaDeadline = (
   usage: Usage | null | undefined,
   nowMs = Date.now(),
-): ClineGlmQuotaDeadline | null => {
+): ClineFreeQuotaDeadline | null => {
   if (!usage?.groups) return null;
   const clineGroup = usage.groups.find(
     (g) =>
@@ -154,27 +156,27 @@ export const getClineGlmQuotaDeadline = (
   );
   if (!clineGroup) return null;
 
-  const glmBuckets = clineGroup.buckets.filter((b) => {
+  const geminiBuckets = clineGroup.buckets.filter((b) => {
     if (b.bucket_id) {
-      return /glm/i.test(b.bucket_id);
+      return /gemini/i.test(b.bucket_id);
     }
     return (
-      (typeof b.display_name === "string" && /glm/i.test(b.display_name)) ||
-      (typeof b.window === "string" && /glm/i.test(b.window))
+      (typeof b.display_name === "string" && /gemini/i.test(b.display_name)) ||
+      (typeof b.window === "string" && /gemini/i.test(b.window))
     );
   });
-  if (glmBuckets.length === 0) return null;
+  if (geminiBuckets.length === 0) return null;
 
   const nowSecs = Math.floor(nowMs / 1000);
-  let expiredMatch: ClineGlmQuotaDeadline | null = null;
+  let expiredMatch: ClineFreeQuotaDeadline | null = null;
 
-  for (const bucket of glmBuckets) {
+  for (const bucket of geminiBuckets) {
     if (typeof bucket.used_percent !== "number" || bucket.used_percent < 99.9) {
       continue;
     }
     if (typeof bucket.reset_at_unix === "number" && bucket.reset_at_unix > 0) {
       const active = bucket.reset_at_unix > nowSecs;
-      const deadline: ClineGlmQuotaDeadline = {
+      const deadline: ClineFreeQuotaDeadline = {
         untilUnixMs: bucket.reset_at_unix * 1000,
         remainingSecs: Math.max(0, bucket.reset_at_unix - nowSecs),
         active,
@@ -188,7 +190,7 @@ export const getClineGlmQuotaDeadline = (
     ) {
       const deadlineSecs = usage.observed_at_unix + bucket.reset_after_seconds;
       const active = deadlineSecs > nowSecs;
-      const deadline: ClineGlmQuotaDeadline = {
+      const deadline: ClineFreeQuotaDeadline = {
         untilUnixMs: deadlineSecs * 1000,
         remainingSecs: Math.max(0, deadlineSecs - nowSecs),
         active,
@@ -201,10 +203,12 @@ export const getClineGlmQuotaDeadline = (
   return expiredMatch;
 };
 
+export const getClineGlmQuotaDeadline = getClineGeminiQuotaDeadline;
+
 export const getClineFreeQuotaDeadline = (
   usage: Usage | null | undefined,
   nowMs = Date.now(),
-): ClineGlmQuotaDeadline | null => {
+): ClineFreeQuotaDeadline | null => {
   if (!usage?.groups) return null;
   const clineGroup = usage.groups.find(
     (g) =>
@@ -215,17 +219,17 @@ export const getClineFreeQuotaDeadline = (
 
   const freeBuckets = clineGroup.buckets.filter((b) => {
     const s = `${b.bucket_id ?? ""} ${b.display_name ?? ""} ${b.window ?? ""}`.toLowerCase();
-    return s.includes("glm") || s.includes("deepseek");
+    return s.includes("gemini") || s.includes("deepseek");
   });
   if (freeBuckets.length === 0) return null;
 
   const nowSecs = Math.floor(nowMs / 1000);
 
-  // Group by distinct free model lane: "glm" vs "deepseek"
+  // Group by distinct free model lane: "gemini" vs "deepseek"
   const lanes = new Map<string, { usedPercent: number; resetAtSecs: number }>();
   for (const b of freeBuckets) {
     const s = `${b.bucket_id ?? ""} ${b.display_name ?? ""}`.toLowerCase();
-    const laneKey = s.includes("deepseek") ? "deepseek" : "glm";
+    const laneKey = s.includes("deepseek") ? "deepseek" : "gemini";
     const used = typeof b.used_percent === "number" ? b.used_percent : 0;
     const reset =
       typeof b.reset_at_unix === "number" && b.reset_at_unix > 0
@@ -244,7 +248,7 @@ export const getClineFreeQuotaDeadline = (
 
   let allExhausted = true;
   let earliestResetSecs = Number.POSITIVE_INFINITY;
-  let expiredMatch: ClineGlmQuotaDeadline | null = null;
+  let expiredMatch: ClineFreeQuotaDeadline | null = null;
 
   for (const [, lane] of lanes) {
     const isExhausted = lane.usedPercent >= 99.9;

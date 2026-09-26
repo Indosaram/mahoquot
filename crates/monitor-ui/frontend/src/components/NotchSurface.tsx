@@ -1,4 +1,4 @@
-import { formatQuotaPercent, quotaRows } from "@/components/AccountsSurface";
+import { formatQuotaPercent, quotaDisplay, quotaRows } from "@/components/AccountsSurface";
 import { MONOCHROME_LOGOS, ProviderGlyph, providerLogos } from "@/components/ProviderGlyph";
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import { type NormalizedAccount, formatResetTime } from "@/lib/accounts";
@@ -14,8 +14,12 @@ import { TotpQuickAccess } from "./TotpVaultSurface";
 // ViewBox 0 0 108 520, shared by shadow/glass/edge layers.
 const NOTCH_ISLAND_PATH = "M108 0 C108 22 0 33 0 55 V465 C0 487 108 498 108 520 Z";
 
-const worstUsedPercent = (rows: readonly { usedPercent: number }[]): number | null => {
-  const values = rows.map((row) => row.usedPercent).filter((value) => Number.isFinite(value));
+const worstUsedPercent = (
+  rows: readonly { usedPercent: number | null }[],
+): number | null => {
+  const values = rows
+    .map((row) => row.usedPercent)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
   return values.length ? Math.max(...values) : null;
 };
 
@@ -203,7 +207,9 @@ export function NotchSurface({
               <strong title={entry.label}>{entry.label}</strong>
             </div>
             {entry.rows.length ? (
-              entry.rows.map((row, index) => (
+              entry.rows.map((row, index) => {
+                const display = quotaDisplay(row.usedPercent, showRemaining);
+                return (
                 <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
                   <div className="notch-tooltip-row-head">
                     <span className="notch-tooltip-label">{row.name}</span>
@@ -213,24 +219,18 @@ export function NotchSurface({
                     </small>
                   </div>
                   <div className="notch-tooltip-bar">
-                    <i
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(0, showRemaining ? 100 - row.usedPercent : row.usedPercent),
-                        )}%`,
-                        background: index === 0 ? providerColor(group.provider) : "var(--ok)",
-                      }}
-                    />
+                    <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
                   </div>
                   <div className="notch-tooltip-meta">
                     <span>
-                      {formatQuotaPercent(showRemaining ? 100 - row.usedPercent : row.usedPercent)}%{" "}
-                      {showRemaining ? "Left" : "Used"}
+                      {display === null
+                        ? "Unmeasured"
+                        : `${formatQuotaPercent(display)}% ${showRemaining ? "Left" : "Used"}`}
                     </span>
                   </div>
                 </div>
-              ))
+                );
+              })
             ) : (
               <div className="notch-tooltip-row">
                 <div className="notch-tooltip-empty">No quota reported</div>

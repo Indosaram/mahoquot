@@ -32,7 +32,8 @@ export const providerAtPoint = (
 
 export interface NotchQuotaRow {
   readonly name: string;
-  readonly usedPercent: number;
+  /** `null` = unmeasured; never render it as 0, which would read as "full". */
+  readonly usedPercent: number | null;
   readonly resetSeconds: number | null;
 }
 
@@ -56,7 +57,8 @@ export interface NotchProviderGroup {
 
 interface RowAccumulator {
   name: string;
-  worst: number;
+  /** `null` while no account has reported a number for this row yet. */
+  worst: number | null;
   samples: number;
   resetSeconds: number | null;
 }
@@ -64,12 +66,23 @@ interface RowAccumulator {
 /// The pooled icon must advertise the worst-off account: an average would
 /// hide that half a pool running at 88% is about to lose capacity. The reset
 /// time likewise follows the worst account, not the soonest arbitrary one.
+///
+/// An unmeasured sample (`null`) carries no usage signal, so it neither wins
+/// the pick nor gets coerced to 0 or 100 — it only fails to update the running
+/// worst, while still counting as a sample.
 const worstAccount = (
-  currentWorst: number,
+  currentWorst: number | null,
   currentReset: number | null,
-  accountWorst: number,
+  accountWorst: number | null,
   accountReset: number | null,
-): { worst: number; resetSeconds: number | null } => {
+): { worst: number | null; resetSeconds: number | null } => {
+  if (accountWorst === null) return { worst: currentWorst, resetSeconds: currentReset };
+  if (currentWorst === null) {
+    return {
+      worst: accountWorst,
+      resetSeconds: typeof accountReset === "number" ? accountReset : currentReset,
+    };
+  }
   if (accountWorst > currentWorst && typeof accountReset === "number") {
     return { worst: accountWorst, resetSeconds: accountReset };
   }

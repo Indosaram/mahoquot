@@ -17,7 +17,7 @@ import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
 import type { WarmupAccountStatus } from "../lib/schemas";
 import { AccountResetCredits } from "./AccountResetCredits";
-import { formatQuotaPercent, quotaRows } from "./AccountsSurface";
+import { formatQuotaPercent, quotaDisplay, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
@@ -527,7 +527,7 @@ export const AccountCard = ({
         {rows.length ? (
           <div className="quota-list">
             {rows.map((row, index, list) => {
-              const percent = showRemaining ? Math.max(0, 100 - row.usedPercent) : row.usedPercent;
+              const percent = quotaDisplay(row.usedPercent, showRemaining);
               const startsGroup = row.group !== null && row.group !== list[index - 1]?.group;
               return (
                 <Fragment key={`${row.group ?? ""}-${row.name}-${index}`}>
@@ -540,12 +540,15 @@ export const AccountCard = ({
                       aria-label={`${row.name} ${showRemaining ? "remaining" : "used"}`}
                       aria-valuemin={0}
                       aria-valuemax={100}
-                      aria-valuenow={Math.min(100, percent)}
+                      aria-valuenow={percent === null ? 0 : Math.min(100, percent)}
+                      aria-valuetext={percent === null ? "unmeasured" : undefined}
                     >
-                      <i style={{ width: `${Math.min(100, percent)}%` }} />
+                      <i style={{ width: `${percent === null ? 0 : Math.min(100, percent)}%` }} />
                     </span>
                     <span className="quota-meta">
-                      <strong>{formatQuotaPercent(percent)}%</strong>
+                      <strong>
+                        {percent === null ? "unmeasured" : `${formatQuotaPercent(percent)}%`}
+                      </strong>
                       {row.resetSeconds !== null ? (
                         <small>{formatResetTime(row.resetSeconds)}</small>
                       ) : null}

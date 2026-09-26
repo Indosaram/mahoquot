@@ -406,6 +406,61 @@ describe("AccountsSurface component", () => {
       expect(screen.queryByText("0%")).not.toBeInTheDocument();
     });
 
+    it("lists every quota lane when one lane is unmeasured", () => {
+      const mixedAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-user@example.com",
+        provider: "cline",
+        label: "cline-user@example.com",
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                  used_percent: null,
+                  reset_at_unix: null,
+                },
+                {
+                  display_name: "cline-free/deepseek-v4.1-flash (Daily limit)",
+                  used_percent: 100,
+                  reset_at_unix: nowUnix + 3600,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(mixedAccount);
+      expect(rows.map((row) => row.name)).toEqual([
+        "z-ai/glm-5.3-flash (Daily limit)",
+        "cline-free/deepseek-v4.1-flash (Daily limit)",
+      ]);
+      // An unmeasured lane must stay null so it cannot be printed as
+      // "0% used", which would claim nobody's measurement says free.
+      expect(rows[0]?.usedPercent).toBeNull();
+      expect(rows[1]?.usedPercent).toBe(100);
+
+      render(
+        <AccountsSurface
+          {...createProps({
+            accounts: [mixedAccount],
+            visibleAccounts: [mixedAccount],
+            providers: ["cline"],
+            selectedProvider: "cline",
+          })}
+        />,
+      );
+
+      expect(screen.getAllByText("unmeasured").length).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText("cline-free/deepseek-v4.1-flash (Daily limit)").length,
+      ).toBeGreaterThan(0);
+    });
+
     it("preserves future Cline inferred 100% quota as exhausted", () => {
       const futureClineAccount: NormalizedAccount = {
         ...mockAccount,
@@ -816,7 +871,7 @@ describe("Cline pool quota summary", () => {
     const fresh: NormalizedAccount = { ...clineAccount("c1", []), usage: null };
     const glmExhausted = clineAccount("c2", [
       {
-        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        display_name: "cline-free/gemini-3.8-flash (Daily limit)",
         used_percent: 100,
         reset_at_unix: nowUnix + 3600,
       },
@@ -828,7 +883,7 @@ describe("Cline pool quota summary", () => {
     ]);
     const deepseekPartial = clineAccount("c3", [
       {
-        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        display_name: "cline-free/gemini-3.8-flash (Daily limit)",
         used_percent: 25,
         reset_at_unix: nowUnix + 3600,
       },
@@ -840,27 +895,27 @@ describe("Cline pool quota summary", () => {
     ]);
     const glmExpired = clineAccount("c4", [
       {
-        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        display_name: "cline-free/gemini-3.8-flash (Daily limit)",
         used_percent: 100,
         reset_at_unix: nowUnix - 300,
       },
     ]);
     const nonCline = clineAccount("other", [
       {
-        display_name: "z-ai/glm-5.3-flash (Daily limit)",
+        display_name: "cline-free/gemini-3.8-flash (Daily limit)",
         used_percent: 100,
         reset_at_unix: nowUnix + 3600,
       },
     ]);
     const foreign: NormalizedAccount = { ...nonCline, provider: "codex" };
 
-    const [glm, deepseek] = clinePoolQuotaSummary(
+    const [gemini, deepseek] = clinePoolQuotaSummary(
       [fresh, glmExhausted, deepseekPartial, glmExpired, foreign],
       nowMs,
     );
 
-    expect(glm).toEqual({
-      model: "z-ai/glm-5.3-flash",
+    expect(gemini).toEqual({
+      model: "cline-free/gemini-3.8-flash",
       total: 4,
       available: 1,
       unmeasured: 2,
@@ -895,7 +950,7 @@ describe("Cline pool quota summary", () => {
     const panel = screen.getByTestId("cline-pool-quota-summary");
     expect(panel.textContent).toContain("Pooled quota · all 1 cline accounts · estimated");
     expect(panel.querySelectorAll(".quota-row")).toHaveLength(2);
-    expect(panel.textContent).toContain("z-ai/glm-5.3-flash");
+    expect(panel.textContent).toContain("cline-free/gemini-3.8-flash");
     expect(panel.textContent).toContain("cline-free/deepseek-v4.1-flash");
     expect(panel.textContent).toContain("0 available");
     expect(panel.textContent).toContain("1 unmeasured · 0 exhausted");

@@ -3,7 +3,7 @@ import {
   type NormalizedAccount,
   deriveAccountHealth,
   formatResetTime,
-  getClineGlmQuotaDeadline,
+  getClineGeminiQuotaDeadline,
   getQuotaCapability,
   mergeAccountsAndCredentials,
 } from "../lib/accounts";
@@ -450,8 +450,8 @@ describe("Account Normalization and Quota Capability", () => {
     const now = Date.now();
     const nowSecs = Math.floor(now / 1000);
 
-    it("derives cooldown with actual deadline from active exhausted GLM free quota even when API health is available", () => {
-      // Live reported issue: API health available, usage.groups Cline Free Limits bucket z-ai/glm-5.3-flash used_percent 100 with future reset -> Cooldown
+    it("derives cooldown with actual deadline from active exhausted Gemini free quota even when API health is available", () => {
+      // Live reported issue: API health available, usage.groups Cline Free Limits bucket cline-free/gemini-3.8-flash used_percent 100 with future reset -> Cooldown
       const stats: AdminStats["accounts"] = [
         {
           id: "cline-live@example.com",
@@ -468,7 +468,7 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    display_name: "z-ai/glm-5.3-flash",
+                    display_name: "cline-free/gemini-3.8-flash",
                     used_percent: 100,
                     reset_at_unix: nowSecs + 3600,
                   },
@@ -488,8 +488,8 @@ describe("Account Normalization and Quota Capability", () => {
       expect(acc.cooldownRemainingSecs).toBeLessThanOrEqual(3600);
     });
 
-    it("derives healthy when other registered models are exhausted but GLM is not exhausted", () => {
-      // User explicitly directs: only GLM free quota determines Healthy vs cooldown; not other registered models
+    it("derives healthy when other registered models are exhausted but Gemini is not exhausted", () => {
+      // User explicitly directs: only Gemini free quota determines Healthy vs cooldown; not other registered models
       const stats: AdminStats["accounts"] = [
         {
           id: "cline-other-exhausted@example.com",
@@ -506,7 +506,7 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    display_name: "z-ai/glm-5.3-flash",
+                    display_name: "cline-free/gemini-3.8-flash",
                     used_percent: 20,
                     reset_at_unix: nowSecs + 3600,
                   },
@@ -529,7 +529,7 @@ describe("Account Normalization and Quota Capability", () => {
       expect(acc.cooldownRemainingSecs).toBeNull();
     });
 
-    it("derives cooldown when both GLM and DeepSeek free models are exhausted (>=99.9% used or 429)", () => {
+    it("derives cooldown when both Gemini and DeepSeek free models are exhausted (>=99.9% used or 429)", () => {
       const stats: AdminStats["accounts"] = [
         {
           id: "cline-both-exhausted@example.com",
@@ -546,8 +546,8 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    bucket_id: "z-ai/glm-5.3-flash",
-                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    bucket_id: "cline-free/gemini-3.8-flash",
+                    display_name: "cline-free/gemini-3.8-flash (Daily limit)",
                     used_percent: 99.9,
                     reset_at_unix: nowSecs + 7200,
                   },
@@ -574,7 +574,7 @@ describe("Account Normalization and Quota Capability", () => {
       expect(acc.cooldownRemainingSecs).toBeLessThanOrEqual(3600);
     });
 
-    it("derives healthy when DeepSeek is exhausted but GLM has available quota", () => {
+    it("derives healthy when DeepSeek is exhausted but Gemini has available quota", () => {
       const stats: AdminStats["accounts"] = [
         {
           id: "cline-ds-only-exhausted@example.com",
@@ -591,8 +591,8 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    bucket_id: "z-ai/glm-5.3-flash",
-                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    bucket_id: "cline-free/gemini-3.8-flash",
+                    display_name: "cline-free/gemini-3.8-flash (Daily limit)",
                     used_percent: 50.0,
                     reset_at_unix: nowSecs + 7200,
                   },
@@ -616,7 +616,7 @@ describe("Account Normalization and Quota Capability", () => {
       expect(acc.cooldownRemainingSecs).toBeNull();
     });
 
-    it("normalizes expired inferred GLM quota to healthy and not exhausted", () => {
+    it("normalizes expired inferred Gemini quota to healthy and not exhausted", () => {
       // Expired inferred quota => unknown, not fabricated zero; unknown must not imply exhausted
       const stats: AdminStats["accounts"] = [
         {
@@ -634,7 +634,7 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    display_name: "z-ai/glm-5.3-flash (Daily limit)",
+                    display_name: "cline-free/gemini-3.8-flash (Daily limit)",
                     used_percent: 100,
                     reset_at_unix: nowSecs - 300,
                   },
@@ -766,7 +766,7 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    display_name: "z-ai/glm-5.3-flash",
+                    display_name: "cline-free/gemini-3.8-flash",
                     used_percent: 100,
                     reset_after_seconds: 300,
                   },
@@ -778,7 +778,7 @@ describe("Account Normalization and Quota Capability", () => {
       ];
 
       // 1. Before fixed deadline: at now = 1200s (< 1300s) -> active cooldown
-      const beforeDeadline = getClineGlmQuotaDeadline(stats[0]?.usage, 1200 * 1000);
+      const beforeDeadline = getClineGeminiQuotaDeadline(stats[0]?.usage, 1200 * 1000);
       expect(beforeDeadline).toEqual({
         untilUnixMs: 1300 * 1000,
         remainingSecs: 100,
@@ -786,7 +786,7 @@ describe("Account Normalization and Quota Capability", () => {
       });
 
       // 2. Beyond fixed deadline: advancing now to 1400s (> 1300s) -> expired, not renewing cooldown
-      const afterDeadline = getClineGlmQuotaDeadline(stats[0]?.usage, 1400 * 1000);
+      const afterDeadline = getClineGeminiQuotaDeadline(stats[0]?.usage, 1400 * 1000);
       expect(afterDeadline).toEqual({
         untilUnixMs: 1300 * 1000,
         remainingSecs: 0,
@@ -794,7 +794,7 @@ describe("Account Normalization and Quota Capability", () => {
       });
     });
 
-    it("recognizes GLM identity from stable bucket_id in id-only actual bucket fixture", () => {
+    it("recognizes Gemini identity from stable bucket_id in id-only actual bucket fixture", () => {
       const stats: AdminStats["accounts"] = [
         {
           id: "cline-id-only@example.com",
@@ -811,7 +811,7 @@ describe("Account Normalization and Quota Capability", () => {
                 display_name: "Cline Free Limits",
                 buckets: [
                   {
-                    bucket_id: "z-ai/glm-5.3-flash",
+                    bucket_id: "cline-free/gemini-3.8-flash",
                     used_percent: 100,
                     reset_at_unix: nowSecs + 1800,
                   },
@@ -822,7 +822,7 @@ describe("Account Normalization and Quota Capability", () => {
         },
       ];
 
-      const deadline = getClineGlmQuotaDeadline(stats[0]?.usage, now);
+      const deadline = getClineGeminiQuotaDeadline(stats[0]?.usage, now);
       expect(deadline).not.toBeNull();
       expect(deadline?.active).toBe(true);
 

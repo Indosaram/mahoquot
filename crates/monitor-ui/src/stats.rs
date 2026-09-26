@@ -211,7 +211,7 @@ fn resolve_cooldown_deadline(
         .filter(|&v| v > 0)
 }
 
-fn cline_glm_cooldown_deadline(usage: &Usage, now_unix_ms: i64) -> Option<(i64, i64, bool)> {
+fn cline_free_cooldown_deadline(usage: &Usage, now_unix_ms: i64) -> Option<(i64, i64, bool)> {
     let now_secs = now_unix_ms / 1000;
     let group = usage.groups.iter().find(|g| {
         g.display_name
@@ -221,19 +221,26 @@ fn cline_glm_cooldown_deadline(usage: &Usage, now_unix_ms: i64) -> Option<(i64, 
 
     let mut expired_match = None;
     for bucket in &group.buckets {
-        let is_glm = if let Some(id) = bucket.bucket_id.as_deref().filter(|s| !s.is_empty()) {
-            id.to_ascii_lowercase().contains("glm")
+        let is_free_model = if let Some(id) = bucket.bucket_id.as_deref().filter(|s| !s.is_empty()) {
+            id.to_ascii_lowercase().contains("gemini")
+                || id.to_ascii_lowercase().contains("deepseek")
         } else {
             bucket
                 .display_name
                 .as_deref()
-                .is_some_and(|name| name.to_ascii_lowercase().contains("glm"))
+                .is_some_and(|name| {
+                    name.to_ascii_lowercase().contains("gemini")
+                        || name.to_ascii_lowercase().contains("deepseek")
+                })
                 || bucket
                     .window
                     .as_deref()
-                    .is_some_and(|w| w.to_ascii_lowercase().contains("glm"))
+                    .is_some_and(|w| {
+                        w.to_ascii_lowercase().contains("gemini")
+                            || w.to_ascii_lowercase().contains("deepseek")
+                    })
         };
-        if !is_glm {
+        if !is_free_model {
             continue;
         }
         if bucket.used_percent.is_none_or(|p| p < 100.0) {
@@ -383,7 +390,7 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
                 {
                     (raw_status.to_string(), None)
                 } else if let Some((_until_ms, remaining_secs, active)) =
-                    cline_glm_cooldown_deadline(&a.usage, now_unix_ms)
+                    cline_free_cooldown_deadline(&a.usage, now_unix_ms)
                 {
                     if active {
                         ("cooldown".to_string(), Some(remaining_secs))
@@ -936,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    fn cline_health_derives_strictly_from_glm_free_quota_not_other_models() {
+    fn cline_health_derives_strictly_from_gemini_free_quota_not_other_models() {
         let s: AdminStats = serde_json::from_value(serde_json::json!({
             "accounts": [
                 {
@@ -950,7 +957,7 @@ mod tests {
                         "groups": [{
                             "display_name": "Cline Free Limits",
                             "buckets": [{
-                                "display_name": "z-ai/glm-5.3-flash",
+                                "display_name": "cline-free/gemini-3.8-flash",
                                 "used_percent": 100.0,
                                 "reset_at_unix": 2000
                             }]
@@ -969,7 +976,7 @@ mod tests {
                             "display_name": "Cline Free Limits",
                             "buckets": [
                                 {
-                                    "display_name": "z-ai/glm-5.3-flash",
+                                    "display_name": "cline-free/gemini-3.8-flash",
                                     "used_percent": 20.0,
                                     "reset_at_unix": 2000
                                 },
@@ -988,13 +995,13 @@ mod tests {
 
         let v = build_view(&s, 1000 * 1000); // now is 1000s
 
-        // 1. Active exhausted GLM quota -> cooldown with actual deadline (2000 - 1000 = 1000s)
+        // 1. Active exhausted Gemini quota -> cooldown with actual deadline (2000 - 1000 = 1000s)
         let live = &v.accounts[0];
         assert_eq!(live.status, "cooldown");
         assert_eq!(live.cooldown_remaining_secs, Some(1000));
         assert!(v.degraded.contains(&"cline-live@example.com".to_string()));
 
-        // 2. Kimi is exhausted, but GLM is not -> healthy ("available"), not in degraded
+        // 2. Kimi is exhausted, but Gemini is not -> healthy ("available"), not in degraded
         let other = &v.accounts[1];
         assert_eq!(other.status, "available");
         assert_eq!(other.cooldown_remaining_secs, None);
@@ -1004,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn cline_glm_relative_reset_anchors_to_observed_at_unix_and_expires_beyond_deadline() {
+    fn cline_gemini_relative_reset_anchors_to_observed_at_unix_and_expires_beyond_deadline() {
         let s: AdminStats = serde_json::from_value(serde_json::json!({
             "accounts": [{
                 "id": "cline-rel@example.com",
@@ -1017,7 +1024,7 @@ mod tests {
                     "groups": [{
                         "display_name": "Cline Free Limits",
                         "buckets": [{
-                            "display_name": "z-ai/glm-5.3-flash",
+                            "display_name": "cline-free/gemini-3.8-flash",
                             "used_percent": 100.0,
                             "reset_after_seconds": 300
                         }]
@@ -1040,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn cline_glm_recognizes_stable_bucket_id_in_id_only_fixture() {
+    fn cline_gemini_recognizes_stable_bucket_id_in_id_only_fixture() {
         let s: AdminStats = serde_json::from_value(serde_json::json!({
             "accounts": [{
                 "id": "cline-id-only@example.com",
@@ -1052,7 +1059,7 @@ mod tests {
                     "groups": [{
                         "display_name": "Cline Free Limits",
                         "buckets": [{
-                            "bucket_id": "z-ai/glm-5.3-flash",
+                            "bucket_id": "cline-free/gemini-3.8-flash",
                             "used_percent": 100.0,
                             "reset_at_unix": 2000
                         }]

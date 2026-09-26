@@ -12,13 +12,13 @@ import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import type { GatewayLifecycleStatus } from "../lib/native";
 import { getPlanTierColor } from "../lib/plan-tier";
 import type { TotpEntry } from "../lib/totp-vault";
-import { quotaRows } from "./AccountsSurface";
+import { quotaDisplay, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { TotpQuickAccess } from "./TotpVaultSurface";
 
 interface TrayTile {
   readonly label: string;
-  readonly usedPercent: number;
+  readonly usedPercent: number | null;
   readonly resetIn: string | null;
 }
 
@@ -224,22 +224,25 @@ export const TrayPanel = ({
             ) : null}
             <div className="tray-tiles">
               {tiles.map((tile) => {
-                const display = Math.round(
-                  showRemaining ? Math.max(0, 100 - tile.usedPercent) : tile.usedPercent,
-                );
+                const raw = quotaDisplay(tile.usedPercent, showRemaining);
+                const display = raw === null ? null : Math.round(raw);
                 return (
                   <div className="tray-tile" key={tile.label}>
                     <div className="tray-tile-row">
                       <span className="tray-tile-name">{tile.label}</span>
                       {tile.resetIn && <span className="tray-tile-reset">{tile.resetIn}</span>}
                       <span
-                        className={`tray-tile-percent${tile.usedPercent >= 100 ? " full" : ""}`}
+                        className={`tray-tile-percent${
+                          tile.usedPercent !== null && tile.usedPercent >= 100 ? " full" : ""
+                        }`}
                       >
-                        {display}% {showRemaining ? "left" : "used"}
+                        {display === null
+                          ? "unmeasured"
+                          : `${display}% ${showRemaining ? "left" : "used"}`}
                       </span>
                     </div>
                     <div className={tileTone(tile.usedPercent)}>
-                      <i style={{ width: `${display}%` }} />
+                      <i style={{ width: `${display ?? 0}%` }} />
                     </div>
                   </div>
                 );
@@ -274,7 +277,8 @@ export const TrayPanel = ({
   );
 };
 
-function tileTone(usedPercent: number): string {
+function tileTone(usedPercent: number | null): string {
+  if (usedPercent === null) return "tray-bar";
   if (usedPercent >= 100) return "tray-bar full";
   if (usedPercent >= 80) return "tray-bar amber";
   return "tray-bar";

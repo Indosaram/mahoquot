@@ -21,8 +21,23 @@ export { HealthBadge, ProviderGlyph, providerLabel };
 export type QuotaRow = {
   readonly name: string;
   readonly group: string | null;
-  readonly usedPercent: number;
+  /**
+   * `null` = the provider reported no number (unmeasured). Deliberately not
+   * `0`: printing "0% used" for an unmeasured window claims the quota is
+   * untouched when nobody measured it, which is the ambiguity that makes a
+   * card showing one lane confusing next to a summary counting it as unmeasured.
+   */
+  readonly usedPercent: number | null;
   readonly resetSeconds: number | null;
+};
+
+/** Remaining-vs-used conversion; `null` in stays `null` out. */
+export const quotaDisplay = (
+  usedPercent: number | null,
+  showRemaining: boolean,
+): number | null => {
+  if (usedPercent === null) return null;
+  return showRemaining ? Math.max(0, 100 - usedPercent) : usedPercent;
 };
 
 export const formatQuotaPercent = (percent: number): string => {
@@ -83,36 +98,43 @@ export const isClineInferredQuotaExpired = (
 export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
   const usage = account.usage;
   if (!usage) return [];
-  const grouped =
-    usage.groups?.flatMap((group) =>
-      group.buckets.flatMap((bucket, index) => {
-        if (typeof bucket.used_percent !== "number") return [];
-        if (
-          isClineInferredQuotaExpired(
-            account,
-            group.display_name,
-            bucket.reset_at_unix,
-            bucket.reset_after_seconds,
-          )
-        ) {
-          return [];
-        }
-        return [
-          {
-            name: windowLabel(
-              bucket.display_name ||
-                bucket.bucket_id ||
-                group.display_name ||
-                group.models ||
-                `Quota ${index + 1}`,
-            ),
-            group: group.display_name || group.models || null,
-            usedPercent: bucket.used_percent,
-            resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
-          },
-        ];
-      }),
-    ) ?? [];
+  const built: { row: QuotaRow; measured: boolean }[] = [];
+  usage.groups?.forEach((group) => {
+    group.buckets.forEach((bucket, index) => {
+      if (
+        isClineInferredQuotaExpired(
+          account,
+          group.display_name,
+          bucket.reset_at_unix,
+          bucket.reset_after_seconds,
+        )
+      ) {
+        return;
+      }
+      const raw = bucket.used_percent;
+      const measured = typeof raw === "number";
+      built.push({
+        row: {
+          name: windowLabel(
+            bucket.display_name ||
+              bucket.bucket_id ||
+              group.display_name ||
+              group.models ||
+              `Quota ${index + 1}`,
+          ),
+          group: group.display_name || group.models || null,
+          usedPercent: measured ? raw : null,
+          resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
+        },
+        measured,
+      });
+    });
+  });
+  // Report every lane when at least one lane was measured, so a card lists
+  // GLM and deepseek together instead of showing only the measured one.
+  // An all-unmeasured account still falls through to the primary/secondary
+  // windows below, preserving the behaviour that path exists for.
+  const grouped = built.some((entry) => entry.measured) ? built.map((entry) => entry.row) : [];
   if (grouped.length) return grouped;
   const flat: readonly (QuotaRow | null)[] = [
     usage.primary && typeof usage.primary.used_percent === "number"
@@ -157,7 +179,7 @@ export type ClinePoolModelSummary = {
 // figure. Accounts with no live bucket in the window are reported as
 // unmeasured instead of being padded into the sum.
 const POOL_QUOTA_MODELS: readonly { model: string; pattern: RegExp }[] = [
-  { model: "z-ai/glm-5.3-flash", pattern: /glm-5\.3-flash/i },
+  { model: "cline-free/gemini-3.8-flash", pattern: /gemini-3\.8-flash/i },
   { model: "cline-free/deepseek-v4.1-flash", pattern: /deepseek-v4\.1-flash/i },
 ];
 
