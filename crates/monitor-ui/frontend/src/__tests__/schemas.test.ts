@@ -20,6 +20,7 @@ describe("Gateway API Zod Schemas", () => {
         {
           id: "acc-1@example.com",
           provider: "codex",
+          model_routability: { "cline-free/gemini-3.8-flash": false },
           health: { status: "available" },
           ok: 95,
           fails: 5,
@@ -58,6 +59,7 @@ describe("Gateway API Zod Schemas", () => {
       parsed.ttft !== null && typeof parsed.ttft === "object" ? parsed.ttft.p50_ms : null,
     ).toBe(120.5);
     expect(parsed.accounts[0]?.id).toBe("acc-1@example.com");
+    expect(parsed.accounts[0]?.model_routability?.["cline-free/gemini-3.8-flash"]).toBe(false);
     expect(parsed.accounts[0]?.usage?.primary?.used_percent).toBe(45.0);
     expect(parsed.accounts[0]?.usage?.reset_credits_available).toBe(2);
   });

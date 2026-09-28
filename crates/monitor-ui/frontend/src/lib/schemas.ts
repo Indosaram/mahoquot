@@ -156,6 +156,7 @@ export const AccountStatsSchema = z.object({
   output_tokens: z.number().optional(),
   total_tokens: z.number().optional(),
   reset_at_unix_ms: z.number().nullable().optional(),
+  model_routability: z.record(z.boolean()).optional(),
   last_error: LastErrorSchema.nullable().optional(),
   ttft: z.union([TtftSnapshotSchema, z.number()]).nullable().optional(),
   usage: UsageSchema.nullable().optional(),

@@ -867,7 +867,7 @@ describe("Cline pool quota summary", () => {
     },
   });
 
-  it("classifies measured, unmeasured, and exhausted across every cline account", () => {
+  it("does not infer routability from estimated quota across cline accounts", () => {
     const fresh: NormalizedAccount = { ...clineAccount("c1", []), usage: null };
     const glmExhausted = clineAccount("c2", [
       {
@@ -917,21 +917,47 @@ describe("Cline pool quota summary", () => {
     expect(gemini).toEqual({
       model: "cline-free/gemini-3.8-flash",
       total: 4,
-      available: 1,
-      unmeasured: 2,
-      exhausted: 1,
+      available: 0,
+      unmeasured: 4,
+      exhausted: 0,
       remainingSumPercent: 75,
-      nextResetAtUnix: nowUnix + 3600,
+      nextResetAtUnix: null,
     });
     expect(deepseek).toEqual({
       model: "cline-free/deepseek-v4.1-flash",
       total: 4,
-      available: 2,
-      unmeasured: 2,
+      available: 0,
+      unmeasured: 4,
       exhausted: 0,
       remainingSumPercent: 110,
       nextResetAtUnix: null,
     });
+  });
+
+  it("uses gateway route candidacy rather than estimated percent or another model's cooldown", () => {
+    const account: NormalizedAccount = {
+      ...clineAccount("c1", [
+        { display_name: "cline-free/gemini-3.8-flash", used_percent: 99.9, reset_at_unix: nowUnix + 3600 },
+        { display_name: "cline-free/deepseek-v4.1-flash", used_percent: 100, reset_at_unix: nowUnix + 3600 },
+      ]),
+      modelRoutability: {
+        "cline-free/gemini-3.8-flash": false,
+        "cline-free/deepseek-v4.1-flash": true,
+      },
+    };
+    const [gemini, deepseek] = clinePoolQuotaSummary([account], nowMs);
+    expect(gemini?.available).toBe(0);
+    expect(gemini?.exhausted).toBe(1);
+    expect(deepseek?.available).toBe(1);
+    expect(deepseek?.exhausted).toBe(0);
+    const panel = render(
+      <AccountsSurface
+        {...createProps({ accounts: [account], visibleAccounts: [account], providers: ["cline"], selectedProvider: "cline" })}
+      />,
+    ).getByTestId("cline-pool-quota-summary");
+    expect(panel.textContent).toContain("0 available");
+    expect(panel.textContent).toContain("1 unavailable");
+    expect(panel.textContent).toContain("1 available");
   });
 
   it("renders the pooled summary at the top of the accounts surface", () => {
@@ -948,12 +974,12 @@ describe("Cline pool quota summary", () => {
     );
 
     const panel = screen.getByTestId("cline-pool-quota-summary");
-    expect(panel.textContent).toContain("Pooled quota · all 1 cline accounts · estimated");
+    expect(panel.textContent).toContain("Cline pool · all 1 accounts · quota estimated");
     expect(panel.querySelectorAll(".quota-row")).toHaveLength(2);
     expect(panel.textContent).toContain("cline-free/gemini-3.8-flash");
     expect(panel.textContent).toContain("cline-free/deepseek-v4.1-flash");
     expect(panel.textContent).toContain("0 available");
-    expect(panel.textContent).toContain("1 unmeasured · 0 exhausted");
+    expect(panel.textContent).toContain("1 unknown · 0 unavailable");
     const segments = panel.querySelectorAll(".pool-quota-track i");
     expect(segments).toHaveLength(6);
     expect(segments[0].getAttribute("data-tone")).toBe("ok");

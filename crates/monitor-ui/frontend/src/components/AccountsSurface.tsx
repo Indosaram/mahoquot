@@ -176,8 +176,7 @@ export type ClinePoolModelSummary = {
 // The pooled Cline free models summarized across every account. Buckets match
 // on the bare model name so both vendor-prefixed labels ("deepseek/..." from
 // upstream cap errors and "cline-free/..." from live requests) fold into one
-// figure. Accounts with no live bucket in the window are reported as
-// unmeasured instead of being padded into the sum.
+// figure. Model candidacy comes from the gateway; quota percentages are estimates.
 const POOL_QUOTA_MODELS: readonly { model: string; pattern: RegExp }[] = [
   { model: "cline-free/gemini-3.8-flash", pattern: /gemini-3\.8-flash/i },
   { model: "cline-free/deepseek-v4.1-flash", pattern: /deepseek-v4\.1-flash/i },
@@ -246,13 +245,8 @@ export const clinePoolQuotaSummary = (
         }
       }
 
-      if (!measured) {
-        unmeasured += 1;
-        continue;
-      }
-      const remaining = accountRemaining ?? 100;
-      remainingSumPercent += remaining;
-      if (remaining <= 0) {
+      if (measured) remainingSumPercent += accountRemaining ?? 100;
+      if (account.modelRoutability?.[model] === false) {
         exhausted += 1;
         if (accountResetAtUnix !== null) {
           nextResetAtUnix =
@@ -260,8 +254,10 @@ export const clinePoolQuotaSummary = (
               ? accountResetAtUnix
               : Math.min(nextResetAtUnix, accountResetAtUnix);
         }
-      } else {
+      } else if (account.modelRoutability?.[model] === true) {
         available += 1;
+      } else {
+        unmeasured += 1;
       }
     }
 
@@ -511,7 +507,7 @@ export const AccountsSurface = ({
           data-testid="cline-pool-quota-summary"
           aria-label="Cline pool quota summary"
         >
-          <div>Pooled quota · all {poolSummary[0]?.total ?? 0} cline accounts · estimated</div>
+          <div>Cline pool · all {poolSummary[0]?.total ?? 0} accounts · quota estimated</div>
           {poolSummary.map((summary) => {
             const total = Math.max(1, summary.total);
             const segment = (count: number) => `${(count / total) * 100}%`;
@@ -530,7 +526,7 @@ export const AccountsSurface = ({
                 <span className="quota-meta">
                   <strong>{summary.available} available</strong>
                   <small>
-                    {summary.unmeasured} unmeasured · {summary.exhausted} exhausted
+                    {summary.unmeasured} unknown · {summary.exhausted} unavailable
                   </small>
                   {summary.nextResetAtUnix !== null ? (
                     <small>resets {resetClockLabel(summary.nextResetAtUnix)}</small>

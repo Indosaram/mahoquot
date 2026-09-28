@@ -46,6 +46,7 @@ export interface NormalizedAccount {
   readonly p50Ms: number | null;
   readonly lastError: LastError | null;
   readonly usage: Usage | null;
+  readonly modelRoutability?: Readonly<Record<string, boolean>> | undefined;
   readonly quotaCapability: QuotaCapability;
   readonly isCredentialOnly: boolean;
   readonly canReset: boolean;
@@ -643,7 +644,11 @@ export const mergeAccountsAndCredentials = (
       if (hasErrorStatus) {
         health = "error";
       } else {
-        const freeDeadline = getClineFreeQuotaDeadline(r.usage, nowMs);
+        const freeDeadline = r.model_routability
+          ? r.model_routability["cline-free/gemini-3.8-flash"] === false
+            ? getClineGeminiQuotaDeadline(r.usage, nowMs)
+            : null
+          : getClineFreeQuotaDeadline(r.usage, nowMs);
         if (freeDeadline?.active) {
           health = "cooldown";
           cooldownUntilUnixMs = freeDeadline.untilUnixMs;
@@ -653,15 +658,25 @@ export const mergeAccountsAndCredentials = (
             cooldownUntilUnixMs = freeDeadline.untilUnixMs;
             cooldownRemainingSecs = 0;
           }
-          health = deriveAccountHealth(
-            r.health,
-            r.reset_at_unix_ms,
-            r.ok,
-            r.fails,
-            r.provider,
-            r.usage,
-            nowMs,
-          );
+          health = r.model_routability
+            ? deriveAccountHealth(
+                r.health,
+                r.reset_at_unix_ms,
+                r.ok,
+                r.fails,
+                r.provider,
+                null,
+                nowMs,
+              )
+            : deriveAccountHealth(
+                r.health,
+                r.reset_at_unix_ms,
+                r.ok,
+                r.fails,
+                r.provider,
+                r.usage,
+                nowMs,
+              );
         }
       }
     } else {
@@ -719,6 +734,7 @@ export const mergeAccountsAndCredentials = (
       p50Ms: p50,
       lastError: r.last_error ?? null,
       usage: r.usage ?? null,
+      modelRoutability: r.model_routability,
       quotaCapability: quotaCap,
       isCredentialOnly: false,
       identitySlug: devinIdentity,

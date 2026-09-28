@@ -450,6 +450,35 @@ describe("Account Normalization and Quota Capability", () => {
     const now = Date.now();
     const nowSecs = Math.floor(now / 1000);
 
+    it("keeps an estimated 99.9% Gemini account healthy when the gateway can route it", () => {
+      const stats: AdminStats["accounts"] = [
+        {
+          id: "cline-estimated@example.com",
+          provider: "cline",
+          health: { status: "available" },
+          ok: 10,
+          fails: 0,
+          model_routability: {
+            "cline-free/gemini-3.8-flash": true,
+            "cline-free/deepseek-v4.1-flash": false,
+          },
+          usage: {
+            groups: [{
+              display_name: "Cline Free Limits",
+              buckets: [{
+                display_name: "cline-free/gemini-3.8-flash",
+                used_percent: 99.9,
+                reset_at_unix: nowSecs + 3600,
+              }],
+            }],
+          },
+        },
+      ];
+      const [account] = mergeAccountsAndCredentials(stats, []);
+      expect(account?.health).toBe("healthy");
+      expect(account?.modelRoutability?.["cline-free/gemini-3.8-flash"]).toBe(true);
+    });
+
     it("derives cooldown with actual deadline from active exhausted Gemini free quota even when API health is available", () => {
       // Live reported issue: API health available, usage.groups Cline Free Limits bucket cline-free/gemini-3.8-flash used_percent 100 with future reset -> Cooldown
       const stats: AdminStats["accounts"] = [
