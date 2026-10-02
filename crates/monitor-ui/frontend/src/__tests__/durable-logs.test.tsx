@@ -143,6 +143,63 @@ describe("Durable logs surface", () => {
     expect(within(summary).getByText("150")).toBeInTheDocument();
   });
 
+  it("marks only the requests that left with the priority tier", async () => {
+    const loadHistory = vi.fn(async () => ({
+      events: [
+        {
+          "event-id": "req-fast",
+          "occurred-at-ms": 1_788_192_000_000,
+          account: "account-a",
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          "key-label": "k",
+          status: 200,
+          succeeded: true,
+          fast: true,
+          "input-tokens": 1,
+          "output-tokens": 1,
+          "cached-input-tokens": 0,
+          "cache-write-tokens": 0,
+          "reasoning-tokens": 0,
+          "total-tokens": 2,
+          "latency-ms": 5,
+          "estimated-cost-usd": 0.1,
+          "price-version": "2026-09",
+        },
+        {
+          "event-id": "req-plain",
+          "occurred-at-ms": 1_788_192_001_000,
+          account: "account-a",
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          "key-label": "k",
+          status: 200,
+          succeeded: true,
+          "input-tokens": 1,
+          "output-tokens": 1,
+          "cached-input-tokens": 0,
+          "cache-write-tokens": 0,
+          "reasoning-tokens": 0,
+          "total-tokens": 2,
+          "latency-ms": 5,
+          "estimated-cost-usd": 0.1,
+          "price-version": "2026-09",
+        },
+      ] as never,
+      "next-cursor": null,
+      totals,
+    }));
+
+    render(<DurableLogs records={[]} loadHistory={loadHistory} />);
+    await act(async () => {});
+
+    const markers = await screen.findAllByTestId("fast-marker");
+    expect(markers).toHaveLength(1);
+    const row = markers[0].closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("gpt-5.6-sol")).toBeInTheDocument();
+  });
+
   it("keeps a provider-filtered page when a slower background request resolves late", async () => {
     let releaseStale = () => {};
     const stalePending = new Promise<void>((resolve) => {

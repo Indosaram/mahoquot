@@ -74,6 +74,7 @@ export const QuotaBucketSchema = z.object({
   bucket_id: z.string().nullable().optional(),
   display_name: z.string().optional(),
   window: z.string().nullable().optional(),
+  window_minutes: z.number().nullable().optional(),
   used_percent: z.number().nullable().optional(),
   reset_at_unix: z.number().nullable().optional(),
   reset_after_seconds: z.number().nullable().optional(),
@@ -122,6 +123,20 @@ export const UsageSchema = z.object({
   reset_credits_available: z.number().nullable().optional(),
   reset_credits: z.array(ResetCreditSchema).optional(),
   observed_at_unix: z.number().nullable().optional(),
+  refreshed_at_unix: z.number().nullable().optional(),
+  last_refresh_error: z.string().nullable().optional(),
+  refresh_status: z.string().nullable().optional(),
+  model_availability: z
+    .record(
+      z.string(),
+      z.object({
+        available: z.boolean(),
+        available_at: z.string().nullable().optional(),
+        credits_would_enable: z.boolean().nullable().optional(),
+      }),
+    )
+    .nullable()
+    .optional(),
   groups: z.array(QuotaGroupSchema).optional(),
   totals: z
     .object({
@@ -243,6 +258,7 @@ export const LogRecordSchema = z.object({
   "bytes-in": z.number().optional(),
   "bytes-out": z.number().optional(),
   tokens: z.number().nullable().optional(),
+  fast: z.boolean().optional(),
   message: z.string().optional(),
   event: z.string().optional(),
   error: z.string().optional(),
@@ -333,6 +349,7 @@ export const HistoryEventSchema = z.object({
   "key-label": z.string().nullable(),
   status: z.number().int(),
   succeeded: z.boolean(),
+  fast: z.boolean().optional(),
   "input-tokens": z.number().int().nonnegative(),
   "output-tokens": z.number().int().nonnegative(),
   "cached-input-tokens": z.number().int().nonnegative(),

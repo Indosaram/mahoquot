@@ -15,7 +15,7 @@ import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
-import type { WarmupAccountStatus } from "../lib/schemas";
+import type { Usage, WarmupAccountStatus } from "../lib/schemas";
 import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaDisplay, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
@@ -60,6 +60,47 @@ export const WarmupBadge = ({
       Warmed
     </Badge>
   );
+};
+
+export const QuotaFreshnessBadge = ({ usage }: { readonly usage?: Usage | null }) => {
+  if (!usage) return null;
+  if (usage.refresh_status === "stale") {
+    const timeStr = usage.refreshed_at_unix
+      ? new Date(usage.refreshed_at_unix * 1000).toLocaleTimeString()
+      : null;
+    return (
+      <Badge
+        tone="warn"
+        data-testid="quota-stale-badge"
+        title={timeStr ? `Quota last refreshed at ${timeStr}` : "Quota data may be stale"}
+      >
+        Stale quota
+      </Badge>
+    );
+  }
+  if (usage.refresh_status === "rate_limited") {
+    return (
+      <Badge
+        tone="warn"
+        data-testid="quota-rate-limited-badge"
+        title="Quota refresh was rate limited by the provider"
+      >
+        Quota rate limited
+      </Badge>
+    );
+  }
+  if (usage.refresh_status === "error" || (usage.last_refresh_error && usage.last_refresh_error.length > 0)) {
+    return (
+      <Badge
+        tone="bad"
+        data-testid="quota-refresh-error-badge"
+        title={usage.last_refresh_error || "Quota refresh failed"}
+      >
+        Refresh failed
+      </Badge>
+    );
+  }
+  return null;
 };
 
 export interface AccountCardProps {
@@ -427,6 +468,7 @@ export const AccountCard = ({
               <HealthBadge account={account} />
               <WarmupBadge status={warmupStatus} health={account.health} />
               <AccountResetCredits account={account} />
+              <QuotaFreshnessBadge usage={account.usage} />
             </div>
             {detailRedundant ? null : <span title={detail}>{detail}</span>}
           </div>
@@ -485,6 +527,23 @@ export const AccountCard = ({
         </div>
       </div>
       <div className="usage-section">
+        {account.usage?.last_refresh_error ? (
+          <div
+            className="quota-refresh-error"
+            data-testid="quota-refresh-error"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "11px",
+              color: "var(--bad, #f87171)",
+              marginBottom: "8px",
+            }}
+          >
+            <AlertTriangle size={12} />
+            <span>Quota refresh failed: {account.usage.last_refresh_error}</span>
+          </div>
+        ) : null}
         {account.usage?.totals ? (
           <div className="usage-totals" data-testid="account-usage-totals">
             {account.plan ? (

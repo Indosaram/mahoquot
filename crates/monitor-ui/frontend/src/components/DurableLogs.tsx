@@ -9,6 +9,7 @@ import {
   totalsCacheTokens,
 } from "../lib/cache-usage";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
+import { Zap } from "lucide-react";
 import { Button } from "./ui";
 
 export interface DurableLogsProps {
@@ -54,6 +55,7 @@ const toHistoryEvent = (record: LogRecord, index: number): HistoryEvent => ({
   "latency-ms": record["latency-ms"] ?? 0,
   "estimated-cost-usd": 0,
   "price-version": null,
+  fast: record.fast === true,
 });
 
 const formatTime = (occurredAtMs: number): string => {
@@ -427,7 +429,18 @@ export function DurableLogs({
                         <strong>{event.provider}</strong>
                         <small>{event.account}</small>
                       </td>
-                      <td className="mono">{event.model}</td>
+                      <td className="mono">
+                        {event.fast ? (
+                          <Zap
+                            size={13}
+                            role="img"
+                            aria-label="Sent with the priority service tier"
+                            data-testid="fast-marker"
+                            style={{ verticalAlign: "-2px", marginRight: "4px" }}
+                          />
+                        ) : null}
+                        {event.model}
+                      </td>
                       <td className="num">{event["total-tokens"].toLocaleString("en-US")}</td>
                       <td className="num">{event["latency-ms"].toLocaleString("en-US")} ms</td>
                       <td>

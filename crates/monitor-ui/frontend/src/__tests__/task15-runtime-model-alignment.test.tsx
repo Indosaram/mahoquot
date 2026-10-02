@@ -196,6 +196,7 @@ describe("Task 15: Runtime model consumption and catalog metadata alignment", ()
         requestRetry="off"
         proxyUrl="http://127.0.0.1:18801"
         loggingToFile={true}
+        codexFastMode={false}
         theme="dark"
         showRemaining={true}
         onShowRemainingChange={vi.fn()}
@@ -210,6 +211,7 @@ describe("Task 15: Runtime model consumption and catalog metadata alignment", ()
         onRequestRetryChange={vi.fn()}
         onProxyUrlChange={vi.fn()}
         onLoggingToFileChange={vi.fn()}
+        onCodexFastModeChange={vi.fn()}
         onSaveProxySettings={vi.fn()}
         onThemeChange={vi.fn()}
         onOpenConfigEditor={vi.fn()}

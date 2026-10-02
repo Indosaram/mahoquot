@@ -4,9 +4,12 @@ import {
   AccountsSurface,
   type AccountsSurfaceProps,
   clinePoolQuotaSummary,
+  formatQuotaDuration,
+  formatQuotaWindowName,
   isClineInferredQuotaExpired,
   quotaRows,
 } from "../components/AccountsSurface";
+import { AccountCard, type AccountCardProps } from "../components/AccountCard";
 import type { NormalizedAccount } from "../lib/accounts";
 
 const mockAccount: NormalizedAccount = {
@@ -1011,5 +1014,404 @@ describe("Cline pool quota summary", () => {
     );
 
     expect(screen.queryByTestId("cline-pool-quota-summary")).not.toBeInTheDocument();
+  });
+
+  describe("quota accuracy, durations, groups, and freshness", () => {
+    it("formats quota duration labels (5h, week, custom) from explicit minutes or window contracts", () => {
+      expect(formatQuotaDuration(300)).toBe("5h");
+      expect(formatQuotaDuration(10080)).toBe("week");
+      expect(formatQuotaDuration(1440)).toBe("1d");
+      expect(formatQuotaDuration(60)).toBe("1h");
+      expect(formatQuotaDuration(120)).toBe("2h");
+      expect(formatQuotaDuration(45)).toBe("45m");
+      expect(formatQuotaDuration(undefined, "5h")).toBe("5h");
+      expect(formatQuotaDuration(undefined, "weekly")).toBe("week");
+      expect(formatQuotaDuration(undefined, "300m")).toBe("5h");
+      expect(formatQuotaDuration(undefined, "10080m")).toBe("week");
+      expect(formatQuotaDuration(undefined, "60m")).toBe("1h");
+      expect(formatQuotaDuration(null)).toBeNull();
+      expect(formatQuotaDuration(0)).toBeNull();
+      expect(formatQuotaDuration(undefined, null)).toBeNull();
+    });
+
+    it("labels flat quotas with actual window_minutes duration rather than Primary/Secondary", () => {
+      const account: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-flat",
+        provider: "codex",
+        usage: {
+          primary: {
+            window_minutes: 300,
+            used_percent: 45,
+            reset_at_unix: 1720001000,
+          },
+          secondary: {
+            window_minutes: 10080,
+            used_percent: 80,
+            reset_at_unix: 1720500000,
+          },
+        },
+      };
+
+      const rows = quotaRows(account);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.name).toBe("5h");
+      expect(rows[0]?.usedPercent).toBe(45);
+      expect(rows[1]?.name).toBe("week");
+      expect(rows[1]?.usedPercent).toBe(80);
+    });
+
+    it("still labels 5h when window_minutes=300 and reset_after_seconds=3600 countdown is short", () => {
+      const account: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-5h-countdown",
+        provider: "codex",
+        usage: {
+          primary: {
+            window_minutes: 300,
+            reset_after_seconds: 3600,
+            used_percent: 20,
+          },
+        },
+      };
+
+      const rows = quotaRows(account);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("5h");
+      expect(rows[0]?.resetSeconds).toBe(3600);
+    });
+
+    it("keeps total duration unknown when window_minutes is absent and does not use countdown as duration", () => {
+      const unknownDurationAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-unknown-duration",
+        provider: "codex",
+        usage: {
+          primary: {
+            reset_after_seconds: 3600,
+            used_percent: 20,
+          },
+        },
+      };
+
+      const rows = quotaRows(unknownDurationAccount);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("Primary window");
+      expect(rows[0]?.resetSeconds).toBe(3600);
+    });
+
+    it("preserves meaningful limit identity and qualifies with duration", () => {
+      expect(
+        formatQuotaWindowName(
+          { window_minutes: 300, limit_name: "Code Review" },
+          "Primary window",
+        ),
+      ).toBe("Code Review (5h)");
+
+      expect(
+        formatQuotaWindowName(
+          { window_minutes: 10080, limit_name: "Chatpass" },
+          "Secondary window",
+        ),
+      ).toBe("Chatpass (week)");
+
+      expect(
+        formatQuotaWindowName(
+          { window_minutes: 300, limit_name: "5 hour" },
+          "Primary window",
+        ),
+      ).toBe("5 hour");
+
+      expect(
+        formatQuotaWindowName(
+          { window_minutes: 300, limit_name: "Primary window" },
+          "Primary window",
+        ),
+      ).toBe("5h");
+
+      expect(
+        formatQuotaWindowName(
+          { window_minutes: 10080, limit_name: "Secondary window" },
+          "Secondary window",
+        ),
+      ).toBe("week");
+
+      expect(
+        formatQuotaWindowName(
+          { window_minutes: 120, limit_name: "Secondary limit" },
+          "Secondary window",
+        ),
+      ).toBe("2h");
+    });
+
+    it("preserves both basic limits and additional quota groups without dropping either", () => {
+      const accountWithBoth: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-plus-groups",
+        provider: "codex",
+        usage: {
+          primary: {
+            window_minutes: 300,
+            used_percent: 25,
+            reset_after_seconds: 18000,
+          },
+          secondary: {
+            window_minutes: 10080,
+            used_percent: 50,
+            reset_after_seconds: 604800,
+          },
+          groups: [
+            {
+              display_name: "Chatpass",
+              models: "chatpass",
+              buckets: [
+                {
+                  display_name: "Chatpass",
+                  window: "10080m",
+                  used_percent: 10,
+                  reset_after_seconds: 604800,
+                },
+              ],
+            },
+            {
+              display_name: "Code Review",
+              models: "code-review",
+              buckets: [
+                {
+                  display_name: "Review Limit",
+                  window: "300m",
+                  used_percent: 5,
+                  reset_after_seconds: 18000,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(accountWithBoth);
+      expect(rows).toHaveLength(4);
+
+      // Basic limits are present
+      expect(rows[0]?.name).toBe("5h");
+      expect(rows[0]?.group).toBeNull();
+      expect(rows[0]?.usedPercent).toBe(25);
+
+      expect(rows[1]?.name).toBe("week");
+      expect(rows[1]?.group).toBeNull();
+      expect(rows[1]?.usedPercent).toBe(50);
+
+      // Additional groups are present with group identities
+      expect(rows[2]?.name).toBe("Chatpass (week)");
+      expect(rows[2]?.group).toBe("Chatpass");
+      expect(rows[2]?.usedPercent).toBe(10);
+
+      expect(rows[3]?.name).toBe("Review (5h)");
+      expect(rows[3]?.group).toBe("Code Review");
+      expect(rows[3]?.usedPercent).toBe(5);
+    });
+
+    it("does not count down an untouched Codex full-window placeholder", () => {
+      const account: NormalizedAccount = {
+        ...mockAccount,
+        provider: "codex",
+        usage: {
+          primary: { used_percent: 0, window_minutes: 300, reset_after_seconds: 18000 },
+          secondary: { used_percent: 0, window_minutes: 10080, reset_after_seconds: 604800 },
+        },
+      };
+      expect(quotaRows(account).map((row) => row.resetSeconds)).toEqual([null, null]);
+      expect(quotaRows(account).map((row) => row.usedPercent)).toEqual([0, 0]);
+      expect(quotaRows({ ...account, usage: {
+        primary: { used_percent: 0, window_minutes: 300, reset_after_seconds: 17900 },
+      } })[0]?.resetSeconds).toBe(17900);
+    });
+
+    it("preserves both flat and group rows even when they have coincident values", () => {
+      const coincidentAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-coincident",
+        provider: "codex",
+        usage: {
+          primary: {
+            window_minutes: 300,
+            used_percent: 25,
+            reset_after_seconds: 3600,
+          },
+          groups: [
+            {
+              display_name: "Code Review",
+              models: "code-review",
+              buckets: [
+                {
+                  display_name: "5h",
+                  window_minutes: 300,
+                  used_percent: 25,
+                  reset_after_seconds: 3600,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(coincidentAccount);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.name).toBe("5h");
+      expect(rows[0]?.group).toBeNull();
+      expect(rows[0]?.usedPercent).toBe(25);
+
+      expect(rows[1]?.name).toBe("5h");
+      expect(rows[1]?.group).toBe("Code Review");
+      expect(rows[1]?.usedPercent).toBe(25);
+    });
+
+    it("suppresses synthetic flat aggregate projections for Antigravity when groups exist", () => {
+      const agAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "ag-account",
+        provider: "antigravity",
+        usage: {
+          primary: {
+            window_minutes: 300,
+            used_percent: 80,
+          },
+          groups: [
+            {
+              display_name: "Gemini Models",
+              buckets: [
+                {
+                  display_name: "gemini-1.5-pro",
+                  window: "5h",
+                  used_percent: 80,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(agAccount);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("gemini-1.5-pro (5h)");
+      expect(rows[0]?.group).toBe("Gemini Models");
+    });
+
+    it("does not convert unknown quota to 0 or hide unmeasured rows", () => {
+      const unmeasuredAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-unmeasured",
+        provider: "codex",
+        usage: {
+          primary: {
+            window_minutes: 300,
+            used_percent: null,
+            reset_after_seconds: 18000,
+          },
+          groups: [
+            {
+              display_name: "Code Review",
+              buckets: [
+                {
+                  display_name: "Review",
+                  used_percent: null,
+                  reset_after_seconds: 18000,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(unmeasuredAccount);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.name).toBe("5h");
+      expect(rows[0]?.usedPercent).toBeNull();
+      expect(rows[1]?.name).toBe("Review");
+      expect(rows[1]?.usedPercent).toBeNull();
+    });
+
+    it("renders stale quota badge and preserves last known quota rows on AccountCard", () => {
+      const staleAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-stale",
+        provider: "codex",
+        usage: {
+          refresh_status: "stale",
+          refreshed_at_unix: 1720000000,
+          primary: {
+            window_minutes: 300,
+            used_percent: 55,
+            reset_after_seconds: 3600,
+          },
+        },
+      };
+
+      const cardProps = (account: NormalizedAccount): AccountCardProps => ({
+        account,
+        pending: "",
+        showRemaining: false,
+        onRunAccountAction: vi.fn(),
+        onRefresh: vi.fn(),
+        onSetCredentialDisabled: vi.fn(),
+        onReauthenticate: vi.fn(),
+        onRemoveCredential: vi.fn(),
+        onSetConfirmRemove: vi.fn(),
+        onMoveCredential: vi.fn(),
+        onDropCredential: vi.fn(),
+        onSetDragging: vi.fn(),
+        onContextMenu: vi.fn(),
+      });
+
+      render(<AccountCard {...cardProps(staleAccount)} />);
+
+      expect(screen.getByTestId("quota-stale-badge")).toBeInTheDocument();
+      expect(screen.getByText("Stale quota")).toBeInTheDocument();
+      // Last known quota data is still rendered
+      expect(screen.getByText("5h")).toBeInTheDocument();
+      expect(screen.getByText("55%")).toBeInTheDocument();
+    });
+
+    it("renders refresh failure badge, error message, and preserves last known data", () => {
+      const errorAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "codex-err",
+        provider: "codex",
+        usage: {
+          refresh_status: "error",
+          last_refresh_error: "rate limit exceeded (429)",
+          primary: {
+            window_minutes: 300,
+            used_percent: 75,
+            reset_after_seconds: 7200,
+          },
+        },
+      };
+
+      const cardProps = (account: NormalizedAccount): AccountCardProps => ({
+        account,
+        pending: "",
+        showRemaining: false,
+        onRunAccountAction: vi.fn(),
+        onRefresh: vi.fn(),
+        onSetCredentialDisabled: vi.fn(),
+        onReauthenticate: vi.fn(),
+        onRemoveCredential: vi.fn(),
+        onSetConfirmRemove: vi.fn(),
+        onMoveCredential: vi.fn(),
+        onDropCredential: vi.fn(),
+        onSetDragging: vi.fn(),
+        onContextMenu: vi.fn(),
+      });
+
+      render(<AccountCard {...cardProps(errorAccount)} />);
+
+      expect(screen.getByTestId("quota-refresh-error-badge")).toBeInTheDocument();
+      expect(screen.getByText("Refresh failed")).toBeInTheDocument();
+      expect(screen.getByTestId("quota-refresh-error")).toHaveTextContent("rate limit exceeded (429)");
+      // Last known quota data is still rendered
+      expect(screen.getByText("5h")).toBeInTheDocument();
+      expect(screen.getByText("75%")).toBeInTheDocument();
+    });
   });
 });

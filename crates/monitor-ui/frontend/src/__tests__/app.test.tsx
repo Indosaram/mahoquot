@@ -1866,6 +1866,9 @@ describe("operations console", () => {
         if (url.endsWith("/logging-to-file")) {
           return new Response(JSON.stringify({ "logging-to-file": false }));
         }
+        if (url.endsWith("/codex-fast-mode")) {
+          return new Response(JSON.stringify({ "codex-fast-mode": false }));
+        }
         return new Response(JSON.stringify({ status: "ok" }));
       }),
     );
@@ -1880,9 +1883,12 @@ describe("operations console", () => {
     });
     fireEvent.change(screen.getByLabelText("Request retry count"), { target: { value: "5" } });
     fireEvent.click(screen.getByLabelText("Write logs to file"));
+    fireEvent.click(screen.getByLabelText("ChatGPT fast mode"));
     fireEvent.click(screen.getByRole("button", { name: "Save proxy settings" }));
 
-    await waitFor(() => expect(writes).toHaveLength(4));
+    await waitFor(() => expect(writes).toHaveLength(5));
+    const fastMode = writes.find((write) => write.url.endsWith("/codex-fast-mode"));
+    expect(fastMode?.body).toBe(JSON.stringify({ value: true }));
     expect(screen.getByText(/Proxy settings saved/i)).toBeInTheDocument();
   });
 

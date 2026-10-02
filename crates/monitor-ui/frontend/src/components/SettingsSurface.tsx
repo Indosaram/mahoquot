@@ -64,6 +64,7 @@ export interface SettingsSurfaceProps {
     patch: Partial<ProviderProxyPolicy>,
   ) => void;
   readonly loggingToFile: boolean;
+  readonly codexFastMode: boolean;
   readonly theme: "dark" | "light";
   readonly showRemaining: boolean;
   readonly onShowRemainingChange: (value: boolean) => void;
@@ -107,6 +108,7 @@ export interface SettingsSurfaceProps {
   readonly onRequestRetryChange: (value: string) => void;
   readonly onProxyUrlChange: (value: string) => void;
   readonly onLoggingToFileChange: (value: boolean) => void;
+  readonly onCodexFastModeChange: (value: boolean) => void;
   readonly onSaveProxySettings: () => void | Promise<void>;
   readonly onSaveProviderProxySettings?: () => void | Promise<void>;
   readonly onThemeChange: (theme: "dark" | "light") => void;
@@ -157,6 +159,7 @@ export function SettingsSurface({
   proxyProviders = {},
   onUpdateProxyProviderPolicy,
   loggingToFile,
+  codexFastMode,
   theme,
   onToggleGateway,
   nativeSettings = null,
@@ -184,6 +187,7 @@ export function SettingsSurface({
   onRequestRetryChange,
   onProxyUrlChange,
   onLoggingToFileChange,
+  onCodexFastModeChange,
   onSaveProxySettings,
   onSaveProviderProxySettings,
   onThemeChange,
@@ -536,6 +540,21 @@ export function SettingsSurface({
                 <span>
                   <strong>Write logs to file</strong>
                   <small>Persist gateway diagnostics for the log viewer.</small>
+                </span>
+              </label>
+              <label className="toggle-field">
+                <input
+                  aria-label="ChatGPT fast mode"
+                  type="checkbox"
+                  checked={codexFastMode}
+                  onChange={(event) => onCodexFastModeChange(event.target.checked)}
+                />
+                <span>
+                  <strong>ChatGPT fast mode</strong>
+                  <small>
+                    Send priority service tier on every codex request, whatever tier the client
+                    asked for. Saved with the settings below.
+                  </small>
                 </span>
               </label>
             </div>

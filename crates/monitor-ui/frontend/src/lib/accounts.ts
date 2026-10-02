@@ -388,6 +388,19 @@ export const formatResetTime = (sec: number | null | undefined): string => {
   return `${s}s`;
 };
 
+export const isQuotaStale = (usage?: Usage | null): boolean => {
+  if (!usage) return false;
+  return usage.refresh_status === "stale" || usage.refresh_status === "rate_limited";
+};
+
+export const hasQuotaRefreshError = (usage?: Usage | null): boolean => {
+  if (!usage) return false;
+  return (
+    usage.refresh_status === "error" ||
+    (typeof usage.last_refresh_error === "string" && usage.last_refresh_error.length > 0)
+  );
+};
+
 /**
  * Order banked reset credits by how soon they lapse.
  *

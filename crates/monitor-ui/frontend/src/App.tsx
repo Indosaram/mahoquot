@@ -670,6 +670,8 @@ export default function App() {
     setRequestRetry,
     loggingToFile,
     setLoggingToFile,
+    codexFastMode,
+    setCodexFastMode,
     setSettingsLoaded,
     saveProxySettings,
     saveProviderProxySettings,
@@ -1955,6 +1957,7 @@ export default function App() {
               onUpdateProxyProviderPolicy={updateProxyProviderPolicy}
               onSaveProviderProxySettings={saveProviderProxySettings}
               loggingToFile={loggingToFile}
+              codexFastMode={codexFastMode}
               theme={theme}
               showRemaining={showRemaining}
               onShowRemainingChange={setShowRemaining}
@@ -2050,6 +2053,7 @@ export default function App() {
               onRequestRetryChange={setRequestRetry}
               onProxyUrlChange={setProxyUrl}
               onLoggingToFileChange={setLoggingToFile}
+              onCodexFastModeChange={setCodexFastMode}
               onSaveProxySettings={saveProxySettings}
               onThemeChange={(nextTheme) => {
                 persistTheme(nextTheme);

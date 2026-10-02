@@ -1,6 +1,6 @@
 [package]
 name = "mahoquot-monitor-ui"
-version = "0.1.0"
+version = "0.1.5"
 edition = "2021"
 
 # The executable carries the product name so macOS shows "mahoquot" in the

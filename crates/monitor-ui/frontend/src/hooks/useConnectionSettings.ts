@@ -32,6 +32,7 @@ export function useConnectionSettings({
   const [routingStrategy, setRoutingStrategy] = useState("round-robin");
   const [requestRetry, setRequestRetry] = useState("3");
   const [loggingToFile, setLoggingToFile] = useState(false);
+  const [codexFastMode, setCodexFastMode] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
@@ -42,9 +43,10 @@ export function useConnectionSettings({
       clients.management.scalar("routing/strategy"),
       clients.management.scalar("request-retry"),
       clients.management.scalar("logging-to-file"),
+      clients.management.scalar("codex-fast-mode"),
       clients.management.scalar("proxy-providers").catch(() => ({})),
     ])
-      .then(([proxy, routing, retry, logging, providers]) => {
+      .then(([proxy, routing, retry, logging, fastMode, providers]) => {
         if (!active) return;
         if (typeof proxy["proxy-url"] === "string") setProxyUrl(proxy["proxy-url"]);
         if (typeof routing.strategy === "string") setRoutingStrategy(routing.strategy);
@@ -53,6 +55,9 @@ export function useConnectionSettings({
         }
         if (typeof logging["logging-to-file"] === "boolean") {
           setLoggingToFile(logging["logging-to-file"]);
+        }
+        if (typeof fastMode["codex-fast-mode"] === "boolean") {
+          setCodexFastMode(fastMode["codex-fast-mode"]);
         }
         setProxyProviders(parseProxyProviders(providers));
         setSettingsLoaded(true);
@@ -81,6 +86,7 @@ export function useConnectionSettings({
         clients.management.saveScalar("routing/strategy", routingStrategy),
         clients.management.saveScalar("request-retry", retry),
         clients.management.saveScalar("logging-to-file", loggingToFile),
+        clients.management.saveScalar("codex-fast-mode", codexFastMode),
       ]);
       setNotice("Proxy settings saved and applied.");
       // The save may have repointed the console at a different gateway
@@ -91,7 +97,7 @@ export function useConnectionSettings({
     } finally {
       setPending("");
     }
-  }, [clients, loggingToFile, proxyUrl, requestRetry, routingStrategy, setNotice, setPending]);
+  }, [clients, codexFastMode, loggingToFile, proxyUrl, requestRetry, routingStrategy, setNotice, setPending]);
 
   const saveProviderProxySettings = useCallback(async () => {
     setPending(pendingKey.settingsSave);
@@ -142,6 +148,8 @@ export function useConnectionSettings({
     setRequestRetry,
     loggingToFile,
     setLoggingToFile,
+    codexFastMode,
+    setCodexFastMode,
     settingsLoaded,
     setSettingsLoaded,
     saveProxySettings,

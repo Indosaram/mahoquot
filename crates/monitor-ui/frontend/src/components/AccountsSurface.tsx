@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
 import { extractDevinSlug } from "../lib/accounts";
 import { blocks } from "../lib/pending";
-import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus } from "../lib/schemas";
+import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus, QuotaWindow } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
@@ -95,10 +95,139 @@ export const isClineInferredQuotaExpired = (
   return false;
 };
 
+/**
+ * Format explicit window duration matching Codex / AI quota window conventions.
+ * Derived strictly from actual window_minutes or explicit bucket window contract string (e.g. "5h", "300m", "week", "10080m").
+ * NEVER falls back to reset_after_seconds (which is a remaining countdown, NOT window duration).
+ */
+export const formatQuotaDuration = (
+  minutes?: number | null,
+  windowContract?: string | null,
+): string | null => {
+  let m: number | null =
+    typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+
+  if (m === null && typeof windowContract === "string") {
+    const trimmed = windowContract.trim().toLowerCase();
+    if (trimmed === "5h") return "5h";
+    if (trimmed === "weekly" || trimmed === "week" || trimmed === "7d") return "week";
+    if (trimmed.endsWith("m")) {
+      const parsed = Number.parseInt(trimmed.slice(0, -1), 10);
+      if (Number.isFinite(parsed) && parsed > 0) m = parsed;
+    } else if (trimmed.endsWith("h")) {
+      const parsed = Number.parseInt(trimmed.slice(0, -1), 10);
+      if (Number.isFinite(parsed) && parsed > 0) m = parsed * 60;
+    } else if (trimmed.endsWith("d")) {
+      const parsed = Number.parseInt(trimmed.slice(0, -1), 10);
+      if (Number.isFinite(parsed) && parsed > 0) m = parsed * 24 * 60;
+    } else if (/^\d+$/.test(trimmed)) {
+      const parsed = Number.parseInt(trimmed, 10);
+      if (Number.isFinite(parsed) && parsed > 0) m = parsed;
+    } else if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+
+  if (m === null || m <= 0) return null;
+
+  if (m === 300) return "5h";
+  if (m === 10080) return "week";
+  if (m % (24 * 60) === 0) {
+    const days = m / (24 * 60);
+    return days === 7 ? "week" : `${days}d`;
+  }
+  if (m % 60 === 0) {
+    const hours = m / 60;
+    return `${hours}h`;
+  }
+  return `${m}m`;
+};
+
+export const isGenericQuotaWindowName = (name?: string | null): boolean => {
+  if (!name) return true;
+  return /^(primary|secondary)(\s*(window|limit))?$/i.test(name.trim());
+};
+
+const alreadyHasDuration = (name: string, duration: string): boolean => {
+  const lower = name.toLowerCase();
+  if (lower.includes(duration.toLowerCase())) return true;
+  if (duration === "5h" && /5\s*h(our)?/i.test(lower)) return true;
+  if (duration === "5h" && lower === "session") return true;
+  if (duration === "week" && /week/i.test(lower)) return true;
+  if (/(\d+)\s*(h|hour|m|min|d|day|week|month)/i.test(lower)) return true;
+  return false;
+};
+
+export const formatQuotaWindowName = (
+  window: QuotaWindow | null | undefined,
+  fallbackSlotName: "Primary window" | "Secondary window",
+): string => {
+  if (!window) return fallbackSlotName;
+  const duration = formatQuotaDuration(window.window_minutes);
+  const rawName = window.limit_name?.trim();
+
+  // If a meaningful limit name is provided (not generic Primary/Secondary):
+  if (rawName && !isGenericQuotaWindowName(rawName)) {
+    // If duration is also known and not already contained in rawName, qualify with duration:
+    if (duration && !alreadyHasDuration(rawName, duration)) {
+      return `${rawName} (${duration})`;
+    }
+    return rawName;
+  }
+
+  // Generic or missing limit_name: label with actual duration if known
+  if (duration) {
+    return duration;
+  }
+
+  return rawName || fallbackSlotName;
+};
+
 export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
   const usage = account.usage;
   if (!usage) return [];
-  const built: { row: QuotaRow; measured: boolean }[] = [];
+
+  const isWindowActive = (w?: QuotaWindow | null): boolean => {
+    if (!w) return false;
+    return (
+      typeof w.used_percent === "number" ||
+      (typeof w.window_minutes === "number" && w.window_minutes > 0) ||
+      (typeof w.reset_after_seconds === "number" && w.reset_after_seconds > 0) ||
+      typeof w.reset_at_unix === "number" ||
+      (typeof w.limit_name === "string" && w.limit_name.trim().length > 0)
+    );
+  };
+
+  const flatRows: QuotaRow[] = [];
+  const flatResetSeconds = (window: QuotaWindow | null | undefined): number | null => {
+    if (
+      account.provider === "codex" &&
+      window?.used_percent === 0 &&
+      typeof window.window_minutes === "number" &&
+      window.reset_after_seconds === window.window_minutes * 60
+    ) return null;
+    return resetSeconds(window?.reset_at_unix, window?.reset_after_seconds);
+  };
+  if (isWindowActive(usage.primary)) {
+    const raw = usage.primary?.used_percent;
+    flatRows.push({
+      name: formatQuotaWindowName(usage.primary, "Primary window"),
+      group: null,
+      usedPercent: typeof raw === "number" ? raw : null,
+      resetSeconds: flatResetSeconds(usage.primary),
+    });
+  }
+  if (isWindowActive(usage.secondary)) {
+    const raw = usage.secondary?.used_percent;
+    flatRows.push({
+      name: formatQuotaWindowName(usage.secondary, "Secondary window"),
+      group: null,
+      usedPercent: typeof raw === "number" ? raw : null,
+      resetSeconds: flatResetSeconds(usage.secondary),
+    });
+  }
+
+  const groupRows: QuotaRow[] = [];
   usage.groups?.forEach((group) => {
     group.buckets.forEach((bucket, index) => {
       if (
@@ -113,54 +242,45 @@ export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
       }
       const raw = bucket.used_percent;
       const measured = typeof raw === "number";
-      built.push({
-        row: {
-          name: windowLabel(
-            bucket.display_name ||
-              bucket.bucket_id ||
-              group.display_name ||
-              group.models ||
-              `Quota ${index + 1}`,
-          ),
-          group: group.display_name || group.models || null,
-          usedPercent: measured ? raw : null,
-          resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
-        },
-        measured,
+      const bucketDuration = formatQuotaDuration(
+        bucket.window_minutes,
+        bucket.window,
+      );
+      const rawBucketName =
+        bucket.display_name ||
+        bucket.bucket_id ||
+        (bucket.window ? `${bucket.window}` : null) ||
+        `Quota ${index + 1}`;
+      const bucketName = windowLabel(rawBucketName);
+      const displayName =
+        bucketDuration &&
+        !alreadyHasDuration(bucketName, bucketDuration) &&
+        !isGenericQuotaWindowName(bucketName)
+          ? `${bucketName} (${bucketDuration})`
+          : bucketDuration && isGenericQuotaWindowName(bucketName)
+            ? bucketDuration
+            : bucketName;
+
+      groupRows.push({
+        name: displayName,
+        group: group.display_name || group.models || null,
+        usedPercent: measured ? raw : null,
+        resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
       });
     });
   });
-  // Report every lane when at least one lane was measured, so a card lists
-  // GLM and deepseek together instead of showing only the measured one.
-  // An all-unmeasured account still falls through to the primary/secondary
-  // windows below, preserving the behaviour that path exists for.
-  const grouped = built.some((entry) => entry.measured) ? built.map((entry) => entry.row) : [];
-  if (grouped.length) return grouped;
-  const flat: readonly (QuotaRow | null)[] = [
-    usage.primary && typeof usage.primary.used_percent === "number"
-      ? {
-          name: usage.primary.limit_name || "Primary window",
-          group: null,
-          usedPercent: usage.primary.used_percent,
-          resetSeconds: resetSeconds(
-            usage.primary.reset_at_unix,
-            usage.primary.reset_after_seconds,
-          ),
-        }
-      : null,
-    usage.secondary && typeof usage.secondary.used_percent === "number"
-      ? {
-          name: usage.secondary.limit_name || "Secondary window",
-          group: null,
-          usedPercent: usage.secondary.used_percent,
-          resetSeconds: resetSeconds(
-            usage.secondary.reset_at_unix,
-            usage.secondary.reset_after_seconds,
-          ),
-        }
-      : null,
-  ];
-  return flat.filter((row): row is QuotaRow => row !== null);
+
+  // Documented aggregate projection suppression:
+  // Antigravity synthesizes primary/secondary flat windows from the worst bucket
+  // across groups for legacy rotation logic. If groups are present on Antigravity,
+  // suppress the synthetic flat projections so only the true model groups appear.
+  if (account.provider === "antigravity" && groupRows.length > 0) {
+    return groupRows;
+  }
+
+  // For Codex and all other providers: preserve both basic flat limits and additional
+  // group limits regardless of coincident values. Do not dedup across group identities.
+  return [...flatRows, ...groupRows];
 };
 
 export type ClinePoolModelSummary = {
