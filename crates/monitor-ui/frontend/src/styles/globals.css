@@ -2499,6 +2499,121 @@ h2 {
   color: var(--fg-faint);
   padding: 8px 0 2px;
 }
+.credit-balance {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0 2px;
+  font-size: 13px;
+}
+.credit-balance-label {
+  color: var(--fg-dim);
+}
+.credit-balance-value {
+  color: var(--fg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.credit-balance[data-state="unknown"] .credit-balance-value {
+  color: var(--fg-faint);
+  font-weight: 500;
+}
+.credit-balance[data-state="unlimited"] .credit-balance-value {
+  color: var(--ok);
+}
+.credit-balance[data-state="overage"] .credit-balance-value {
+  color: var(--warn);
+}
+.credits-toggle,
+.credits-global {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.credits-global {
+  margin-top: 0;
+  background: var(--panel);
+}
+.credits-toggle-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.credits-toggle-label {
+  font-size: 13px;
+  color: var(--fg);
+}
+.credits-toggle-label strong {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.credits-global[data-state="mixed"] .credits-toggle-label strong,
+.credits-global[data-state="on"] .credits-toggle-label strong {
+  color: var(--accent-fg, var(--accent));
+}
+.credits-toggle-hint {
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.credits-switch {
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-3);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.credits-switch i {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--fg-faint);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+.credits-switch:hover:not(:disabled) {
+  border-color: var(--fg-faint);
+}
+.credits-switch:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.credits-switch[aria-busy="true"] {
+  cursor: progress;
+  opacity: 1;
+}
+.credits-switch[data-state="on"],
+.credits-switch[data-state="mixed"] {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.55);
+}
+.credits-switch[data-state="on"] {
+  background: var(--accent);
+}
+.credits-switch[data-state="on"] i {
+  background: var(--panel);
+  transform: translateX(16px);
+}
+.credits-switch[data-state="mixed"] i {
+  background: var(--accent-fg, var(--accent));
+  transform: translateX(8px);
+}
 .pool-quota {
   display: block;
 }

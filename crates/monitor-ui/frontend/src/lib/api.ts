@@ -94,6 +94,27 @@ const schedulerOrderResponseSchema = z.object({
   order: z.array(z.string()),
 });
 
+/** GET /v0/management/accounts/credits: accounts opted into post-limit credit spend. */
+const codexCreditsOptInListSchema = z.object({
+  ids: z.array(z.string()),
+  credit_codex_account_ids: z.array(z.string()).optional(),
+});
+
+/** Per-account PUT ack: the gateway echoes the applied value before we trust it. */
+const codexCreditsAccountAckSchema = z.object({
+  id: z.string(),
+  credits_after_limit: z.boolean(),
+  creditsAfterLimit: z.boolean().optional(),
+  ok: z.boolean().optional(),
+});
+
+/** Bulk PUT ack: `ids` is the server-resolved codex set the write touched. */
+const codexCreditsAllAckSchema = z.object({
+  all: z.boolean(),
+  ids: z.array(z.string()),
+  ok: z.boolean().optional(),
+});
+
 const historyQueryString = (query: HistoryStatsQuery = {}): string => {
   const params = new URLSearchParams();
   if (query.startMs !== undefined) params.set("start-ms", String(query.startMs));
@@ -182,6 +203,13 @@ export interface GatewayClients {
     importCredential(name: string, content: Record<string, unknown>): Promise<void>;
     importVertexServiceAccount(document: string): Promise<void>;
     saveCredentialOrder(names: readonly string[]): Promise<readonly string[]>;
+
+    codexCreditsOptIn(): Promise<{ readonly ids: readonly string[] }>;
+    setCodexCreditsOptIn(
+      id: string,
+      enabled: boolean,
+    ): Promise<{ readonly id: string; readonly credits_after_limit: boolean }>;
+    setCodexCreditsOptInAll(enabled: boolean): Promise<{ readonly ids: readonly string[] }>;
 
     beginProviderAuth(provider: string): Promise<{ readonly url: string; readonly state: string }>;
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
@@ -588,6 +616,26 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       usageRefresh: async () => {
         await requestJson(`${base}/admin/usage/refresh`, authHeaders, { method: "POST" });
       },
+      codexCreditsOptIn: async () =>
+        codexCreditsOptInListSchema.parse(
+          await requestJson(`${base}/v0/management/accounts/credits`, authHeaders),
+        ),
+      setCodexCreditsOptIn: async (id, enabled) =>
+        codexCreditsAccountAckSchema.parse(
+          await requestJson(`${base}/v0/management/accounts/credits`, authHeaders, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id, credits_after_limit: enabled }),
+          }),
+        ),
+      setCodexCreditsOptInAll: async (enabled) =>
+        codexCreditsAllAckSchema.parse(
+          await requestJson(`${base}/v0/management/accounts/credits`, authHeaders, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ all: enabled }),
+          }),
+        ),
       removeCredential: async (name) => {
         await requestJson(
           `${base}/v0/management/auth-files?name=${encodeURIComponent(name)}`,

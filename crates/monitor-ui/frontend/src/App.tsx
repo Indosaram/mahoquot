@@ -337,6 +337,9 @@ export default function App() {
     type: "provider" | "account";
     id: string;
   } | null>(null);
+  /** Codex accounts explicitly opted into post-limit credit spend (absent = off). */
+  const [creditFlags, setCreditFlags] = useState<Record<string, boolean>>({});
+  const [creditsReady, setCreditsReady] = useState(false);
   const clients = useMemo(
     () => createGatewayClients(committedBaseUrl || DEFAULT_GATEWAY_URL, relayKey),
     [committedBaseUrl, relayKey],
@@ -356,7 +359,32 @@ export default function App() {
     setWarmupError("");
     setWarmupPending(false);
     setPending((current) => (current.startsWith("warm:") ? "" : current));
+    setCreditFlags({});
+    setCreditsReady(false);
+    setPending((current) => (current.startsWith("credits:") ? "" : current));
   }, [clients]);
+
+  const creditsClient = useRef(clients);
+  creditsClient.current = clients;
+
+  const loadCreditFlags = useCallback(async () => {
+    if (creditsClient.current !== clients) return;
+    try {
+      const result = await clients.management.codexCreditsOptIn();
+      if (creditsClient.current !== clients) return;
+      setCreditFlags(Object.fromEntries(result.ids.map((id) => [id, true])));
+      setCreditsReady(true);
+    } catch {
+      // A gateway without the policy endpoint (or a locked management key)
+      // renders no controls rather than claiming a default it never read.
+      if (creditsClient.current === clients) setCreditsReady(false);
+    }
+  }, [clients]);
+
+  useEffect(() => {
+    if (surface !== "accounts") return;
+    void loadCreditFlags();
+  }, [surface, loadCreditFlags]);
 
   const reloadWarmup = useCallback(async () => {
     const [settings, status] = await Promise.all([
@@ -930,6 +958,55 @@ export default function App() {
       setNotice(actionFailed(error));
     } finally {
       if (action !== "warm" || warmupClient.current === clients) setPending("");
+    }
+  };
+
+  /**
+   * Writes the per-account opt-in and commits state only from the gateway's
+   * ack, so a failed mutation leaves the visible toggle exactly where it was.
+   */
+  const toggleCreditsAfterLimit = async (account: NormalizedAccount, enabled: boolean) => {
+    setPending(pendingKey.credits(account.id));
+    setNotice("");
+    try {
+      const ack = await clients.management.setCodexCreditsOptIn(account.id, enabled);
+      if (creditsClient.current !== clients) return;
+      const applied = ack.credits_after_limit;
+      setCreditFlags((current) => {
+        const next = { ...current };
+        if (applied) next[account.id] = true;
+        else delete next[account.id];
+        return next;
+      });
+      setNotice(
+        applied
+          ? `Credits after limit on for ${account.label} — proxy-local policy.`
+          : `Credits after limit off for ${account.label}.`,
+      );
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      if (creditsClient.current === clients) setPending("");
+    }
+  };
+
+  /** Bulk flip: the ack's id list is the server's full codex set, so replace state with it. */
+  const toggleAllCreditsAfterLimit = async (enabled: boolean) => {
+    setPending(pendingKey.credits("all"));
+    setNotice("");
+    try {
+      const ack = await clients.management.setCodexCreditsOptInAll(enabled);
+      if (creditsClient.current !== clients) return;
+      setCreditFlags(enabled ? Object.fromEntries(ack.ids.map((id) => [id, true])) : {});
+      setNotice(
+        enabled
+          ? "Credits after limit on for all codex accounts — proxy-local policy."
+          : "Credits after limit off for all codex accounts.",
+      );
+    } catch (error) {
+      setNotice(actionFailed(error));
+    } finally {
+      if (creditsClient.current === clients) setPending("");
     }
   };
 
@@ -1876,6 +1953,16 @@ export default function App() {
             onDropCredential={dropCredentialOn}
             onSetDragging={setDragging}
             onContextMenu={(event, account) => openMenu(event, accountMenuItems(account))}
+            credits={
+              creditsReady
+                ? {
+                    flags: creditFlags,
+                    pending: pending.startsWith("credits:") ? pending : "",
+                    onToggleAccount: toggleCreditsAfterLimit,
+                    onToggleAll: toggleAllCreditsAfterLimit,
+                  }
+                : undefined
+            }
           />
         ) : null}
 

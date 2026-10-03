@@ -6,6 +6,13 @@ import { blocks } from "../lib/pending";
 import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus, QuotaWindow } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
+import {
+  GlobalCreditsToggle,
+} from "./CreditsSpendControls";
+import {
+  creditSpendGlobalState,
+  creditSpendSummary,
+} from "../lib/credits";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
 import {
   AccountWarmupControls,
@@ -396,6 +403,19 @@ export const clinePoolQuotaSummary = (
 const resetClockLabel = (unixSecs: number): string =>
   new Date(unixSecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+/**
+ * Opt-in credit-spend policy state owned by App.tsx. `credits` stays optional
+ * so surfaces render unchanged when the gateway does not expose the policy;
+ * absent flags read as off (the default).
+ */
+export interface CreditSpendProps {
+  readonly flags: Readonly<Record<string, boolean | undefined>>;
+  /** Active mutation key: `credits:<accountId>` for one card, `credits:all` for the global switch. */
+  readonly pending: string;
+  readonly onToggleAccount: (account: NormalizedAccount, enabled: boolean) => void | Promise<void>;
+  readonly onToggleAll: (enabled: boolean) => void | Promise<void>;
+}
+
 export const accountMenuItems = (account: NormalizedAccount): ContextMenuItem[] => {
   const identifier = account.runtimeId ?? account.credentialName;
   const items: ContextMenuItem[] = [
@@ -408,6 +428,7 @@ export const accountMenuItems = (account: NormalizedAccount): ContextMenuItem[] 
 };
 
 export interface AccountsSurfaceProps {
+  readonly credits?: CreditSpendProps | undefined;
   readonly warmup?: WarmupControlsState | undefined;
   readonly accounts: readonly NormalizedAccount[];
   readonly providers: readonly string[];
@@ -446,6 +467,7 @@ export interface AccountsSurfaceProps {
 }
 
 export const AccountsSurface = ({
+  credits,
   warmup,
   accounts,
   providers,
@@ -477,6 +499,13 @@ export const AccountsSurface = ({
       : undefined;
   const popupProvider = warmup?.selection?.type === "provider" ? warmup.selection.id : undefined;
   const poolSummary = clinePoolQuotaSummary(accounts);
+  const codexAccounts = accounts.filter((account) => account.provider === "codex");
+  const spendSummary = credits
+    ? creditSpendSummary(
+        codexAccounts.map((account) => account.id),
+        credits.flags,
+      )
+    : null;
   return (
     <Stack className="content accounts">
       <div className="provider-tabs" aria-label="Providers">
@@ -621,6 +650,15 @@ export const AccountsSurface = ({
         </>
       ) : null}
 
+      {credits && spendSummary && spendSummary.total > 0 ? (
+        <GlobalCreditsToggle
+          summary={spendSummary}
+          state={creditSpendGlobalState(spendSummary)}
+          pending={credits.pending !== ""}
+          onToggle={(enabled) => credits.onToggleAll(enabled)}
+        />
+      ) : null}
+
       {selectedProvider === "cline" && poolSummary.length > 0 && (
         <div
           className="state-panel pool-quota"
@@ -687,6 +725,17 @@ export const AccountsSurface = ({
             <AccountCard
               key={account.id}
               account={account}
+              credits={
+                credits && account.provider === "codex"
+                  ? {
+                      enabled: credits.flags[account.id] === true,
+                      pending:
+                        credits.pending === `credits:${account.id}` ||
+                        credits.pending === "credits:all",
+                      onToggle: (enabled) => credits.onToggleAccount(account, enabled),
+                    }
+                  : undefined
+              }
               warmup={warmup}
               pending={pending}
               showRemaining={showRemaining}

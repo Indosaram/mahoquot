@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Fragment, type MouseEvent, type ReactNode, useEffect, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
+import { hasCreditDetail } from "../lib/credits";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
@@ -21,6 +22,11 @@ import { formatQuotaPercent, quotaDisplay, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
+import {
+  AccountCreditsToggle,
+  CreditBalanceRow,
+  type AccountCreditsControl,
+} from "./CreditsSpendControls";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -106,6 +112,7 @@ export const QuotaFreshnessBadge = ({ usage }: { readonly usage?: Usage | null }
 export interface AccountCardProps {
   readonly warmup?: WarmupControlsState | undefined;
   readonly account: NormalizedAccount;
+  readonly credits?: AccountCreditsControl | undefined;
   readonly pending: string;
   readonly showRemaining?: boolean;
   readonly dragging?: string | undefined;
@@ -234,6 +241,7 @@ const AccountOverflowMenu = ({
 export const AccountCard = ({
   warmup,
   account,
+  credits,
   pending,
   showRemaining = true,
   dragging,
@@ -620,6 +628,15 @@ export const AccountCard = ({
         ) : (
           <div className="quota-empty">Not reported by provider</div>
         )}
+        {hasCreditDetail(account.usage) ? <CreditBalanceRow usage={account.usage} /> : null}
+        {credits ? (
+          <AccountCreditsToggle
+            accountLabel={account.label}
+            enabled={credits.enabled}
+            pending={credits.pending}
+            onToggle={credits.onToggle}
+          />
+        ) : null}
       </div>
       {isDevin && resolvedDiscoveryState ? (
         <div className="account-discovery" data-testid="devin-discovery">
