@@ -2001,15 +2001,18 @@ describe("reset quota toast flows", () => {
     accounts: [
       {
         ...stats.accounts[0],
+        credits_after_limit: false,
         usage: {
           ...stats.accounts[0].usage,
+          credits_balance: 0,
+          has_credits: false,
           reset_credits_available: 1,
         },
       },
     ],
   };
 
-  it("shows successful real reset toast and updates notice", async () => {
+  it("spends a banked reset when paid credits are empty and spending is off", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2020,6 +2023,9 @@ describe("reset quota toast flows", () => {
           method === "POST"
         ) {
           return new Response(JSON.stringify({ ok: true }));
+        }
+        if (url.includes("/v0/management/accounts/credits")) {
+          return new Response(JSON.stringify({ ids: [] }));
         }
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(resettableStats));
         if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));

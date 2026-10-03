@@ -990,26 +990,6 @@ export default function App() {
     }
   };
 
-  /** Bulk flip: the ack's id list is the server's full codex set, so replace state with it. */
-  const toggleAllCreditsAfterLimit = async (enabled: boolean) => {
-    setPending(pendingKey.credits("all"));
-    setNotice("");
-    try {
-      const ack = await clients.management.setCodexCreditsOptInAll(enabled);
-      if (creditsClient.current !== clients) return;
-      setCreditFlags(enabled ? Object.fromEntries(ack.ids.map((id) => [id, true])) : {});
-      setNotice(
-        enabled
-          ? "Credits after limit on for all codex accounts — proxy-local policy."
-          : "Credits after limit off for all codex accounts.",
-      );
-    } catch (error) {
-      setNotice(actionFailed(error));
-    } finally {
-      if (creditsClient.current === clients) setPending("");
-    }
-  };
-
   const removeCredential = async (account: NormalizedAccount) => {
     const credName =
       account.credentialName ||
@@ -1959,7 +1939,6 @@ export default function App() {
                     flags: creditFlags,
                     pending: pending.startsWith("credits:") ? pending : "",
                     onToggleAccount: toggleCreditsAfterLimit,
-                    onToggleAll: toggleAllCreditsAfterLimit,
                   }
                 : undefined
             }

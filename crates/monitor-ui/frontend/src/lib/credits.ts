@@ -73,28 +73,3 @@ export const creditBalanceLabel = (balance: CreditBalance): string => {
 
 /** Per-account opt-in flags, keyed by account id. Absent reads as off. */
 export type CreditSpendFlags = Readonly<Record<string, boolean | undefined>>;
-
-export interface CreditSpendSummary {
-  /** Accounts explicitly allowed to spend credits after the limit. */
-  readonly enabled: number;
-  /** Accounts the policy applies to. */
-  readonly total: number;
-}
-
-export const creditSpendSummary = (
-  ids: readonly string[],
-  flags: CreditSpendFlags,
-): CreditSpendSummary => ({
-  enabled: ids.filter((id) => flags[id] === true).length,
-  total: ids.length,
-});
-
-/** Tri-state for the global switch: on only when every account opted in. */
-export type CreditSpendGlobalState = "off" | "mixed" | "on";
-
-export const creditSpendGlobalState = (
-  summary: CreditSpendSummary,
-): CreditSpendGlobalState => {
-  if (summary.total === 0 || summary.enabled === 0) return "off";
-  return summary.enabled === summary.total ? "on" : "mixed";
-};

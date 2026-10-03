@@ -1,10 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
-  type AccountCreditsControl,
-  AccountCreditsToggle,
   CreditBalanceRow,
-  GlobalCreditsToggle,
 } from "../components/CreditsSpendControls";
 import {
   AccountsSurface,
@@ -13,8 +10,6 @@ import {
 } from "../components/AccountsSurface";
 import {
   creditBalanceLabel,
-  creditSpendGlobalState,
-  creditSpendSummary,
   formatCredits,
   interpretCreditBalance,
 } from "../lib/credits";
@@ -82,7 +77,6 @@ const creditProps = (
   flags,
   pending: "",
   onToggleAccount: vi.fn(),
-  onToggleAll: vi.fn(),
   ...overrides,
 });
 
@@ -142,177 +136,48 @@ describe("credit balance display", () => {
   });
 });
 
-describe("per-account credits toggle", () => {
-  const control = (overrides?: Partial<AccountCreditsControl>): AccountCreditsControl => ({
-    enabled: false,
-    pending: false,
-    onToggle: vi.fn(),
-    ...overrides,
-  });
+describe("account menu credit controls", () => {
+  const open = (id: string) => {
+    fireEvent.click(screen.getByRole("button", { name: `More actions for ${id}` }));
+    return screen.getByRole("menuitemcheckbox", { name: `Use credits after limit for ${id}` });
+  };
 
-  it("defaults to off and requests the opposite value on click", () => {
-    const onToggle = vi.fn();
-    render(
-      <AccountCreditsToggle accountLabel="dev@example.com" {...control({ onToggle })} />,
-    );
-    const toggle = screen.getByRole("switch", {
-      name: "Use credits after limit for dev@example.com",
-    });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalledWith(true);
-  });
-
-  it("stays disabled and busy while the mutation is pending", () => {
-    const onToggle = vi.fn();
-    render(
-      <AccountCreditsToggle accountLabel="dev@example.com" {...control({ pending: true, onToggle })} />,
-    );
-    const toggle = screen.getByRole("switch");
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAttribute("aria-busy", "true");
-    fireEvent.click(toggle);
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it("states the policy is proxy-local and not provider billing", () => {
-    render(<AccountCreditsToggle accountLabel="dev@example.com" {...control()} />);
-    expect(screen.getByText(/proxy-local routing policy/i)).toBeInTheDocument();
-    expect(screen.getByText(/never your provider account billing/i)).toBeInTheDocument();
-  });
-});
-
-describe("global credits toggle", () => {
-  it("derives mixed state and requests all-on from a partial opt-in", () => {
-    const summary = creditSpendSummary(["a", "b", "c"], { a: true, b: undefined, c: false });
-    expect(summary).toEqual({ enabled: 1, total: 3 });
-    expect(creditSpendGlobalState(summary)).toBe("mixed");
-
-    const onToggle = vi.fn();
-    render(
-      <GlobalCreditsToggle
-        summary={summary}
-        state={creditSpendGlobalState(summary)}
-        pending={false}
-        onToggle={onToggle}
-      />,
-    );
-    expect(screen.getByTestId("global-credits-state")).toHaveTextContent("some on");
-    const toggle = screen.getByRole("switch", {
-      name: "Use credits after limit for all accounts",
-    });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalledWith(true);
-  });
-
-  it("reads all-on only when every account opted in, and clears all on click", () => {
-    const summary = creditSpendSummary(["a", "b"], { a: true, b: true });
-    expect(creditSpendGlobalState(summary)).toBe("on");
-    const onToggle = vi.fn();
-    render(
-      <GlobalCreditsToggle summary={summary} state="on" pending={false} onToggle={onToggle} />,
-    );
-    expect(screen.getByTestId("global-credits-state")).toHaveTextContent("all on");
-    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("switch"));
-    expect(onToggle).toHaveBeenCalledWith(false);
-  });
-
-  it("is off and inert when no account exists", () => {
-    const onToggle = vi.fn();
-    render(
-      <GlobalCreditsToggle
-        summary={{ enabled: 0, total: 0 }}
-        state="off"
-        pending={false}
-        onToggle={onToggle}
-      />,
-    );
-    const toggle = screen.getByRole("switch");
-    expect(toggle).toBeDisabled();
-    fireEvent.click(toggle);
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it("is inert while the bulk mutation is pending", () => {
-    const onToggle = vi.fn();
-    render(
-      <GlobalCreditsToggle
-        summary={{ enabled: 1, total: 2 }}
-        state="mixed"
-        pending
-        onToggle={onToggle}
-      />,
-    );
-    const toggle = screen.getByRole("switch");
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAttribute("aria-busy", "true");
-    fireEvent.click(toggle);
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-});
-
-describe("AccountsSurface credit controls", () => {
-  it("shows the global switch and per-account switches for codex only", () => {
-    const antigravity = { ...codexAccount("ag-1"), provider: "antigravity" };
-    render(
-      <AccountsSurface
-        {...surfaceProps([codexAccount("codex-1"), antigravity])}
-        credits={creditProps({})}
-      />,
-    );
-    expect(screen.getByTestId("global-credits-toggle")).toBeInTheDocument();
-    expect(screen.getByTestId("global-credits-state")).toHaveTextContent("off");
-    expect(screen.getAllByTestId("account-credits-toggle")).toHaveLength(1);
-    expect(screen.queryByRole("switch", { name: /ag-1/ })).not.toBeInTheDocument();
-  });
-
-  it("scopes pending to the mutating card so sibling toggles stay live", () => {
-    const first = codexAccount("codex-1");
-    const second = codexAccount("codex-2");
-    render(
-      <AccountsSurface
-        {...surfaceProps([first, second])}
-        credits={creditProps({}, { pending: "credits:codex-1" })}
-      />,
-    );
-    expect(
-      screen.getByRole("switch", { name: "Use credits after limit for codex-1" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("switch", { name: "Use credits after limit for codex-2" }),
-    ).toBeEnabled();
-  });
-
-  it("omits every credit control when the gateway does not expose the policy", () => {
-    render(<AccountsSurface {...surfaceProps([codexAccount("codex-1")])} />);
+  it("keeps settings out of cards and exposes the current value in the menu", () => {
+    render(<AccountsSurface {...surfaceProps([codexAccount("codex-1")])} credits={creditProps({})} />);
     expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
     expect(screen.queryByTestId("account-credits-toggle")).not.toBeInTheDocument();
+    expect(open("codex-1")).toHaveAttribute("aria-checked", "false");
   });
 
-  it("routes per-account and bulk toggles to the surface owner", () => {
-    const first = codexAccount("codex-1");
-    const second = codexAccount("codex-2");
+  it.each([false, true])("requests the opposite value when enabled is %s", (enabled) => {
+    const account = codexAccount("codex-1");
     const onToggleAccount = vi.fn();
-    const onToggleAll = vi.fn();
-    render(
-      <AccountsSurface
-        {...surfaceProps([first, second])}
-        credits={creditProps(
-          { "codex-1": true },
-          { onToggleAccount, onToggleAll },
-        )}
-      />,
-    );
-    fireEvent.click(
-      screen.getByRole("switch", { name: "Use credits after limit for codex-2" }),
-    );
-    expect(onToggleAccount).toHaveBeenCalledWith(second, true);
+    render(<AccountsSurface {...surfaceProps([account])} credits={creditProps({ "codex-1": enabled }, { onToggleAccount })} />);
+    fireEvent.click(open(account.id));
+    expect(onToggleAccount).toHaveBeenCalledWith(account, !enabled);
+  });
 
-    fireEvent.click(
-      screen.getByRole("switch", { name: "Use credits after limit for all accounts" }),
-    );
-    expect(onToggleAll).toHaveBeenCalledWith(true);
+  it("disables only the pending account menu setting", () => {
+    const onToggleAccount = vi.fn();
+    render(<AccountsSurface {...surfaceProps([codexAccount("codex-1"), codexAccount("codex-2")])} credits={creditProps({}, { pending: "credits:codex-1", onToggleAccount })} />);
+    const pending = open("codex-1");
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(pending);
+    expect(onToggleAccount).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(open("codex-2")).toBeEnabled();
+  });
+
+  it("omits the setting for unsupported providers", () => {
+    render(<AccountsSurface {...surfaceProps([{ ...codexAccount("ag-1"), provider: "antigravity" }])} credits={creditProps({})} />);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for ag-1" }));
+    expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+  });
+
+  it("omits the setting when the gateway policy is unavailable", () => {
+    render(<AccountsSurface {...surfaceProps([codexAccount("codex-1")])} />);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for codex-1" }));
+    expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
   });
 });

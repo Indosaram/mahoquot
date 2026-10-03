@@ -112,20 +112,20 @@ const openAccounts = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
 };
 
-const accountSwitch = (id: string) =>
-  screen.getByRole("switch", { name: `Use credits after limit for ${id}` });
-
-const globalSwitch = () =>
-  screen.getByRole("switch", { name: "Use credits after limit for all accounts" });
+const accountSwitch = (id: string) => {
+  const existing = screen.queryByRole("menuitemcheckbox", { name: `Use credits after limit for ${id}` });
+  if (existing) return existing;
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: `More actions for ${id}` }));
+  return screen.getByRole("menuitemcheckbox", { name: `Use credits after limit for ${id}` });
+};
 
 describe("codex credit policy in the operations console", () => {
   it("defaults every control off when no account opted in", async () => {
     installFetch({ statsAccounts: codexStats(), creditIds: [], creditIdsOrFail: [] });
     await openAccounts();
 
-    const global = await waitFor(() => globalSwitch());
-    expect(global).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByTestId("global-credits-state")).toHaveTextContent("off");
+    expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "false");
       expect(accountSwitch("unknown@example.com")).toHaveAttribute("aria-checked", "false");
@@ -147,7 +147,7 @@ describe("codex credit policy in the operations console", () => {
     expect(values[1]?.textContent).not.toContain("0 credits");
   });
 
-  it("derives the global mixed state from per-account flags", async () => {
+  it("reads each account flag independently", async () => {
     installFetch({
       statsAccounts: codexStats(),
       creditIds: ["zero@example.com"],
@@ -155,9 +155,7 @@ describe("codex credit policy in the operations console", () => {
     });
     await openAccounts();
 
-    const global = await waitFor(() => globalSwitch());
-    expect(global).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByTestId("global-credits-state")).toHaveTextContent("some on");
+    expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true");
       expect(accountSwitch("unknown@example.com")).toHaveAttribute("aria-checked", "false");
@@ -178,7 +176,7 @@ describe("codex credit policy in the operations console", () => {
     await openAccounts();
 
     const toggle = await waitFor(() => accountSwitch("zero@example.com"));
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"));
 
     await act(async () => {
       fireEvent.click(toggle);
@@ -186,8 +184,8 @@ describe("codex credit policy in the operations console", () => {
 
     expect(await screen.findByText("Action failed: disk full")).toBeInTheDocument();
     expect(puts).toEqual([{ body: { id: "zero@example.com", credits_after_limit: false } }]);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(toggle).not.toHaveAttribute("aria-busy");
+    expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true");
+    expect(accountSwitch("zero@example.com")).not.toHaveAttribute("aria-busy");
     expect(screen.queryByText(/Credits after limit (on|off)/)).not.toBeInTheDocument();
   });
 
@@ -205,19 +203,19 @@ describe("codex credit policy in the operations console", () => {
     await openAccounts();
 
     const toggle = await waitFor(() => accountSwitch("zero@example.com"));
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"));
 
     await act(async () => {
       fireEvent.click(toggle);
     });
 
     await waitFor(() => {
-      expect(toggle).toHaveAttribute("aria-busy", "true");
-      expect(toggle).toBeDisabled();
+      expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-busy", "true");
+      expect(accountSwitch("zero@example.com")).toBeDisabled();
     });
     // No success surface while the mutation is still in flight.
     expect(screen.queryByText(/Credits after limit (on|off)/)).not.toBeInTheDocument();
-    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true");
 
     await act(async () => {
       release?.(
@@ -234,36 +232,11 @@ describe("codex credit policy in the operations console", () => {
       await gate;
     });
 
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
-    expect(toggle).not.toHaveAttribute("aria-busy");
+    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "false"));
+    expect(accountSwitch("zero@example.com")).not.toHaveAttribute("aria-busy");
     expect(
       await screen.findByText("Credits after limit off for zero@example.com."),
     ).toBeInTheDocument();
-  });
-
-  it("flips every account through the bulk write and commits the acked id set", async () => {
-    const { puts } = installFetch({
-      statsAccounts: codexStats(),
-      creditIds: ["zero@example.com", "unknown@example.com"],
-      creditIdsOrFail: ["zero@example.com", "unknown@example.com"],
-    });
-    await openAccounts();
-
-    const global = await waitFor(() => globalSwitch());
-    await waitFor(() => expect(global).toHaveAttribute("aria-checked", "true"));
-
-    await act(async () => {
-      fireEvent.click(global);
-    });
-
-    expect(await screen.findByText("Credits after limit off for all codex accounts.")).toBeInTheDocument();
-    expect(puts).toEqual([{ body: { all: false } }]);
-    await waitFor(() => {
-      expect(global).toHaveAttribute("aria-checked", "false");
-      expect(screen.getByTestId("global-credits-state")).toHaveTextContent("off");
-      expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "false");
-      expect(accountSwitch("unknown@example.com")).toHaveAttribute("aria-checked", "false");
-    });
   });
 
   it("renders no credit controls when the gateway does not expose the policy", async () => {
@@ -274,7 +247,7 @@ describe("codex credit policy in the operations console", () => {
       expect(screen.getAllByTestId("account-usage-totals")).toHaveLength(2);
     });
     expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: /Use credits after limit/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: /Use credits after limit/ })).not.toBeInTheDocument();
   });
 
   it("keeps the acked value while a pre-ack stats snapshot still claims the old flag", async () => {
@@ -305,7 +278,7 @@ describe("codex credit policy in the operations console", () => {
     await openAccounts();
 
     const toggle = await waitFor(() => accountSwitch("zero@example.com"));
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"));
 
     await act(async () => {
       fireEvent.click(toggle);
@@ -314,7 +287,7 @@ describe("codex credit policy in the operations console", () => {
     expect(
       await screen.findByText("Credits after limit off for zero@example.com."),
     ).toBeInTheDocument();
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByTestId("global-credits-state")).toHaveTextContent("off");
+    expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
   });
 });

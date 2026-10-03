@@ -7,6 +7,8 @@ import {
   RefreshCw,
   RotateCcw,
   Sparkles,
+  Square,
+  SquareCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -23,7 +25,6 @@ import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
 import {
-  AccountCreditsToggle,
   CreditBalanceRow,
   type AccountCreditsControl,
 } from "./CreditsSpendControls";
@@ -157,6 +158,11 @@ interface OverflowAction {
   readonly disabled: boolean;
   readonly danger?: boolean;
   readonly title?: string;
+  /** Present only on stateful items: renders menuitemcheckbox plus aria-checked. */
+  readonly checked?: boolean;
+  /** Present only on stateful items while their write is still in flight. */
+  readonly busy?: boolean;
+  readonly testId?: string;
   readonly run: () => void;
 }
 
@@ -217,9 +223,12 @@ const AccountOverflowMenu = ({
             <button
               key={action.key}
               type="button"
-              role="menuitem"
+              role={action.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+              aria-checked={action.checked === undefined ? undefined : action.checked}
+              aria-busy={action.busy ? "true" : undefined}
               className="account-overflow-item"
               data-danger={action.danger ? "true" : undefined}
+              data-testid={action.testId}
               aria-label={action.ariaLabel}
               title={action.title}
               disabled={action.disabled}
@@ -348,6 +357,24 @@ export const AccountCard = ({
         : "No banked resets available",
       disabled: !account.runtimeId || isPending || !canSpendReset,
       run: () => void onRunAccountAction("reset", account),
+    });
+  }
+  if (credits) {
+    // The policy is rare enough to live with the other lifecycle actions
+    // instead of spending permanent card-bottom width on a switch.
+    const creditsControl = credits;
+    overflowActions.push({
+      key: "credits",
+      label: creditsControl.pending ? "Saving…" : "Use credits after limit",
+      ariaLabel: `Use credits after limit for ${account.label}`,
+      icon: creditsControl.enabled ? <SquareCheck size={13} /> : <Square size={13} />,
+      title:
+        "Proxy-local routing policy — applies only to this proxy's requests, never your provider account billing.",
+      disabled: isPending || creditsControl.pending,
+      busy: creditsControl.pending,
+      checked: creditsControl.enabled,
+      testId: "account-credits-toggle",
+      run: () => void creditsControl.onToggle(!creditsControl.enabled),
     });
   }
   if (account.credentialName) {
@@ -629,14 +656,6 @@ export const AccountCard = ({
           <div className="quota-empty">Not reported by provider</div>
         )}
         {hasCreditDetail(account.usage) ? <CreditBalanceRow usage={account.usage} /> : null}
-        {credits ? (
-          <AccountCreditsToggle
-            accountLabel={account.label}
-            enabled={credits.enabled}
-            pending={credits.pending}
-            onToggle={credits.onToggle}
-          />
-        ) : null}
       </div>
       {isDevin && resolvedDiscoveryState ? (
         <div className="account-discovery" data-testid="devin-discovery">

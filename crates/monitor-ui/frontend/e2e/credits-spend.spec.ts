@@ -130,183 +130,51 @@ const openAccounts = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "Accounts", exact: true })).toBeVisible();
 };
 
-const globalSwitch = (page: Page) =>
-  page.getByRole("switch", { name: "Use credits after limit for all accounts" });
+const menuToggle = async (page: Page, id: string) => {
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: `More actions for ${id}` }).click();
+  return page.getByRole("menuitemcheckbox", { name: `Use credits after limit for ${id}` });
+};
 
-const accountCard = (page: Page, id: string) =>
-  page.locator(".account-card").filter({ hasText: id });
-
-const cardSwitch = (page: Page, id: string) =>
-  page.getByRole("switch", { name: `Use credits after limit for ${id}` });
-
-const creditValue = (page: Page, id: string) =>
-  accountCard(page, id).getByTestId("account-credit-value");
-
-test.beforeEach(async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 720 });
-});
-
-test("renders the real Accounts surface with credit controls", async ({ page }) => {
-  await installCreditsFixture(page, { enabledIds: [] });
-  await openAccounts(page);
-
-  await expect(page.getByTestId("global-credits-toggle")).toBeVisible();
-  for (const id of CODEX_IDS) {
-    await expect(accountCard(page, id)).toBeVisible();
-    await expect(cardSwitch(page, id)).toBeVisible();
-    await expect(
-      accountCard(page, id).getByTestId("account-usage-totals"),
-    ).toBeVisible();
-  }
-  await expect(page.getByText("proxy-local policy", { exact: false }).first()).toBeVisible();
-});
-
-test("defaults every credit control off", async ({ page }) => {
-  await installCreditsFixture(page, { enabledIds: [] });
-  await openAccounts(page);
-
-  const global = globalSwitch(page);
-  await expect(global).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByTestId("global-credits-state")).toHaveText("off");
-  for (const id of CODEX_IDS) {
-    await expect(cardSwitch(page, id)).toHaveAttribute("aria-checked", "false");
-  }
-});
-
-test("derives the mixed global state from per-account flags", async ({ page }) => {
-  await installCreditsFixture(page, { enabledIds: ["zero@example.test"] });
-  await openAccounts(page);
-
-  const global = globalSwitch(page);
-  await expect(page.getByTestId("global-credits-state")).toHaveText("some on");
-  await expect(global).toHaveAttribute("data-state", "mixed");
-  await expect(global).toHaveAttribute("aria-checked", "false");
-  await expect(cardSwitch(page, "zero@example.test")).toHaveAttribute("aria-checked", "true");
-  await expect(cardSwitch(page, "unknown@example.test")).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
-  await expect(cardSwitch(page, "rich@example.test")).toHaveAttribute("aria-checked", "false");
-});
-
-test("keeps the prior toggle and surfaces the error when the write fails", async ({
-  page,
-}) => {
-  await installCreditsFixture(page, {
-    enabledIds: ["zero@example.test"],
-    failPut: true,
-  });
-  await openAccounts(page);
-
-  const toggle = cardSwitch(page, "zero@example.test");
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
-  await toggle.click();
-
-  await expect(page.getByText("Action failed: simulated disk failure")).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
-  await expect(toggle).not.toHaveAttribute("aria-busy", "true");
-  await expect(page.getByText(/Credits after limit (on|off)/)).toHaveCount(0);
-});
-
-test("shows zero, unknown, and exact balances distinctly and never as dollars", async ({
-  page,
-}) => {
-  await installCreditsFixture(page, { enabledIds: [] });
-  await openAccounts(page);
-
-  const zero = creditValue(page, "zero@example.test");
-  const unknown = creditValue(page, "unknown@example.test");
-  const rich = creditValue(page, "rich@example.test");
-  await expect(zero).toHaveText("0 credits");
-  await expect(unknown).toHaveText("Unknown");
-  await expect(rich).toHaveText("42.5 credits");
-  for (const value of [zero, unknown, rich]) {
-    await expect(value).not.toContainText("$");
-  }
-  await expect(
-    accountCard(page, "zero@example.test").getByTestId("account-credit-balance"),
-  ).toHaveAttribute("data-state", "value");
-  await expect(
-    accountCard(page, "unknown@example.test").getByTestId("account-credit-balance"),
-  ).toHaveAttribute("data-state", "unknown");
-});
-
-test("keeps the mobile viewport free of horizontal overflow", async ({ page }) => {
-  await installCreditsFixture(page, { enabledIds: ["rich@example.test"] });
-  await openAccounts(page);
-  await page.setViewportSize({ width: 390, height: 844 });
-
-  await expect(globalSwitch(page)).toBeVisible();
-  await expect(cardSwitch(page, "zero@example.test")).toBeVisible();
-  const overflow = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }));
-  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
-
-  const switchBox = await cardSwitch(page, "rich@example.test").boundingBox();
-  expect(switchBox).not.toBeNull();
-  expect((switchBox?.x ?? Infinity) + (switchBox?.width ?? 0)).toBeLessThanOrEqual(390);
-});
-
-test("toggles an account on, then the global switch on and off, with screenshots", async (
-  { page },
-  testInfo,
-) => {
+test("keeps credit controls in account menus and persists each account independently", async ({ page }, testInfo) => {
   const { putBodies } = await installCreditsFixture(page, { enabledIds: [] });
+  await page.setViewportSize({ width: 1100, height: 720 });
   await openAccounts(page);
-
-  const global = globalSwitch(page);
-  const zero = cardSwitch(page, "zero@example.test");
-  await expect(global).toHaveAttribute("aria-checked", "false");
-  await expect(zero).toHaveAttribute("aria-checked", "false");
-
-  await zero.click();
-  await expect(page.locator("output.toast-stack button.toast")).toHaveCount(1);
-  await expect(zero).toHaveAttribute("aria-checked", "true");
-  await expect(cardSwitch(page, "unknown@example.test")).toHaveAttribute("aria-checked", "false");
-  await expect(cardSwitch(page, "rich@example.test")).toHaveAttribute("aria-checked", "false");
-  await expect(global).toHaveAttribute("data-state", "mixed");
-  await expect(global).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByTestId("global-credits-state")).toHaveText("some on");
-
-  await global.click();
-  await expect(page.getByTestId("global-credits-state")).toHaveText("all on");
-  await expect(global).toHaveAttribute("data-state", "on");
-  await expect(global).toHaveAttribute("aria-checked", "true");
-  for (const id of CODEX_IDS) {
-    await expect(cardSwitch(page, id)).toHaveAttribute("aria-checked", "true");
-  }
-
-  await global.click();
-  await expect(page.getByTestId("global-credits-state")).toHaveText("off");
-  await expect(global).toHaveAttribute("data-state", "off");
-  await expect(global).toHaveAttribute("aria-checked", "false");
-  for (const id of CODEX_IDS) {
-    await expect(cardSwitch(page, id)).toHaveAttribute("aria-checked", "false");
-  }
-
-  expect(putBodies).toEqual([
-    { id: "zero@example.test", credits_after_limit: true },
-    { all: true },
-    { all: false },
-  ]);
-
-  await page.screenshot({
-    path: testInfo.outputPath("credits-toggle-flow-desktop.png"),
-    fullPage: true,
-  });
-
+  await expect(page.getByTestId("global-credits-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("account-credits-toggle")).toHaveCount(0);
+  const toggle = await menuToggle(page, CODEX_IDS[0]);
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(page.getByText(/Credits after limit on for/)).toBeVisible();
+  await expect(await menuToggle(page, CODEX_IDS[0])).toHaveAttribute("aria-checked", "true");
+  await page.screenshot({ path: testInfo.outputPath("credits-menu-desktop.png") });
+  await expect(await menuToggle(page, CODEX_IDS[1])).toHaveAttribute("aria-checked", "false");
+  await (await menuToggle(page, CODEX_IDS[0])).click();
+  await expect(page.getByText(/Credits after limit off for/)).toBeVisible();
+  await expect(await menuToggle(page, CODEX_IDS[0])).toHaveAttribute("aria-checked", "false");
+  expect(putBodies).toEqual([{ id: CODEX_IDS[0], credits_after_limit: true }, { id: CODEX_IDS[0], credits_after_limit: false }]);
+  await page.reload();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await expect(await menuToggle(page, CODEX_IDS[0])).toHaveAttribute("aria-checked", "false");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(globalSwitch(page)).toBeVisible();
-  await expect(cardSwitch(page, "zero@example.test")).toBeVisible();
-  const overflow = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }));
-  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
-  await page.screenshot({
-    path: testInfo.outputPath("credits-toggle-flow-mobile.png"),
-    fullPage: true,
-  });
+  await menuToggle(page, CODEX_IDS[0]);
+  const bounds = await page.getByRole("menu").boundingBox();
+  expect(bounds).not.toBeNull();
+  expect((bounds?.x ?? Infinity) + (bounds?.width ?? 0)).toBeLessThanOrEqual(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("credits-menu-mobile.png") });
+});
+
+test("retains enabled policy after a failed write", async ({ page }) => {
+  await installCreditsFixture(page, { enabledIds: [CODEX_IDS[0]], failPut: true });
+  await openAccounts(page);
+  await (await menuToggle(page, CODEX_IDS[0])).click();
+  await expect(page.getByText("Action failed: simulated disk failure")).toBeVisible();
+  await expect(await menuToggle(page, CODEX_IDS[0])).toHaveAttribute("aria-checked", "true");
+});
+
+test("preserves measured zero, unknown, and exact credit balances", async ({ page }) => {
+  await installCreditsFixture(page, { enabledIds: [] });
+  await openAccounts(page);
+  await expect(page.getByTestId("account-credit-value")).toHaveText(["0 credits", "Unknown", "42.5 credits"]);
 });

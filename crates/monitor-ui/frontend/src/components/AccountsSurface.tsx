@@ -6,13 +6,6 @@ import { blocks } from "../lib/pending";
 import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus, QuotaWindow } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
-import {
-  GlobalCreditsToggle,
-} from "./CreditsSpendControls";
-import {
-  creditSpendGlobalState,
-  creditSpendSummary,
-} from "../lib/credits";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
 import {
   AccountWarmupControls,
@@ -410,10 +403,9 @@ const resetClockLabel = (unixSecs: number): string =>
  */
 export interface CreditSpendProps {
   readonly flags: Readonly<Record<string, boolean | undefined>>;
-  /** Active mutation key: `credits:<accountId>` for one card, `credits:all` for the global switch. */
+  /** Active mutation key: `credits:<accountId>` while one card's write is in flight. */
   readonly pending: string;
   readonly onToggleAccount: (account: NormalizedAccount, enabled: boolean) => void | Promise<void>;
-  readonly onToggleAll: (enabled: boolean) => void | Promise<void>;
 }
 
 export const accountMenuItems = (account: NormalizedAccount): ContextMenuItem[] => {
@@ -499,13 +491,6 @@ export const AccountsSurface = ({
       : undefined;
   const popupProvider = warmup?.selection?.type === "provider" ? warmup.selection.id : undefined;
   const poolSummary = clinePoolQuotaSummary(accounts);
-  const codexAccounts = accounts.filter((account) => account.provider === "codex");
-  const spendSummary = credits
-    ? creditSpendSummary(
-        codexAccounts.map((account) => account.id),
-        credits.flags,
-      )
-    : null;
   return (
     <Stack className="content accounts">
       <div className="provider-tabs" aria-label="Providers">
@@ -650,15 +635,6 @@ export const AccountsSurface = ({
         </>
       ) : null}
 
-      {credits && spendSummary && spendSummary.total > 0 ? (
-        <GlobalCreditsToggle
-          summary={spendSummary}
-          state={creditSpendGlobalState(spendSummary)}
-          pending={credits.pending !== ""}
-          onToggle={(enabled) => credits.onToggleAll(enabled)}
-        />
-      ) : null}
-
       {selectedProvider === "cline" && poolSummary.length > 0 && (
         <div
           className="state-panel pool-quota"
@@ -729,9 +705,7 @@ export const AccountsSurface = ({
                 credits && account.provider === "codex"
                   ? {
                       enabled: credits.flags[account.id] === true,
-                      pending:
-                        credits.pending === `credits:${account.id}` ||
-                        credits.pending === "credits:all",
+                      pending: credits.pending === `credits:${account.id}`,
                       onToggle: (enabled) => credits.onToggleAccount(account, enabled),
                     }
                   : undefined
