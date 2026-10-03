@@ -1502,6 +1502,22 @@ h2 {
   border: 1px dashed var(--line-soft);
   border-radius: 6px;
 }
+.overview-breakdown-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  color: var(--fg-faint);
+}
+.overview-breakdown-page-status {
+  font-size: 12px;
+}
+.overview-breakdown-page-actions {
+  display: flex;
+  gap: 8px;
+}
 .live-badge {
   display: inline-block;
   margin-left: 6px;

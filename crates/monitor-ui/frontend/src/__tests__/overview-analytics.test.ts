@@ -229,6 +229,15 @@ describe("buildAnalytics ranking, folding, and series", () => {
     const sumMetrics = analytics.rows.reduce((sum, r) => sum + r.requests, 0);
     expect(sumMetrics).toBe(totalRequests);
     expect(otherRow.share).toBeCloseTo(60 / totalRequests);
+
+    // The table's allRows keeps every aggregate row unfolded, ranked the same
+    // way, with shares against the same metric denominator as rows.
+    expect(analytics.allRows).toHaveLength(inputGroups.length);
+    expect(analytics.allRows?.some((r) => r.isOther)).toBe(false);
+    const allRowsSum = (analytics.allRows ?? []).reduce((sum, r) => sum + r.requests, 0);
+    expect(allRowsSum).toBe(totalRequests);
+    expect(analytics.allRows?.[0]?.requests).toBe(90);
+    expect(analytics.allRows?.[analytics.allRows.length - 1]?.requests).toBe(10);
   });
 
   it("ranks rows by selected metric (tokens vs requests)", () => {

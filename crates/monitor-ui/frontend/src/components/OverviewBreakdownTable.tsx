@@ -28,9 +28,13 @@ const formatLatencyExact = (row: BreakdownRow): string => {
 const formatCost = (val: number): string =>
   `$${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** Rows per page of the usage breakdown pager. Kept small enough that a
+ * laptop sees navigation without scrolling, large enough that one page reads
+ * as a table rather than a sample. */
+const PAGE_SIZE = 8;
+
 export interface OverviewBreakdownTableProps {
   readonly analytics: OverviewAnalytics;
-  readonly maxRows?: number;
   /** Row key the dashboard is narrowed to, or null when showing everything. */
   readonly focusKey?: string | null;
   /** Omitted by callers that want a read-only table. */
@@ -39,14 +43,31 @@ export interface OverviewBreakdownTableProps {
 
 export const OverviewBreakdownTable = ({
   analytics,
-  maxRows = 8,
   focusKey = null,
   onFocusChange,
 }: OverviewBreakdownTableProps): JSX.Element => {
-  const [expanded, setExpanded] = useState(false);
+  // allRows carries every aggregate row; legacy/mocked analytics objects that
+  // predate it fall back to rows so their behavior is unchanged.
+  const rows = analytics.allRows ?? analytics.rows;
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const [page, setPage] = useState(0);
 
-  const hasMore = analytics.rows.length > maxRows;
-  const visibleRows = expanded || !hasMore ? analytics.rows : analytics.rows.slice(0, maxRows);
+  // The rows identity is the pagination contract: a group-by, range, sort, or
+  // filter change that alters the row set rewinds to the first page, and a
+  // shrink below the current page clamps instead of stranding an empty view.
+  const rowSignature = rows.map((row) => row.key).join("\u0000");
+  const [prevRowSignature, setPrevRowSignature] = useState(rowSignature);
+  if (prevRowSignature !== rowSignature) {
+    setPrevRowSignature(rowSignature);
+    setPage(0);
+  }
+  const currentPage = Math.min(page, pageCount - 1);
+  if (page !== currentPage) {
+    setPage(currentPage);
+  }
+
+  const pageStart = currentPage * PAGE_SIZE;
+  const visibleRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
 
   return (
     <section className="overview-breakdown" aria-label="Usage breakdown">
@@ -60,7 +81,7 @@ export const OverviewBreakdownTable = ({
         </div>
       </header>
 
-      {analytics.rows.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="overview-token-empty">
           <span>No usage in this window</span>
         </div>
@@ -206,17 +227,34 @@ export const OverviewBreakdownTable = ({
               </tbody>
             </table>
           </div>
-          {hasMore ? (
-            <div className="overview-breakdown-actions flex justify-center py-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setExpanded((prev) => !prev)}
-                aria-label={expanded ? "Show fewer" : "Show all"}
-              >
-                {expanded ? "Show fewer" : "Show all"}
-              </Button>
+          {pageCount > 1 ? (
+            <div className="overview-breakdown-pagination">
+              <span className="overview-breakdown-page-status">
+                {pageStart + 1}–{pageStart + visibleRows.length} of {rows.length} rows · page{" "}
+                {currentPage + 1}/{pageCount}
+              </span>
+              <div className="overview-breakdown-page-actions">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Previous breakdown page"
+                  disabled={currentPage === 0}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  Previous page
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Next breakdown page"
+                  disabled={currentPage >= pageCount - 1}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  Next page
+                </Button>
+              </div>
             </div>
           ) : null}
         </div>

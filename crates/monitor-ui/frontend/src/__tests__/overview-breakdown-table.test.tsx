@@ -150,7 +150,7 @@ describe("OverviewBreakdownTable", () => {
     expect(screen.getByText("~13K")).toBeInTheDocument();
   });
 
-  it("ten rows with default maxRows show 8 rows plus a 'Show all' button, and clicking it reveals all ten", () => {
+  it("paginates ten rows: first page shows 8 rows with a range status and next page reveals the rest", () => {
     const tenRows = Array.from({ length: 10 }, (_, i) =>
       makeRow({
         key: `row-${i}`,
@@ -168,20 +168,74 @@ describe("OverviewBreakdownTable", () => {
     expect(screen.queryByText("Model 9")).not.toBeInTheDocument();
     expect(screen.queryByText("Model 10")).not.toBeInTheDocument();
 
-    const showAllBtn = screen.getByRole("button", { name: "Show all" });
-    expect(showAllBtn).toBeInTheDocument();
+    expect(screen.getByText(/1–8 of 10 rows/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous breakdown page" })).toBeDisabled();
 
-    fireEvent.click(showAllBtn);
-    expect(screen.getAllByRole("row")).toHaveLength(11);
+    fireEvent.click(screen.getByRole("button", { name: "Next breakdown page" }));
+    expect(screen.getAllByRole("row")).toHaveLength(3);
     expect(screen.getByText("Model 9")).toBeInTheDocument();
     expect(screen.getByText("Model 10")).toBeInTheDocument();
+    expect(screen.queryByText("Model 1")).not.toBeInTheDocument();
+    expect(screen.getByText(/9–10 of 10 rows · page 2\/2/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next breakdown page" })).toBeDisabled();
 
-    const showFewerBtn = screen.getByRole("button", { name: "Show fewer" });
-    expect(showFewerBtn).toBeInTheDocument();
-
-    fireEvent.click(showFewerBtn);
+    fireEvent.click(screen.getByRole("button", { name: "Previous breakdown page" }));
     expect(screen.getAllByRole("row")).toHaveLength(9);
-    expect(screen.queryByText("Model 9")).not.toBeInTheDocument();
+    expect(screen.getByText("Model 1")).toBeInTheDocument();
+  });
+
+  it("resets to the first page when the rows identity changes", () => {
+    const tenRows = Array.from({ length: 10 }, (_, i) =>
+      makeRow({
+        key: `row-${i}`,
+        label: `Model ${i + 1}`,
+        requests: 100 * (10 - i),
+        totalTokens: 1000 * (10 - i),
+      }),
+    );
+
+    const { rerender } = render(
+      <OverviewBreakdownTable analytics={makeAnalytics({ rows: tenRows })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next breakdown page" }));
+    expect(screen.getByText("Model 10")).toBeInTheDocument();
+
+    rerender(
+      <OverviewBreakdownTable
+        analytics={makeAnalytics({
+          rows: tenRows.map((row) => ({ ...row, key: `changed-${row.key}` })),
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/1–8 of 10 rows/)).toBeInTheDocument();
+    expect(screen.getByText("Model 1")).toBeInTheDocument();
+  });
+
+  it("paginates the unfolded allRows list even when rows carries the folded top-N view", () => {
+    const allRows = Array.from({ length: 10 }, (_, i) =>
+      makeRow({
+        key: `row-${i}`,
+        label: `Model ${i + 1}`,
+        requests: 100 * (10 - i),
+        totalTokens: 1000 * (10 - i),
+      }),
+    );
+
+    render(
+      <OverviewBreakdownTable analytics={makeAnalytics({ rows: allRows.slice(0, 6), allRows })} />,
+    );
+
+    expect(screen.getAllByRole("row")).toHaveLength(9);
+    expect(screen.getByText("Model 8")).toBeInTheDocument();
+    expect(screen.getByText(/of 10 rows/)).toBeInTheDocument();
+  });
+
+  it("hides the pager when every row fits on one page", () => {
+    render(<OverviewBreakdownTable analytics={makeAnalytics()} />);
+
+    expect(screen.queryByRole("button", { name: "Next breakdown page" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/of 3 rows/)).not.toBeInTheDocument();
   });
 
   it("renders 'Unlinked' text when row has isUnlinked true", () => {

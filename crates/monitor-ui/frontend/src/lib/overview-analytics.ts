@@ -56,6 +56,10 @@ export interface OverviewAnalytics {
   readonly bucketMs: number;
   readonly totals: OverviewTotals;
   readonly rows: readonly BreakdownRow[]; // sorted desc by metric, Other last
+  /** Every aggregate row sorted desc by metric, without the chart's top-N +
+   * Other fold. The breakdown table paginates this list so no row is ever
+   * hidden behind the folded remainder. Falls back to `rows` when absent. */
+  readonly allRows?: readonly BreakdownRow[];
   readonly series: readonly SeriesPoint[]; // uniform grid over [now-range, now], zero filled
   readonly seriesKeys: readonly string[]; // stack + legend order, same order as rows
   readonly hasCostData: boolean;
@@ -194,6 +198,17 @@ interface AggregateAccumulator {
   avgLatencyMsDirect?: number;
 }
 
+const withMetricShares = (rows: readonly BreakdownRow[], metric: OverviewMetric): BreakdownRow[] => {
+  const sumMetrics = rows.reduce(
+    (sum, row) => sum + (metric === "requests" ? row.requests : row.totalTokens),
+    0,
+  );
+  return rows.map((row) => {
+    const rowMetric = metric === "requests" ? row.requests : row.totalTokens;
+    return { ...row, share: sumMetrics > 0 ? rowMetric / sumMetrics : 0 };
+  });
+};
+
 export const buildAnalytics = ({
   ranking,
   series,
@@ -292,7 +307,7 @@ export const buildAnalytics = ({
   const topAggregates = sortedAggregates.slice(0, OVERVIEW_TOP_N);
   const remainder = sortedAggregates.slice(OVERVIEW_TOP_N);
 
-  const topRows: BreakdownRow[] = topAggregates.map((a) => ({
+  const toBreakdownRow = (a: AggregateAccumulator): BreakdownRow => ({
     key: a.key,
     label: a.label,
     provider: a.provider,
@@ -312,7 +327,12 @@ export const buildAnalytics = ({
     share: 0,
     isOther: false,
     isUnlinked: a.isUnlinked,
-  }));
+  });
+  const topRows: BreakdownRow[] = topAggregates.map(toBreakdownRow);
+  const allRows: BreakdownRow[] = withMetricShares(
+    sortedAggregates.map(toBreakdownRow),
+    metric,
+  );
 
   let rows: BreakdownRow[] = topRows;
 
@@ -458,6 +478,7 @@ export const buildAnalytics = ({
     bucketMs,
     totals,
     rows,
+    allRows,
     series: points,
     seriesKeys,
     hasCostData,
@@ -517,6 +538,7 @@ export const telemetryAnalytics = ({
   const startMs = nowMs - duration;
 
   let rows: BreakdownRow[] = [];
+  let allRows: BreakdownRow[] = [];
 
   if (dimension === "provider") {
     const providerTokens = new Map<
@@ -565,6 +587,7 @@ export const telemetryAnalytics = ({
       const valB = metric === "requests" ? b.requests : b.totalTokens;
       return valB - valA || a.key.localeCompare(b.key);
     });
+    allRows = withMetricShares(providerRows, metric);
 
     const top = providerRows.slice(0, OVERVIEW_TOP_N);
     const rem = providerRows.slice(OVERVIEW_TOP_N);
@@ -656,6 +679,7 @@ export const telemetryAnalytics = ({
       const valB = metric === "requests" ? b.requests : b.totalTokens;
       return valB - valA || a.key.localeCompare(b.key);
     });
+    allRows = withMetricShares(accRows, metric);
 
     const top = accRows.slice(0, OVERVIEW_TOP_N);
     const rem = accRows.slice(OVERVIEW_TOP_N);
@@ -785,6 +809,7 @@ export const telemetryAnalytics = ({
     bucketMs,
     totals,
     rows,
+    allRows,
     series: points,
     seriesKeys,
     hasCostData: false,
@@ -814,6 +839,7 @@ export const EMPTY_ANALYTICS = (
     costUsd: 0,
   },
   rows: [],
+  allRows: [],
   series: [],
   seriesKeys: [],
   hasCostData: false,

@@ -2,7 +2,6 @@ import type { NormalizedAccount } from "@/lib/accounts";
 import type { GatewayClients } from "@/lib/api";
 import {
   EMPTY_ANALYTICS,
-  OVERVIEW_TOP_N,
   type OverviewAnalytics,
   type OverviewDimension,
   type OverviewMetric,
@@ -122,35 +121,6 @@ const buildCachedAnalytics = (
   };
 };
 
-const deriveTopKeys = (
-  ranking: HistoryStatsResponse,
-  dimension: OverviewDimension,
-  metric: OverviewMetric,
-): readonly string[] => {
-  const aggregates = new Map<string, { requests: number; tokens: number }>();
-
-  for (const group of ranking.groups) {
-    const rawKey =
-      dimension === "model"
-        ? (group.model ?? "unknown")
-        : dimension === "provider"
-          ? (group.provider ?? "unknown")
-          : (group.account ?? "unknown");
-
-    const current = aggregates.get(rawKey) ?? { requests: 0, tokens: 0 };
-    current.requests += group.totals.requests;
-    current.tokens += group.totals["total-tokens"];
-    aggregates.set(rawKey, current);
-  }
-
-  const sorted = [...aggregates.entries()].sort(([keyA, a], [keyB, b]) => {
-    const valA = metric === "requests" ? a.requests : a.tokens;
-    const valB = metric === "requests" ? b.requests : b.tokens;
-    return valB - valA || keyA.localeCompare(keyB);
-  });
-
-  return sorted.slice(0, OVERVIEW_TOP_N).map(([key]) => key);
-};
 
 export function useOverviewAnalytics({
   clients,
@@ -346,18 +316,15 @@ export function useOverviewAnalytics({
           return;
         }
 
-        const topKeys = deriveTopKeys(rankingResp, dimension, metricRef.current);
-
-        const seriesQueries = buildOverviewQueries({
-          range,
-          dimension,
-          nowMs: roundNow,
-          topKeys,
-        });
-
+        // The series query stays unfiltered on purpose: filtering it to the
+        // fetch-time top-N keys froze the cached series to whichever metric
+        // was selected during that round, so a later metric switch rendered
+        // the previous metric's key set instead of the selected metric's
+        // amounts. Full-key series let every metric switch recompute
+        // truthfully from the cached raw responses without a refetch.
         const [seriesResp, totalSeriesResp] = await Promise.all([
-          clients.management.historyStats(seriesQueries.series),
-          clients.management.historyStats(seriesQueries.totalSeries),
+          clients.management.historyStats(initialQueries.series),
+          clients.management.historyStats(initialQueries.totalSeries),
         ]);
 
         if (!mountedRef.current || generation !== generationRef.current) {
