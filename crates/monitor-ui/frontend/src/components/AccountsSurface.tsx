@@ -3,6 +3,7 @@ import type { MouseEvent } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
 import { extractDevinSlug } from "../lib/accounts";
 import { blocks } from "../lib/pending";
+import { CLINE_QUOTA_DISPLAY_DEFAULT, clineQuotaSlug } from "../lib/storage";
 import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus, QuotaWindow } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
@@ -183,7 +184,10 @@ export const formatQuotaWindowName = (
   return rawName || fallbackSlotName;
 };
 
-export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
+export const quotaRows = (
+  account: NormalizedAccount,
+  clineQuotaDisplay: readonly string[] = CLINE_QUOTA_DISPLAY_DEFAULT,
+): readonly QuotaRow[] => {
   const usage = account.usage;
   if (!usage) return [];
 
@@ -230,6 +234,17 @@ export const quotaRows = (account: NormalizedAccount): readonly QuotaRow[] => {
   const groupRows: QuotaRow[] = [];
   usage.groups?.forEach((group) => {
     group.buckets.forEach((bucket, index) => {
+      // Display selection: the gateway records a daily bucket for every Cline
+      // model it serves; only the slugs picked in Settings render. A bucket
+      // without an id stays visible rather than vanish by accident.
+      if (
+        account.provider === "cline" &&
+        group.display_name === "Cline Free Limits" &&
+        bucket.bucket_id &&
+        !clineQuotaDisplay.includes(clineQuotaSlug(bucket.bucket_id))
+      ) {
+        return;
+      }
       if (
         isClineInferredQuotaExpired(
           account,
@@ -293,24 +308,26 @@ export type ClinePoolModelSummary = {
   readonly nextResetAtUnix: number | null;
 };
 
-// The pooled Cline free models summarized across every account. Buckets match
-// on the bare model name so both vendor-prefixed labels ("deepseek/..." from
-// upstream cap errors and "cline-free/..." from live requests) fold into one
-// figure. Model candidacy comes from the gateway; quota percentages are estimates.
-const POOL_QUOTA_MODELS: readonly { model: string; pattern: RegExp }[] = [
-  { model: "cline-free/gemini-3.8-flash", pattern: /gemini-3\.8-flash/i },
-  { model: "cline-free/deepseek-v4.1-flash", pattern: /deepseek-v4\.1-flash/i },
-];
+// The pooled Cline free models summarized across every account — one row per
+// slug the operator chose to display (Settings → Cline daily quota display).
+// Buckets match on the bare model name so both vendor-prefixed labels
+// ("deepseek/..." from upstream cap errors and "cline-free/..." from live
+// requests) fold into one figure. Quota percentages are gateway estimates.
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const clinePoolQuotaSummary = (
   accounts: readonly NormalizedAccount[],
   nowMs = Date.now(),
+  clineQuotaDisplay: readonly string[] = CLINE_QUOTA_DISPLAY_DEFAULT,
 ): readonly ClinePoolModelSummary[] => {
   const clineAccounts = accounts.filter((account) => account.provider === "cline");
   if (clineAccounts.length === 0) return [];
   const nowSecs = Math.floor(nowMs / 1000);
 
-  return POOL_QUOTA_MODELS.map(({ model, pattern }) => {
+  return clineQuotaDisplay.map((slug) => {
+    const model = `cline-free/${slug}`;
+    const pattern = new RegExp(escapeRegExp(slug), "i");
     let available = 0;
     let unmeasured = 0;
     let exhausted = 0;
@@ -428,6 +445,8 @@ export interface AccountsSurfaceProps {
   readonly visibleAccounts: readonly NormalizedAccount[];
   readonly pending: string;
   readonly showRemaining?: boolean;
+  /** Bare slugs of Cline models whose daily bucket renders (Settings). */
+  readonly clineQuotaDisplay?: readonly string[] | undefined;
   readonly credentialsError?: string | undefined;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
@@ -467,6 +486,7 @@ export const AccountsSurface = ({
   visibleAccounts,
   pending,
   showRemaining = true,
+  clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
   credentialsError,
   dragging,
   confirmRemove,
@@ -490,7 +510,7 @@ export const AccountsSurface = ({
       ? accounts.find((account) => account.id === warmup.selection?.id)
       : undefined;
   const popupProvider = warmup?.selection?.type === "provider" ? warmup.selection.id : undefined;
-  const poolSummary = clinePoolQuotaSummary(accounts);
+  const poolSummary = clinePoolQuotaSummary(accounts, Date.now(), clineQuotaDisplay);
   return (
     <Stack className="content accounts">
       <div className="provider-tabs" aria-label="Providers">
@@ -701,6 +721,7 @@ export const AccountsSurface = ({
             <AccountCard
               key={account.id}
               account={account}
+              clineQuotaDisplay={clineQuotaDisplay}
               credits={
                 credits && account.provider === "codex"
                   ? {

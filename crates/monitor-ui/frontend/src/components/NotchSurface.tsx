@@ -7,6 +7,7 @@ import { providerColor } from "@/lib/provider-colors";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TotpEntry } from "../lib/totp-vault";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { TotpQuickAccess } from "./TotpVaultSurface";
 
 // Island silhouette matching reference: smooth continuous S-curve flare (55px)
@@ -46,6 +47,8 @@ interface NotchSurfaceProps {
   accounts: readonly NormalizedAccount[];
   loadState: LoadState;
   showRemaining: boolean;
+  /** Bare slugs of Cline models whose daily bucket renders (Settings). */
+  clineQuotaDisplay?: readonly string[];
   totpEntries?: readonly TotpEntry[];
   totpCodes?: Readonly<Record<string, string>>;
   totpRemaining?: number;
@@ -61,6 +64,7 @@ export function NotchSurface({
   accounts,
   loadState,
   showRemaining,
+  clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
   totpEntries = [],
   totpCodes = {},
   totpRemaining = 0,
@@ -172,7 +176,7 @@ export function NotchSurface({
           accounts.map((account) => ({
             provider: account.provider,
             label: account.label || account.email || account.id,
-            rows: quotaRows(account).map((row) => ({
+            rows: quotaRows(account, clineQuotaDisplay).map((row) => ({
               name: row.name,
               usedPercent: row.usedPercent,
               resetSeconds: row.resetSeconds,

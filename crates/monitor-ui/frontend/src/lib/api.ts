@@ -211,7 +211,7 @@ export interface GatewayClients {
     ): Promise<{ readonly id: string; readonly credits_after_limit: boolean }>;
     setCodexCreditsOptInAll(enabled: boolean): Promise<{ readonly ids: readonly string[] }>;
 
-    beginProviderAuth(provider: string): Promise<{ readonly url: string; readonly state: string }>;
+    beginProviderAuth(provider: string, credentialName?: string): Promise<{ readonly url: string; readonly state: string }>;
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
     scalar(path: string): Promise<Record<string, unknown>>;
     saveScalar(path: string, value: ScalarValue): Promise<void>;
@@ -658,7 +658,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         })) as { names?: string[] } | null;
         return result?.names ?? [];
       },
-      beginProviderAuth: async (provider) => {
+      beginProviderAuth: async (provider, credentialName) => {
         const endpoint: Record<string, string> = {
           codex: "codex-auth-url",
           antigravity: "antigravity-auth-url",
@@ -675,7 +675,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         const route = endpoint[provider];
         if (!route) throw new GatewayError(`Unsupported provider: ${provider}`, 400);
         return providerAuthStartSchema.parse(
-          await requestJson(`${base}/v0/management/${route}`, authHeaders),
+          await requestJson(`${base}/v0/management/${route}${credentialName ? `?credential_name=${encodeURIComponent(credentialName)}` : ""}`, authHeaders),
         );
       },
       providerAuthStatus: async (state) =>
@@ -776,6 +776,38 @@ const extractModelIds = (payload: unknown): readonly string[] => {
     }
   }
   return ids;
+};
+
+/** Cline's own API base. The public `/v1/models` catalog carries only vendor
+ * slugs; the `cline-*` lists live behind this base's recommended-models route. */
+export const CLINE_API_BASE_URL = "https://api.cline.bot/api/v1";
+
+/** Section ids from Cline's remote model list, keyed by the section the
+ * endpoint returns. Every list is read live: a hardcoded copy here goes stale
+ * the moment upstream adds or retires a model. */
+export interface ClineModelLists {
+  readonly recommended: readonly string[];
+  readonly free: readonly string[];
+  readonly clinePass: readonly string[];
+  readonly clineCloud: readonly string[];
+}
+
+export const fetchClineModelLists = async (): Promise<ClineModelLists> => {
+  const response = await fetch(`${CLINE_API_BASE_URL}/ai/cline/recommended-models`);
+  if (!response.ok) {
+    throw new GatewayError(await describeFailure(response), response.status);
+  }
+  const payload = (await response.json()) as unknown;
+  const section = (key: keyof ClineModelLists): readonly string[] => {
+    if (!payload || typeof payload !== "object") return [];
+    return extractModelIds((payload as Record<string, unknown>)[key]);
+  };
+  return {
+    recommended: section("recommended"),
+    free: section("free"),
+    clinePass: section("clinePass"),
+    clineCloud: section("clineCloud"),
+  };
 };
 
 export const discoverProviderModels = async (

@@ -21,6 +21,7 @@ import { relayPlanLabel } from "../lib/relay-plans";
 import type { Usage, WarmupAccountStatus } from "../lib/schemas";
 import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaDisplay, quotaRows } from "./AccountsSurface";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
@@ -116,6 +117,8 @@ export interface AccountCardProps {
   readonly credits?: AccountCreditsControl | undefined;
   readonly pending: string;
   readonly showRemaining?: boolean;
+  /** Bare slugs of Cline models whose daily bucket renders (Settings). */
+  readonly clineQuotaDisplay?: readonly string[] | undefined;
   readonly dragging?: string | undefined;
   readonly confirmRemove?: string | undefined;
   readonly devinModels?: readonly string[] | undefined;
@@ -253,6 +256,7 @@ export const AccountCard = ({
   credits,
   pending,
   showRemaining = true,
+  clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
   dragging,
   confirmRemove,
   devinModels,
@@ -273,7 +277,7 @@ export const AccountCard = ({
   // Only work targeting this account disables this card; a mutation on a
   // sibling card, or a settings save, leaves it interactive.
   const isPending = blocks(pending, "account", account.id);
-  const rows = quotaRows(account);
+  const rows = quotaRows(account, clineQuotaDisplay);
   const [refreshing, setRefreshing] = useState(false);
   const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
 

@@ -38,6 +38,7 @@ import type {
 import { SharedKeysCard } from "./SharedKeysCard";
 import { TunnelCard } from "./TunnelCard";
 import { Badge, Button, Card, Field, Input } from "./ui";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 
 function ModelPriceEstimate({ value }: { readonly value: number | null }) {
   return value === null ? (
@@ -68,6 +69,13 @@ export interface SettingsSurfaceProps {
   readonly theme: "dark" | "light";
   readonly showRemaining: boolean;
   readonly onShowRemainingChange: (value: boolean) => void;
+  /** Bare slugs of Cline models whose daily bucket renders (App-owned pref). */
+  readonly clineQuotaDisplay?: readonly string[] | undefined;
+  readonly onClineQuotaDisplayChange?: (slugs: readonly string[]) => void;
+  /** Renderable choices: Cline's live model list plus buckets this gateway served. */
+  readonly clineQuotaCandidates?:
+    | readonly { readonly slug: string; readonly label: string }[]
+    | undefined;
   readonly onToggleGateway: () => void | Promise<void>;
   readonly nativeSettings?: NativeSettingsState | null;
   readonly nativeSettingsBusy?: boolean;
@@ -194,6 +202,9 @@ export function SettingsSurface({
   onOpenConfigEditor,
   showRemaining,
   onShowRemainingChange,
+  clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
+  onClineQuotaDisplayChange,
+  clineQuotaCandidates = [],
   historyHealth,
   historyStats,
   historyError,
@@ -530,6 +541,33 @@ export function SettingsSurface({
                   <small>Show how much quota is left instead of how much was used.</small>
                 </span>
               </label>
+              <Field
+                label="Cline daily quota display"
+                hint="Which Cline free models show a (Daily limit) row. Choices come from the Cline model list and models this gateway has served."
+              >
+                {clineQuotaCandidates.length === 0 ? (
+                  <small>Loading Cline model list...</small>
+                ) : (
+                  clineQuotaCandidates.map(({ slug, label }) => (
+                    <label className="toggle-field" key={slug}>
+                      <input
+                        aria-label={`Show daily quota for ${label}`}
+                        type="checkbox"
+                        checked={clineQuotaDisplay.includes(slug)}
+                        onChange={(event) => {
+                          const next = event.target.checked
+                            ? [...clineQuotaDisplay, slug]
+                            : clineQuotaDisplay.filter((entry) => entry !== slug);
+                          onClineQuotaDisplayChange?.(next);
+                        }}
+                      />
+                      <span>
+                        <strong>{label}</strong>
+                      </span>
+                    </label>
+                  ))
+                )}
+              </Field>
               <label className="toggle-field">
                 <input
                   aria-label="Write logs to file"

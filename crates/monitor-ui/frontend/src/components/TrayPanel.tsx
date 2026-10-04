@@ -13,6 +13,7 @@ import type { GatewayLifecycleStatus } from "../lib/native";
 import { getPlanTierColor } from "../lib/plan-tier";
 import type { TotpEntry } from "../lib/totp-vault";
 import { quotaDisplay, quotaRows } from "./AccountsSurface";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { TotpQuickAccess } from "./TotpVaultSurface";
 
@@ -34,8 +35,11 @@ const planBadge = (plan: string | null | undefined): string | null => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
-const tilesOf = (account: NormalizedAccount): readonly TrayTile[] =>
-  quotaRows(account).map((row) => ({
+const tilesOf = (
+  account: NormalizedAccount,
+  clineQuotaDisplay: readonly string[] = CLINE_QUOTA_DISPLAY_DEFAULT,
+): readonly TrayTile[] =>
+  quotaRows(account, clineQuotaDisplay).map((row) => ({
     label: row.name,
     usedPercent: row.usedPercent,
     resetIn: row.resetSeconds !== null ? formatResetTime(row.resetSeconds) : null,
@@ -58,6 +62,8 @@ interface TrayPanelProps {
   readonly fetchedAgoSecs: number | null;
   readonly refreshing: boolean;
   readonly showRemaining: boolean;
+  /** Bare slugs of Cline models whose daily bucket renders (Settings). */
+  readonly clineQuotaDisplay?: readonly string[] | undefined;
   readonly onRefresh: () => void;
   readonly onOpenConsole: () => void;
   readonly onQuit: () => void;
@@ -77,6 +83,7 @@ export const TrayPanel = ({
   fetchedAgoSecs,
   refreshing,
   showRemaining,
+  clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
   onRefresh,
   onOpenConsole,
   onQuit,
@@ -101,7 +108,7 @@ export const TrayPanel = ({
 
   const cards: readonly TrayCard[] = visible.map((account) => ({
     account,
-    tiles: tilesOf(account),
+    tiles: tilesOf(account, clineQuotaDisplay),
   }));
 
   return (

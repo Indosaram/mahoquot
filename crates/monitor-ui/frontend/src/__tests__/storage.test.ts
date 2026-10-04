@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  CLINE_QUOTA_DISPLAY_DEFAULT,
+  clineQuotaSlug,
   getGatewayBaseUrl,
+  getClineQuotaDisplay,
   getLegacyRelayKey,
   getOverviewDimension,
   getOverviewMetric,
@@ -8,6 +11,7 @@ import {
   getTheme,
   migrateStoredGatewayUrl,
   removeLegacyRelayKey,
+  setClineQuotaDisplay,
   setGatewayBaseUrl,
   setOverviewDimension,
   setOverviewMetric,
@@ -112,5 +116,32 @@ describe("Storage and Port Migration", () => {
     expect(localStorage.getItem("mahoquot.overview.metric")).toBe("tokens");
     localStorage.setItem("mahoquot.overview.metric", "invalid-metric");
     expect(getOverviewMetric()).toBe("requests");
+  });
+
+  it("round-trips the Cline daily-quota display selection", () => {
+    // An absent key keeps the historical default pair.
+    expect(getClineQuotaDisplay()).toEqual(["gemini-3.8-flash", "deepseek-v4.1-flash"]);
+    expect(getClineQuotaDisplay()).toEqual(CLINE_QUOTA_DISPLAY_DEFAULT);
+    setClineQuotaDisplay(["mimo-v2.6-flash"]);
+    expect(getClineQuotaDisplay()).toEqual(["mimo-v2.6-flash"]);
+    // An explicit empty list hides every bucket and survives a reload.
+    setClineQuotaDisplay([]);
+    expect(getClineQuotaDisplay()).toEqual([]);
+    // Damaged or non-string stored values fall back instead of throwing.
+    localStorage.setItem("mahoquot.cline-quota-display", "not-json");
+    expect(getClineQuotaDisplay()).toEqual(CLINE_QUOTA_DISPLAY_DEFAULT);
+    localStorage.setItem(
+      "mahoquot.cline-quota-display",
+      JSON.stringify({ nope: true }),
+    );
+    expect(getClineQuotaDisplay()).toEqual(CLINE_QUOTA_DISPLAY_DEFAULT);
+    localStorage.setItem(
+      "mahoquot.cline-quota-display",
+      JSON.stringify(["glm-4.7", 7, null, "  "]),
+    );
+    expect(getClineQuotaDisplay()).toEqual(["glm-4.7"]);
+    // Slug extraction strips any vendor prefix for matching and display.
+    expect(clineQuotaSlug("cline-free/mimo-v2.6-flash")).toBe("mimo-v2.6-flash");
+    expect(clineQuotaSlug("glm-4.7")).toBe("glm-4.7");
   });
 });

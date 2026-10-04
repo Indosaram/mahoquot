@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createGatewayClients, discoverProviderModels } from "../lib/api";
+import { createGatewayClients, discoverProviderModels, fetchClineModelLists } from "../lib/api";
 import { RawCredentialDocumentSchema } from "../lib/schemas";
 
 describe("credential order resync and raw import guard", () => {
@@ -310,5 +310,57 @@ describe("discoverProviderModels", () => {
     );
 
     await expect(discoverProviderModels("http://example.com")).rejects.toThrow();
+  });
+});
+
+describe("fetchClineModelLists", () => {
+  it("reads every section from Cline's remote model list", async () => {
+    let capturedUrl = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        capturedUrl = String(input);
+        return new Response(
+          JSON.stringify({
+            recommended: [{ id: "anthropic/claude-sonnet-5.5" }],
+            free: [
+              { id: "cline-free/mimo-v2.6-flash" },
+              { id: "cline-free/deepseek-v4.1-flash" },
+            ],
+            clinePass: [{ id: "cline-pass/glm-5.3" }],
+            clineCloud: [{ id: "cline-cloud/kimi-k3" }],
+          }),
+        );
+      }),
+    );
+
+    const lists = await fetchClineModelLists();
+    expect(capturedUrl).toBe(
+      "https://api.cline.bot/api/v1/ai/cline/recommended-models",
+    );
+    expect(lists.recommended).toEqual(["anthropic/claude-sonnet-5.5"]);
+    expect(lists.free).toEqual(["cline-free/mimo-v2.6-flash", "cline-free/deepseek-v4.1-flash"]);
+    expect(lists.clinePass).toEqual(["cline-pass/glm-5.3"]);
+    expect(lists.clineCloud).toEqual(["cline-cloud/kimi-k3"]);
+  });
+
+  it("treats an omitted section as empty instead of failing the import", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ free: [] }))),
+    );
+
+    const lists = await fetchClineModelLists();
+    expect(lists.clinePass).toEqual([]);
+    expect(lists.free).toEqual([]);
+  });
+
+  it("throws on HTTP failure so callers never fall back to a stale list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("upstream down", { status: 503 })),
+    );
+
+    await expect(fetchClineModelLists()).rejects.toThrow();
   });
 });

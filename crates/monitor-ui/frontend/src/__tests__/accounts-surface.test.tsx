@@ -464,6 +464,62 @@ describe("AccountsSurface component", () => {
       ).toBeGreaterThan(0);
     });
 
+    it("renders only the Cline daily buckets selected for display", () => {
+      const account: NormalizedAccount = {
+        ...mockAccount,
+        id: "cline-display@example.com",
+        provider: "cline",
+        label: "cline-display@example.com",
+        usage: {
+          groups: [
+            {
+              display_name: "Cline Free Limits",
+              models: "Cline Free Models",
+              buckets: [
+                {
+                  bucket_id: "cline-free/gemini-3.8-flash",
+                  display_name: "cline-free/gemini-3.8-flash (Daily limit)",
+                  used_percent: 40,
+                  reset_at_unix: nowUnix + 3600,
+                },
+                {
+                  bucket_id: "cline-free/mimo-v2.6-flash",
+                  display_name: "cline-free/mimo-v2.6-flash (Daily limit)",
+                  used_percent: 10,
+                  reset_at_unix: nowUnix + 3600,
+                },
+                {
+                  bucket_id: "cline-free/deepseek-v4.1-flash",
+                  display_name: "cline-free/deepseek-v4.1-flash (Daily limit)",
+                  used_percent: 90,
+                  reset_at_unix: nowUnix + 3600,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      // Absent preference keeps the historical default pair.
+      expect(quotaRows(account).map((row) => row.name)).toEqual([
+        "cline-free/gemini-3.8-flash (Daily limit)",
+        "cline-free/deepseek-v4.1-flash (Daily limit)",
+      ]);
+      // A wider selection renders exactly the chosen slugs, in bucket order...
+      expect(
+        quotaRows(account, ["gemini-3.8-flash", "mimo-v2.6-flash"]).map((row) => row.name),
+      ).toEqual([
+        "cline-free/gemini-3.8-flash (Daily limit)",
+        "cline-free/mimo-v2.6-flash (Daily limit)",
+      ]);
+      // ...and an empty selection hides every daily bucket.
+      expect(quotaRows(account, []).map((row) => row.name)).toEqual([]);
+      // Non-Cline providers are never filtered by the Cline display pref.
+      expect(quotaRows({ ...account, provider: "codex" }, []).map((row) => row.name)).toHaveLength(
+        3,
+      );
+    });
+
     it("preserves future Cline inferred 100% quota as exhausted", () => {
       const futureClineAccount: NormalizedAccount = {
         ...mockAccount,
@@ -778,8 +834,9 @@ describe("AccountsSurface component", () => {
         },
       };
 
-      // Before expiry: row is preserved and labeled with bucket_id
-      const activeRows = quotaRows(idOnlyCline);
+      // Before expiry: row is preserved and labeled with bucket_id. The display
+      // list opts this slug in so the labeling regression stays under test.
+      const activeRows = quotaRows(idOnlyCline, ["glm-5.3-flash"]);
       expect(activeRows).toHaveLength(1);
       expect(activeRows[0]?.name).toBe("z-ai/glm-5.3-flash");
       expect(activeRows[0]?.usedPercent).toBe(100);
@@ -961,6 +1018,47 @@ describe("Cline pool quota summary", () => {
     expect(panel.textContent).toContain("0 available");
     expect(panel.textContent).toContain("1 unavailable");
     expect(panel.textContent).toContain("1 available");
+  });
+
+  it("summarizes only the models selected for display", () => {
+    const account = clineAccount("c1", [
+      {
+        display_name: "cline-free/gemini-3.8-flash (Daily limit)",
+        used_percent: 50,
+        reset_at_unix: nowUnix + 3600,
+      },
+      {
+        display_name: "cline-free/deepseek-v4.1-flash (Daily limit)",
+        used_percent: 20,
+        reset_at_unix: nowUnix + 3600,
+      },
+    ]);
+
+    const onlyGemini = clinePoolQuotaSummary([account], nowMs, ["gemini-3.8-flash"]);
+    expect(onlyGemini).toHaveLength(1);
+    expect(onlyGemini[0]).toMatchObject({
+      model: "cline-free/gemini-3.8-flash",
+      remainingSumPercent: 50,
+    });
+
+    const widened = clinePoolQuotaSummary([account], nowMs, [
+      "gemini-3.8-flash",
+      "mimo-v2.6-flash",
+      "deepseek-v4.1-flash",
+    ]);
+    expect(widened.map((row) => row.model)).toEqual([
+      "cline-free/gemini-3.8-flash",
+      "cline-free/mimo-v2.6-flash",
+      "cline-free/deepseek-v4.1-flash",
+    ]);
+    // A selected model nobody served reports unmeasured, never invented data.
+    expect(widened[1]).toMatchObject({
+      remainingSumPercent: 0,
+      unmeasured: 1,
+      available: 0,
+      exhausted: 0,
+    });
+    expect(clinePoolQuotaSummary([account], nowMs, [])).toEqual([]);
   });
 
   it("renders the pooled summary at the top of the accounts surface", () => {

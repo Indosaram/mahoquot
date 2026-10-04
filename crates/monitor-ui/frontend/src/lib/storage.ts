@@ -128,3 +128,38 @@ export const getQuotaShowRemaining = (): boolean => {
 export const setQuotaShowRemaining = (value: boolean): void => {
   localStorage.setItem("mahoquot.show-remaining", value ? "1" : "0");
 };
+
+/**
+ * Bare slugs of the Cline free models whose "(Daily limit)" bucket renders.
+ * Display preference only: the gateway records a bucket for every Cline model
+ * it serves, the surface decides what shows. Absent key keeps the historical
+ * two-model default; an explicit `[]` hides every bucket.
+ */
+export const CLINE_QUOTA_DISPLAY_DEFAULT: readonly string[] = [
+  "gemini-3.8-flash",
+  "deepseek-v4.1-flash",
+];
+
+/** The bare slug of a Cline model id (`cline-free/mimo-v2.6-flash` → `mimo-v2.6-flash`). */
+export const clineQuotaSlug = (model: string): string => {
+  const separator = model.lastIndexOf("/");
+  return separator >= 0 ? model.slice(separator + 1) : model;
+};
+
+export const getClineQuotaDisplay = (): readonly string[] => {
+  const raw = localStorage.getItem("mahoquot.cline-quota-display");
+  if (raw === null) return CLINE_QUOTA_DISPLAY_DEFAULT;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return CLINE_QUOTA_DISPLAY_DEFAULT;
+    return parsed.filter(
+      (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
+    );
+  } catch {
+    return CLINE_QUOTA_DISPLAY_DEFAULT;
+  }
+};
+
+export const setClineQuotaDisplay = (slugs: readonly string[]): void => {
+  localStorage.setItem("mahoquot.cline-quota-display", JSON.stringify(slugs));
+};

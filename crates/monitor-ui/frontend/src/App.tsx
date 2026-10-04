@@ -35,7 +35,7 @@ import {
   extractDevinSlug,
   mergeAccountsAndCredentials,
 } from "./lib/accounts";
-import { createGatewayClients, discoverProviderModels } from "./lib/api";
+import { createGatewayClients, discoverProviderModels, fetchClineModelLists } from "./lib/api";
 import type { HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
 import {
@@ -110,6 +110,8 @@ import {
 } from "./lib/schemas";
 import {
   DEFAULT_GATEWAY_URL,
+  clineQuotaSlug,
+  getClineQuotaDisplay,
   getGatewayBaseUrl,
   getLegacyRelayKey,
   getOverviewDimension,
@@ -123,6 +125,7 @@ import {
   setOverviewDimension,
   setOverviewMetric,
   setQuotaShowRemaining,
+  setClineQuotaDisplay as persistClineQuotaDisplay,
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "./lib/storage";
@@ -195,6 +198,32 @@ export default function App() {
     ).__TAURI__;
     api?.event?.emit("mahoquot-quota-mode", value);
   }, []);
+
+  // Cline daily-quota display preference: which bare model slugs render a
+  // "(Daily limit)" row. The gateway tracks every model it serves; this list
+  // only decides what the surfaces show (App owns persistence per AGENTS).
+  const [clineQuotaDisplay, setClineQuotaDisplayState] = useState<readonly string[]>(
+    getClineQuotaDisplay,
+  );
+  const [clineQuotaRemoteSlugs, setClineQuotaRemoteSlugs] = useState<readonly string[]>([]);
+  const clineQuotaListLoaded = useRef(false);
+  const updateClineQuotaDisplay = useCallback((slugs: readonly string[]) => {
+    persistClineQuotaDisplay(slugs);
+    setClineQuotaDisplayState(slugs);
+  }, []);
+
+  // Candidates for the Settings picker: Cline's live free list, fetched once
+  // when Settings opens (that endpoint is public and auth-free).
+  useEffect(() => {
+    if (surface !== "settings" || clineQuotaListLoaded.current) return;
+    clineQuotaListLoaded.current = true;
+    fetchClineModelLists()
+      .then((lists) => setClineQuotaRemoteSlugs(lists.free.map(clineQuotaSlug)))
+      .catch(() => {
+        // Leave candidates to observed buckets; retry on the next settings open.
+        clineQuotaListLoaded.current = false;
+      });
+  }, [surface]);
   const [provider, setProvider] = useState(
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
@@ -932,6 +961,34 @@ export default function App() {
   const selectedProvider = providers.includes(provider) ? provider : providers[0];
   const visibleAccounts = accounts.filter((account) => account.provider === selectedProvider);
 
+  // Observed Cline daily buckets (the gateway reports every model it served);
+  // combined with the live remote list into the Settings candidate set.
+  const observedClineQuotaSlugs = useMemo(() => {
+    const slugs = new Set<string>();
+    for (const account of accounts) {
+      if (account.provider !== "cline") continue;
+      for (const group of account.usage?.groups ?? []) {
+        if (group.display_name !== "Cline Free Limits") continue;
+        for (const bucket of group.buckets ?? []) {
+          if (bucket.bucket_id) slugs.add(clineQuotaSlug(bucket.bucket_id));
+        }
+      }
+    }
+    return [...slugs];
+  }, [accounts]);
+  const clineQuotaCandidates = useMemo(() => {
+    const bySlug = new Map<string, string>();
+    for (const slug of clineQuotaRemoteSlugs) bySlug.set(slug, `cline-free/${slug}`);
+    for (const slug of observedClineQuotaSlugs) {
+      if (!bySlug.has(slug)) bySlug.set(slug, `cline-free/${slug}`);
+    }
+    // A saved slug with no live list and no observed bucket stays checkable.
+    for (const slug of clineQuotaDisplay) {
+      if (!bySlug.has(slug)) bySlug.set(slug, slug);
+    }
+    return [...bySlug].map(([slug, label]) => ({ slug, label }));
+  }, [clineQuotaRemoteSlugs, observedClineQuotaSlugs, clineQuotaDisplay]);
+
   const runAccountAction = async (action: "warm" | "reset", account: NormalizedAccount) => {
     if (!account.runtimeId) return;
     setPending(pendingKey.account(action, account.id));
@@ -1095,7 +1152,7 @@ export default function App() {
     }
   };
 
-  const beginOnboarding = async (methodId: string) => {
+  const beginOnboarding = async (methodId: string, credentialName?: string) => {
     setPending(pendingKey.auth(methodId));
     setNotice("");
     try {
@@ -1149,7 +1206,7 @@ export default function App() {
         });
         return;
       }
-      const auth = await clients.management.beginProviderAuth(methodId);
+      const auth = await clients.management.beginProviderAuth(methodId, credentialName);
       const refreshOnFocus = () => {
         window.removeEventListener("focus", refreshOnFocus);
         void refresh();
@@ -1204,28 +1261,22 @@ export default function App() {
         // ClinePass shares the Cline API-key surface: the same pasted key
         // opens both pay-as-you-go and the subscription quota windows,
         // distinguished by the model slug sent upstream.
+        //
+        // The slugs come from Cline's own model list at import time: a
+        // hardcoded array here silently goes stale when upstream retires a
+        // model or ships a new one (mimo-v2.6, deepseek-v4.1 arrived after
+        // the literal list was written).
+        const clineModels = await fetchClineModelLists();
+        if (clineModels.clinePass.length === 0) {
+          throw new Error("Cline's model list returned no ClinePass models");
+        }
         await clients.management.createGenericCredential({
           provider: "cline-pass",
           label: form.label.trim() || "ClinePass",
           adapter: "openai-chat",
           baseUrl: "https://api.cline.bot/api/v1",
           apiKey: form.apiKey.trim(),
-          models: [
-            "cline-pass/glm-5.3",
-            "cline-pass/glm-5.3-flash",
-            "cline-pass/glm-5.2",
-            "cline-pass/kimi-k3",
-            "cline-pass/kimi-k2.7-code",
-            "cline-pass/kimi-k2.6",
-            "cline-pass/deepseek-v4-pro",
-            "cline-pass/deepseek-v4-flash",
-            "cline-pass/mimo-v2.5",
-            "cline-pass/mimo-v2.5-pro",
-            "cline-pass/minimax-m3",
-            "cline-pass/qwen3.8-max",
-            "cline-pass/qwen3.7-max",
-            "cline-pass/qwen3.7-plus",
-          ],
+          models: clineModels.clinePass,
         });
       } else {
         await clients.management.createGenericCredential({
@@ -1477,7 +1528,10 @@ export default function App() {
     const dedicated = ONBOARDING_PROVIDERS.find((provider) => provider.glyph === account.provider);
     setStep(dedicated ? { kind: "methods", provider: dedicated } : PROVIDER_STEP);
     setOnboardingOpen(true);
-    await beginOnboarding(dedicated ? account.provider : `generic:${account.provider}`);
+    await beginOnboarding(
+      dedicated ? account.provider : `generic:${account.provider}`,
+      account.provider === "antigravity" ? account.credentialName ?? undefined : undefined,
+    );
   };
 
   /**
@@ -1716,6 +1770,7 @@ export default function App() {
         accounts={accounts}
         loadState={loadState}
         showRemaining={showRemaining}
+        clineQuotaDisplay={clineQuotaDisplay}
         totpEntries={totp.entries}
         totpCodes={totp.codes}
         totpRemaining={totp.remaining}
@@ -1739,6 +1794,7 @@ export default function App() {
         gatewayLifecycle={gatewayLifecycle}
         refreshing={refreshing}
         showRemaining={showRemaining}
+        clineQuotaDisplay={clineQuotaDisplay}
         fetchedAgoSecs={fetchedAt === null ? null : Math.round((Date.now() - fetchedAt) / 1000)}
         onRefresh={() => void refreshNow()}
         onOpenConsole={() => void api?.core?.invoke("open_console")}
@@ -1913,6 +1969,7 @@ export default function App() {
             selectedProvider={selectedProvider}
             visibleAccounts={visibleAccounts}
             showRemaining={showRemaining}
+            clineQuotaDisplay={clineQuotaDisplay}
             pending={pending}
             credentialsError={credentialsError}
             dragging={dragging}
@@ -2027,6 +2084,9 @@ export default function App() {
               theme={theme}
               showRemaining={showRemaining}
               onShowRemainingChange={setShowRemaining}
+              clineQuotaDisplay={clineQuotaDisplay}
+              onClineQuotaDisplayChange={updateClineQuotaDisplay}
+              clineQuotaCandidates={clineQuotaCandidates}
               onToggleGateway={toggleGateway}
               nativeSettings={nativeSettings}
               nativeSettingsBusy={nativeSettingsBusy}
