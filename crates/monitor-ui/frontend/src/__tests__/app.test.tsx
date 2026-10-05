@@ -1925,7 +1925,7 @@ describe("operations console", () => {
   it("opens raw logs without presenting fabricated request history", async () => {
     render(<App />);
     fireEvent.click((await screen.findAllByText("Logs")).at(0) as HTMLElement);
-    expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
   });
 
   it("composes onboarding and config drawers through OverlayLayer with layout-overlay-layer class", async () => {

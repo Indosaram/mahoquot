@@ -494,7 +494,7 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await expect(page.getByRole("heading", { name: "Request activity" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Provider mix" })).toBeVisible();
   await page.getByRole("button", { name: "Logs" }).click();
-  await expect(page.getByRole("heading", { name: "Gateway logs" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Logs", exact: true })).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/desktop-dark-overview.png`, fullPage: true });
 
   await page

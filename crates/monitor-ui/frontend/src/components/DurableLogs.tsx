@@ -323,7 +323,6 @@ export function DurableLogs({
       <section className="durable-logs-console">
         <header className="durable-logs-head">
           <div>
-            <h2>Gateway logs</h2>
             {fromMemoryTail ? <p>File logging is off — showing the in-memory tail.</p> : null}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>

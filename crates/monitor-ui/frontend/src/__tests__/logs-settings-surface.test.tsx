@@ -162,7 +162,7 @@ describe("Logs and Settings characterization pin", () => {
       if (!logsNav) throw new Error("Logs navigation missing");
       fireEvent.click(logsNav);
 
-      expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
       // These mocks leave file logging off, so the memory-tail hint must show.
       expect(
         screen.getByText(/File logging is off — showing the in-memory tail\./),
@@ -229,7 +229,7 @@ describe("Logs and Settings characterization pin", () => {
       if (!logsNav) throw new Error("Logs navigation missing");
       fireEvent.click(logsNav);
 
-      expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
       expect(screen.getByText("No request records.")).toBeInTheDocument();
     });
   });
