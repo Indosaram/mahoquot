@@ -637,10 +637,14 @@ describe("useOverviewAnalytics", () => {
 
     // First round for 1h|provider is in flight -> isLoading is true
     expect(result.current.isLoading).toBe(true);
+    // The flag must also travel inside the `analytics` object, because App.tsx
+    // only forwards `analytics`/`error` to the dashboard (F-M1).
+    expect(result.current.analytics.isLoading).toBe(true);
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
     });
+    expect(result.current.analytics.isLoading).not.toBe(true);
 
     // Switch to account (first round for 1h|account)
     currentDimension = "account";
@@ -648,6 +652,7 @@ describe("useOverviewAnalytics", () => {
       rerender();
     });
     expect(result.current.isLoading).toBe(true);
+    expect(result.current.analytics.isLoading).toBe(true);
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -659,6 +664,7 @@ describe("useOverviewAnalytics", () => {
       rerender();
     });
     expect(result.current.isLoading).toBe(false);
+    expect(result.current.analytics.isLoading).not.toBe(true);
 
     // Await background revalidation so no in-flight updates leak past the test
     await waitFor(() => {

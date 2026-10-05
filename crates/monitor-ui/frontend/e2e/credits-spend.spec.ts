@@ -14,7 +14,7 @@ const USAGE: Record<string, Record<string, unknown>> = {
   "unknown@example.test": {
     plan_type: "Pro",
     credits_balance: null,
-    has_credits: false,
+    has_credits: null,
     totals: { requests: 3, tokens: 400, total_cost_usd: 0.5 },
     primary: { used_percent: 40, reset_after_seconds: 3600 },
   },

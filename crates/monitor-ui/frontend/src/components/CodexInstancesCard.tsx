@@ -29,6 +29,13 @@ export function CodexInstancesCard({
     [accounts, instances],
   );
   const [accountId, setAccountId] = useState(availableAccounts[0]?.id ?? "");
+  // Keep the selection on an account that is still available; a stale id renders
+  // the select blank and lets launch() pick a different account than displayed.
+  useEffect(() => {
+    if (!availableAccounts.some((account) => account.id === accountId)) {
+      setAccountId(availableAccounts[0]?.id ?? "");
+    }
+  }, [availableAccounts, accountId]);
   // Deliberately empty: a hardcoded model id rots into launches the gateway rejects.
   const [model, setModel] = useState(runtimeModels?.[0] ?? "");
   useEffect(() => {
@@ -39,14 +46,11 @@ export function CodexInstancesCard({
   const [reasoningEffort, setReasoningEffort] = useState("high");
 
   const launch = () => {
-    const selected = availableAccounts.some((account) => account.id === accountId)
-      ? accountId
-      : (availableAccounts[0]?.id ?? "");
-    if (!selected || !model) return;
+    if (!model || !availableAccounts.some((account) => account.id === accountId)) return;
     void onLaunch({
       // Becomes an isolated CODEX_HOME directory name, so a collision merges two sessions.
       instance_id: `codex-${crypto.randomUUID()}`,
-      account_id: selected,
+      account_id: accountId,
       model,
       reasoning_effort: reasoningEffort,
     });

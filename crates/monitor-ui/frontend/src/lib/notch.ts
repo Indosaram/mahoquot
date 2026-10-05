@@ -40,11 +40,15 @@ export interface NotchQuotaRow {
 export interface NotchProviderEntry {
   readonly provider: string;
   readonly label?: string;
+  /** Unique account id; keeps React keys stable when labels collide. */
+  readonly id?: string;
   readonly rows: readonly NotchQuotaRow[];
 }
 
 export interface NotchAccountEntry {
   readonly label: string;
+  /** Unique account id; keeps React keys stable when labels collide. */
+  readonly id?: string;
   readonly rows: readonly NotchQuotaRow[];
 }
 
@@ -59,7 +63,6 @@ interface RowAccumulator {
   name: string;
   /** `null` while no account has reported a number for this row yet. */
   worst: number | null;
-  samples: number;
   resetSeconds: number | null;
 }
 
@@ -69,7 +72,7 @@ interface RowAccumulator {
 ///
 /// An unmeasured sample (`null`) carries no usage signal, so it neither wins
 /// the pick nor gets coerced to 0 or 100 — it only fails to update the running
-/// worst, while still counting as a sample.
+/// worst.
 const worstAccount = (
   currentWorst: number | null,
   currentReset: number | null,
@@ -107,6 +110,7 @@ export const groupNotchProviders = (
     counts.set(provider, (counts.get(provider) ?? 0) + 1);
     accountsByProvider.get(provider)?.push({
       label: entry.label ?? provider,
+      id: entry.id,
       rows: entry.rows,
     });
 
@@ -122,12 +126,10 @@ export const groupNotchProviders = (
         );
         existing.worst = winner.worst;
         existing.resetSeconds = winner.resetSeconds;
-        existing.samples += 1;
       } else {
         accumulators.set(row.name, {
           name: row.name,
           worst: row.usedPercent,
-          samples: 1,
           resetSeconds: row.resetSeconds,
         });
       }

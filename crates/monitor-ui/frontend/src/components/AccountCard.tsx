@@ -360,7 +360,14 @@ export const AccountCard = ({
         ? `Spends one of ${account.resetCreditsAvailable} banked resets to start a fresh quota window`
         : "No banked resets available",
       disabled: !account.runtimeId || isPending || !canSpendReset,
-      run: () => void onRunAccountAction("reset", account),
+      // Spending a banked reset costs a finite resource: gate it behind an
+      // explicit confirmation. Only an abort answer (false) cancels; hosts
+      // without dialog support keep dispatching.
+      run: () => {
+        const decision = globalThis.confirm?.(`Spend 1 banked reset for ${account.label}?`);
+        if (decision === false) return;
+        void onRunAccountAction("reset", account);
+      },
     });
   }
   if (credits) {

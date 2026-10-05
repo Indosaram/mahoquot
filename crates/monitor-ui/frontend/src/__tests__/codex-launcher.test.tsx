@@ -48,4 +48,49 @@ describe("Codex multi-instance launcher", () => {
     expect(screen.getByText("a@example.com")).toBeInTheDocument();
     expect(screen.queryByText("b@example.com")).not.toBeInTheDocument();
   });
+
+  it("re-syncs the account selection when the available accounts change", () => {
+    const onLaunchCodex = vi.fn().mockResolvedValue(undefined);
+    const shared = { runtimeModels: ["gpt-5.6-codex"], onLaunch: onLaunchCodex };
+    const { rerender } = render(
+      <CodexInstancesCard
+        accounts={[
+          { id: "codex-a", label: "a@example.com" },
+          { id: "codex-b", label: "b@example.com" },
+        ]}
+        {...shared}
+      />,
+    );
+    expect(screen.getByLabelText("Codex account")).toHaveValue("codex-a");
+
+    // The selected account leaves the available pool; the display follows the pool.
+    rerender(
+      <CodexInstancesCard
+        accounts={[
+          { id: "codex-c", label: "c@example.com" },
+          { id: "codex-d", label: "d@example.com" },
+        ]}
+        {...shared}
+      />,
+    );
+    expect(screen.getByLabelText("Codex account")).toHaveValue("codex-c");
+
+    // A later refresh brings codex-a back; the selection must stay on the account
+    // that remained available and was displayed, not jump back to a stale id.
+    rerender(
+      <CodexInstancesCard
+        accounts={[
+          { id: "codex-a", label: "a@example.com" },
+          { id: "codex-b", label: "b@example.com" },
+          { id: "codex-c", label: "c@example.com" },
+          { id: "codex-d", label: "d@example.com" },
+        ]}
+        {...shared}
+      />,
+    );
+
+    expect(screen.getByLabelText("Codex account")).toHaveValue("codex-c");
+    fireEvent.click(screen.getByRole("button", { name: "Launch Codex instance" }));
+    expect(onLaunchCodex).toHaveBeenCalledWith(expect.objectContaining({ account_id: "codex-c" }));
+  });
 });

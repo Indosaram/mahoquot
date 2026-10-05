@@ -3,9 +3,46 @@ import type { GatewayClients } from "@/lib/api";
 import { pendingKey } from "@/lib/pending";
 import type { ProviderProxyPolicy, ProxyProvidersMap } from "@/lib/schemas";
 import { parseProxyProviders } from "@/lib/schemas";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 type SetText = (value: string) => void;
+
+/**
+ * Load state of the six gateway scalars read by this hook.
+ * `loading` covers both "waiting to start" and "read in flight".
+ */
+export type SettingsScalarsStatus = "loading" | "loaded" | "error";
+
+let settingsScalarsStatus: SettingsScalarsStatus = "loading";
+const settingsScalarsListeners = new Set<() => void>();
+
+const setSettingsScalarsStatus = (next: SettingsScalarsStatus) => {
+  if (next === settingsScalarsStatus) return;
+  settingsScalarsStatus = next;
+  for (const listener of settingsScalarsListeners) listener();
+};
+
+/** Synchronous read so save paths can gate without waiting for a re-render. */
+export const getSettingsScalarsStatus = (): SettingsScalarsStatus => settingsScalarsStatus;
+
+export const subscribeSettingsScalarsStatus = (listener: () => void): (() => void) => {
+  settingsScalarsListeners.add(listener);
+  return () => {
+    settingsScalarsListeners.delete(listener);
+  };
+};
+
+/**
+ * Surfaces the hook-owned scalar load state to components (SettingsSurface
+ * gates Save on it) without prop wiring through App.tsx.
+ */
+export function useSettingsScalarsStatus(): SettingsScalarsStatus {
+  return useSyncExternalStore(
+    subscribeSettingsScalarsStatus,
+    getSettingsScalarsStatus,
+    getSettingsScalarsStatus,
+  );
+}
 
 interface ConnectionSettingsArgs {
   clients: GatewayClients;
@@ -33,11 +70,45 @@ export function useConnectionSettings({
   const [requestRetry, setRequestRetry] = useState("3");
   const [loggingToFile, setLoggingToFile] = useState(false);
   const [codexFastMode, setCodexFastMode] = useState(false);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [settingsLoaded, setSettingsLoadedState] = useState(false);
+
+  // App.tsx drops this latch directly after connection/config/gateway changes;
+  // wrap it so every drop also flips the external status the Save gate reads.
+  const setSettingsLoaded = useCallback((loaded: boolean) => {
+    setSettingsLoadedState(loaded);
+    setSettingsScalarsStatus(loaded ? "loaded" : "loading");
+  }, []);
+
+  // Gateway restarts and connection losses outside App's own actions (crash,
+  // manual restart) invalidate the latched scalars. Drop the latch only on an
+  // online → offline TRANSITION: a drop on every non-online render would
+  // ping-pong with the read effect below (read succeeds → loaded → drop →
+  // read …), starving the event loop whenever reads answer while the gateway
+  // reports anything but "online".
+  const gatewayWasOnlineRef = useRef(false);
+  useEffect(() => {
+    const wasOnline = gatewayWasOnlineRef.current;
+    gatewayWasOnlineRef.current = loadState === "online";
+    if (wasOnline && loadState !== "online" && settingsLoaded) setSettingsLoaded(false);
+  }, [loadState, setSettingsLoaded, settingsLoaded]);
 
   useEffect(() => {
-    if (surface !== "settings" || settingsLoaded || loadState !== "online") return;
+    // Start the scalar read at mount (H1): the Save gate must be armed before
+    // the settings card first renders, so reads cannot wait for a settings
+    // visit or for loadState to settle. A failure stays silent off-surface and
+    // retries whenever clients/loadState/surface change (gateway comes online,
+    // connection saved, settings reopened).
+    // A relay lock answers scalar reads with 401 — skip while locked so the
+    // status keeps its honest "waiting" state, and re-run when loadState moves.
+    // A prior run may have populated the form while this run was orphaned by a
+    // dep change; reconcile the store instead of leaving it on "loading".
+    if (settingsLoaded) {
+      if (getSettingsScalarsStatus() !== "error") setSettingsScalarsStatus("loaded");
+      return;
+    }
+    if (loadState === "relay-locked") return;
     let active = true;
+    setSettingsScalarsStatus("loading");
     void Promise.all([
       clients.management.scalar("proxy-url"),
       clients.management.scalar("routing/strategy"),
@@ -64,18 +135,29 @@ export function useConnectionSettings({
       })
       .catch((error: unknown) => {
         if (active) {
-          setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+          setSettingsScalarsStatus("error");
+          // Only surface the failure while the settings card is visible; elsewhere
+          // the Save gate + inline alert cover it when the user arrives.
+          if (surface === "settings") {
+            setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+          }
         }
       });
     return () => {
       active = false;
     };
-  }, [clients, loadState, setNotice, settingsLoaded, surface]);
+  }, [clients, loadState, setNotice, settingsLoaded, setSettingsLoaded, surface]);
 
   const saveProxySettings = useCallback(async () => {
     const retry = Number(requestRetry);
     if (!Number.isInteger(retry) || retry < 0) {
       setNotice("Request retry count must be a non-negative integer.");
+      return;
+    }
+    // H1: before the scalar read completes (or after it fails) the form holds
+    // hardcoded defaults — never persist them over the gateway's live values.
+    if (getSettingsScalarsStatus() !== "loaded") {
+      setNotice("Gateway settings have not loaded yet; wait for them before saving.");
       return;
     }
     setPending(pendingKey.settingsSave);
@@ -97,9 +179,25 @@ export function useConnectionSettings({
     } finally {
       setPending("");
     }
-  }, [clients, codexFastMode, loggingToFile, proxyUrl, requestRetry, routingStrategy, setNotice, setPending]);
+  }, [
+    clients,
+    codexFastMode,
+    loggingToFile,
+    proxyUrl,
+    requestRetry,
+    routingStrategy,
+    setNotice,
+    setPending,
+    setSettingsLoaded,
+  ]);
 
   const saveProviderProxySettings = useCallback(async () => {
+    // Same H1 gate as saveProxySettings: the provider table is part of the
+    // same scalar batch, so an unloaded form must not overwrite it either.
+    if (getSettingsScalarsStatus() !== "loaded") {
+      setNotice("Gateway settings have not loaded yet; wait for them before saving.");
+      return;
+    }
     setPending(pendingKey.settingsSave);
     setNotice("");
     try {

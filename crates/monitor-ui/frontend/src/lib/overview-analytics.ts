@@ -35,6 +35,11 @@ export interface SeriesPoint {
   readonly startMs: number;
   readonly total: number;
   readonly values: Readonly<Record<string, number>>; // series key -> metric value, every seriesKey present (0 when idle)
+  /** Per-key bucket values for every key the gateway returned, including rows
+   * folded into Other. `values` only carries the plotted top-N + Other stack;
+   * focus over `allRows` reads this so a rank ≥7 row narrows to its own
+   * history instead of all zeros (F-H1). */
+  readonly allValues?: Readonly<Record<string, number>>;
 }
 
 export interface OverviewTotals {
@@ -54,6 +59,11 @@ export interface OverviewAnalytics {
   readonly metric: OverviewMetric;
   readonly range: TelemetryRange;
   readonly bucketMs: number;
+  /** Transport flag set by `useOverviewAnalytics` while a round for the
+   * current cache key is in flight. Surfaces render a loading state instead of
+   * presenting EMPTY/stale rows as the current window (F-M1). Absent on
+   * analytics built locally (telemetry fallback, tests). */
+  readonly isLoading?: boolean;
   readonly totals: OverviewTotals;
   readonly rows: readonly BreakdownRow[]; // sorted desc by metric, Other last
   /** Every aggregate row sorted desc by metric, without the chart's top-N +
@@ -83,7 +93,11 @@ export function focusAnalytics(
   focusKey: string | null,
 ): OverviewAnalytics {
   if (!focusKey) return analytics;
-  const row = analytics.rows.find((candidate) => candidate.key === focusKey);
+  // The breakdown table offers focus on every row it renders, and that list is
+  // `allRows` (all 7+ rows across pages), not the top-N + Other `rows` stack
+  // (F-H1). Resolve there first and fall back to `rows` for analytics built
+  // without the unfolded list; an unknown key still leaves the view untouched.
+  const row = (analytics.allRows ?? analytics.rows).find((candidate) => candidate.key === focusKey);
   if (!row) return analytics;
   return {
     ...analytics,
@@ -99,7 +113,10 @@ export function focusAnalytics(
     },
     rows: [{ ...row, share: 1 }],
     series: analytics.series.map((point) => {
-      const value = point.values[focusKey] ?? 0;
+      // `allValues` carries raw bucket values for keys outside the plotted
+      // stack (Other swallows ranks ≥7 in `values`), so the focused series
+      // shows this row's real history rather than zeros (F-H1).
+      const value = point.allValues?.[focusKey] ?? point.values[focusKey] ?? 0;
       return { startMs: point.startMs, total: value, values: { [focusKey]: value } };
     }),
     seriesKeys: [focusKey],
@@ -401,22 +418,32 @@ export const buildAnalytics = ({
     const ts = group["bucket-start-ms"];
     if (ts !== null && ts !== undefined) {
       const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((ts - startMs) / bucketMs)));
+      // Mirror the ranking key mapping exactly (`group.model ?? "unknown"`):
+      // a null key used to fall through `if (key)` below and never reach
+      // `values`, so its traffic was attributed to the Other remainder instead
+      // of the "unknown" row the ranking shows (F-M7).
       const key =
         dimension === "model"
-          ? group.model
+          ? (group.model ?? "unknown")
           : dimension === "provider"
-            ? group.provider
-            : group.account;
-      if (key) {
-        const val = metric === "requests" ? group.totals.requests : group.totals["total-tokens"];
-        let bucketMap = seriesByBucketAndKey.get(idx);
-        if (!bucketMap) {
-          bucketMap = new Map();
-          seriesByBucketAndKey.set(idx, bucketMap);
-        }
-        bucketMap.set(key, (bucketMap.get(key) ?? 0) + val);
+            ? (group.provider ?? "unknown")
+            : (group.account ?? "unknown");
+      const val = metric === "requests" ? group.totals.requests : group.totals["total-tokens"];
+      let bucketMap = seriesByBucketAndKey.get(idx);
+      if (!bucketMap) {
+        bucketMap = new Map();
+        seriesByBucketAndKey.set(idx, bucketMap);
       }
+      bucketMap.set(key, (bucketMap.get(key) ?? 0) + val);
     }
+  }
+
+  // Every key the gateway returned in the series window, so focus over
+  // `allRows` can read a row's own bucket values even though `values` only
+  // carries the plotted top-N + Other stack (F-H1).
+  const rawSeriesKeys = new Set<string>();
+  for (const bucketMap of seriesByBucketAndKey.values()) {
+    for (const key of bucketMap.keys()) rawSeriesKeys.add(key);
   }
 
   const points: SeriesPoint[] = [];
@@ -441,10 +468,15 @@ export const buildAnalytics = ({
     }
 
     const pointTotal = Object.values(values).reduce((sum, v) => sum + v, 0);
+    const allValues: Record<string, number> = { ...values };
+    for (const key of rawSeriesKeys) {
+      if (!(key in allValues)) allValues[key] = bucketMap?.get(key) ?? 0;
+    }
     points.push({
       startMs: bucketStart,
       total: pointTotal,
       values,
+      allValues,
     });
   }
 
@@ -761,6 +793,13 @@ export const telemetryAnalytics = ({
     }
   }
 
+  // Raw per-key values for focus over `allRows`, mirroring the history path
+  // (F-H1): `values` below only carries the plotted top-N + Other stack.
+  const rawSeriesKeys = new Set<string>();
+  for (const bucketMap of seriesByBucketAndKey.values()) {
+    for (const key of bucketMap.keys()) rawSeriesKeys.add(key);
+  }
+
   const points: SeriesPoint[] = [];
   for (let i = 0; i < bucketCount; i++) {
     const bucketStart = startMs + i * bucketMs;
@@ -783,10 +822,15 @@ export const telemetryAnalytics = ({
     }
 
     const pointTotal = Object.values(values).reduce((sum, v) => sum + v, 0);
+    const allValues: Record<string, number> = { ...values };
+    for (const key of rawSeriesKeys) {
+      if (!(key in allValues)) allValues[key] = bucketMap?.get(key) ?? 0;
+    }
     points.push({
       startMs: bucketStart,
       total: pointTotal,
       values,
+      allValues,
     });
   }
 

@@ -56,6 +56,9 @@ if (typeof globalThis.EventSource === "undefined") {
 const storageMock = (() => {
   let store: Record<string, string> = {};
   return {
+    get length() {
+      return Object.keys(store).length;
+    },
     getItem: (key: string) => store[key] ?? null,
     setItem: (key: string, value: string) => {
       store[key] = value.toString();
@@ -63,6 +66,7 @@ const storageMock = (() => {
     removeItem: (key: string) => {
       delete store[key];
     },
+    key: (index: number) => Object.keys(store)[index] ?? null,
     clear: () => {
       store = {};
     },

@@ -15,6 +15,8 @@ import { Button } from "./ui";
 export interface DurableLogsProps {
   readonly records: readonly LogRecord[];
   readonly fromMemoryTail?: boolean;
+  /** Set when the gateway logs fetch failed; renders an error instead of a false empty state. */
+  readonly logsError?: string;
   readonly loadHistory?: (query: HistoryStatsQuery) => Promise<HistoryEventsResponse>;
   readonly loadHistoryDetail?: (eventId: string) => Promise<HistoryEvent>;
   /** Increments when the gateway streams a new request line. */
@@ -109,6 +111,7 @@ export function DurableLogs({
   loadHistory,
   loadHistoryDetail,
   liveTick = 0,
+  logsError,
 }: DurableLogsProps) {
   const [tab, setTab] = useState<"requests" | "proxy">("requests");
   const [provider, setProvider] = useState("all");
@@ -141,6 +144,7 @@ export function DurableLogs({
   const requestSeqRef = useRef(0);
   // Explicit actions own their results and pending state, not live freshness.
   const actionSeqRef = useRef(0);
+  const detailSeqRef = useRef(0);
   const pendingActionRef = useRef<number | null>(null);
 
   const proxyRecords = useMemo(
@@ -168,6 +172,8 @@ export function DurableLogs({
         });
         if (seq !== requestSeqRef.current || actionSeq !== actionSeqRef.current || blockedByAction)
           return;
+        // A successful load supersedes any earlier failure banner.
+        setActionError("");
         // Only update the event list if user is still on the first page
         if (pageHistoryRef.current.length === 0) {
           setEvents(page.events);
@@ -288,9 +294,14 @@ export function DurableLogs({
       setSelected(event);
       return;
     }
+    detailSeqRef.current += 1;
+    const seq = detailSeqRef.current;
     try {
-      setSelected(await loadHistoryDetail(event["event-id"]));
+      const detail = await loadHistoryDetail(event["event-id"]);
+      if (seq !== detailSeqRef.current) return;
+      setSelected(detail);
     } catch (error) {
+      if (seq !== detailSeqRef.current) return;
       setActionError(error instanceof Error ? error.message : "Request detail unavailable");
     }
   };
@@ -313,10 +324,7 @@ export function DurableLogs({
         <header className="durable-logs-head">
           <div>
             <h2>Gateway logs</h2>
-            <p>
-              Parsed request outcomes, not a reconstructed request history.
-              {fromMemoryTail ? " File logging is off — showing the in-memory tail." : ""}
-            </p>
+            {fromMemoryTail ? <p>File logging is off — showing the in-memory tail.</p> : null}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             <output className="logs-live-indicator">
@@ -497,10 +505,20 @@ export function DurableLogs({
                 File logging is disabled. Showing the bounded memory tail.
               </div>
             ) : null}
-            {proxyRecords.map((record, index) => {
-              const event = (record as Record<string, unknown>).event;
+            {proxyRecords.map((record) => {
+              const raw = record as Record<string, unknown>;
+              const event = raw.event;
+              const requestId = typeof raw["request-id"] === "string" && raw["request-id"]
+                ? String(raw["request-id"])
+                : null;
+              // Stable identity: request-id when present, else timestamp + content,
+              // so a new line never shifts indices and remounts the whole tail.
+              const rowKey =
+                requestId !== null
+                  ? `req-${requestId}`
+                  : `${record.timestamp ?? 0}|${typeof event === "string" ? event : ""}|${record.message ?? ""}`;
               return (
-                <article key={`${record.timestamp ?? 0}-${index}`}>
+                <article key={rowKey}>
                   <time>
                     {record.timestamp
                       ? new Date(record.timestamp * 1000).toLocaleTimeString()
@@ -511,7 +529,14 @@ export function DurableLogs({
                 </article>
               );
             })}
-            {proxyRecords.length === 0 ? <div className="logs-empty">No proxy events.</div> : null}
+            {logsError ? (
+              <div className="state-panel warning">
+                <strong>Proxy logs unavailable</strong>
+                <p>{logsError}</p>
+              </div>
+            ) : proxyRecords.length === 0 ? (
+              <div className="logs-empty">No proxy events.</div>
+            ) : null}
           </div>
         )}
       </section>

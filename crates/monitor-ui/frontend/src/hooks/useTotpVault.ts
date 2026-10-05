@@ -7,6 +7,7 @@ import {
   writeDesktopSecret,
 } from "../lib/native";
 import {
+  TOTP_VAULT_NOT_LOADED_MESSAGE,
   type TotpEdit,
   type TotpEntry,
   type TotpSecretStore,
@@ -33,13 +34,25 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
   const [entries, setEntries] = useState<readonly TotpEntry[]>([]);
   const [codes, setCodes] = useState<Readonly<Record<string, string>>>({});
   const [error, setError] = useState<string | null>(null);
+  const [poisoned, setPoisoned] = useState(false);
   const [now, setNow] = useState(Date.now);
   const loadGeneration = useRef(0);
 
   const reload = useCallback(async () => {
     const generation = ++loadGeneration.current;
+    let loaded: readonly TotpEntry[];
     try {
-      const loaded = await vault.load();
+      loaded = await vault.load();
+    } catch (reason) {
+      if (generation === loadGeneration.current) {
+        setError(errorMessage(reason));
+        setPoisoned(true);
+      }
+      return;
+    }
+    if (generation !== loadGeneration.current) return;
+    setPoisoned(false);
+    try {
       const generated = await Promise.all(
         loaded.map(async (entry) => [entry.id, await generateTotp(entry)] as const),
       );
@@ -110,6 +123,9 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
 
   const run = useCallback(
     async (operation: () => Promise<unknown>) => {
+      // A failed load leaves the vault poisoned; refuse writes until a reload succeeds
+      // so a stale/empty in-memory state can never clobber the stored vault.
+      if (poisoned) throw new Error(TOTP_VAULT_NOT_LOADED_MESSAGE);
       try {
         await operation();
         await changed();
@@ -118,7 +134,7 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
         throw reason;
       }
     },
-    [changed],
+    [changed, poisoned],
   );
 
   const add = useCallback(
@@ -148,6 +164,7 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
     codes,
     remaining,
     error,
+    poisoned,
     add,
     edit,
     remove,

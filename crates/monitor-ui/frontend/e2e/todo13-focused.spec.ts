@@ -303,6 +303,9 @@ const openSettings = async (page: Page) => {
 test.beforeAll(async () => mkdir(evidenceDir, { recursive: true }));
 
 test("scheduler history cost reset flow", async ({ page }) => {
+  // The spend-reset menu item is gated by a confirm dialog; accept it so the
+  // request under test is actually issued instead of being auto-dismissed.
+  page.on("dialog", (dialog) => dialog.accept());
   const captured = installMocks(page);
 
   await openSettings(page);
@@ -390,6 +393,9 @@ test("invalid price is rejected without a success toast", async ({ page }) => {
 });
 
 test("reset denied shows a failure toast", async ({ page }) => {
+  // The spend-reset menu item is gated by a confirm dialog; accept it so the
+  // request that the server denies is actually issued.
+  page.on("dialog", (dialog) => dialog.accept());
   installMocks(page, { resetDenies: true });
   await openAccounts(page);
   await page.getByRole("button", { name: /^More actions for / }).first().click();

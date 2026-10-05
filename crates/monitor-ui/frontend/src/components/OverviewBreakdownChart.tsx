@@ -10,6 +10,9 @@ import type { DitherColor } from "./dither-kit/palette";
 export interface OverviewBreakdownChartProps {
   readonly analytics: OverviewAnalytics;
   readonly height?: number;
+  /** True while the owning hook fetches this window: say so instead of
+   * claiming the window is empty or showing the previous window's data (F-M1). */
+  readonly loading?: boolean;
 }
 
 const PALETTE_CHOICES: readonly DitherColor[] = [
@@ -31,6 +34,7 @@ const isReducedMotion = (): boolean => {
 export const OverviewBreakdownChart = ({
   analytics,
   height = 250,
+  loading = false,
 }: OverviewBreakdownChartProps): JSX.Element => {
   // 1. const isEmpty
   const isEmpty =
@@ -94,12 +98,25 @@ export const OverviewBreakdownChart = ({
   // 6. const animate
   const animate = !isReducedMotion();
 
-  // 7. if (showNotice)
+  // 7. if (loading) — a round is in flight: neither an empty-window claim nor
+  // stale rows may be presented as this window's data (F-M1). Plain text div
+  // (no aria-label: a name on role="generic" is never exposed, F-M5).
+  if (loading) {
+    return (
+      <div
+        className="overview-breakdown-chart flex items-center justify-center text-xs text-muted-foreground"
+        style={{ height }}
+      >
+        Loading activity…
+      </div>
+    );
+  }
+
+  // 8. if (showNotice)
   if (showNotice) {
     return (
       <div
         className="overview-breakdown-chart flex items-center justify-center text-xs text-muted-foreground"
-        aria-label={`Activity by ${analytics.dimension}`}
         style={{ height }}
       >
         Model breakdown needs request history
@@ -107,12 +124,11 @@ export const OverviewBreakdownChart = ({
     );
   }
 
-  // 8. if (isEmpty)
+  // 9. if (isEmpty)
   if (isEmpty) {
     return (
       <div
         className="overview-breakdown-chart flex items-center justify-center text-xs text-muted-foreground"
-        aria-label={`Activity by ${analytics.dimension}`}
         style={{ height }}
       >
         No traffic in this window
@@ -120,19 +136,19 @@ export const OverviewBreakdownChart = ({
     );
   }
 
-  // 9. return AreaChart + BlockLegend
+  // 10. return AreaChart + BlockLegend. The former `aria-label` sat on a plain
+  // <div> (role="generic" cannot be named, so screen readers never heard it)
+  // while the graphic itself was hardcoded "Chart"; the name now lives on the
+  // chart graphic through `ariaLabel` (F-M5).
   return (
-    <div
-      className="overview-breakdown-chart flex flex-col gap-2"
-      aria-label={`Activity by ${analytics.dimension}`}
-      style={{ height }}
-    >
+    <div className="overview-breakdown-chart flex flex-col gap-2" style={{ height }}>
       <AreaChart
         data={data}
         config={config}
         stackType="stacked"
         animate={animate}
         className="flex-1 min-h-0"
+        ariaLabel={`Activity by ${analytics.dimension}`}
       >
         {analytics.seriesKeys.map((key) => (
           <Area key={key} dataKey={key} />

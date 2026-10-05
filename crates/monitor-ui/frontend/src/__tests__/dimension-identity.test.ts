@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PALETTE } from "../components/dither-kit/palette";
 import type { NormalizedAccount } from "../lib/accounts";
 import { dimensionColor, dimensionDitherColor } from "../lib/dimension-colors";
 import {
@@ -270,10 +271,32 @@ describe("resolveProviderIdentity", () => {
 });
 
 describe("dimension-colors", () => {
-  it("delegates provider dimension to providerColor", () => {
-    expect(dimensionColor("provider", "codex", "codex")).toBe("#10A37F");
-    expect(dimensionColor("provider", "antigravity", "antigravity")).toBe("#3186FF");
-    expect(dimensionColor("provider", "claude", "claude")).toBe("#D97757");
+  it("resolves provider colors through the same dither palette the chart paints (F-M3)", () => {
+    // The mix used to fall through to providerColor while the chart painted
+    // PROVIDER_DITHER_MAP seeds: one key, two hues on one screen.
+    expect(dimensionColor("provider", "codex", "codex")).toBe("#28d26e");
+    expect(dimensionColor("provider", "antigravity", "antigravity")).toBe("#358ff3");
+    expect(dimensionColor("provider", "claude", "claude")).toBe("#ff9632");
+
+    const hexToRgb = (hex: string): number[] => [
+      Number.parseInt(hex.slice(1, 3), 16),
+      Number.parseInt(hex.slice(3, 5), 16),
+      Number.parseInt(hex.slice(5, 7), 16),
+    ];
+    for (const provider of [
+      "codex",
+      "antigravity",
+      "claude",
+      "cline",
+      "kiro",
+      "cursor",
+      "unknown",
+    ]) {
+      const seed = dimensionDitherColor("provider", provider, provider);
+      expect(hexToRgb(dimensionColor("provider", provider, provider))).toEqual(PALETTE[seed].fill);
+    }
+    // Other folds to the same grey the chart paints.
+    expect(hexToRgb(dimensionColor("provider", OTHER_KEY, "other"))).toEqual(PALETTE.grey.fill);
   });
 
   it("picks deterministically for model and account dimensions", () => {

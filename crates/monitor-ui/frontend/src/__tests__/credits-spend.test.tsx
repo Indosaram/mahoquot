@@ -96,8 +96,20 @@ describe("credit balance display", () => {
     expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
   });
 
-  it("renders an unreported balance as unknown, never zero", () => {
+  it("renders a no-credits answer when the gateway affirmatively reported none", () => {
+    render(<CreditBalanceRow usage={{ has_credits: false }} />);
     render(<CreditBalanceRow usage={{ credits_balance: null, has_credits: false }} />);
+    const values = screen.getAllByTestId("account-credit-value");
+    expect(values).toHaveLength(2);
+    for (const value of values) expect(value).toHaveTextContent("No credits");
+    expect(screen.getAllByTestId("account-credit-balance")[0]).toHaveAttribute(
+      "data-state",
+      "none",
+    );
+  });
+
+  it("renders an unreported balance as unknown, never zero", () => {
+    render(<CreditBalanceRow usage={{ credits_balance: null }} />);
     expect(screen.getByTestId("account-credit-value")).toHaveTextContent("Unknown");
     expect(screen.getByTestId("account-credit-balance")).toHaveAttribute("data-state", "unknown");
     expect(screen.queryByText(/0 credits/)).not.toBeInTheDocument();

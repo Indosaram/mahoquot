@@ -14,10 +14,13 @@ const desktop = () => {
   const stored = { value: null as string | null };
   const emitted: string[] = [];
   const listeners: Array<() => void> = [];
-  const failure = { write: null as Error | null };
+  const failure = { read: null as Error | null, write: null as Error | null };
 
   const invoke = vi.fn(async (command: string, args: { readonly request: SecretRequest }) => {
-    if (command === "read_secret") return stored.value;
+    if (command === "read_secret") {
+      if (failure.read) throw failure.read;
+      return stored.value;
+    }
     if (command === "write_secret") {
       if (failure.write) throw failure.write;
       stored.value = String(args.request.value);
@@ -125,6 +128,51 @@ describe("useTotpVault", () => {
 
     expect(result.current.error).toBeTruthy();
     expect(result.current.entries).toHaveLength(1);
+  });
+
+  it("refuses writes after a load failure until a reload succeeds", async () => {
+    bridge.stored.value = JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          id: "pre-existing",
+          label: "Stored login",
+          issuer: "Example",
+          account: "alice@example.test",
+          secret: SECRET,
+          algorithm: "SHA1",
+          digits: 6,
+          period: 30,
+          createdAt: 1,
+        },
+      ],
+    });
+    bridge.failure.read = new Error("Desktop secret store is locked.");
+    const { result } = await mountVault();
+
+    await waitFor(() => expect(result.current.error).toBeTruthy());
+    expect(result.current.poisoned).toBe(true);
+    const storedBefore = bridge.stored.value;
+
+    await act(async () => {
+      await expect(result.current.add(URI, "Must not clobber")).rejects.toBeTruthy();
+    });
+    expect(bridge.stored.value).toBe(storedBefore);
+    expect(result.current.entries).toEqual([]);
+
+    bridge.failure.read = null;
+    await act(async () => {
+      await result.current.reload();
+    });
+    expect(result.current.poisoned).toBe(false);
+    expect(result.current.error).toBeNull();
+    expect(result.current.entries).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.add(URI, "Recovered login");
+    });
+    expect(result.current.entries).toHaveLength(2);
+    expect(bridge.stored.value).toContain("Recovered login");
   });
 
   it("reloads when another surface changes the vault", async () => {

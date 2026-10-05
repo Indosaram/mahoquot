@@ -88,6 +88,13 @@ export function useGatewayPolling(clients: GatewayClients) {
     setTelemetry([]);
     setFetchedAt(null);
     setLoadState("loading");
+    // Drop the previous gateway's logs/credentials too, so its tail and auth
+    // never linger under the new gateway until the first successful poll.
+    setLogs([]);
+    setLogsError("");
+    setCredentials([]);
+    setModelRegistryStatus(null);
+    setGatewayModels([]);
   }, [clients]);
 
   // Mirrors gatewayLifecycle so refresh can read it without becoming a new
@@ -286,7 +293,7 @@ export function useGatewayPolling(clients: GatewayClients) {
     let disposed = false;
     void currentWindow
       .onFocusChanged((event) => {
-        if (event.payload && !document.hidden) void refreshNow();
+        if (event.payload && !document.hidden) void refresh();
       })
       .then((fn) => {
         if (disposed) fn?.();
@@ -299,7 +306,7 @@ export function useGatewayPolling(clients: GatewayClients) {
       disposed = true;
       unlisten?.();
     };
-  }, [refreshNow]);
+  }, [refresh]);
 
   useEffect(() => {
     // hidden tray/notch windows skip the poll; the moment one becomes visible

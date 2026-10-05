@@ -75,9 +75,9 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
   expect(document.querySelector(".accounts form")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
   expect(
-    screen.getByRole("dialog", { name: "Warm settings for provider codex" }),
+    screen.getByRole("dialog", { name: "Warm settings for provider Codex" }),
   ).toBeInTheDocument();
-  let provider = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
+  let provider = within(screen.getByRole("dialog", { name: "Warm settings for provider Codex" }));
   expect(provider.getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual([
     "",
     "live/model",
@@ -147,7 +147,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
   });
   fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-  provider = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
+  provider = within(screen.getByRole("dialog", { name: "Warm settings for provider Codex" }));
   expect(provider.getByRole("checkbox")).toBeChecked();
   expect(provider.getByLabelText("Model")).toHaveValue("live/model");
 });
@@ -213,7 +213,7 @@ it.each(["save", "manual"])(
       fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
     });
     fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-    let form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
+    let form = within(screen.getByRole("dialog", { name: "Warm settings for provider Codex" }));
     expect(form.getByLabelText("Model")).toHaveValue("removed/model");
     expect(form.getByRole("option", { name: "removed/model (unavailable)" })).toBeDisabled();
     fireEvent.click(form.getByRole("checkbox"));
@@ -244,7 +244,7 @@ it.each(["save", "manual"])(
       fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
     });
     fireEvent.click(screen.getByRole("button", { name: "Warm settings for provider codex" }));
-    form = within(screen.getByRole("dialog", { name: "Warm settings for provider codex" }));
+    form = within(screen.getByRole("dialog", { name: "Warm settings for provider Codex" }));
     expect(form.getByRole("checkbox")).not.toBeChecked();
     await act(async () => {
       resolveSave(

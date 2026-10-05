@@ -1,4 +1,4 @@
-import { render, within } from "@testing-library/react";
+import { fireEvent, render, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotchSurface } from "../components/NotchSurface";
@@ -18,9 +18,11 @@ const RFC_SHA1_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 
 class FakeSecretStore implements TotpSecretStore {
   value: string | null = null;
+  readError: Error | null = null;
   writeError: Error | null = null;
 
   async read(): Promise<string | null> {
+    if (this.readError) throw this.readError;
     return this.value;
   }
 
@@ -130,6 +132,43 @@ describe("secure TOTP vault", () => {
     expect(store.value).toBe(beforePayload);
   });
 
+  it("refuses writes after a load failure instead of clobbering the stored vault", async () => {
+    const store = new FakeSecretStore();
+    const seeded = new TotpVault(store, { now: () => 59_000, createId: () => "seeded" });
+    await seeded.load();
+    await seeded.add(RFC_SHA1_SECRET, "Seeded login");
+    const storedPayload = store.value;
+    expect(storedPayload).toBeTruthy();
+
+    store.readError = new Error("Desktop secret store is locked.");
+    const vault = new TotpVault(store, { now: () => 59_000, createId: () => "after-failure" });
+    await expect(vault.load()).rejects.toThrow("locked");
+    await expect(vault.add("JBSWY3DPEHPK3PXP", "Must not clobber")).rejects.toThrow(
+      "TOTP vault has not been loaded",
+    );
+    await expect(
+      vault.import("otpauth://totp/GitHub:octo%40example.test?secret=JBSWY3DPEHPK3PXP"),
+    ).rejects.toThrow("TOTP vault has not been loaded");
+    expect(store.value).toBe(storedPayload);
+  });
+
+  it("recovers from corrupt stored data only after a successful reload", async () => {
+    const store = new FakeSecretStore();
+    store.value = "corrupt-payload";
+    const vault = new TotpVault(store, { now: () => 59_000, createId: () => "recovered" });
+
+    await expect(vault.load()).rejects.toThrow("TOTP vault data is invalid.");
+    await expect(vault.add(RFC_SHA1_SECRET, "Blocked")).rejects.toThrow(
+      "TOTP vault has not been loaded",
+    );
+    expect(store.value).toBe("corrupt-payload");
+
+    store.value = null;
+    await vault.load();
+    await vault.add(RFC_SHA1_SECRET, "Allowed after reload");
+    expect(store.value).toContain("Allowed after reload");
+  });
+
   it("never serializes secrets", async () => {
     const storageWrite = vi.spyOn(window.localStorage, "setItem");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -159,6 +198,45 @@ describe("secure TOTP vault", () => {
     expect(captured).not.toContain(code);
     expect(storageWrite).not.toHaveBeenCalled();
     expect(emitted).toEqual([{ name: "mahoquot:totp-vault-changed", payload: { version: 1 } }]);
+  });
+});
+
+describe("TotpVaultSurface load-failure gating", () => {
+  it("keeps add and import disabled while a load error is unresolved", () => {
+    const onAdd = vi.fn();
+    const onImport = vi.fn();
+    const view = render(
+      createElement(TotpVaultSurface, {
+        entries: [],
+        codes: {},
+        remaining: 0,
+        error: "TOTP vault data is invalid.",
+        onAdd,
+        onEdit: vi.fn(),
+        onRemove: vi.fn(),
+        onImport,
+        onRetry: vi.fn(),
+        onCopyCode: vi.fn(),
+      }),
+    );
+
+    fireEvent.change(within(view.container).getByLabelText("Secret or URI"), {
+      target: { value: "JBSWY3DPEHPK3PXP" },
+    });
+    fireEvent.change(within(view.container).getByLabelText("TOTP import values"), {
+      target: { value: "JBSWY3DPEHPK3PXP" },
+    });
+
+    const addButton = within(view.container).getByRole("button", { name: "Add" });
+    const importButton = within(view.container).getByRole("button", { name: "Import" });
+    expect(addButton).toBeDisabled();
+    expect(importButton).toBeDisabled();
+
+    fireEvent.click(addButton);
+    fireEvent.click(importButton);
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onImport).not.toHaveBeenCalled();
+    view.unmount();
   });
 });
 

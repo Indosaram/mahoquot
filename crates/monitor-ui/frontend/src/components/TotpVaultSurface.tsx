@@ -143,7 +143,7 @@ export const TotpVaultSurface = ({
               />
             </label>
             <Button
-              disabled={busy || !input.trim()}
+              disabled={busy || Boolean(error) || !input.trim()}
               onClick={() =>
                 void submit(
                   () => onAdd(input, label.trim() || undefined),
@@ -174,7 +174,7 @@ export const TotpVaultSurface = ({
             onChange={(event) => setImportInput(event.currentTarget.value)}
           />
           <Button
-            disabled={busy || !importInput.trim()}
+            disabled={busy || Boolean(error) || !importInput.trim()}
             onClick={() =>
               void submit(
                 () => onImport(importInput),

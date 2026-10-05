@@ -311,4 +311,47 @@ describe("OverviewBreakdownTable", () => {
     expect(screen.getByText("No usage in this window")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
+
+  it("renders '—' for unknown latency instead of a factual '0 ms' (F-M6)", () => {
+    render(
+      <OverviewBreakdownTable
+        analytics={makeAnalytics({
+          rows: [
+            makeRow({
+              key: "row-no-latency",
+              label: "Degraded Model",
+              requests: 42,
+              successes: 42,
+              failures: 0,
+              // Gateway omitted both optional latency fields (history falls
+              // back to 0) or the telemetry fallback hardcodes 0: unknown.
+              avgLatencyMs: 0,
+            }),
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("0 ms")).not.toBeInTheDocument();
+    // The exact-value title must not assert a measurement either.
+    expect(screen.getByTitle("—")).toBeInTheDocument();
+  });
+
+  it("shows 'Loading usage…' instead of the empty claim or stale rows while a round is in flight (F-M1)", () => {
+    const { rerender } = render(<OverviewBreakdownTable analytics={makeAnalytics()} loading />);
+
+    expect(screen.getByText("Loading usage…")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    // Empty rows during the same in-flight round must not claim an empty window either.
+    rerender(<OverviewBreakdownTable analytics={makeAnalytics({ rows: [] })} loading />);
+    expect(screen.getByText("Loading usage…")).toBeInTheDocument();
+    expect(screen.queryByText("No usage in this window")).not.toBeInTheDocument();
+
+    // Settled: the honest empty state returns.
+    rerender(<OverviewBreakdownTable analytics={makeAnalytics({ rows: [] })} />);
+    expect(screen.getByText("No usage in this window")).toBeInTheDocument();
+    expect(screen.queryByText("Loading usage…")).not.toBeInTheDocument();
+  });
 });

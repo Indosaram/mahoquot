@@ -125,4 +125,39 @@ describe("groupNotchProviders", () => {
     expect(grouped[0]?.provider).toBe("codex");
     expect(grouped[0]?.accounts.map((account) => account.label)).toEqual(["one", "two"]);
   });
+
+  it("propagates account ids so colliding labels stay distinguishable", () => {
+    const grouped = groupNotchProviders([
+      { provider: "codex", id: "cred-a", label: "same@example.test", rows: [] },
+      { provider: "codex", id: "cred-b", label: "same@example.test", rows: [] },
+    ]);
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]?.accounts.map((account) => account.id)).toEqual(["cred-a", "cred-b"]);
+  });
+
+  it("keeps worst-usage aggregation correct across measured and unmeasured accounts", () => {
+    const groups = groupNotchProviders([
+      {
+        provider: "claude",
+        label: "unmeasured",
+        rows: [{ name: "Primary window", usedPercent: null, resetSeconds: 600 }],
+      },
+      {
+        provider: "claude",
+        label: "worst",
+        rows: [{ name: "Primary window", usedPercent: 70, resetSeconds: 300 }],
+      },
+      {
+        provider: "claude",
+        label: "lower",
+        rows: [{ name: "Primary window", usedPercent: 40, resetSeconds: 900 }],
+      },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.accountCount).toBe(3);
+    expect(groups[0]?.rows[0]?.usedPercent).toBe(70);
+    expect(groups[0]?.rows[0]?.resetSeconds).toBe(300);
+  });
 });

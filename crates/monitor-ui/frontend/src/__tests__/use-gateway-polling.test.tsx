@@ -234,6 +234,68 @@ describe("useGatewayPolling generation guard", () => {
     releaseSecondStats(new Response(JSON.stringify({ ...baseStats, uptime_secs: 200 })));
   });
 
+  it("clears logs, credentials, logsError, registry status, and models the moment clients change", async () => {
+    let releaseSecond: (response: Response) => void = () => undefined;
+    const pendingSecond = new Promise<Response>((resolve) => {
+      releaseSecond = resolve;
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("18801")) {
+          if (url.includes("/v0/management/logs")) {
+            return new Response("log store offline", { status: 500 });
+          }
+          if (url.includes("/admin/stats")) {
+            return new Response(JSON.stringify(baseStats));
+          }
+          if (url.includes("/healthz")) {
+            return new Response(JSON.stringify({ status: "ok", version: "1.0", api_schema: 1 }));
+          }
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        // The second gateway answers nothing during the assertion window, so only
+        // the clients-change reset can clear the seeded first-gateway state.
+        return pendingSecond;
+      }),
+    );
+
+    const clientA = createGatewayClients("http://127.0.0.1:18801", "keyA");
+    const clientB = createGatewayClients("http://127.0.0.1:18802", "keyB");
+
+    const { result, rerender } = renderHook(({ clients }) => useGatewayPolling(clients), {
+      initialProps: { clients: clientA },
+    });
+
+    // Seed every non-stats surface the reset must clear: a failed logs fetch
+    // raises logsError, then the setters populate the rest.
+    await waitFor(() => expect(result.current.logsError).not.toBe(""));
+    act(() => {
+      result.current.setLogs([{ kind: "proxy", timestamp: 1, message: "old gateway line" }]);
+      result.current.setCredentials([{ account: "old-account" } as never]);
+      result.current.setModelRegistryStatus({ status: "ok" } as never);
+      result.current.setGatewayModels([{ id: "old-model" } as never]);
+    });
+    expect(result.current.logs).toHaveLength(1);
+    expect(result.current.credentials).toHaveLength(1);
+    expect(result.current.gatewayModels).toHaveLength(1);
+    expect(result.current.modelRegistryStatus).not.toBeNull();
+
+    act(() => {
+      rerender({ clients: clientB });
+    });
+
+    expect(result.current.logs).toHaveLength(0);
+    expect(result.current.credentials).toHaveLength(0);
+    expect(result.current.logsError).toBe("");
+    expect(result.current.modelRegistryStatus).toBeNull();
+    expect(result.current.gatewayModels).toHaveLength(0);
+
+    releaseSecond(new Response(JSON.stringify(baseStats)));
+  });
+
   it("preserves the Tauri window receiver when subscribing to focus changes", async () => {
     type FocusHandler = (event: { payload: boolean }) => void;
     class NativeWindow {

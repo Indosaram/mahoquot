@@ -110,7 +110,7 @@ const installMocks = async (
     });
   });
   await page.route(
-    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file)$/,
+    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file|codex-fast-mode|proxy-providers)$/,
     (route) => {
       if (options?.managementLocked) return route.fulfill({ status: 401, body: "locked" });
       if (route.request().method() === "PUT") return route.fulfill({ json: { status: "ok" } });
@@ -122,6 +122,10 @@ const installMocks = async (
       if (path.endsWith("request-retry")) {
         return route.fulfill({ json: { "request-retry": 3 } });
       }
+      if (path.endsWith("codex-fast-mode")) {
+        return route.fulfill({ json: { "codex-fast-mode": false } });
+      }
+      if (path.endsWith("proxy-providers")) return route.fulfill({ json: { "proxy-providers": {} } });
       return route.fulfill({ json: { "logging-to-file": false } });
     },
   );
@@ -479,6 +483,9 @@ for (const viewport of [
 
 test("desktop overview, logs, accounts, actions, and settings truth", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
+  // The spend-reset menu item is gated by a confirm dialog; accept it so the
+  // request under test is actually issued instead of being auto-dismissed.
+  page.on("dialog", (dialog) => dialog.accept());
   await page.clock.install();
   await installMocks(page);
   await page.goto("/management.html");
@@ -487,9 +494,7 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   await expect(page.getByRole("heading", { name: "Request activity" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Provider mix" })).toBeVisible();
   await page.getByRole("button", { name: "Logs" }).click();
-  await expect(
-    page.getByText("Parsed request outcomes, not a reconstructed request history."),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Gateway logs" })).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/desktop-dark-overview.png`, fullPage: true });
 
   await page

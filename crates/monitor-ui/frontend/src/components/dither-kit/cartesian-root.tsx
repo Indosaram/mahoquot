@@ -30,6 +30,10 @@ export type CartesianChartProps<TData extends Row> = {
   data: TData[];
   config: ChartConfig;
   children: ReactNode;
+  /** Accessible name for the chart graphic. When set, the container is exposed
+   * as `role="img"` with this name and the front SVG carries it instead of the
+   * hardcoded "Chart" (F-M5); omitted, behavior is unchanged. */
+  ariaLabel?: string;
   stackType?: StackType;
   margins?: Partial<Margins>;
   className?: string;
@@ -80,6 +84,7 @@ export function CartesianRoot<TData extends Row>({
   stackType = "default",
   margins: marginsProp,
   className,
+  ariaLabel,
   animate = true,
   animationDuration = 900,
   replayToken = 0,
@@ -146,6 +151,8 @@ export function CartesianRoot<TData extends Row>({
         <div
           ref={ref}
           className={cn("relative h-full w-full", className)}
+          role={ariaLabel ? "img" : undefined}
+          aria-label={ariaLabel}
           onPointerEnter={() => ctx.setMouseInChart(true)}
           onPointerMove={interactive ? (e) => onMove(e.clientX) : undefined}
           onPointerLeave={() => {
@@ -172,7 +179,7 @@ export function CartesianRoot<TData extends Row>({
               height={size.height}
               className="absolute inset-0 overflow-visible"
               role="img"
-              aria-label="Chart"
+              aria-label={ariaLabel ?? "Chart"}
             >
               <g transform={`translate(${margins.left},${margins.top})`}>{svgChildren}</g>
             </svg>

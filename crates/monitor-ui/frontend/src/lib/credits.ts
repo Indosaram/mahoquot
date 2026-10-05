@@ -5,10 +5,12 @@ import type { Usage } from "./schemas";
  *
  * `unknown` is deliberately its own state: a gateway that never reported a
  * balance said nothing, and printing `0` would claim the balance was measured
- * and found empty. Only `value` and `overage` carry an amount; `overage`
+ * and found empty. `none` is the mirror image: the gateway affirmatively
+ * answered that no credits exist, so the row says so instead of falling back
+ * to `unknown`. Only `value` and `overage` carry an amount; `overage`
  * without a reported amount keeps `amount: null` rather than inventing one.
  */
-export type CreditBalanceState = "unknown" | "value" | "unlimited" | "overage";
+export type CreditBalanceState = "unknown" | "value" | "unlimited" | "overage" | "none";
 
 export interface CreditBalance {
   readonly state: CreditBalanceState;
@@ -21,7 +23,8 @@ export interface CreditBalance {
  *
  * Precedence follows upstream semantics: an overage lock outranks everything
  * (the balance is being drawn but the limit already tripped), then unlimited,
- * then the numeric balance, then unknown.
+ * then the numeric balance, then an affirmative "no credits" answer
+ * (`has_credits: false`), then unknown.
  */
 export const interpretCreditBalance = (usage: Usage | null | undefined): CreditBalance => {
   if (usage?.overage_limit_reached === true) {
@@ -33,6 +36,11 @@ export const interpretCreditBalance = (usage: Usage | null | undefined): CreditB
   const raw = usage?.credits_balance;
   if (typeof raw === "number" && Number.isFinite(raw)) {
     return { state: "value", amount: raw };
+  }
+  if (usage?.has_credits === false) {
+    // The gateway answered: this account has no credits. Reading this payload
+    // as "unknown" would erase an affirmative response into a missing one.
+    return { state: "none", amount: null };
   }
   return { state: "unknown", amount: null };
 };
@@ -66,6 +74,8 @@ export const creditBalanceLabel = (balance: CreditBalance): string => {
         : `${formatCredits(balance.amount)} · overage limit reached`;
     case "value":
       return formatCredits(balance.amount ?? 0);
+    case "none":
+      return "No credits";
     case "unknown":
       return "Unknown";
   }

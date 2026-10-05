@@ -511,39 +511,42 @@ export const AccountsSurface = ({
       : undefined;
   const popupProvider = warmup?.selection?.type === "provider" ? warmup.selection.id : undefined;
   const poolSummary = clinePoolQuotaSummary(accounts, Date.now(), clineQuotaDisplay);
+  // One pass over the inventory feeds every tab's count, health dot, and
+  // accessible name; re-filtering per attribute scanned the whole list three
+  // times per tab on every render.
+  const providerTabStats = new Map<string, { total: number; healthy: number }>();
+  for (const account of accounts) {
+    const stats = providerTabStats.get(account.provider) ?? { total: 0, healthy: 0 };
+    stats.total += 1;
+    if (account.health === "healthy") stats.healthy += 1;
+    providerTabStats.set(account.provider, stats);
+  }
   return (
     <Stack className="content accounts">
       <div className="provider-tabs" aria-label="Providers">
-        {providers.map((item) => (
-          <label className="provider-tab" key={item}>
-            <input
-              type="radio"
-              name="provider"
-              value={item}
-              aria-label={`${item} ${accounts.filter((account) => account.provider === item).length} account${accounts.filter((account) => account.provider === item).length === 1 ? "" : "s"}`}
-              checked={selectedProvider === item}
-              onChange={(event) => onSelectProvider(event.currentTarget.value)}
-            />
-            <span className="provider-tab-content">
-              <span className="provider-tab-icon">
-                <ProviderGlyph provider={item} />
-              </span>
-              <strong>{providerLabel(item)}</strong>
-              <span className="provider-count">
-                {accounts.filter((account) => account.provider === item).length}
-              </span>
-              <i
-                className={
-                  accounts.some(
-                    (account) => account.provider === item && account.health === "healthy",
-                  )
-                    ? "healthy"
-                    : ""
-                }
+        {providers.map((item) => {
+          const stats = providerTabStats.get(item) ?? { total: 0, healthy: 0 };
+          return (
+            <label className="provider-tab" key={item}>
+              <input
+                type="radio"
+                name="provider"
+                value={item}
+                aria-label={`${item} ${stats.total} account${stats.total === 1 ? "" : "s"}`}
+                checked={selectedProvider === item}
+                onChange={(event) => onSelectProvider(event.currentTarget.value)}
               />
-            </span>
-          </label>
-        ))}
+              <span className="provider-tab-content">
+                <span className="provider-tab-icon">
+                  <ProviderGlyph provider={item} />
+                </span>
+                <strong>{providerLabel(item)}</strong>
+                <span className="provider-count">{stats.total}</span>
+                <i className={stats.healthy > 0 ? "healthy" : ""} />
+              </span>
+            </label>
+          );
+        })}
       </div>
       {credentialsError ? (
         <div className="state-panel warning">
@@ -564,7 +567,7 @@ export const AccountsSurface = ({
           ) : null}
           {popupProvider || popupAccount ? (
             <WarmupDialog
-              title={`Warm settings for ${popupProvider ? `provider ${popupProvider}` : popupAccount?.label}`}
+              title={`Warm settings for ${popupProvider ? `provider ${providerLabel(popupProvider)}` : popupAccount?.label}`}
               onClose={warmup.onClose}
               returnFocus={warmup.returnFocus}
               footer={

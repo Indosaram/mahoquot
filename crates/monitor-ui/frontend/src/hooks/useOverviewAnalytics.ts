@@ -11,7 +11,7 @@ import {
 } from "@/lib/overview-analytics";
 import type { HistoryStatsResponse } from "@/lib/schemas";
 import type { TelemetryRange, TelemetrySample } from "@/lib/telemetry";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /// Turns a failed analytics round into something an operator can act on.
 ///
@@ -407,6 +407,16 @@ export function useOverviewAnalytics({
     await executeRoundRef.current(true);
   }, []);
 
+  // App.tsx only forwards `analytics` and `error` into OverviewDashboard, so a
+  // top-level `isLoading` would be discarded before any surface can use it
+  // (F-M1). Carry the flag inside the analytics object instead: rows keep
+  // their identity, but no surface presents them as the current window while a
+  // round for the current cache key is in flight.
+  const presentedAnalytics = useMemo(
+    () => (isLoading ? { ...analytics, isLoading: true } : analytics),
+    [analytics, isLoading],
+  );
+
   if (!enabled) {
     return {
       analytics: EMPTY_ANALYTICS(dimension, metric, range),
@@ -417,7 +427,7 @@ export function useOverviewAnalytics({
   }
 
   return {
-    analytics,
+    analytics: presentedAnalytics,
     isLoading,
     error,
     refresh,

@@ -132,19 +132,22 @@ describe("codex credit policy in the operations console", () => {
     });
   });
 
-  it("shows a measured zero as zero credits and an unreported balance as unknown", async () => {
+  it("shows a measured zero as zero credits and a no-credits answer when the flag says none", async () => {
     installFetch({ statsAccounts: codexStats(), creditIds: [], creditIdsOrFail: [] });
     await openAccounts();
 
     const values = await screen.findAllByTestId("account-credit-value");
     expect(values).toHaveLength(2);
     expect(values[0]).toHaveTextContent("0 credits");
-    expect(values[1]).toHaveTextContent("Unknown");
+    // has_credits: false is an affirmative answer from the gateway, not an
+    // unreported balance: it renders "No credits" instead of "Unknown".
+    expect(values[1]).toHaveTextContent("No credits");
     for (const value of values) {
       expect(value.textContent ?? "").not.toContain("$");
       expect(value.textContent ?? "").not.toContain("Unknown0");
     }
     expect(values[1]?.textContent).not.toContain("0 credits");
+    expect(values[1]?.textContent).not.toContain("Unknown");
   });
 
   it("reads each account flag independently", async () => {

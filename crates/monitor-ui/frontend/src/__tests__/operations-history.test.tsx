@@ -406,10 +406,9 @@ describe("Todo 8/9 frontend API contracts", () => {
     await expect(
       management.saveSchedulerSettings({ enabled: true, priorities: schedulerSettings.priorities }),
     ).resolves.toEqual(schedulerStatus);
-    await expect(management.saveSchedulerOrder(["account-b", "account-a"])).resolves.toEqual([
-      "account-b",
-      "account-a",
-    ]);
+    await expect(management.saveSchedulerOrder(["account-b", "account-a"])).resolves.toEqual(
+      schedulerStatus.order,
+    );
 
     expect(
       calls.map((call) => [call.url, call.init?.method ?? "GET", call.init?.body ?? ""]),

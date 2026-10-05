@@ -76,7 +76,10 @@ describe("OverviewBreakdownChart", () => {
     expect(screen.getByText("Anthropic")).toBeInTheDocument();
     const wrapper = document.querySelector(".overview-breakdown-chart");
     expect(wrapper).toBeInTheDocument();
-    expect(wrapper).toHaveAttribute("aria-label", "Activity by provider");
+    // The graphic carries the accessible name; the wrapper div stays plain
+    // (aria-label on role="generic" is never exposed — F-M5).
+    expect(wrapper).not.toHaveAttribute("aria-label");
+    expect(screen.getByRole("img", { name: "Activity by provider" })).toBeInTheDocument();
     expect(document.querySelector("canvas")).toBeInTheDocument();
   });
 
@@ -93,7 +96,7 @@ describe("OverviewBreakdownChart", () => {
     expect(container.querySelector("canvas")).toBeNull();
     const wrapper = container.querySelector(".overview-breakdown-chart");
     expect(wrapper).toBeInTheDocument();
-    expect(wrapper).toHaveAttribute("aria-label", "Activity by provider");
+    expect(wrapper).not.toHaveAttribute("aria-label");
   });
 
   it("renders 'No traffic in this window' and no canvas when every point total is 0", () => {
@@ -124,7 +127,7 @@ describe("OverviewBreakdownChart", () => {
     expect(container.querySelector("canvas")).toBeNull();
     const wrapper = container.querySelector(".overview-breakdown-chart");
     expect(wrapper).toBeInTheDocument();
-    expect(wrapper).toHaveAttribute("aria-label", "Activity by model");
+    expect(wrapper).not.toHaveAttribute("aria-label");
   });
 
   it("handles transition from unsupported to supported model dimension without breaking rules of hooks", () => {
@@ -281,8 +284,21 @@ describe("OverviewBreakdownChart", () => {
 
     expect(screen.getByText("gemini-3.8-flash-high")).toBeInTheDocument();
     expect(screen.getByText("claude-3-5-sonnet")).toBeInTheDocument();
-    const wrapper = document.querySelector(".overview-breakdown-chart");
-    expect(wrapper).toHaveAttribute("aria-label", "Activity by model");
+    expect(screen.getByRole("img", { name: "Activity by model" })).toBeInTheDocument();
+  });
+
+  it("says loading instead of claiming the window is empty while a round is in flight (F-M1)", () => {
+    const analytics = createMockAnalytics({
+      series: [],
+      seriesKeys: [],
+      rows: [],
+      totals: { ...createMockAnalytics().totals, requests: 0 },
+    });
+    const { container } = render(<OverviewBreakdownChart analytics={analytics} loading />);
+
+    expect(screen.getByText("Loading activity…")).toBeInTheDocument();
+    expect(screen.queryByText("No traffic in this window")).not.toBeInTheDocument();
+    expect(container.querySelector("canvas")).toBeNull();
   });
 
   it("applies default height 250 and respects custom height prop", () => {

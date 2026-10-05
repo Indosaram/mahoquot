@@ -131,19 +131,17 @@ import {
 } from "./lib/storage";
 import type { TelemetryRange } from "./lib/telemetry";
 
-type Surface = "overview" | "accounts" | "agents" | "logs" | "settings" | "notch" | "tray";
+type Surface = "overview" | "accounts" | "logs" | "settings" | "notch" | "tray";
 const getInitialSurface = (): Surface => {
   if (typeof window !== "undefined") {
     const param = new URLSearchParams(window.location.search).get("surface");
     if (param === "notch") return "notch";
     if (param === "tray") return "tray";
-    if (
-      param === "accounts" ||
-      param === "agents" ||
-      param === "logs" ||
-      param === "settings" ||
-      param === "overview"
-    ) {
+    // Agents is a Settings-owned section (SettingsSurface.agentsSlot), not a
+    // top-level page: land the deep link on the page that renders it instead
+    // of an "Agents" title with no page body.
+    if (param === "agents") return "settings";
+    if (param === "accounts" || param === "logs" || param === "settings" || param === "overview") {
       return param;
     }
   }
@@ -281,7 +279,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (surface !== "agents" && surface !== "settings") return;
+    if (surface !== "settings") return;
     void Promise.all([reloadCliAgents(), listCodexInstances().then(setCodexInstances)]).catch(
       (error: unknown) => setNotice(actionFailed(error)),
     );
@@ -332,7 +330,9 @@ export default function App() {
       } catch (error) {
         setNotice(actionFailed(error));
       } finally {
-        setBusyAgent(null);
+        // Only clear the busy slot this call still owns; a later operation
+        // may have taken it already.
+        setBusyAgent((current) => (current === agentId ? null : current));
       }
     },
     [reloadCliAgents, setNotice],
@@ -673,7 +673,7 @@ export default function App() {
         setAgentPreview(null);
         setNotice(actionFailed(error));
       } finally {
-        setBusyAgent(null);
+        setBusyAgent((current) => (current === agentId ? null : current));
       }
     },
     [agentRequest, setNotice],
@@ -697,7 +697,7 @@ export default function App() {
       } catch (error) {
         setNotice(actionFailed(error));
       } finally {
-        setBusyAgent(null);
+        setBusyAgent((current) => (current === agentId ? null : current));
       }
     },
     [agentRequest, reloadCliAgents, setNotice],
@@ -905,8 +905,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    // The notch window is a dark-only island: its tooltip keeps hard-coded
+    // dark-card colours that a light theme turns unreadable, so the user's
+    // theme must not reach this window.
+    document.documentElement.dataset.theme = surface === "notch" ? "dark" : theme;
+  }, [surface, theme]);
 
   useEffect(() => {
     if (surface === "notch" || surface === "tray") {
@@ -1617,6 +1620,9 @@ export default function App() {
         gatewayLifecycle === "running" ? await stopManagedGateway() : await startManagedGateway();
       setGatewayLifecycle(next);
       setLoadState(next === "running" ? "starting" : "stopped");
+      // A gateway cycle can change the live scalars; drop the latch so the
+      // settings form re-reads them once the gateway is online again.
+      setSettingsLoaded(false);
       if (next === "running") {
         await refresh();
       }
@@ -1728,6 +1734,9 @@ export default function App() {
       const next = await startManagedGateway();
       setGatewayLifecycle(next);
       setLoadState(next === "running" ? "starting" : "stopped");
+      // A gateway restart can change the live scalars; drop the latch so the
+      // settings form re-reads them once the gateway is online again.
+      setSettingsLoaded(false);
       if (next === "running") await refresh();
     } catch (error) {
       setNotice(actionFailed(error));
@@ -1756,6 +1765,9 @@ export default function App() {
         setNotice("Configuration saved and applied.");
         setConfigOpen(false);
       }
+      // config.yaml changed, so the gateway's live scalars may no longer
+      // match the form; drop the latch so the surface re-reads them.
+      setSettingsLoaded(false);
     } catch (error) {
       setNotice(actionFailed(error));
     } finally {

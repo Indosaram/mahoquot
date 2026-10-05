@@ -86,4 +86,17 @@ describe("native focus subscription", () => {
     });
     expect(result.current.loadState).toBe("online");
   });
+
+  it("does not spin the manual-refresh flag on a focus-triggered refresh", async () => {
+    const native = new NativeWindow();
+    const { result } = renderWith(native);
+    await waitFor(() => expect(native.listen).toHaveBeenCalledOnce());
+    expect(result.current.refreshing).toBe(false);
+
+    const before = vi.mocked(fetch).mock.calls.length;
+    await act(async () => native.focused?.({ payload: true }));
+
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(before);
+    expect(result.current.refreshing).toBe(false);
+  });
 });

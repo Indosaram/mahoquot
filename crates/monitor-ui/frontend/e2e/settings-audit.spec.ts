@@ -163,7 +163,7 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
     });
   });
   void page.route(
-    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file)$/,
+    /\/v0\/management\/(proxy-url|routing\/strategy|request-retry|logging-to-file|codex-fast-mode|proxy-providers)$/,
     (route) => {
       capture(route.request());
       if (route.request().method() === "PUT") return route.fulfill({ json: { status: "ok" } });
@@ -173,6 +173,11 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
         return route.fulfill({ json: { strategy: "round-robin" } });
       }
       if (path.endsWith("request-retry")) return route.fulfill({ json: { "request-retry": 3 } });
+      if (path.endsWith("codex-fast-mode")) {
+        return route.fulfill({ json: { "codex-fast-mode": false } });
+      }
+      if (path.endsWith("proxy-providers"))
+        return route.fulfill({ json: { "proxy-providers": {} } });
       return route.fulfill({ json: { "logging-to-file": false } });
     },
   );
@@ -519,4 +524,35 @@ test("model price editing saves the edited value", async ({ page }) => {
   await expect
     .poll(() => captured.find((call) => call.url.includes("/prices/"))?.body ?? "")
     .toContain("2.5");
+});
+
+test("settings jump bar pins while scrolling and marks the section it lands on", async ({
+  page,
+}) => {
+  installMocks(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSettings(page);
+
+  const jump = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(jump).toBeVisible();
+  const storageChip = jump.getByRole("button", { name: "Storage & Appearance" });
+  await expect(storageChip).toBeVisible();
+
+  const jumpTop = () => jump.evaluate((node) => node.getBoundingClientRect().top);
+  const before = await jumpTop();
+
+  await storageChip.click();
+
+  const headingTop = () =>
+    page
+      .getByRole("heading", { name: "Storage & Appearance" })
+      .evaluate((node) => node.getBoundingClientRect().top);
+  await expect.poll(() => headingTop()).toBeGreaterThan(40);
+  await expect.poll(() => headingTop()).toBeLessThan(260);
+
+  const after = await jumpTop();
+  expect(after).toBeLessThanOrEqual(before);
+  expect(after).toBeLessThan(120);
+
+  await expect(storageChip).toHaveAttribute("aria-current", "location");
 });

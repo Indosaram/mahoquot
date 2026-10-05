@@ -90,6 +90,9 @@ export function AgentsSurface({
         <div className="agents-grid">
           {agents.map((agent) => {
             const busy = busyAgent === agent.agent_id;
+            // One agent operation at a time: while any agent is mid-flight the
+            // whole grid locks so a second launch cannot race the first.
+            const anyBusy = busyAgent !== null;
             const conflicted = agent.config_state === "modified";
             const preview = pendingPreview?.agent_id === agent.agent_id ? pendingPreview : null;
             return (
@@ -159,7 +162,7 @@ export function AgentsSurface({
                     <div className="agent-actions">
                       <Button
                         aria-label={`Apply ${agent.display_name} configuration`}
-                        disabled={busy}
+                        disabled={anyBusy}
                         onClick={() => void onApply(agent.agent_id, conflicted)}
                       >
                         {busy ? "Working…" : "Apply"}
@@ -173,7 +176,7 @@ export function AgentsSurface({
                   <div className="agent-actions">
                     <Button
                       aria-label={`Configure ${agent.display_name}`}
-                      disabled={busy}
+                      disabled={anyBusy}
                       onClick={() => void onPreview(agent.agent_id)}
                     >
                       {busy ? "Working…" : actionCopy(agent.config_state)}
@@ -181,7 +184,7 @@ export function AgentsSurface({
                     {agent.backup ? (
                       <Button
                         aria-label={`Restore ${agent.display_name}`}
-                        disabled={busy || conflicted}
+                        disabled={anyBusy || conflicted}
                         onClick={() => void onRestore(agent.agent_id)}
                       >
                         <RotateCcw size={14} /> Restore

@@ -15,13 +15,19 @@ const formatSuccess = (row: BreakdownRow): string => {
   return `${((row.successes / row.requests) * 100).toFixed(1)}%`;
 };
 
+// Latency is unknown — not zero — when the gateway omitted both optional
+// latency fields (history rows fall back to 0) or the telemetry fallback
+// hardcodes 0 (degraded mode is exactly when history is failing); only a
+// measured positive value is a latency. Printing "0 ms" as fact was wrong (F-M6).
+const hasLatency = (row: BreakdownRow): boolean => row.requests > 0 && row.avgLatencyMs > 0;
+
 const formatLatency = (row: BreakdownRow): string => {
-  if (row.requests === 0) return "—";
+  if (!hasLatency(row)) return "—";
   return `${compact.format(row.avgLatencyMs)} ms`;
 };
 
 const formatLatencyExact = (row: BreakdownRow): string => {
-  if (row.requests === 0) return "—";
+  if (!hasLatency(row)) return "—";
   return `${formatExact(row.avgLatencyMs)} ms`;
 };
 
@@ -39,12 +45,16 @@ export interface OverviewBreakdownTableProps {
   readonly focusKey?: string | null;
   /** Omitted by callers that want a read-only table. */
   readonly onFocusChange?: (key: string | null) => void;
+  /** True while the owning hook fetches this window: show that instead of
+   * the empty-state claim or the previous window's rows (F-M1). */
+  readonly loading?: boolean;
 }
 
 export const OverviewBreakdownTable = ({
   analytics,
   focusKey = null,
   onFocusChange,
+  loading = false,
 }: OverviewBreakdownTableProps): JSX.Element => {
   // allRows carries every aggregate row; legacy/mocked analytics objects that
   // predate it fall back to rows so their behavior is unchanged.
@@ -81,7 +91,11 @@ export const OverviewBreakdownTable = ({
         </div>
       </header>
 
-      {rows.length === 0 ? (
+      {loading ? (
+        <div className="overview-token-empty">
+          <span>Loading usage…</span>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="overview-token-empty">
           <span>No usage in this window</span>
         </div>

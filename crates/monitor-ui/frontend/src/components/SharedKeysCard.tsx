@@ -1,5 +1,6 @@
 import { Check, Copy, Key, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
+import { normalizeToQuotioProviderId } from "../lib/provider-catalog";
 import type { GatewayModelEntry, ScopedApiKey } from "../lib/schemas";
 import { OverlayLayer } from "./layout";
 import { Badge, Button, Card, Field, Input } from "./ui";
@@ -46,6 +47,33 @@ const PRESET_LIMITS = [
 const DEFAULT_LIMIT = 1_000_000;
 
 /** Empty scope arrays mean "no restriction"; the gateway grants everything. */
+/**
+ * Gateway model-catalog `owned_by` synonyms the provider-catalog alias table
+ * does not know; applied before canonicalization so account providers and
+ * model owners resolve to the same Quotio id instead of near-synonym pairs
+ * (zcode/z-ai, claude/anthropic, codex/openai, antigravity/google).
+ */
+const GATEWAY_OWNED_BY_ALIASES: Readonly<Record<string, string>> = {
+  "z-ai": "zcode",
+  google: "antigravity",
+};
+
+const canonicalScopeProvider = (value: string): string => {
+  const clean = value.trim().toLowerCase();
+  return normalizeToQuotioProviderId(GATEWAY_OWNED_BY_ALIASES[clean] ?? clean);
+};
+
+/** Items whose canonical provider sits inside the given scope (empty = all). */
+const withinProviderScope = <T,>(
+  items: readonly T[],
+  providerOf: (item: T) => string,
+  providers: readonly string[],
+): readonly T[] => {
+  if (providers.length === 0) return items;
+  const scope = new Set(providers.map(canonicalScopeProvider));
+  return items.filter((item) => scope.has(canonicalScopeProvider(providerOf(item))));
+};
+
 const describeScope = (values: readonly string[]): string =>
   values.length > 0 ? values.join(", ") : "All";
 
@@ -160,117 +188,92 @@ export function SharedKeysCard({
   const providerOptions = useMemo(() => {
     const distinct = new Set<string>();
     for (const account of availableAccounts) {
-      if (account.provider) distinct.add(account.provider);
+      if (account.provider) distinct.add(canonicalScopeProvider(account.provider));
     }
     for (const model of availableModels) {
-      if (model.owned_by) distinct.add(model.owned_by);
+      if (model.owned_by) distinct.add(canonicalScopeProvider(model.owned_by));
     }
     return Array.from(distinct)
       .sort((a, b) => a.localeCompare(b))
       .map((provider) => ({ value: provider, label: provider }));
   }, [availableAccounts, availableModels]);
 
-  const filteredAccounts = useMemo(() => {
-    if (selectedProviders.length === 0) return availableAccounts;
-    return availableAccounts.filter((acc) => selectedProviders.includes(acc.provider));
-  }, [availableAccounts, selectedProviders]);
+  const filteredAccounts = useMemo(
+    () => withinProviderScope(availableAccounts, (account) => account.provider, selectedProviders),
+    [availableAccounts, selectedProviders],
+  );
 
   const accountOptions = useMemo(
     () =>
       filteredAccounts.map((account) => ({
         value: account.id,
-        label: `${account.id} · ${account.provider}`,
+        label: `${account.id} · ${canonicalScopeProvider(account.provider)}`,
       })),
     [filteredAccounts],
   );
 
-  const filteredModels = useMemo(() => {
-    if (selectedProviders.length === 0) return availableModels;
-    return availableModels.filter((model) => {
-      if (selectedProviders.includes(model.owned_by)) return true;
-      // Zcode models have owned_by = "z-ai" in the gateway catalog
-      if (
-        selectedProviders.includes("zcode") &&
-        (model.owned_by === "z-ai" || model.owned_by === "zcode")
-      ) {
-        return true;
-      }
-      // Claude models have owned_by = "anthropic"
-      if (
-        selectedProviders.includes("claude") &&
-        (model.owned_by === "anthropic" || model.owned_by === "claude")
-      ) {
-        return true;
-      }
-      // Codex models have owned_by = "openai"
-      if (
-        selectedProviders.includes("codex") &&
-        (model.owned_by === "openai" || model.owned_by === "codex")
-      ) {
-        return true;
-      }
-      // Antigravity models have owned_by = "google"
-      if (
-        selectedProviders.includes("antigravity") &&
-        (model.owned_by === "google" || model.owned_by === "antigravity")
-      ) {
-        return true;
-      }
-      return false;
-    });
-  }, [availableModels, selectedProviders]);
+  // One canonical comparison serves both filters: accounts match on provider,
+  // models on their gateway-catalog owned_by, which may be a synonym of it.
+  const filteredModels = useMemo(
+    () => withinProviderScope(availableModels, (model) => model.owned_by, selectedProviders),
+    [availableModels, selectedProviders],
+  );
 
   const modelOptions = useMemo(
     () => filteredModels.map((model) => ({ value: model.id, label: model.id })),
     [filteredModels],
   );
 
-  const filteredEditAccounts = useMemo(() => {
-    if (editProviders.length === 0) return availableAccounts;
-    return availableAccounts.filter((acc) => editProviders.includes(acc.provider));
-  }, [availableAccounts, editProviders]);
+  const filteredEditAccounts = useMemo(
+    () => withinProviderScope(availableAccounts, (account) => account.provider, editProviders),
+    [availableAccounts, editProviders],
+  );
 
   const editAccountOptions = useMemo(
     () =>
       filteredEditAccounts.map((account) => ({
         value: account.id,
-        label: `${account.id} · ${account.provider}`,
+        label: `${account.id} · ${canonicalScopeProvider(account.provider)}`,
       })),
     [filteredEditAccounts],
   );
 
-  const filteredEditModels = useMemo(() => {
-    if (editProviders.length === 0) return availableModels;
-    return availableModels.filter((model) => {
-      if (editProviders.includes(model.owned_by)) return true;
-      if (
-        editProviders.includes("zcode") &&
-        (model.owned_by === "z-ai" || model.owned_by === "zcode")
-      )
-        return true;
-      if (
-        editProviders.includes("claude") &&
-        (model.owned_by === "anthropic" || model.owned_by === "claude")
-      )
-        return true;
-      if (
-        editProviders.includes("codex") &&
-        (model.owned_by === "openai" || model.owned_by === "codex")
-      )
-        return true;
-      if (
-        editProviders.includes("antigravity") &&
-        (model.owned_by === "google" || model.owned_by === "antigravity")
-      )
-        return true;
-      return false;
-    });
-  }, [availableModels, editProviders]);
+  const filteredEditModels = useMemo(
+    () => withinProviderScope(availableModels, (model) => model.owned_by, editProviders),
+    [availableModels, editProviders],
+  );
 
   const editModelOptions = useMemo(
     () => filteredEditModels.map((model) => ({ value: model.id, label: model.id })),
     [filteredEditModels],
   );
+
+  /**
+   * M3: changing the provider filter hides accounts/models the new scope would
+   * deny — drop those selections in the same update so the payload can never
+   * contradict its own allowed_providers.
+   */
+  const applyProviderSelection = (
+    next: readonly string[],
+    setProviders: (value: readonly string[]) => void,
+    setAccounts: (updater: (prev: readonly string[]) => readonly string[]) => void,
+    setModels: (updater: (prev: readonly string[]) => readonly string[]) => void,
+  ) => {
+    setProviders(next);
+    if (next.length === 0) return;
+    const visibleAccounts = new Set(
+      withinProviderScope(availableAccounts, (account) => account.provider, next).map(
+        (account) => account.id,
+      ),
+    );
+    const visibleModels = new Set(
+      withinProviderScope(availableModels, (model) => model.owned_by, next).map(
+        (model) => model.id,
+      ),
+    );
+    setAccounts((prev) => prev.filter((id) => visibleAccounts.has(id)));
+    setModels((prev) => prev.filter((id) => visibleModels.has(id)));
+  };
 
   const anyOverlayOpen = issueOpen || issuedKey !== null || topUpKey !== null || editKey !== null;
 
@@ -407,7 +410,10 @@ export function SharedKeysCard({
     }
   };
 
-  const endpoint = `${(tunnelUrl ?? baseUrl).replace(/\/+$/, "")}/v1`;
+  // M9: a blank baseUrl means same-origin — never emit a relative /v1 URL.
+  const tunnel = (tunnelUrl ?? "").trim();
+  const origin = tunnel !== "" ? tunnel : baseUrl.trim();
+  const endpoint = origin === "" ? null : `${origin.replace(/\/+$/, "")}/v1`;
 
   const toggle = (
     setter: (updater: (prev: readonly string[]) => readonly string[]) => void,
@@ -635,12 +641,24 @@ export function SharedKeysCard({
               hint="Empty means every provider."
               options={providerOptions}
               selected={selectedProviders}
-              onToggle={(value) => toggle(setSelectedProviders, value)}
+              onToggle={(value) =>
+                applyProviderSelection(
+                  selectedProviders.includes(value)
+                    ? selectedProviders.filter((entry) => entry !== value)
+                    : [...selectedProviders, value],
+                  setSelectedProviders,
+                  setSelectedAccounts,
+                  setSelectedModels,
+                )
+              }
               onSelectAll={() =>
-                setSelectedProviders((prev) =>
-                  prev.length === providerOptions.length
+                applyProviderSelection(
+                  selectedProviders.length === providerOptions.length
                     ? []
                     : providerOptions.map((option) => option.value),
+                  setSelectedProviders,
+                  setSelectedAccounts,
+                  setSelectedModels,
                 )
               }
             />
@@ -761,7 +779,14 @@ export function SharedKeysCard({
               <div>
                 <dt>Base URL</dt>
                 <dd>
-                  <code>{endpoint}</code>
+                  {endpoint ? (
+                    <code>{endpoint}</code>
+                  ) : (
+                    <small>
+                      Same-origin only: this gateway has no tunnel or external Base URL. Use this
+                      console's own address with /v1 appended.
+                    </small>
+                  )}
                 </dd>
               </div>
               <div>
@@ -893,12 +918,24 @@ export function SharedKeysCard({
               hint="Empty means every provider."
               options={providerOptions}
               selected={editProviders}
-              onToggle={(value) => toggle(setEditProviders, value)}
+              onToggle={(value) =>
+                applyProviderSelection(
+                  editProviders.includes(value)
+                    ? editProviders.filter((entry) => entry !== value)
+                    : [...editProviders, value],
+                  setEditProviders,
+                  setEditAccounts,
+                  setEditModels,
+                )
+              }
               onSelectAll={() =>
-                setEditProviders((prev) =>
-                  prev.length === providerOptions.length
+                applyProviderSelection(
+                  editProviders.length === providerOptions.length
                     ? []
                     : providerOptions.map((option) => option.value),
+                  setEditProviders,
+                  setEditAccounts,
+                  setEditModels,
                 )
               }
             />

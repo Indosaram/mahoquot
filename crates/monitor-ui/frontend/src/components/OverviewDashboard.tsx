@@ -124,12 +124,29 @@ export const OverviewDashboard = ({
     () => focusAnalytics(effectiveAnalytics, focusKey),
     [effectiveAnalytics, focusKey],
   );
+  // Focus resolves over `allRows` (the table lists every row, across pages),
+  // not just the top-N stack — keep the chip lookup in lockstep with
+  // focusAnalytics so a rank ≥7 focus both narrows and shows its clear chip (F-H1).
   const focusedRow = focusKey
-    ? (effectiveAnalytics.rows.find((row) => row.key === focusKey) ?? null)
+    ? ((effectiveAnalytics.allRows ?? effectiveAnalytics.rows).find(
+        (row) => row.key === focusKey,
+      ) ?? null)
     : null;
 
+  // True while the owning hook fetches this window: the rows below are either
+  // an EMPTY placeholder or the previous window's data — neither may present
+  // itself as the current window (F-M1).
+  const isLoading = effectiveAnalytics.isLoading === true;
+
   const outcomes = viewAnalytics.totals.successes + viewAnalytics.totals.failures;
-  const successRate = outcomes > 0 ? (viewAnalytics.totals.successes / outcomes) * 100 : 100;
+  // Zero outcomes is "no data", not "perfect": the table prints "—" for an
+  // idle row, and a fabricated 100% claimed outcomes this window never had (F-M2).
+  const successRate = outcomes > 0 ? (viewAnalytics.totals.successes / outcomes) * 100 : null;
+  const successRateLabel = successRate === null ? "—" : `${successRate.toFixed(1)}%`;
+
+  // The mix paints nothing while loading: stale segments would attribute the
+  // previous window's traffic to the range named above them (F-M1).
+  const mixRows = isLoading ? [] : viewAnalytics.rows;
 
   const mixTitle =
     effectiveAnalytics.dimension === "model"
@@ -223,15 +240,15 @@ export const OverviewDashboard = ({
       <IntrinsicGrid className="minimal-kpis">
         <div>
           <span>Requests</span>
-          <strong>{compact.format(viewAnalytics.totals.requests)}</strong>
+          <strong>{isLoading ? "—" : compact.format(viewAnalytics.totals.requests)}</strong>
         </div>
         <div>
           <span>Success</span>
-          <strong>{successRate.toFixed(outcomes > 0 ? 1 : 0)}%</strong>
+          <strong>{isLoading ? "—" : successRateLabel}</strong>
         </div>
         <div>
           <span>Failed</span>
-          <strong>{compact.format(viewAnalytics.totals.failures)}</strong>
+          <strong>{isLoading ? "—" : compact.format(viewAnalytics.totals.failures)}</strong>
         </div>
         <div>
           <span>In flight</span>
@@ -252,7 +269,7 @@ export const OverviewDashboard = ({
           <h2>Request activity</h2>
           <span>{range}</span>
         </header>
-        <OverviewBreakdownChart analytics={viewAnalytics} />
+        <OverviewBreakdownChart analytics={viewAnalytics} loading={isLoading} />
       </section>
 
       <section className="minimal-provider-mix" aria-label={mixTitle}>
@@ -261,7 +278,7 @@ export const OverviewDashboard = ({
           <span>{range}</span>
         </header>
         <div className="provider-mix-track" aria-hidden="true">
-          {viewAnalytics.rows.map((row) => (
+          {mixRows.map((row) => (
             <i
               key={row.key}
               style={{
@@ -272,8 +289,8 @@ export const OverviewDashboard = ({
           ))}
         </div>
         <Cluster className="provider-mix-labels">
-          {viewAnalytics.rows.length ? (
-            viewAnalytics.rows.map((row) => {
+          {mixRows.length ? (
+            mixRows.map((row) => {
               const color = dimensionColor(effectiveAnalytics.dimension, row.key, row.provider);
               return (
                 <span key={row.key}>
@@ -288,7 +305,9 @@ export const OverviewDashboard = ({
               );
             })
           ) : (
-            <span>No {effectiveAnalytics.dimension} traffic</span>
+            <span>
+              {isLoading ? "Loading usage…" : `No ${effectiveAnalytics.dimension} traffic`}
+            </span>
           )}
         </Cluster>
       </section>
@@ -297,6 +316,7 @@ export const OverviewDashboard = ({
         analytics={effectiveAnalytics}
         focusKey={focusKey}
         onFocusChange={setFocusKey}
+        loading={isLoading}
       />
 
       {analyticsError && analyticsError.trim() !== "" ? (

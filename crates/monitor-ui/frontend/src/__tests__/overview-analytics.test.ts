@@ -9,6 +9,7 @@ import {
   bucketMsFor,
   buildAnalytics,
   buildOverviewQueries,
+  focusAnalytics,
   telemetryAnalytics,
 } from "../lib/overview-analytics";
 import type { HistoryStatsResponse, HistoryTotals } from "../lib/schemas";
@@ -238,6 +239,205 @@ describe("buildAnalytics ranking, folding, and series", () => {
     expect(allRowsSum).toBe(totalRequests);
     expect(analytics.allRows?.[0]?.requests).toBe(90);
     expect(analytics.allRows?.[analytics.allRows.length - 1]?.requests).toBe(10);
+  });
+
+  it("maps a null dimension key to 'unknown' in BOTH ranking and series, so Other never absorbs its mass (F-M7)", () => {
+    const ranking = makeResponse(
+      [
+        {
+          "bucket-start-ms": null,
+          account: null,
+          provider: "codex",
+          model: null,
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 7, "successful-requests": 7 },
+        },
+        {
+          "bucket-start-ms": null,
+          account: null,
+          provider: "codex",
+          model: "gpt-5",
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 5, "successful-requests": 5 },
+        },
+      ],
+      { requests: 12 },
+    );
+    const series = makeResponse(
+      [
+        {
+          "bucket-start-ms": nowMs,
+          account: null,
+          provider: "codex",
+          model: null,
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 7, "successful-requests": 7 },
+        },
+        {
+          "bucket-start-ms": nowMs,
+          account: null,
+          provider: "codex",
+          model: "gpt-5",
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 5, "successful-requests": 5 },
+        },
+      ],
+      { requests: 12 },
+    );
+    const totalSeries = makeResponse(
+      [
+        {
+          "bucket-start-ms": nowMs,
+          account: null,
+          provider: "codex",
+          model: null,
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 12 },
+        },
+      ],
+      { requests: 12 },
+    );
+
+    const analytics = buildAnalytics({
+      ranking,
+      series,
+      totalSeries,
+      dimension: "model",
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    });
+
+    // The ranking side already mapped null -> "unknown" (unchanged).
+    const unknownRow = analytics.rows.find((row) => row.key === "unknown");
+    expect(unknownRow?.requests).toBe(7);
+    expect(analytics.rows.some((row) => row.key === "gpt-5")).toBe(true);
+
+    // Before F-M7 the series builder dropped the falsy key: the "unknown"
+    // series painted 0 and the mass was misattributed. Sum over all buckets.
+    const paintedUnknown = analytics.series.reduce(
+      (sum, point) => sum + (point.values.unknown ?? 0),
+      0,
+    );
+    const paintedGpt = analytics.series.reduce(
+      (sum, point) => sum + (point.values["gpt-5"] ?? 0),
+      0,
+    );
+    expect(paintedUnknown).toBe(7);
+    expect(paintedGpt).toBe(5);
+
+    const paintedTotal = analytics.series.reduce((sum, point) => sum + point.total, 0);
+    expect(paintedTotal).toBe(12);
+  });
+
+  it("focus resolves a rank >=7 row from allRows and narrows the series to its own history (F-H1)", () => {
+    const inputGroups = Array.from({ length: 9 }, (_, i) => ({
+      "bucket-start-ms": null,
+      account: `acc-${i + 1}`,
+      provider: "codex",
+      model: null,
+      "key-label": null,
+      status: null,
+      totals: {
+        ...defaultTotals,
+        requests: (i + 1) * 10, // acc-9=90 … acc-1=10
+        "successful-requests": (i + 1) * 10,
+      },
+    }));
+    const totalRequests = inputGroups.reduce((sum, g) => sum + g.totals.requests, 0);
+    const ranking = makeResponse(inputGroups, { requests: totalRequests });
+    // Only the rank-8 key's bucket arrives in the series window.
+    const series = makeResponse(
+      [
+        {
+          "bucket-start-ms": nowMs,
+          account: "acc-2",
+          provider: "claude",
+          model: null,
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 20, "successful-requests": 20 },
+        },
+      ],
+      { requests: 20 },
+    );
+    const totalSeries = makeResponse(
+      [
+        {
+          "bucket-start-ms": nowMs,
+          account: "acc-2",
+          provider: "claude",
+          model: null,
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 20 },
+        },
+      ],
+      { requests: 20 },
+    );
+
+    const analytics = buildAnalytics({
+      ranking,
+      series,
+      totalSeries,
+      dimension: "account",
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    });
+
+    // Rank 8 (20 requests) is folded out of the plotted rows but kept in allRows.
+    expect(analytics.rows.some((row) => row.key === "acc-2")).toBe(false);
+    expect(analytics.allRows?.find((row) => row.key === "acc-2")?.requests).toBe(20);
+
+    // Before F-H1 focusAnalytics searched only `rows`, found nothing, and
+    // returned the analytics untouched — KPIs/chart/mix never narrowed.
+    const focused = focusAnalytics(analytics, "acc-2");
+    expect(focused.totals.requests).toBe(20);
+    expect(focused.seriesKeys).toEqual(["acc-2"]);
+    expect(focused.rows).toHaveLength(1);
+    expect(focused.rows[0].key).toBe("acc-2");
+    // The focused series carries the row's real per-bucket values (allValues),
+    // not the zeros the plotted stack would give it.
+    const painted = focused.series.reduce((sum, point) => sum + (point.values["acc-2"] ?? 0), 0);
+    expect(painted).toBe(20);
+  });
+
+  it("focus still narrows a top-6 row and leaves an unknown key untouched (F-H1)", () => {
+    const inputGroups = Array.from({ length: 8 }, (_, i) => ({
+      "bucket-start-ms": null,
+      account: `acc-${i + 1}`,
+      provider: "codex",
+      model: null,
+      "key-label": null,
+      status: null,
+      totals: { ...defaultTotals, requests: (i + 1) * 10 },
+    }));
+    const totalRequests = inputGroups.reduce((sum, g) => sum + g.totals.requests, 0);
+    const analytics = buildAnalytics({
+      ranking: makeResponse(inputGroups, { requests: totalRequests }),
+      series: makeResponse(),
+      totalSeries: makeResponse(),
+      dimension: "account",
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    });
+
+    const focused = focusAnalytics(analytics, "acc-8"); // rank 1, 80 requests
+    expect(focused.totals.requests).toBe(80);
+    expect(focused.seriesKeys).toEqual(["acc-8"]);
+
+    // Unknown keys still leave the view untouched (identity comparison).
+    expect(focusAnalytics(analytics, "does-not-exist")).toBe(analytics);
   });
 
   it("ranks rows by selected metric (tokens vs requests)", () => {
@@ -681,5 +881,32 @@ describe("telemetryAnalytics", () => {
     expect(analytics.rows).toEqual([]);
     expect(analytics.series).toEqual([]);
     expect(analytics.seriesKeys).toEqual([]);
+  });
+
+  it("focus resolves a rank >=7 telemetry row through allValues as well (F-H1)", () => {
+    const providers = Array.from({ length: 9 }, (_, i) => ({
+      provider: `prov-${i + 1}`,
+      requests: i + 1, // prov-9=9 … prov-1=1
+      successes: i + 1,
+      failures: 0,
+    }));
+    const richSamples: readonly TelemetrySample[] = [{ ...samples[0], providers }];
+    const analytics = telemetryAnalytics({
+      samples: richSamples,
+      dimension: "provider",
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    });
+
+    expect(analytics.rows.some((row) => row.key === "prov-2")).toBe(false);
+    expect(analytics.allRows?.find((row) => row.key === "prov-2")?.requests).toBe(2);
+
+    const focused = focusAnalytics(analytics, "prov-2");
+    expect(focused.totals.requests).toBe(2);
+    expect(focused.seriesKeys).toEqual(["prov-2"]);
+    const painted = focused.series.reduce((sum, point) => sum + (point.values["prov-2"] ?? 0), 0);
+    expect(painted).toBe(2);
   });
 });

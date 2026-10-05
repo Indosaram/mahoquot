@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AccountsSurface,
   type AccountsSurfaceProps,
@@ -10,7 +10,12 @@ import {
   quotaRows,
 } from "../components/AccountsSurface";
 import { AccountCard, type AccountCardProps } from "../components/AccountCard";
+import type { WarmupControlsState } from "../components/WarmupControls";
 import type { NormalizedAccount } from "../lib/accounts";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const mockAccount: NormalizedAccount = {
   id: "codex-1",
@@ -74,8 +79,12 @@ const openOverflowMenu = (label = "dev@example.com") => {
   fireEvent.click(screen.getByRole("button", { name: `More actions for ${label}` }));
 };
 
-/** Spending a banked reset dispatches immediately from the menu. */
+/** Spending a banked reset confirms, then dispatches from the menu. */
 const spendBankedReset = (label = "dev@example.com") => {
+  vi.stubGlobal(
+    "confirm",
+    vi.fn(() => true),
+  );
   openOverflowMenu(label);
   fireEvent.click(screen.getByRole("menuitem", { name: `Spend 1 banked reset for ${label}` }));
 };
@@ -165,12 +174,92 @@ describe("AccountsSurface component", () => {
     expect(screen.queryByTestId("account-reset-credits-list")).not.toBeInTheDocument();
   });
 
-  it("spends a banked reset directly when clicked from the menu", () => {
+  it("dispatches the banked reset only when the confirmation is accepted", () => {
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     const onRunAccountAction = vi.fn();
     render(<AccountsSurface {...createProps({ onRunAccountAction })} />);
 
-    spendBankedReset();
+    openOverflowMenu();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Spend 1 banked reset for dev@example.com" }),
+    );
     expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
+  });
+
+  it("asks for confirmation before spending a banked reset", () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const onRunAccountAction = vi.fn();
+    render(<AccountsSurface {...createProps({ onRunAccountAction })} />);
+
+    openOverflowMenu();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Spend 1 banked reset for dev@example.com" }),
+    );
+    // A finite banked resource must not be spent without the confirm prompt.
+    expect(confirm).toHaveBeenCalledWith("Spend 1 banked reset for dev@example.com?");
+    expect(onRunAccountAction).not.toHaveBeenCalled();
+  });
+
+  it("titles the provider warmup dialog with the display label, not the raw id", () => {
+    const warmup: WarmupControlsState = {
+      selection: { type: "provider", id: "google-antigravity" },
+      onOpen: vi.fn(),
+      onClose: vi.fn(),
+      returnFocus: null,
+      settings: null,
+      status: null,
+      error: "",
+      pending: false,
+      onProviderChange: vi.fn(),
+      onAccountChange: vi.fn(),
+      onSaveProvider: vi.fn(),
+      onSaveAccount: vi.fn(),
+      onReload: vi.fn(),
+    };
+    const agAccount = { ...mockAccount, id: "ag-1", provider: "google-antigravity" };
+    render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [agAccount],
+          providers: ["google-antigravity"],
+          selectedProvider: "google-antigravity",
+          visibleAccounts: [agAccount],
+        })}
+        warmup={warmup}
+      />,
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: "Warm settings for provider Google Antigravity" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Warm settings for provider google-antigravity" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the raw provider key as the tab accessible name and the display label visible", () => {
+    const agAccount = { ...mockAccount, id: "ag-1", provider: "google-antigravity" };
+    render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [agAccount, mockAccount],
+          providers: ["google-antigravity", "codex"],
+          selectedProvider: "google-antigravity",
+          visibleAccounts: [agAccount, mockAccount],
+        })}
+      />,
+    );
+
+    // Accessible name is keyed on the raw provider contract; the visible tab
+    // text shows the display label, and counts come from one inventory pass.
+    const tab = screen.getByRole("radio", { name: "google-antigravity 1 account" });
+    expect(tab).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeInTheDocument();
+    expect(tab.closest("label")?.querySelector("strong")).toHaveTextContent("Google Antigravity");
   });
 
   it("renders provider tabs, count badges, and account cards", () => {

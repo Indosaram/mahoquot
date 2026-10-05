@@ -30,6 +30,7 @@ import {
   type ModelRegistryRefreshResponse,
   ModelRegistryRefreshResponseSchema,
   type ModelRegistryStatus,
+  PatchScopedKeyResponseSchema,
   type SchedulerSettings,
   SchedulerSettingsSchema,
   type SchedulerStatus,
@@ -418,8 +419,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ order }),
         });
-        schedulerOrderResponseSchema.parse(response);
-        return order;
+        return schedulerOrderResponseSchema.parse(response).order;
       },
       historyStats: async (query = {}) =>
         HistoryStatsResponseSchema.parse(
@@ -720,18 +720,18 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             body: JSON.stringify(payload),
           }),
         ),
-      patchScopedKey: async (id, payload) => {
-        const resp = (await requestJson(
-          `${base}/v0/management/scoped-keys/${encodeURIComponent(id)}`,
-          authHeaders,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          },
-        )) as { key: ScopedApiKey };
-        return resp.key;
-      },
+      patchScopedKey: async (id, payload) =>
+        PatchScopedKeyResponseSchema.parse(
+          await requestJson(
+            `${base}/v0/management/scoped-keys/${encodeURIComponent(id)}`,
+            authHeaders,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            },
+          ),
+        ).key,
       deleteScopedKey: async (id) => {
         await requestJson(
           `${base}/v0/management/scoped-keys/${encodeURIComponent(id)}`,

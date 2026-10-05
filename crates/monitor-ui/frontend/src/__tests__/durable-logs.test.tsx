@@ -340,6 +340,121 @@ describe("Durable logs surface", () => {
     expect(screen.getByText("upstream_failover")).toBeInTheDocument();
     expect(screen.getByText("account-a failed over to account-b")).toBeInTheDocument();
   });
+
+  it("clears the stale history-error banner after a later successful refresh", async () => {
+    let failing = true;
+    const loadHistory = vi.fn(async () => {
+      if (failing) throw new Error("gateway down");
+      return { events: durableEvents as never, "next-cursor": 2, totals };
+    });
+    const { rerender } = render(
+      <DurableLogs records={requestRecords as never} loadHistory={loadHistory} liveTick={0} />,
+    );
+
+    await screen.findByText("Request history unavailable");
+
+    failing = false;
+    rerender(
+      <DurableLogs records={requestRecords as never} loadHistory={loadHistory} liveTick={1} />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("Request history unavailable")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("req-success")).toBeInTheDocument();
+  });
+
+  it("surfaces the logs fetch error instead of a false empty state", () => {
+    renderLogs({ logsError: "log stream unavailable" });
+
+    fireEvent.click(screen.getByRole("tab", { name: /proxy logs/i }));
+
+    expect(screen.getByText("Proxy logs unavailable")).toBeInTheDocument();
+    expect(screen.getByText("log stream unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("No proxy events.")).not.toBeInTheDocument();
+  });
+
+  it("ignores a slower earlier detail response after a newer one is opened", async () => {
+    const resolvers: ((value: never) => void)[] = [];
+    const loadHistory = vi.fn(async () => ({
+      events: durableEvents as never,
+      "next-cursor": 2,
+      totals,
+    }));
+    const loadHistoryDetail = vi.fn(
+      () =>
+        new Promise<never>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    render(
+      <DurableLogs
+        records={requestRecords as never}
+        loadHistory={loadHistory}
+        loadHistoryDetail={loadHistoryDetail}
+      />,
+    );
+
+    const failedRow = await screen.findByRole("button", { name: /view req-failed details/i });
+    const successRow = await screen.findByRole("button", { name: /view req-success details/i });
+
+    fireEvent.click(failedRow); // older request (seq 1)
+    fireEvent.click(successRow); // newer request (seq 2)
+    expect(resolvers).toHaveLength(2);
+
+    // The newer request answers first and must own the selection.
+    await act(async () => {
+      resolvers[1]({ ...durableEvents[0] } as never);
+    });
+    const detail = await screen.findByRole("region", { name: /request detail/i });
+    expect(within(detail).getByText("account-a")).toBeInTheDocument();
+
+    // The slower earlier response must not overwrite the newer selection.
+    await act(async () => {
+      resolvers[0]({ ...durableEvents[1] } as never);
+    });
+    const settled = screen.getByRole("region", { name: /request detail/i });
+    expect(within(settled).getByText("account-a")).toBeInTheDocument();
+    expect(within(settled).queryByText("account-b")).not.toBeInTheDocument();
+  });
+
+  it("keeps proxy rows mounted when a new line arrives via stable keys", () => {
+    const older = [
+      {
+        kind: "proxy",
+        timestamp: 1_788_192_100,
+        event: "boot",
+        message: "gateway booted",
+        "request-id": "rid-1",
+      },
+      {
+        kind: "proxy",
+        timestamp: 1_788_192_200,
+        event: "failover",
+        message: "account-a failed over",
+      },
+    ];
+    const { rerender } = render(<DurableLogs records={older as never} />);
+    fireEvent.click(screen.getByRole("tab", { name: /proxy logs/i }));
+
+    const idRow = screen.getByText("gateway booted").closest("article");
+    const fallbackRow = screen.getByText("account-a failed over").closest("article");
+
+    rerender(
+      <DurableLogs
+        records={
+          [
+            ...older,
+            { kind: "proxy", timestamp: 1_788_192_300, event: "boot", message: "newest line" },
+          ] as never
+        }
+      />,
+    );
+
+    expect(screen.getByText("newest line")).toBeInTheDocument();
+    expect(screen.getByText("gateway booted").closest("article")).toBe(idRow);
+    expect(screen.getByText("account-a failed over").closest("article")).toBe(fallbackRow);
+  });
 });
 
 describe("DurableLogs stale response ordering", () => {

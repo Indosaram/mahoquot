@@ -38,6 +38,8 @@ test("R09-R11 committed connection, provider fallback, and quota mode", async ({
     if (path === "/v0/management/routing/strategy") return route.fulfill({ json: { strategy: "fill-first" } });
     if (path === "/v0/management/request-retry") return route.fulfill({ json: { "request-retry": 2 } });
     if (path === "/v0/management/logging-to-file") return route.fulfill({ json: { "logging-to-file": true } });
+    if (path === "/v0/management/codex-fast-mode") return route.fulfill({ json: { "codex-fast-mode": false } });
+    if (path === "/v0/management/proxy-providers") return route.fulfill({ json: { "proxy-providers": {} } });
     return route.fulfill({ status: 404, body: `Not available in connection fixture: ${path}` });
   });
   await page.goto("/");

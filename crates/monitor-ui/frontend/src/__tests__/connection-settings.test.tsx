@@ -142,10 +142,12 @@ describe("connection settings robustness", () => {
     await waitFor(() => expect(scalarReads.length).toBeGreaterThanOrEqual(1));
 
     const savesBefore = saveCount;
+    // Capture before the save: with the hook preloading scalars at mount, the
+    // save-triggered re-read can land before the post-save line would run.
+    const readsBeforeSave = scalarReads.length;
     const save = screen.getByRole("button", { name: "Save proxy settings" });
     fireEvent.click(save);
     await waitFor(() => expect(saveCount).toBeGreaterThan(savesBefore));
-    const readsAfterSave = scalarReads.length;
-    await waitFor(() => expect(scalarReads.length).toBeGreaterThan(readsAfterSave));
+    await waitFor(() => expect(scalarReads.length).toBeGreaterThan(readsBeforeSave));
   });
 });

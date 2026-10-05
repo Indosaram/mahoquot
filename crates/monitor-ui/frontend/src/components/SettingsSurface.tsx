@@ -9,7 +9,8 @@ import {
   Settings2,
   TerminalSquare,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useSettingsScalarsStatus } from "../hooks/useConnectionSettings";
 import type { HistoryStatsQuery } from "../lib/api";
 import { UNAVAILABLE_LABEL, nonCachedInputTokens } from "../lib/cache-usage";
 import { cn } from "../lib/cn";
@@ -35,10 +36,11 @@ import type {
   ProxyProvidersMap,
   ScopedApiKey,
 } from "../lib/schemas";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { SharedKeysCard } from "./SharedKeysCard";
 import { TunnelCard } from "./TunnelCard";
+import { OverlayLayer } from "./layout";
 import { Badge, Button, Card, Field, Input } from "./ui";
-import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 
 function ModelPriceEstimate({ value }: { readonly value: number | null }) {
   return value === null ? (
@@ -238,6 +240,32 @@ export function SettingsSurface({
   const [clearCount, setClearCount] = useState<number | null>(null);
   const [historyBusy, setHistoryBusy] = useState<"" | "csv" | "json" | "clear">("");
   const [historyActionError, setHistoryActionError] = useState("");
+  const [activeSection, setActiveSection] = useState("settings-gateway");
+  // H1: Save and the scalar fields stay gated until the hook's six-scalar read
+  // succeeds; the status is exposed by the hook itself (no App.tsx wiring).
+  const scalarsStatus = useSettingsScalarsStatus();
+  const scalarsLoaded = scalarsStatus === "loaded";
+  const clearDialogRef = useRef<HTMLDialogElement>(null);
+
+  // M6: mount-only dialog focus management, mirroring WarmupDialog — capture
+  // the trigger for focus restore, move focus in, and handle Escape once.
+  useEffect(() => {
+    if (!confirmClear) return;
+    const previous = document.activeElement;
+    clearDialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setConfirmClear(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, [confirmClear]);
 
   useEffect(() => setDraftPrices(modelPrices), [modelPrices]);
 
@@ -314,825 +342,950 @@ export function SettingsSurface({
     );
   };
 
+  const jumpTargets = [
+    { id: "settings-gateway", label: "Gateway & Connection" },
+    { id: "settings-proxy", label: "Proxy & Routing" },
+    ...(agentsSlot ? [{ id: "settings-agents", label: "Agents & Tools" }] : []),
+    ...(totpVaultSlot ? [{ id: "settings-security", label: "Security & 2FA Vault" }] : []),
+    { id: "settings-storage", label: "Storage & Appearance" },
+  ];
+  const jumpSignature = jumpTargets.map((target) => target.id).join("|");
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const sections = jumpSignature
+      .split("|")
+      .map((id) => document.getElementById(id))
+      .filter((section): section is HTMLElement => section !== null);
+    if (sections.length === 0) return;
+    const sync = () => {
+      const line = window.innerHeight * 0.35;
+      let current = sections[0];
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= line) current = section;
+      }
+      setActiveSection(current.id);
+    };
+    sync();
+    const observer = new IntersectionObserver(sync, { threshold: [0, 0.01] });
+    for (const section of sections) observer.observe(section);
+    return () => observer.disconnect();
+  }, [jumpSignature]);
+
   return (
     <div className="settings">
-      <section className="settings-section" aria-label="Gateway and runtime">
-        <header className="settings-section-head">
-          <span className="kicker">CORE RUNTIME</span>
-          <h2>Gateway & Connection</h2>
-          <p>Local inference proxy lifecycle, address binding, and access credentials.</p>
-        </header>
-        <div className="settings-section-cards">
-          <Card className="gateway-process-card">
-            <div>
-              <h2>Gateway process</h2>
-              <p>Starts automatically with Mahoquot. Stop or restart it explicitly here.</p>
-            </div>
-            <div className="gateway-process-action">
-              <Badge tone={gatewayLifecycle === "running" ? "ok" : "neutral"}>
-                {gatewayLifecycle === "running" ? "Running" : "Stopped"}
-              </Badge>
-              <Button disabled={blocks(pending, "gateway")} onClick={() => void onToggleGateway()}>
-                {pending === "gateway:lifecycle"
-                  ? "Working…"
-                  : gatewayLifecycle === "running"
-                    ? "Stop gateway"
-                    : "Start gateway"}
-              </Button>
-            </div>
-          </Card>
-          <Card className="settings-card">
-            <header className="settings-card-head">
-              <div className={`connection-orb ${loadState}`}>
-                <Network size={18} />
-              </div>
-              <div>
-                <h2>Connection & access</h2>
-                <p>{baseUrl || "Same-origin gateway"}</p>
-              </div>
-            </header>
-            <div className="connection-fields">
-              <Field
-                label="Gateway URL"
-                hint="Blank uses the current origin. Desktop defaults to http://127.0.0.1:18801."
+      <nav className="settings-jump" aria-label="Settings sections">
+        <span className="settings-jump-title">On this page</span>
+        <ul className="settings-jump-list">
+          {jumpTargets.map((target) => (
+            <li key={target.id}>
+              <button
+                type="button"
+                className={cn("settings-jump-link", activeSection === target.id && "active")}
+                aria-current={activeSection === target.id ? "location" : undefined}
+                onClick={() => {
+                  document.getElementById(target.id)?.scrollIntoView({ block: "start" });
+                }}
               >
-                <Input
-                  aria-label="Gateway URL"
-                  aria-invalid={gatewayUrlError !== null && gatewayUrlError !== undefined}
-                  value={baseUrl}
-                  placeholder="http://127.0.0.1:18801"
-                  onChange={(event) => onBaseUrlChange(event.target.value)}
-                />
-                {gatewayUrlError ? <small className="field-error">{gatewayUrlError}</small> : null}
-              </Field>
-              <Field
-                label="API key"
-                hint="Proxy access, telemetry, credentials, logs, and configuration."
-              >
-                <div className="secret-input-row">
-                  <Input
-                    aria-label="API key"
-                    type="password"
-                    value={relayKey}
-                    onChange={(event) => onRelayKeyChange(event.target.value)}
-                    onBlur={onRelayKeyBlur}
-                  />
-                  <Button aria-label="Copy API key" disabled={!relayKey} onClick={onCopyRelayKey}>
-                    <Copy size={14} /> Copy
-                  </Button>
-                </div>
-                {secretStoreError ? (
-                  <div role="alert" className="field-error">
-                    {secretStoreError.message}{" "}
-                    <button type="button" onClick={onRetrySecretStore}>
-                      {secretStoreError.action === "retry"
-                        ? "Retry secure storage"
-                        : "Re-enter key"}
-                    </button>
-                  </div>
-                ) : null}
-              </Field>
-            </div>
-            <div className="connection-actions">
-              <span>Connection changes apply to this console immediately.</span>
-              <Button onClick={onSaveConnection}>Save & reconnect</Button>
-            </div>
-          </Card>
-          <Card className="settings-card">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <Settings2 size={17} />
-              </div>
+                {target.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <div className="settings-body">
+        <section
+          id="settings-gateway"
+          className="settings-section"
+          aria-label="Gateway and runtime"
+        >
+          <header className="settings-section-head">
+            <span className="kicker">CORE RUNTIME</span>
+            <h2>Gateway & Connection</h2>
+            <p>Local inference proxy lifecycle, address binding, and access credentials.</p>
+          </header>
+          <div className="settings-section-cards">
+            <Card className="gateway-process-card">
               <div>
-                <h2>Desktop integration</h2>
-                <p>Native login startup and observed-state notifications.</p>
+                <h2>Gateway process</h2>
+                <p>Starts automatically with Mahoquot. Stop or restart it explicitly here.</p>
               </div>
-              <Badge tone={nativeSettings?.notifications === "available" ? "ok" : "warn"}>
-                {nativeSettings?.notifications === "available"
-                  ? "Notifications ready"
-                  : nativeSettings?.notifications === "permission_denied"
-                    ? "Permission denied"
-                    : "Service unavailable"}
-              </Badge>
-            </header>
-            <div className="proxy-settings-grid">
-              <label className="toggle-field">
-                <input
-                  aria-label="Start Mahoquot at login"
-                  type="checkbox"
-                  checked={nativeSettings?.login_start_enabled ?? false}
-                  disabled={nativeSettingsBusy}
-                  onChange={(event) => void onLoginStartChange(event.target.checked)}
-                />
-                <span>
-                  <strong>Start Mahoquot at login</strong>
-                  <small>
-                    Starts the owned gateway, tray, and compact notch while leaving the console
-                    hidden and unfocused.
-                  </small>
-                </span>
-              </label>
-              <div>
-                <strong>Native notifications</strong>
-                <p>
-                  Account isolation, all-account exhaustion, degraded history, update readiness or
-                  failure, and tunnel failure are observed by Rust without hidden-webview polling.
-                </p>
-                {nativeSettings?.action ? <p role="alert">{nativeSettings.action}</p> : null}
-                {nativeSettings?.notifications !== "available" ? (
-                  <Button
-                    disabled={nativeSettingsBusy}
-                    onClick={() => void onRequestNotificationPermission()}
-                  >
-                    {nativeSettingsBusy ? "Checking…" : "Enable notifications"}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </Card>
-          <Card className="settings-card">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <ArrowDownToLine size={17} />
-              </div>
-              <div>
-                <h2>Signed updates</h2>
-                <p>Desktop and bundled gateway update as one verified release unit.</p>
-              </div>
-              <Badge tone={updateStatus?.available ? "warn" : "neutral"}>
-                {updateStatus?.available ? updateStatus.version : "Current"}
-              </Badge>
-            </header>
-            <div className="settings-actions">
-              <Button disabled={updateBusy} onClick={onCheckUpdate}>
-                Check for updates
-              </Button>
-              {updateStatus?.available ? (
-                <Button disabled={updateBusy} onClick={onInstallUpdate}>
-                  Install signed update
-                </Button>
-              ) : null}
-            </div>
-          </Card>
-        </div>
-      </section>
-
-      <section className="settings-section" aria-label="Proxy and routing">
-        <header className="settings-section-head">
-          <span className="kicker">TRAFFIC & DISCOVERY</span>
-          <h2>Proxy & Routing</h2>
-          <p>Routing strategy, upstream catalogs, failover scheduling, and ingress tunnel.</p>
-        </header>
-        <div className="settings-section-cards">
-          <Card className="settings-card">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <Route size={17} />
-              </div>
-              <div>
-                <h2>Proxy behavior</h2>
-                <p>How requests route across accounts, retry, and log.</p>
-              </div>
-              <Badge tone="warn">Saved changes require restart</Badge>
-            </header>
-            <div className="proxy-settings-grid">
-              <Field
-                label="Routing strategy"
-                hint="Failover only before the first response byte; cooldowns follow provider direction."
-              >
-                <select
-                  className="input"
-                  aria-label="Routing strategy"
-                  value={routingStrategy}
-                  onChange={(event) => onRoutingStrategyChange(event.target.value)}
+              <div className="gateway-process-action">
+                <Badge tone={gatewayLifecycle === "running" ? "ok" : "neutral"}>
+                  {gatewayLifecycle === "running" ? "Running" : "Stopped"}
+                </Badge>
+                <Button
+                  disabled={blocks(pending, "gateway")}
+                  onClick={() => void onToggleGateway()}
                 >
-                  <option value="round-robin">Round robin</option>
-                  <option value="weighted-round-robin">Weighted round robin</option>
-                  <option value="fill-first">Fill first</option>
-                </select>
-              </Field>
-              <Field label="Request retry count" hint="Non-negative attempts before failure.">
-                <Input
-                  aria-label="Request retry count"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={requestRetry}
-                  onChange={(event) => onRequestRetryChange(event.target.value)}
-                />
-              </Field>
-              <Field label="Upstream proxy URL" hint="Leave blank to connect directly.">
-                <Input
-                  aria-label="Upstream proxy URL"
-                  value={proxyUrl}
-                  placeholder="http://127.0.0.1:7890"
-                  onChange={(event) => onProxyUrlChange(event.target.value)}
-                />
-              </Field>
-              <label className="toggle-field">
-                <input
-                  aria-label="Show remaining quota"
-                  type="checkbox"
-                  checked={showRemaining}
-                  onChange={(event) => onShowRemainingChange(event.target.checked)}
-                />
-                <span>
-                  <strong>Show remaining quota</strong>
-                  <small>Show how much quota is left instead of how much was used.</small>
-                </span>
-              </label>
-              <Field
-                label="Cline daily quota display"
-                hint="Which Cline free models show a (Daily limit) row. Choices come from the Cline model list and models this gateway has served."
-              >
-                {clineQuotaCandidates.length === 0 ? (
-                  <small>Loading Cline model list...</small>
-                ) : (
-                  clineQuotaCandidates.map(({ slug, label }) => (
-                    <label className="toggle-field" key={slug}>
-                      <input
-                        aria-label={`Show daily quota for ${label}`}
-                        type="checkbox"
-                        checked={clineQuotaDisplay.includes(slug)}
-                        onChange={(event) => {
-                          const next = event.target.checked
-                            ? [...clineQuotaDisplay, slug]
-                            : clineQuotaDisplay.filter((entry) => entry !== slug);
-                          onClineQuotaDisplayChange?.(next);
-                        }}
-                      />
-                      <span>
-                        <strong>{label}</strong>
-                      </span>
-                    </label>
-                  ))
-                )}
-              </Field>
-              <label className="toggle-field">
-                <input
-                  aria-label="Write logs to file"
-                  type="checkbox"
-                  checked={loggingToFile}
-                  onChange={(event) => onLoggingToFileChange(event.target.checked)}
-                />
-                <span>
-                  <strong>Write logs to file</strong>
-                  <small>Persist gateway diagnostics for the log viewer.</small>
-                </span>
-              </label>
-              <label className="toggle-field">
-                <input
-                  aria-label="ChatGPT fast mode"
-                  type="checkbox"
-                  checked={codexFastMode}
-                  onChange={(event) => onCodexFastModeChange(event.target.checked)}
-                />
-                <span>
-                  <strong>ChatGPT fast mode</strong>
-                  <small>
-                    Send priority service tier on every codex request, whatever tier the client
-                    asked for. Saved with the settings below.
-                  </small>
-                </span>
-              </label>
-            </div>
-            <div className="connection-actions">
-              <span>Saved values persist immediately.</span>
-              <Button
-                disabled={blocks(pending, "settings")}
-                onClick={() => void onSaveProxySettings()}
-              >
-                {pending === "settings:save" ? "Saving…" : "Save proxy settings"}
-              </Button>
-            </div>
-          </Card>
-          <Card className="settings-card" aria-label="Per-provider proxy routing">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <Network size={17} />
+                  {pending === "gateway:lifecycle"
+                    ? "Working…"
+                    : gatewayLifecycle === "running"
+                      ? "Stop gateway"
+                      : "Start gateway"}
+                </Button>
               </div>
-              <div>
-                <h2>Per-Provider Proxy Routing</h2>
-                <p>
-                  Route provider accounts through rotating or sticky upstream proxies (e.g.
-                  global-egress).
-                </p>
-              </div>
-            </header>
-            <div className="proxy-settings-grid">
-              {(() => {
-                const configuredProviders = Object.keys(proxyProviders);
-                const accountProviders = availableAccounts.map((a) => a.provider.toLowerCase());
-                const standardProviders = [
-                  "cline",
-                  "codex",
-                  "antigravity",
-                  "claude",
-                  "cursor",
-                  "kiro",
-                  "zcode",
-                ];
-                const allProviders = Array.from(
-                  new Set([...configuredProviders, ...accountProviders, ...standardProviders]),
-                ).sort();
-
-                return allProviders.map((provider) => {
-                  const policy = proxyProviders[provider] ?? {
-                    enabled: false,
-                    sticky: true,
-                    "ttl-secs": 0,
-                    url: "",
-                  };
-                  return (
-                    <div
-                      key={provider}
-                      style={{
-                        display: "grid",
-                        gap: "8px",
-                        padding: "12px",
-                        border: "1px solid var(--line)",
-                        borderRadius: "8px",
-                        background: "var(--panel-2)",
-                      }}
-                    >
-                      <label
-                        className="toggle-field"
-                        style={{
-                          minHeight: "auto",
-                          padding: "4px 0",
-                          border: "none",
-                          background: "transparent",
-                        }}
-                      >
-                        <input
-                          aria-label={`Enable proxy for ${provider}`}
-                          type="checkbox"
-                          checked={policy.enabled}
-                          onChange={(e) =>
-                            onUpdateProxyProviderPolicy?.(provider, { enabled: e.target.checked })
-                          }
-                        />
-                        <span>
-                          <strong style={{ textTransform: "capitalize" }}>{provider}</strong>
-                          <small>Enable upstream proxy for {provider} accounts</small>
-                        </span>
-                      </label>
-                      {policy.enabled ? (
-                        <div
-                          style={{
-                            display: "grid",
-                            gap: "8px",
-                            paddingLeft: "24px",
-                            paddingTop: "6px",
-                          }}
-                        >
-                          <label
-                            className="toggle-field"
-                            style={{
-                              minHeight: "auto",
-                              padding: "4px 0",
-                              border: "none",
-                              background: "transparent",
-                            }}
-                          >
-                            <input
-                              aria-label={`Sticky session for ${provider}`}
-                              type="checkbox"
-                              checked={policy.sticky}
-                              onChange={(e) =>
-                                onUpdateProxyProviderPolicy?.(provider, {
-                                  sticky: e.target.checked,
-                                })
-                              }
-                            />
-                            <span>
-                              <strong>Sticky session (per account)</strong>
-                              <small>
-                                Pin each account to a stable session IP (global-egress sess=)
-                              </small>
-                            </span>
-                          </label>
-                          <Field
-                            label="Session TTL (seconds)"
-                            hint="0 = pool default (10m in global-egress). Positive = rotate exit IP every N seconds."
-                          >
-                            <Input
-                              aria-label={`Session TTL for ${provider}`}
-                              type="number"
-                              min="0"
-                              step="60"
-                              value={String(policy["ttl-secs"] ?? 0)}
-                              onChange={(e) =>
-                                onUpdateProxyProviderPolicy?.(provider, {
-                                  "ttl-secs": Math.max(0, Number.parseInt(e.target.value, 10) || 0),
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field
-                            label="Proxy URL override"
-                            hint="Leave blank to use global upstream proxy URL above."
-                          >
-                            <Input
-                              aria-label={`Proxy URL override for ${provider}`}
-                              placeholder="http://127.0.0.1:3128"
-                              value={policy.url ?? ""}
-                              onChange={(e) =>
-                                onUpdateProxyProviderPolicy?.(provider, { url: e.target.value })
-                              }
-                            />
-                          </Field>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-            <div className="connection-actions">
-              <span>Per-provider proxies apply live without restarting the gateway.</span>
-              <Button
-                disabled={blocks(pending, "settings")}
-                onClick={() =>
-                  void (onSaveProviderProxySettings
-                    ? onSaveProviderProxySettings()
-                    : onSaveProxySettings())
-                }
-              >
-                {pending === "settings:save" ? "Saving…" : "Save provider proxy routing"}
-              </Button>
-            </div>
-          </Card>
-          {modelRegistryStatus || modelRegistryError ? (
-            <Card className="settings-card" aria-label="Model registry">
+            </Card>
+            <Card className="settings-card">
               <header className="settings-card-head">
-                <div className="settings-icon">
-                  <Route size={17} />
+                <div className={`connection-orb ${loadState}`}>
+                  <Network size={18} />
                 </div>
                 <div>
-                  <h2>Model registry</h2>
-                  <p>
-                    {modelRegistryStatus
-                      ? `Catalog v${modelRegistryStatus["catalog-version"]} · source ${modelRegistryStatus.source} · ${modelRegistryStatus["model-count"]} models`
-                      : "Active catalog and model resolution status."}
-                  </p>
+                  <h2>Connection & access</h2>
+                  <p>{baseUrl || "Same-origin gateway"}</p>
                 </div>
-                {modelRegistryStatus ? (
-                  <output
-                    className={cn(
-                      "badge",
-                      modelRegistryStatus.stale ||
-                        modelRegistryStatus["last-refresh"].outcome === "error"
-                        ? "badge-warn"
-                        : "badge-ok",
-                    )}
-                    aria-label={
-                      modelRegistryStatus.stale
-                        ? "Model catalog is stale"
-                        : modelRegistryStatus["last-refresh"].outcome === "error"
-                          ? "Model catalog refresh error"
-                          : "Model catalog is current"
-                    }
-                  >
-                    {modelRegistryStatus.stale
-                      ? "Catalog stale"
-                      : modelRegistryStatus["last-refresh"].outcome === "error"
-                        ? "Refresh error"
-                        : "Current"}
-                  </output>
-                ) : modelRegistryError ? (
-                  <output
-                    className="badge badge-warn"
-                    aria-label="Model catalog status unavailable"
-                  >
-                    Catalog error
-                  </output>
-                ) : null}
               </header>
-              {modelRegistryStatus?.["last-refresh"].outcome === "error" &&
-              modelRegistryStatus["last-refresh"]["rejection-reason"] ? (
-                <div className="state-panel warning" role="alert">
-                  Refresh failure: {modelRegistryStatus["last-refresh"]["rejection-reason"]}
-                </div>
-              ) : null}
-              {modelRegistryError ? (
-                <div className="state-panel warning" role="alert">
-                  {modelRegistryError}
-                </div>
-              ) : null}
-              {onRefreshModelRegistry ? (
-                <div className="settings-actions">
-                  <Button
-                    disabled={
-                      blocks(pending, "registry") || modelRegistryStatus?.["refresh-in-flight"]
-                    }
-                    onClick={() => void onRefreshModelRegistry()}
-                  >
-                    {pending === "registry:refresh" || modelRegistryStatus?.["refresh-in-flight"]
-                      ? "Refreshing…"
-                      : "Refresh catalog"}
-                  </Button>
-                </div>
-              ) : null}
-            </Card>
-          ) : null}
-          <Card className="settings-card" aria-label="Account scheduling">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <ListOrdered size={17} />
-              </div>
-              <div>
-                <h2>Account scheduling</h2>
-                <p>Gateway-owned rotation with a manual order override.</p>
-              </div>
-              {schedulerStatus ? (
-                <Badge
-                  tone={
-                    schedulerStatus.fail_open ? "warn" : schedulerStatus.enabled ? "ok" : "neutral"
-                  }
+              <div className="connection-fields">
+                <Field
+                  label="Gateway URL"
+                  hint="Blank uses the current origin. Desktop defaults to http://127.0.0.1:18801."
                 >
-                  {schedulerStatus.fail_open
-                    ? "Fail open"
-                    : schedulerStatus.enabled
-                      ? "Active"
-                      : "Off"}
-                </Badge>
-              ) : null}
-            </header>
-            {schedulerError ? (
-              <div className="state-panel warning">Scheduler unavailable: {schedulerError}</div>
-            ) : schedulerSettings && schedulerStatus ? (
-              <label className="toggle-field">
-                <input
-                  aria-label="Enable scheduler"
-                  type="checkbox"
-                  checked={schedulerSettings.enabled}
-                  disabled={schedulerPending}
-                  onChange={(event) =>
-                    void onSaveSchedulerSettings({ enabled: event.target.checked })
-                  }
-                />
-                <span>
-                  <strong>Enable scheduler</strong>
-                  <small>
-                    Ranks eligible quota by active reset time; default account priority follows the
-                    order set in the Accounts view.
-                  </small>
-                </span>
-              </label>
-            ) : null}
-            {!schedulerError && schedulerStatus ? (
-              schedulerStatus.order.length ? (
-                <div className="scheduler-order" aria-label="Scheduler order">
-                  {schedulerStatus.order.map((id, index) => {
-                    const account = schedulerStatus.accounts.find((item) => item.id === id);
-                    const label = schedulerAccountLabels[id] ?? id;
-                    return (
-                      <div className="scheduler-order-row" key={id}>
-                        <span className="scheduler-rank">{index + 1}</span>
-                        <div className="scheduler-order-name">
-                          <strong>{label}</strong>
-                          <small>{id}</small>
-                        </div>
-                        <span className="scheduler-remaining">
-                          {account === undefined ? (
-                            <small>Unavailable</small>
-                          ) : account.remaining_percent === null ? (
-                            <small>Quota unknown</small>
-                          ) : (
-                            `${account.remaining_percent}% remaining`
-                          )}
-                          {account?.parked ? <small>Parked</small> : null}
-                        </span>
-                        <div className="scheduler-order-actions">
-                          <Button
-                            aria-label={`Move ${label} up`}
-                            disabled={schedulerPending || index === 0}
-                            onClick={() => moveSchedulerEntry(index, -1)}
-                          >
-                            <ArrowUp size={13} />
-                          </Button>
-                          <Button
-                            aria-label={`Move ${label} down`}
-                            disabled={
-                              schedulerPending || index === schedulerStatus.order.length - 1
-                            }
-                            onClick={() => moveSchedulerEntry(index, 1)}
-                          >
-                            <ArrowDown size={13} />
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="state-panel">
-                  No accounts are currently ordered by the scheduler.
-                </div>
-              )
-            ) : null}
-          </Card>
-          <TunnelCard
-            status={tunnelStatus}
-            busy={tunnelBusy}
-            onDownload={onDownloadCloudflared}
-            onEnable={onEnableTunnel}
-            onDisable={onDisableTunnel}
-            onCopyUrl={onCopyTunnelUrl}
-          />
-          {onCreateScopedKey && onPatchScopedKey && onDeleteScopedKey ? (
-            <SharedKeysCard
-              scopedKeys={scopedKeys}
-              availableModels={availableModels}
-              availableAccounts={availableAccounts}
-              tunnelUrl={tunnelStatus.public_url}
-              baseUrl={baseUrl}
-              onCreateKey={onCreateScopedKey}
-              onPatchKey={onPatchScopedKey}
-              onDeleteKey={onDeleteScopedKey}
-              onRefresh={onRefreshScopedKeys}
-            />
-          ) : null}
-        </div>
-      </section>
-
-      {agentsSlot ? (
-        <section className="settings-section" aria-label="Developer tools">
-          <header className="settings-section-head">
-            <span className="kicker">DEVELOPER WORKSPACES</span>
-            <h2>Agents & Tools</h2>
-            <p>Local coding agent environment configuration and isolated Codex sessions.</p>
-          </header>
-          <div className="settings-section-cards">{agentsSlot}</div>
-        </section>
-      ) : null}
-
-      {totpVaultSlot ? (
-        <section className="settings-section" aria-label="Security and credentials">
-          <header className="settings-section-head">
-            <span className="kicker">KEYRING CREDENTIALS</span>
-            <h2>Security & 2FA Vault</h2>
-            <p>Encrypted local credential store for two-factor authentication codes.</p>
-          </header>
-          <div className="settings-section-cards">{totpVaultSlot}</div>
-        </section>
-      ) : null}
-
-      <section className="settings-section" aria-label="Storage and appearance">
-        <header className="settings-section-head">
-          <span className="kicker">DATA & PREFERENCES</span>
-          <h2>Storage & Appearance</h2>
-          <p>Durable request history records, model pricing ledger, and console appearance.</p>
-        </header>
-        <div className="settings-section-cards">
-          {historyHealth || draftPrices.length > 0 ? (
-            <Card className="settings-card" aria-label="History and pricing">
+                  <Input
+                    aria-label="Gateway URL"
+                    aria-invalid={gatewayUrlError !== null && gatewayUrlError !== undefined}
+                    value={baseUrl}
+                    placeholder="http://127.0.0.1:18801"
+                    onChange={(event) => onBaseUrlChange(event.target.value)}
+                  />
+                  {gatewayUrlError ? (
+                    <small className="field-error">{gatewayUrlError}</small>
+                  ) : null}
+                </Field>
+                <Field
+                  label="API key"
+                  hint="Proxy access, telemetry, credentials, logs, and configuration."
+                >
+                  <div className="secret-input-row">
+                    <Input
+                      aria-label="API key"
+                      type="password"
+                      value={relayKey}
+                      onChange={(event) => onRelayKeyChange(event.target.value)}
+                      onBlur={onRelayKeyBlur}
+                    />
+                    <Button aria-label="Copy API key" disabled={!relayKey} onClick={onCopyRelayKey}>
+                      <Copy size={14} /> Copy
+                    </Button>
+                  </div>
+                  {secretStoreError ? (
+                    <div role="alert" className="field-error">
+                      {secretStoreError.message}{" "}
+                      <button type="button" onClick={onRetrySecretStore}>
+                        {secretStoreError.action === "retry"
+                          ? "Retry secure storage"
+                          : "Re-enter key"}
+                      </button>
+                    </div>
+                  ) : null}
+                </Field>
+              </div>
+              <div className="connection-actions">
+                <span>Connection changes apply to this console immediately.</span>
+                <Button onClick={onSaveConnection}>Save & reconnect</Button>
+              </div>
+            </Card>
+            <Card className="settings-card">
               <header className="settings-card-head">
                 <div className="settings-icon">
                   <Settings2 size={17} />
                 </div>
                 <div>
-                  <h2>History and pricing</h2>
-                  <p>Durable request history health, retention policy, and current model prices.</p>
+                  <h2>Desktop integration</h2>
+                  <p>Native login startup and observed-state notifications.</p>
                 </div>
-                {historyHealth ? (
-                  <Badge tone={historyHealth.degraded ? "warn" : "ok"}>
-                    {historyHealth.degraded ? "Degraded" : "Ready"}
+                <Badge tone={nativeSettings?.notifications === "available" ? "ok" : "warn"}>
+                  {nativeSettings?.notifications === "available"
+                    ? "Notifications ready"
+                    : nativeSettings?.notifications === "permission_denied"
+                      ? "Permission denied"
+                      : "Service unavailable"}
+                </Badge>
+              </header>
+              <div className="proxy-settings-grid">
+                <label className="toggle-field">
+                  <input
+                    aria-label="Start Mahoquot at login"
+                    type="checkbox"
+                    checked={nativeSettings?.login_start_enabled ?? false}
+                    disabled={nativeSettingsBusy}
+                    onChange={(event) => void onLoginStartChange(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Start Mahoquot at login</strong>
+                    <small>
+                      Starts the owned gateway, tray, and compact notch while leaving the console
+                      hidden and unfocused.
+                    </small>
+                  </span>
+                </label>
+                <div>
+                  <strong>Native notifications</strong>
+                  <p>
+                    Account isolation, all-account exhaustion, degraded history, update readiness or
+                    failure, and tunnel failure are observed by Rust without hidden-webview polling.
+                  </p>
+                  {nativeSettings?.action ? <p role="alert">{nativeSettings.action}</p> : null}
+                  {nativeSettings?.notifications !== "available" ? (
+                    <Button
+                      disabled={nativeSettingsBusy}
+                      onClick={() => void onRequestNotificationPermission()}
+                    >
+                      {nativeSettingsBusy ? "Checking…" : "Enable notifications"}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </Card>
+            <Card className="settings-card">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <ArrowDownToLine size={17} />
+                </div>
+                <div>
+                  <h2>Signed updates</h2>
+                  <p>Desktop and bundled gateway update as one verified release unit.</p>
+                </div>
+                <Badge tone={updateStatus?.available ? "warn" : "neutral"}>
+                  {updateStatus?.available ? updateStatus.version : "Current"}
+                </Badge>
+              </header>
+              <div className="settings-actions">
+                <Button disabled={updateBusy} onClick={onCheckUpdate}>
+                  Check for updates
+                </Button>
+                {updateStatus?.available ? (
+                  <Button disabled={updateBusy} onClick={onInstallUpdate}>
+                    Install signed update
+                  </Button>
+                ) : null}
+              </div>
+            </Card>
+          </div>
+        </section>
+
+        <section id="settings-proxy" className="settings-section" aria-label="Proxy and routing">
+          <header className="settings-section-head">
+            <span className="kicker">TRAFFIC & DISCOVERY</span>
+            <h2>Proxy & Routing</h2>
+            <p>Routing strategy, upstream catalogs, failover scheduling, and ingress tunnel.</p>
+          </header>
+          <div className="settings-section-cards">
+            <Card className="settings-card">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <Route size={17} />
+                </div>
+                <div>
+                  <h2>Proxy behavior</h2>
+                  <p>How requests route across accounts, retry, and log.</p>
+                </div>
+                <Badge tone="warn">Saved changes require restart</Badge>
+              </header>
+              <div className="proxy-settings-grid">
+                <Field
+                  label="Routing strategy"
+                  hint="Failover only before the first response byte; cooldowns follow provider direction."
+                >
+                  <select
+                    className="input"
+                    aria-label="Routing strategy"
+                    value={routingStrategy}
+                    disabled={!scalarsLoaded}
+                    onChange={(event) => onRoutingStrategyChange(event.target.value)}
+                  >
+                    <option value="round-robin">Round robin</option>
+                    <option value="weighted-round-robin">Weighted round robin</option>
+                    <option value="fill-first">Fill first</option>
+                  </select>
+                </Field>
+                <Field label="Request retry count" hint="Non-negative attempts before failure.">
+                  <Input
+                    aria-label="Request retry count"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={requestRetry}
+                    disabled={!scalarsLoaded}
+                    onChange={(event) => onRequestRetryChange(event.target.value)}
+                  />
+                </Field>
+                <Field label="Upstream proxy URL" hint="Leave blank to connect directly.">
+                  <Input
+                    aria-label="Upstream proxy URL"
+                    value={proxyUrl}
+                    placeholder="http://127.0.0.1:7890"
+                    disabled={!scalarsLoaded}
+                    onChange={(event) => onProxyUrlChange(event.target.value)}
+                  />
+                </Field>
+                <label className="toggle-field">
+                  <input
+                    aria-label="Show remaining quota"
+                    type="checkbox"
+                    checked={showRemaining}
+                    onChange={(event) => onShowRemainingChange(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Show remaining quota</strong>
+                    <small>Show how much quota is left instead of how much was used.</small>
+                  </span>
+                </label>
+                <Field
+                  label="Cline daily quota display"
+                  hint="Which Cline free models show a (Daily limit) row. Choices come from the Cline model list and models this gateway has served."
+                >
+                  {clineQuotaCandidates.length === 0 ? (
+                    <small>Loading Cline model list...</small>
+                  ) : (
+                    clineQuotaCandidates.map(({ slug, label }) => (
+                      <label className="toggle-field" key={slug}>
+                        <input
+                          aria-label={`Show daily quota for ${label}`}
+                          type="checkbox"
+                          checked={clineQuotaDisplay.includes(slug)}
+                          onChange={(event) => {
+                            const next = event.target.checked
+                              ? [...clineQuotaDisplay, slug]
+                              : clineQuotaDisplay.filter((entry) => entry !== slug);
+                            onClineQuotaDisplayChange?.(next);
+                          }}
+                        />
+                        <span>
+                          <strong>{label}</strong>
+                        </span>
+                      </label>
+                    ))
+                  )}
+                </Field>
+                <label className="toggle-field">
+                  <input
+                    aria-label="Write logs to file"
+                    type="checkbox"
+                    checked={loggingToFile}
+                    disabled={!scalarsLoaded}
+                    onChange={(event) => onLoggingToFileChange(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Write logs to file</strong>
+                    <small>Persist gateway diagnostics for the log viewer.</small>
+                  </span>
+                </label>
+                <label className="toggle-field">
+                  <input
+                    aria-label="ChatGPT fast mode"
+                    type="checkbox"
+                    checked={codexFastMode}
+                    disabled={!scalarsLoaded}
+                    onChange={(event) => onCodexFastModeChange(event.target.checked)}
+                  />
+                  <span>
+                    <strong>ChatGPT fast mode</strong>
+                    <small>
+                      Send priority service tier on every codex request, whatever tier the client
+                      asked for. Saved with the settings below.
+                    </small>
+                  </span>
+                </label>
+              </div>
+              <div className="connection-actions">
+                <span role={scalarsStatus === "error" ? "alert" : undefined}>
+                  {scalarsLoaded
+                    ? "Saved values persist immediately."
+                    : scalarsStatus === "error"
+                      ? "Gateway settings failed to load; saving is blocked so defaults cannot overwrite live values."
+                      : "Waiting for gateway settings to load before saving."}
+                </span>
+                <Button
+                  disabled={blocks(pending, "settings") || !scalarsLoaded}
+                  onClick={() => void onSaveProxySettings()}
+                >
+                  {pending === "settings:save" ? "Saving…" : "Save proxy settings"}
+                </Button>
+              </div>
+            </Card>
+            <Card className="settings-card" aria-label="Per-provider proxy routing">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <Network size={17} />
+                </div>
+                <div>
+                  <h2>Per-Provider Proxy Routing</h2>
+                  <p>
+                    Route provider accounts through rotating or sticky upstream proxies (e.g.
+                    global-egress).
+                  </p>
+                </div>
+              </header>
+              <div className="proxy-settings-grid">
+                {(() => {
+                  const configuredProviders = Object.keys(proxyProviders);
+                  const accountProviders = availableAccounts.map((a) => a.provider.toLowerCase());
+                  const standardProviders = [
+                    "cline",
+                    "codex",
+                    "antigravity",
+                    "claude",
+                    "cursor",
+                    "kiro",
+                    "zcode",
+                  ];
+                  const allProviders = Array.from(
+                    new Set([...configuredProviders, ...accountProviders, ...standardProviders]),
+                  ).sort();
+
+                  return allProviders.map((provider) => {
+                    const policy = proxyProviders[provider] ?? {
+                      enabled: false,
+                      sticky: true,
+                      "ttl-secs": 0,
+                      url: "",
+                    };
+                    return (
+                      <div
+                        key={provider}
+                        style={{
+                          display: "grid",
+                          gap: "8px",
+                          padding: "12px",
+                          border: "1px solid var(--line)",
+                          borderRadius: "8px",
+                          background: "var(--panel-2)",
+                        }}
+                      >
+                        <label
+                          className="toggle-field"
+                          style={{
+                            minHeight: "auto",
+                            padding: "4px 0",
+                            border: "none",
+                            background: "transparent",
+                          }}
+                        >
+                          <input
+                            aria-label={`Enable proxy for ${provider}`}
+                            type="checkbox"
+                            checked={policy.enabled}
+                            onChange={(e) =>
+                              onUpdateProxyProviderPolicy?.(provider, { enabled: e.target.checked })
+                            }
+                          />
+                          <span>
+                            <strong style={{ textTransform: "capitalize" }}>{provider}</strong>
+                            <small>Enable upstream proxy for {provider} accounts</small>
+                          </span>
+                        </label>
+                        {policy.enabled ? (
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: "8px",
+                              paddingLeft: "24px",
+                              paddingTop: "6px",
+                            }}
+                          >
+                            <label
+                              className="toggle-field"
+                              style={{
+                                minHeight: "auto",
+                                padding: "4px 0",
+                                border: "none",
+                                background: "transparent",
+                              }}
+                            >
+                              <input
+                                aria-label={`Sticky session for ${provider}`}
+                                type="checkbox"
+                                checked={policy.sticky}
+                                onChange={(e) =>
+                                  onUpdateProxyProviderPolicy?.(provider, {
+                                    sticky: e.target.checked,
+                                  })
+                                }
+                              />
+                              <span>
+                                <strong>Sticky session (per account)</strong>
+                                <small>
+                                  Pin each account to a stable session IP (global-egress sess=)
+                                </small>
+                              </span>
+                            </label>
+                            <Field
+                              label="Session TTL (seconds)"
+                              hint="0 = pool default (10m in global-egress). Positive = rotate exit IP every N seconds."
+                            >
+                              <Input
+                                aria-label={`Session TTL for ${provider}`}
+                                type="number"
+                                min="0"
+                                step="60"
+                                value={String(policy["ttl-secs"] ?? 0)}
+                                onChange={(e) =>
+                                  onUpdateProxyProviderPolicy?.(provider, {
+                                    "ttl-secs": Math.max(
+                                      0,
+                                      Number.parseInt(e.target.value, 10) || 0,
+                                    ),
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field
+                              label="Proxy URL override"
+                              hint="Leave blank to use global upstream proxy URL above."
+                            >
+                              <Input
+                                aria-label={`Proxy URL override for ${provider}`}
+                                placeholder="http://127.0.0.1:3128"
+                                value={policy.url ?? ""}
+                                onChange={(e) =>
+                                  onUpdateProxyProviderPolicy?.(provider, { url: e.target.value })
+                                }
+                              />
+                            </Field>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              <div className="connection-actions">
+                <span>Per-provider proxies apply live without restarting the gateway.</span>
+                <Button
+                  disabled={blocks(pending, "settings") || !scalarsLoaded}
+                  onClick={() =>
+                    void (onSaveProviderProxySettings
+                      ? onSaveProviderProxySettings()
+                      : onSaveProxySettings())
+                  }
+                >
+                  {pending === "settings:save" ? "Saving…" : "Save provider proxy routing"}
+                </Button>
+              </div>
+            </Card>
+            {modelRegistryStatus || modelRegistryError ? (
+              <Card className="settings-card" aria-label="Model registry">
+                <header className="settings-card-head">
+                  <div className="settings-icon">
+                    <Route size={17} />
+                  </div>
+                  <div>
+                    <h2>Model registry</h2>
+                    <p>
+                      {modelRegistryStatus
+                        ? `Catalog v${modelRegistryStatus["catalog-version"]} · source ${modelRegistryStatus.source} · ${modelRegistryStatus["model-count"]} models`
+                        : "Active catalog and model resolution status."}
+                    </p>
+                  </div>
+                  {modelRegistryStatus ? (
+                    <output
+                      className={cn(
+                        "badge",
+                        modelRegistryStatus.stale ||
+                          modelRegistryStatus["last-refresh"].outcome === "error"
+                          ? "badge-warn"
+                          : "badge-ok",
+                      )}
+                      aria-label={
+                        modelRegistryStatus.stale
+                          ? "Model catalog is stale"
+                          : modelRegistryStatus["last-refresh"].outcome === "error"
+                            ? "Model catalog refresh error"
+                            : "Model catalog is current"
+                      }
+                    >
+                      {modelRegistryStatus.stale
+                        ? "Catalog stale"
+                        : modelRegistryStatus["last-refresh"].outcome === "error"
+                          ? "Refresh error"
+                          : "Current"}
+                    </output>
+                  ) : modelRegistryError ? (
+                    <output
+                      className="badge badge-warn"
+                      aria-label="Model catalog status unavailable"
+                    >
+                      Catalog error
+                    </output>
+                  ) : null}
+                </header>
+                {modelRegistryStatus?.["last-refresh"].outcome === "error" &&
+                modelRegistryStatus["last-refresh"]["rejection-reason"] ? (
+                  <div className="state-panel warning" role="alert">
+                    Refresh failure: {modelRegistryStatus["last-refresh"]["rejection-reason"]}
+                  </div>
+                ) : null}
+                {modelRegistryError ? (
+                  <div className="state-panel warning" role="alert">
+                    {modelRegistryError}
+                  </div>
+                ) : null}
+                {onRefreshModelRegistry ? (
+                  <div className="settings-actions">
+                    <Button
+                      disabled={
+                        blocks(pending, "registry") || modelRegistryStatus?.["refresh-in-flight"]
+                      }
+                      onClick={() => void onRefreshModelRegistry()}
+                    >
+                      {pending === "registry:refresh" || modelRegistryStatus?.["refresh-in-flight"]
+                        ? "Refreshing…"
+                        : "Refresh catalog"}
+                    </Button>
+                  </div>
+                ) : null}
+              </Card>
+            ) : null}
+            <Card className="settings-card" aria-label="Account scheduling">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <ListOrdered size={17} />
+                </div>
+                <div>
+                  <h2>Account scheduling</h2>
+                  <p>Gateway-owned rotation with a manual order override.</p>
+                </div>
+                {schedulerStatus ? (
+                  <Badge
+                    tone={
+                      schedulerStatus.fail_open
+                        ? "warn"
+                        : schedulerStatus.enabled
+                          ? "ok"
+                          : "neutral"
+                    }
+                  >
+                    {schedulerStatus.fail_open
+                      ? "Fail open"
+                      : schedulerStatus.enabled
+                        ? "Active"
+                        : "Off"}
                   </Badge>
                 ) : null}
               </header>
-              {historyHealth ? (
-                <p>
-                  {historyHealth["written-events"].toLocaleString("en-US")} events written · queue{" "}
-                  {historyHealth["queue-depth"]}/{historyHealth["queue-capacity"]}
-                  {historyHealth["dropped-events"] > 0
-                    ? ` · ${historyHealth["dropped-events"]} dropped`
-                    : ""}
-                </p>
+              {schedulerError ? (
+                <div className="state-panel warning">Scheduler unavailable: {schedulerError}</div>
+              ) : schedulerSettings && schedulerStatus ? (
+                <label className="toggle-field">
+                  <input
+                    aria-label="Enable scheduler"
+                    type="checkbox"
+                    checked={schedulerSettings.enabled}
+                    disabled={schedulerPending}
+                    onChange={(event) =>
+                      void onSaveSchedulerSettings({ enabled: event.target.checked })
+                    }
+                  />
+                  <span>
+                    <strong>Enable scheduler</strong>
+                    <small>
+                      Ranks eligible quota by active reset time; default account priority follows
+                      the order set in the Accounts view.
+                    </small>
+                  </span>
+                </label>
               ) : null}
-              {historyError ? <div className="state-panel warning">{historyError}</div> : null}
-              {historyActionError ? (
-                <div className="state-panel warning">{historyActionError}</div>
-              ) : null}
-              <div className="settings-actions">
-                <Button
-                  disabled={!exportHistory || historyBusy !== ""}
-                  onClick={() => void runHistoryExport("csv")}
-                >
-                  {historyBusy === "csv" ? "Exporting…" : "Export CSV"}
-                </Button>
-                <Button
-                  disabled={!exportHistory || historyBusy !== ""}
-                  onClick={() => void runHistoryExport("json")}
-                >
-                  {historyBusy === "json" ? "Exporting…" : "Export JSON"}
-                </Button>
-                <Button
-                  className="danger"
-                  disabled={!clearHistory || historyBusy !== ""}
-                  onClick={() => void requestClearConfirmation()}
-                >
-                  {historyBusy === "clear" ? "Clearing…" : "Clear history"}
-                </Button>
-              </div>
-              {draftPrices.map((price, index) => (
-                <div className="model-price-row" key={price.model}>
-                  <Field
-                    label={`Input price for ${price.model}`}
-                    hint="USD per million input tokens."
-                  >
-                    <Input
-                      aria-label={`Input price for ${price.model}`}
-                      type="number"
-                      step="0.01"
-                      value={price["input-per-million"]}
-                      onChange={(event) => {
-                        const next = [...draftPrices];
-                        next[index] = { ...price, "input-per-million": Number(event.target.value) };
-                        setDraftPrices(next);
-                      }}
-                    />
-                  </Field>
-                  <div className="model-price-estimate">
-                    <small>Estimated spend</small>
-                    <ModelPriceEstimate value={estimatedSpend(price)} />
+              {!schedulerError && schedulerStatus ? (
+                schedulerStatus.order.length ? (
+                  <div className="scheduler-order" aria-label="Scheduler order">
+                    {schedulerStatus.order.map((id, index) => {
+                      const account = schedulerStatus.accounts.find((item) => item.id === id);
+                      const label = schedulerAccountLabels[id] ?? id;
+                      return (
+                        <div className="scheduler-order-row" key={id}>
+                          <span className="scheduler-rank">{index + 1}</span>
+                          <div className="scheduler-order-name">
+                            <strong>{label}</strong>
+                            <small>{id}</small>
+                          </div>
+                          <span className="scheduler-remaining">
+                            {account === undefined ? (
+                              <small>Unavailable</small>
+                            ) : account.remaining_percent === null ? (
+                              <small>Quota unknown</small>
+                            ) : (
+                              `${account.remaining_percent}% remaining`
+                            )}
+                            {account?.parked ? <small>Parked</small> : null}
+                          </span>
+                          <div className="scheduler-order-actions">
+                            <Button
+                              aria-label={`Move ${label} up`}
+                              disabled={schedulerPending || index === 0}
+                              onClick={() => moveSchedulerEntry(index, -1)}
+                            >
+                              <ArrowUp size={13} />
+                            </Button>
+                            <Button
+                              aria-label={`Move ${label} down`}
+                              disabled={
+                                schedulerPending || index === schedulerStatus.order.length - 1
+                              }
+                              onClick={() => moveSchedulerEntry(index, 1)}
+                            >
+                              <ArrowDown size={13} />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <Button onClick={() => void onSaveModelPrice(price)}>
-                    Save {price.model} price
+                ) : (
+                  <div className="state-panel">
+                    No accounts are currently ordered by the scheduler.
+                  </div>
+                )
+              ) : null}
+            </Card>
+            <TunnelCard
+              status={tunnelStatus}
+              busy={tunnelBusy}
+              onDownload={onDownloadCloudflared}
+              onEnable={onEnableTunnel}
+              onDisable={onDisableTunnel}
+              onCopyUrl={onCopyTunnelUrl}
+            />
+            {onCreateScopedKey && onPatchScopedKey && onDeleteScopedKey ? (
+              <SharedKeysCard
+                scopedKeys={scopedKeys}
+                availableModels={availableModels}
+                availableAccounts={availableAccounts}
+                tunnelUrl={tunnelStatus.public_url}
+                baseUrl={baseUrl}
+                onCreateKey={onCreateScopedKey}
+                onPatchKey={onPatchScopedKey}
+                onDeleteKey={onDeleteScopedKey}
+                onRefresh={onRefreshScopedKeys}
+              />
+            ) : null}
+          </div>
+        </section>
+
+        {agentsSlot ? (
+          <section id="settings-agents" className="settings-section" aria-label="Developer tools">
+            <header className="settings-section-head">
+              <span className="kicker">DEVELOPER WORKSPACES</span>
+              <h2>Agents & Tools</h2>
+              <p>Local coding agent environment configuration and isolated Codex sessions.</p>
+            </header>
+            <div className="settings-section-cards">{agentsSlot}</div>
+          </section>
+        ) : null}
+
+        {totpVaultSlot ? (
+          <section
+            id="settings-security"
+            className="settings-section"
+            aria-label="Security and credentials"
+          >
+            <header className="settings-section-head">
+              <span className="kicker">KEYRING CREDENTIALS</span>
+              <h2>Security & 2FA Vault</h2>
+              <p>Encrypted local credential store for two-factor authentication codes.</p>
+            </header>
+            <div className="settings-section-cards">{totpVaultSlot}</div>
+          </section>
+        ) : null}
+
+        <section
+          id="settings-storage"
+          className="settings-section"
+          aria-label="Storage and appearance"
+        >
+          <header className="settings-section-head">
+            <span className="kicker">DATA & PREFERENCES</span>
+            <h2>Storage & Appearance</h2>
+            <p>Durable request history records, model pricing ledger, and console appearance.</p>
+          </header>
+          <div className="settings-section-cards">
+            {historyHealth || draftPrices.length > 0 ? (
+              <Card className="settings-card" aria-label="History and pricing">
+                <header className="settings-card-head">
+                  <div className="settings-icon">
+                    <Settings2 size={17} />
+                  </div>
+                  <div>
+                    <h2>History and pricing</h2>
+                    <p>
+                      Durable request history health, retention policy, and current model prices.
+                    </p>
+                  </div>
+                  {historyHealth ? (
+                    <Badge tone={historyHealth.degraded ? "warn" : "ok"}>
+                      {historyHealth.degraded ? "Degraded" : "Ready"}
+                    </Badge>
+                  ) : null}
+                </header>
+                {historyHealth ? (
+                  <p>
+                    {historyHealth["written-events"].toLocaleString("en-US")} events written · queue{" "}
+                    {historyHealth["queue-depth"]}/{historyHealth["queue-capacity"]}
+                    {historyHealth["dropped-events"] > 0
+                      ? ` · ${historyHealth["dropped-events"]} dropped`
+                      : ""}
+                  </p>
+                ) : null}
+                {historyError ? <div className="state-panel warning">{historyError}</div> : null}
+                {historyActionError ? (
+                  <div className="state-panel warning">{historyActionError}</div>
+                ) : null}
+                <div className="settings-actions">
+                  <Button
+                    disabled={!exportHistory || historyBusy !== ""}
+                    onClick={() => void runHistoryExport("csv")}
+                  >
+                    {historyBusy === "csv" ? "Exporting…" : "Export CSV"}
+                  </Button>
+                  <Button
+                    disabled={!exportHistory || historyBusy !== ""}
+                    onClick={() => void runHistoryExport("json")}
+                  >
+                    {historyBusy === "json" ? "Exporting…" : "Export JSON"}
+                  </Button>
+                  <Button
+                    className="danger"
+                    disabled={!clearHistory || historyBusy !== ""}
+                    onClick={() => void requestClearConfirmation()}
+                  >
+                    {historyBusy === "clear" ? "Clearing…" : "Clear history"}
                   </Button>
                 </div>
-              ))}
+                {draftPrices.map((price, index) => (
+                  <div className="model-price-row" key={price.model}>
+                    <Field
+                      label={`Input price for ${price.model}`}
+                      hint="USD per million input tokens."
+                    >
+                      <Input
+                        aria-label={`Input price for ${price.model}`}
+                        type="number"
+                        step="0.01"
+                        value={price["input-per-million"]}
+                        onChange={(event) => {
+                          const next = [...draftPrices];
+                          next[index] = {
+                            ...price,
+                            "input-per-million": Number(event.target.value),
+                          };
+                          setDraftPrices(next);
+                        }}
+                      />
+                    </Field>
+                    <div className="model-price-estimate">
+                      <small>Estimated spend</small>
+                      <ModelPriceEstimate value={estimatedSpend(price)} />
+                    </div>
+                    <Button onClick={() => void onSaveModelPrice(price)}>
+                      Save {price.model} price
+                    </Button>
+                  </div>
+                ))}
+              </Card>
+            ) : null}
+            <Card className="settings-card">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <Settings2 size={17} />
+                </div>
+                <div>
+                  <h2>Appearance</h2>
+                  <p>Choose the color scheme for this console.</p>
+                </div>
+              </header>
+              <Field label="Theme" hint="Saved on this device and applied to the entire console.">
+                <select
+                  aria-label="Theme"
+                  className="input"
+                  value={theme}
+                  onChange={(event) => {
+                    const nextTheme = event.currentTarget.value === "light" ? "light" : "dark";
+                    onThemeChange(nextTheme);
+                  }}
+                >
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                </select>
+              </Field>
             </Card>
-          ) : null}
-          <Card className="settings-card">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <Settings2 size={17} />
+            <Card className="settings-card">
+              <header className="settings-card-head">
+                <div className="settings-icon">
+                  <TerminalSquare size={17} />
+                </div>
+                <div>
+                  <h2>Advanced YAML</h2>
+                  <p>
+                    Edit the complete persisted gateway configuration. The document may contain
+                    secrets.
+                  </p>
+                </div>
+              </header>
+              <div className="settings-actions">
+                <Button
+                  disabled={blocks(pending, "config")}
+                  onClick={() => void onOpenConfigEditor()}
+                >
+                  {pending === "config:load" ? "Loading…" : "Open YAML editor"}
+                </Button>
               </div>
-              <div>
-                <h2>Appearance</h2>
-                <p>Choose the color scheme for this console.</p>
-              </div>
-            </header>
-            <Field label="Theme" hint="Saved on this device and applied to the entire console.">
-              <select
-                aria-label="Theme"
-                className="input"
-                value={theme}
-                onChange={(event) => {
-                  const nextTheme = event.currentTarget.value === "light" ? "light" : "dark";
-                  onThemeChange(nextTheme);
-                }}
-              >
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-              </select>
-            </Field>
-          </Card>
-          <Card className="settings-card">
-            <header className="settings-card-head">
-              <div className="settings-icon">
-                <TerminalSquare size={17} />
-              </div>
-              <div>
-                <h2>Advanced YAML</h2>
-                <p>
-                  Edit the complete persisted gateway configuration. The document may contain
-                  secrets.
-                </p>
-              </div>
-            </header>
-            <div className="settings-actions">
-              <Button
-                disabled={blocks(pending, "config")}
-                onClick={() => void onOpenConfigEditor()}
-              >
-                {pending === "config:load" ? "Loading…" : "Open YAML editor"}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      </section>
+            </Card>
+          </div>
+        </section>
 
-      {confirmClear ? (
-        <div className="history-dialog-backdrop">
-          <dialog open className="history-dialog" aria-label="Clear request history">
-            <h2>Clear request history</h2>
-            <p>
-              This permanently removes {clearCount?.toLocaleString("en-US") ?? "all stored"} request
-              records and their dashboard history. It cannot be undone. Proxy file logs are not
-              affected.
-            </p>
-            <div className="settings-actions">
-              <Button onClick={() => setConfirmClear(false)}>Cancel</Button>
-              <Button className="danger" onClick={() => void confirmHistoryClear()}>
-                Clear history
-              </Button>
-            </div>
-          </dialog>
-        </div>
-      ) : null}
+        {confirmClear ? (
+          <OverlayLayer
+            className="history-dialog-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setConfirmClear(false);
+            }}
+          >
+            <dialog
+              ref={clearDialogRef}
+              open
+              className="history-dialog"
+              aria-modal="true"
+              aria-label="Clear request history"
+              onKeyDown={(event) => {
+                if (event.key === "Tab") {
+                  const items = Array.from(
+                    event.currentTarget.querySelectorAll<HTMLElement>(
+                      'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
+                    ),
+                  );
+                  const first = items[0];
+                  const last = items.at(-1);
+                  if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last?.focus();
+                  } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first?.focus();
+                  }
+                }
+              }}
+            >
+              <h2>Clear request history</h2>
+              <p>
+                This permanently removes {clearCount?.toLocaleString("en-US") ?? "all stored"}{" "}
+                request records and their dashboard history. It cannot be undone. Proxy file logs
+                are not affected.
+              </p>
+              {historyActionError ? (
+                <div role="alert" className="field-error">
+                  {historyActionError}
+                </div>
+              ) : null}
+              <div className="settings-actions">
+                <Button onClick={() => setConfirmClear(false)}>Cancel</Button>
+                <Button className="danger" onClick={() => void confirmHistoryClear()}>
+                  Clear history
+                </Button>
+              </div>
+            </dialog>
+          </OverlayLayer>
+        ) : null}
+      </div>
     </div>
   );
 }

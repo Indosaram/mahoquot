@@ -163,9 +163,6 @@ describe("Logs and Settings characterization pin", () => {
       fireEvent.click(logsNav);
 
       expect(await screen.findByRole("heading", { name: "Gateway logs" })).toBeInTheDocument();
-      expect(
-        screen.getByText(/Parsed request outcomes, not a reconstructed request history\./),
-      ).toBeInTheDocument();
       // These mocks leave file logging off, so the memory-tail hint must show.
       expect(
         screen.getByText(/File logging is off — showing the in-memory tail\./),

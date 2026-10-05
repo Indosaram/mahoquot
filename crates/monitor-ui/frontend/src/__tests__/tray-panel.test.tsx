@@ -156,4 +156,112 @@ describe("TrayPanel", () => {
     fireEvent.click(screen.getByRole("tab", { name: "All" }));
     expect(screen.getByText("codex@example.test")).toBeTruthy();
   });
+
+  it("reports a pending first fetch instead of an empty inventory", () => {
+    render(
+      <TrayPanel
+        accounts={[]}
+        proxyUrl="http://127.0.0.1:18801"
+        online={false}
+        fetchedAgoSecs={null}
+        refreshing={false}
+        showRemaining={false}
+        onRefresh={vi.fn()}
+        onOpenConsole={vi.fn()}
+        onQuit={vi.fn()}
+        onStartGateway={vi.fn()}
+        onStopGateway={vi.fn()}
+        gatewayLifecycle="running"
+      />,
+    );
+
+    const empty = screen.getByTestId("tray-empty");
+    expect(empty.getAttribute("data-empty-state")).toBe("loading");
+    expect(empty.textContent).not.toMatch(/No accounts or credentials found/);
+  });
+
+  it("reports an unreachable gateway instead of an empty inventory", () => {
+    render(
+      <TrayPanel
+        accounts={[]}
+        proxyUrl="http://127.0.0.1:18801"
+        online={false}
+        fetchedAgoSecs={12}
+        refreshing={false}
+        showRemaining={false}
+        onRefresh={vi.fn()}
+        onOpenConsole={vi.fn()}
+        onQuit={vi.fn()}
+        onStartGateway={vi.fn()}
+        onStopGateway={vi.fn()}
+        gatewayLifecycle="running"
+      />,
+    );
+
+    const empty = screen.getByTestId("tray-empty");
+    expect(empty.getAttribute("data-empty-state")).toBe("error");
+    expect(empty.textContent).not.toMatch(/No accounts or credentials found/);
+  });
+
+  it("claims an empty inventory only after a completed online fetch", () => {
+    render(
+      <TrayPanel
+        accounts={[]}
+        proxyUrl="http://127.0.0.1:18801"
+        online
+        fetchedAgoSecs={12}
+        refreshing={false}
+        showRemaining={false}
+        onRefresh={vi.fn()}
+        onOpenConsole={vi.fn()}
+        onQuit={vi.fn()}
+        onStartGateway={vi.fn()}
+        onStopGateway={vi.fn()}
+        gatewayLifecycle="running"
+      />,
+    );
+
+    const empty = screen.getByTestId("tray-empty");
+    expect(empty.getAttribute("data-empty-state")).toBe("empty");
+    expect(empty.textContent).toMatch(/No accounts or credentials found/);
+  });
+
+  it("labels every card refresh button as the global refresh it runs", () => {
+    const onRefresh = vi.fn();
+    render(
+      <TrayPanel
+        accounts={[
+          account({
+            provider: "codex",
+            email: "codex@example.test",
+            plan: "plus",
+            primary: 46,
+          }),
+          account({
+            provider: "claude",
+            email: "claude@example.test",
+            plan: null,
+            primary: 20,
+          }),
+        ]}
+        proxyUrl="http://127.0.0.1:18801"
+        online
+        fetchedAgoSecs={3}
+        refreshing={false}
+        showRemaining={false}
+        onRefresh={onRefresh}
+        onOpenConsole={vi.fn()}
+        onQuit={vi.fn()}
+        onStartGateway={vi.fn()}
+        onStopGateway={vi.fn()}
+        gatewayLifecycle="running"
+      />,
+    );
+
+    const refreshButtons = screen.getAllByLabelText("Refresh all accounts");
+    expect(refreshButtons).toHaveLength(2);
+    expect(screen.queryByLabelText("Refresh codex@example.test")).toBeNull();
+    fireEvent.click(refreshButtons[0]);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
 });

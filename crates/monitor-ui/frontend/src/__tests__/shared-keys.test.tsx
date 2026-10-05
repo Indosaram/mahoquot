@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SharedKeysCard } from "../components/SharedKeysCard";
@@ -399,5 +399,78 @@ describe("SharedKeysCard", () => {
     expect(alert).toHaveTextContent("gateway refused: key was revoked");
     expect(within(drawer).getByPlaceholderText("Name")).toHaveValue("Renamed Partner");
     expect(within(drawer).getByRole("button", { name: "Save changes" })).toBeEnabled();
+  });
+
+  it("dedupes account providers and model owned_by to canonical provider options", () => {
+    renderCard({
+      availableAccounts: [
+        { id: "acc_z", provider: "zcode" },
+        { id: "acc_c", provider: "claude" },
+        { id: "acc_o", provider: "codex" },
+        { id: "acc_a", provider: "antigravity" },
+      ],
+      availableModels: [
+        { id: "glm-5.3-flash", object: "model", created: 1, owned_by: "z-ai" },
+        { id: "claude-sonnet", object: "model", created: 1, owned_by: "anthropic" },
+        { id: "gpt-5", object: "model", created: 1, owned_by: "openai" },
+        { id: "gemini-4", object: "model", created: 1, owned_by: "google" },
+      ],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Issue key/i }));
+
+    expect(screen.queryByRole("checkbox", { name: "z-ai" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "anthropic" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "openai" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "google" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "zcode" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "claude" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "codex" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "antigravity" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "zcode" }));
+    expect(screen.getByText("acc_z · zcode")).toBeInTheDocument();
+    expect(screen.getByText("glm-5.3-flash")).toBeInTheDocument();
+    expect(screen.queryByText("claude-sonnet")).toBeNull();
+  });
+
+  it("prunes hidden account and model selections when the provider filter narrows", async () => {
+    const props = renderCard({
+      onCreateKey: vi.fn(async () => ({ api_key: "raw_test", key: activeKey })),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Issue key/i }));
+    fireEvent.change(screen.getByPlaceholderText("Name"), {
+      target: { value: "Scope prune key" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "acc_1 · claude" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "acc_2 · codex" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "claude-3-5-sonnet" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "gpt-4o" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "claude" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+    await waitFor(() => expect(props.onCreateKey).toHaveBeenCalledTimes(1));
+    expect(props.onCreateKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowed_providers: ["claude"],
+        allowed_accounts: ["acc_1"],
+        allowed_models: ["claude-3-5-sonnet"],
+      }),
+    );
+  });
+
+  it("shows same-origin guidance instead of a relative Base URL when baseUrl is blank", async () => {
+    renderCard({
+      baseUrl: "",
+      onCreateKey: vi.fn(async () => ({ api_key: "raw_local", key: activeKey })),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Issue key/i }));
+    fireEvent.change(screen.getByPlaceholderText("Name"), { target: { value: "local" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+
+    expect(await screen.findByText(/Same-origin only/)).toBeInTheDocument();
+    expect(screen.queryByText("/v1")).toBeNull();
   });
 });

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -356,7 +358,10 @@ describe("Devin App console onboarding and lifecycle UI", () => {
       },
     });
 
-    // Token must NOT be stored in localStorage
+    // Token must NOT be stored in localStorage. Seed a probe key and assert the
+    // store is enumerable so the scan below can never be a zero-iteration no-op.
+    localStorage.setItem("devin-onboarding-scan-probe", "present");
+    expect(localStorage.length).toBeGreaterThan(0);
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i) || "";
       expect(localStorage.getItem(key)).not.toContain("devin-secret-token$abc123");
@@ -835,6 +840,8 @@ describe("Devin App console onboarding and lifecycle UI", () => {
       const serialized = JSON.stringify(call);
       expect(serialized).not.toContain(secretToken);
     }
+    localStorage.setItem("devin-onboarding-scan-probe", "present");
+    expect(localStorage.length).toBeGreaterThan(0);
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i) || "";
       expect(localStorage.getItem(key)).not.toContain(secretToken);
@@ -916,5 +923,65 @@ describe("Devin App console onboarding and lifecycle UI", () => {
       expect(badge).not.toHaveTextContent("devin/glm-5-2");
       expect(badge).not.toHaveTextContent("devin/swe-1-7");
     }
+  });
+});
+
+describe("secret-leak localStorage scan integrity (p9 F1)", () => {
+  it("enumerates stored keys so the leak loop cannot be vacuous", () => {
+    localStorage.clear();
+    localStorage.setItem("devin-onboarding-scan-probe", "present");
+    expect(localStorage.length).toBe(1);
+    expect(localStorage.key(0)).toBe("devin-onboarding-scan-probe");
+    expect(localStorage.key(1)).toBeNull();
+    localStorage.removeItem("devin-onboarding-scan-probe");
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("catches a planted secret token instead of looping zero times", () => {
+    const plantedToken = "devin-secret-token$planted-leak";
+    localStorage.setItem("devin-onboarding-leak-probe", plantedToken);
+    expect(localStorage.length).toBeGreaterThan(0);
+
+    const scan = () => {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || "";
+        expect(localStorage.getItem(key)).not.toContain(plantedToken);
+      }
+    };
+
+    // A mock without length/key() would skip the loop entirely and let this pass.
+    expect(scan).toThrow();
+    localStorage.removeItem("devin-onboarding-leak-probe");
+  });
+});
+
+describe("globals.css theme token integrity (p9 F2-F5)", () => {
+  const readGlobalsCss = async () => readFile(resolve(__dirname, "../styles/globals.css"), "utf8");
+
+  it("notch tooltip label and account chip use theme tokens, not dark-only colors (F2)", async () => {
+    const css = await readGlobalsCss();
+    expect(css).toMatch(/\.notch-tooltip-label\s*\{[^}]*color:\s*var\(--fg-dim\)/);
+    expect(css).not.toContain("#d1d2d8");
+    expect(css).toMatch(/\.notch-tooltip-account\s*\{[^}]*background:\s*var\(--panel-2\)/);
+    expect(css).not.toContain("rgba(35, 35, 44");
+  });
+
+  it("tray TOTP text over hard-coded dark surfaces is forced light (F3)", async () => {
+    const css = await readGlobalsCss();
+    expect(css).toMatch(/\.tray-totp-access \.totp-quick-head > span[^{}]*\{[^}]*color:\s*#f5f5f7/);
+    expect(css).toMatch(/\.tray-totp-access \.totp-code-button\s*\{[^}]*color:\s*#f5f5f7/);
+    expect(css).toMatch(/\.tray-totp-access \.totp-quick-head\s*[,{][^}]*color:\s*#f5f5f7/);
+  });
+
+  it("notch tooltip count uses a defined token instead of undefined --muted (F4)", async () => {
+    const css = await readGlobalsCss();
+    expect(css).not.toContain("var(--muted)");
+    expect(css).toMatch(/\.notch-tooltip-count\s*\{[^}]*color:\s*var\(--fg-dim\)/);
+  });
+
+  it("agent preview fills with a defined token instead of undefined --surface-2 (F5)", async () => {
+    const css = await readGlobalsCss();
+    expect(css).not.toContain("var(--surface-2)");
+    expect(css).toMatch(/\.agent-preview\s*\{[^}]*background:\s*var\(--panel-2\)/);
   });
 });

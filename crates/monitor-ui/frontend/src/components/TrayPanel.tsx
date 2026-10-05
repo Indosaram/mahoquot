@@ -19,6 +19,7 @@ import { TotpQuickAccess } from "./TotpVaultSurface";
 
 interface TrayTile {
   readonly label: string;
+  readonly group: string | null;
   readonly usedPercent: number | null;
   readonly resetIn: string | null;
 }
@@ -41,6 +42,7 @@ const tilesOf = (
 ): readonly TrayTile[] =>
   quotaRows(account, clineQuotaDisplay).map((row) => ({
     label: row.name,
+    group: row.group,
     usedPercent: row.usedPercent,
     resetIn: row.resetSeconds !== null ? formatResetTime(row.resetSeconds) : null,
   }));
@@ -53,6 +55,21 @@ const formatUsd = (value: number): string =>
 
 const providerChipLabel = (provider: string): string =>
   provider.charAt(0).toUpperCase() + provider.slice(1);
+
+type TrayEmptyState = "filtered" | "loading" | "error" | "empty";
+
+/**
+ * The empty slot must not claim absence before a fetch settles: `filtered`
+ * keeps the historic copy, while an unfetched (loading) or unreachable
+ * (error) gateway reports its own state. "No accounts or credentials found."
+ * is reserved for `empty` — a completed fetch against an online gateway.
+ */
+const TRAY_EMPTY_COPY: Readonly<Record<TrayEmptyState, string>> = {
+  filtered: "No accounts match this filter.",
+  loading: "Loading accounts…",
+  error: "Gateway unavailable — accounts could not be loaded.",
+  empty: "No accounts or credentials found.",
+};
 
 interface TrayPanelProps {
   readonly accounts: readonly NormalizedAccount[];
@@ -110,6 +127,14 @@ export const TrayPanel = ({
     account,
     tiles: tilesOf(account, clineQuotaDisplay),
   }));
+
+  const emptyState: TrayEmptyState = accounts.length
+    ? "filtered"
+    : !online
+      ? fetchedAgoSecs === null && gatewayLifecycle === "running"
+        ? "loading"
+        : "error"
+      : "empty";
 
   return (
     <div className="tray-shell" data-mahoquot-surface="tray">
@@ -194,7 +219,7 @@ export const TrayPanel = ({
               <button
                 type="button"
                 className="tray-icon-button"
-                aria-label={`Refresh ${account.email || account.label}`}
+                aria-label="Refresh all accounts"
                 onClick={onRefresh}
               >
                 <RefreshCw size={12} className={refreshing ? "tray-spin" : undefined} />
@@ -230,11 +255,13 @@ export const TrayPanel = ({
               </div>
             ) : null}
             <div className="tray-tiles">
-              {tiles.map((tile) => {
+              {tiles.map((tile, index) => {
                 const raw = quotaDisplay(tile.usedPercent, showRemaining);
                 const display = raw === null ? null : Math.round(raw);
+                const startsGroup = tile.group !== null && tile.group !== tiles[index - 1]?.group;
                 return (
-                  <div className="tray-tile" key={tile.label}>
+                  <div className="tray-tile" key={`${index}-${tile.label}`}>
+                    {startsGroup ? <div className="tray-tile-group">{tile.group}</div> : null}
                     <div className="tray-tile-row">
                       <span className="tray-tile-name">{tile.label}</span>
                       {tile.resetIn && <span className="tray-tile-reset">{tile.resetIn}</span>}
@@ -261,10 +288,8 @@ export const TrayPanel = ({
           </article>
         ))}
         {!cards.length && (
-          <div className="tray-empty" data-testid="tray-empty">
-            {accounts.length
-              ? "No accounts match this filter."
-              : "No accounts or credentials found."}
+          <div className="tray-empty" data-testid="tray-empty" data-empty-state={emptyState}>
+            {TRAY_EMPTY_COPY[emptyState]}
           </div>
         )}
       </div>

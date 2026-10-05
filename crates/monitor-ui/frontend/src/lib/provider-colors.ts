@@ -1,9 +1,11 @@
 import { normalizeToQuotioProviderId } from "./provider-catalog";
 
 /**
- * The one provider accent table. Every surface that tints by provider —
- * overview mix bars, notch dials, tray chips — reads it through
- * `providerColor` so a hue can never drift between console and notch.
+ * The provider accent table for surfaces outside the Overview analytics
+ * charts — notch dials, tray chips. The Overview mix and the activity chart
+ * read the dither palette through `dimensionColor`/`dimensionDitherColor` so
+ * the two agree beside each other (F-M3); every table here stays static so a
+ * hue can never drift between console and notch.
  */
 export const providerColors: Readonly<Record<string, string>> = {
   codex: "#10A37F",

@@ -1,10 +1,11 @@
 import type { DitherColor } from "@/components/dither-kit/palette";
 import { OTHER_KEY, type OverviewDimension } from "./overview-analytics";
 import { normalizeToQuotioProviderId } from "./provider-catalog";
-import { providerColor } from "./provider-colors";
 
 const DITHER_PALETTE: readonly DitherColor[] = ["green", "blue", "purple", "pink", "orange", "red"];
 
+// Hex mirror of the paint palette (`dither-kit/palette.ts` PALETTE.*.fill), so
+// a swatch and a painted series of the same seed can never disagree.
 const PALETTE_CSS: Readonly<Record<DitherColor, string>> = {
   green: "#28d26e",
   blue: "#358ff3",
@@ -12,7 +13,7 @@ const PALETTE_CSS: Readonly<Record<DitherColor, string>> = {
   pink: "#f05abe",
   orange: "#ff9632",
   red: "#f04646",
-  grey: "#71717a",
+  grey: "#5c5c64", // PALETTE.grey.fill [92,92,100]; was #71717a, which the chart never paints
 };
 
 const PROVIDER_DITHER_MAP: Readonly<Record<string, DitherColor>> = {
@@ -58,17 +59,15 @@ export const dimensionDitherColor = (
   return DITHER_PALETTE[hashString(key) % DITHER_PALETTE.length];
 };
 
+/**
+ * CSS accent for a breakdown row — one source for every dimension: the same
+ * dither seed the activity chart assigns (`dimensionDitherColor`), resolved to
+ * its hex. Provider rows used to fall through to `providerColor`, so the mix
+ * bar and the chart beside it painted one key in two hues (F-M3); both now
+ * read the same seed table, Other included.
+ */
 export const dimensionColor = (
   dimension: OverviewDimension,
   key: string,
   provider: string,
-): string => {
-  if (key === OTHER_KEY || provider === "other" || provider === OTHER_KEY) {
-    return "#71717A";
-  }
-  if (dimension === "provider") {
-    return providerColor(provider || key);
-  }
-  const dither = dimensionDitherColor(dimension, key, provider);
-  return PALETTE_CSS[dither];
-};
+): string => PALETTE_CSS[dimensionDitherColor(dimension, key, provider)];

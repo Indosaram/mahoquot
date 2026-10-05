@@ -234,8 +234,15 @@ const parseStored = (raw: string): readonly TotpEntry[] => {
   });
 };
 
+export const TOTP_VAULT_NOT_LOADED_MESSAGE =
+  "TOTP vault has not been loaded. Retry loading before making changes.";
+
 export class TotpVault {
   private current: readonly TotpEntry[] = [];
+  /** Set only by a successful load; a failed (or never-run) load keeps it poisoned so
+   * commit() refuses to overwrite stored data it has never read. */
+  private loaded = false;
+  private loadGeneration = 0;
   private readonly now: () => number;
   private readonly createId: () => string;
 
@@ -252,8 +259,19 @@ export class TotpVault {
   }
 
   async load(): Promise<readonly TotpEntry[]> {
-    const raw = await this.store.read();
-    this.current = raw ? parseStored(raw) : [];
+    const generation = ++this.loadGeneration;
+    try {
+      const raw = await this.store.read();
+      const entries = raw ? parseStored(raw) : [];
+      if (generation === this.loadGeneration) {
+        this.current = entries;
+        this.loaded = true;
+      }
+    } catch (reason) {
+      // A load failure poisons the vault: never write over state that was not read.
+      if (generation === this.loadGeneration) this.loaded = false;
+      throw reason;
+    }
     return this.entries;
   }
 
@@ -308,6 +326,7 @@ export class TotpVault {
   }
 
   private async commit(entries: readonly TotpEntry[]): Promise<void> {
+    if (!this.loaded) throw new Error(TOTP_VAULT_NOT_LOADED_MESSAGE);
     if (entries.length) await this.store.write(JSON.stringify({ version: 1, entries }));
     else await this.store.delete();
     this.current = entries;

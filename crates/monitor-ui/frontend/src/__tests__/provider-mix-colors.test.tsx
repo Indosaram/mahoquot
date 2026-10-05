@@ -42,9 +42,11 @@ describe("provider mix colors", () => {
     const segments = document.querySelectorAll<HTMLIFrameElement>(".provider-mix-track i");
     expect(segments.length).toBe(3);
     const backgrounds = [...segments].map((segment) => segment.style.background);
-    expect(backgrounds[0]).toBe("rgb(16, 163, 127)");
-    expect(backgrounds[1]).toBe("rgb(49, 134, 255)");
-    expect(backgrounds[2]).toBe("rgb(217, 119, 87)");
+    // F-M3: the mix reads the same dither palette the chart paints
+    // (codex → green, antigravity → blue, claude → orange), not providerColor.
+    expect(backgrounds[0]).toBe("rgb(40, 210, 110)");
+    expect(backgrounds[1]).toBe("rgb(53, 143, 243)");
+    expect(backgrounds[2]).toBe("rgb(255, 150, 50)");
   });
 
   it("colors the label dots to match their segments", () => {
@@ -53,6 +55,27 @@ describe("provider mix colors", () => {
       ".provider-mix-labels .provider-mix-dot",
     );
     expect(dots.length).toBe(3);
-    expect(dots[0].style.background).toBe("rgb(16, 163, 127)");
+    expect(dots[0].style.background).toBe("rgb(40, 210, 110)");
+  });
+
+  it("gives the mix and the chart legend the same hue for the same provider (F-M3)", () => {
+    render(
+      <OverviewDashboard stats={stats} samples={samples} dimension="provider" metric="requests" />,
+    );
+    const segments = [...document.querySelectorAll<HTMLElement>(".provider-mix-track i")];
+    const swatches = [
+      ...document.querySelectorAll<HTMLElement>(".overview-breakdown-chart ul li span:first-child"),
+    ];
+    expect(segments).toHaveLength(3);
+    expect(swatches).toHaveLength(3);
+
+    // Hex inline styles serialise as "rgb(r, g, b)"; seed fills as
+    // "rgba(r, g, b, 1)" — compare the r,g,b triple only.
+    const rgbOf = (el: HTMLElement): string =>
+      (el.style.background || el.style.backgroundColor).match(/\d+/g)?.slice(0, 3).join(",") ?? "";
+
+    for (let i = 0; i < segments.length; i++) {
+      expect(rgbOf(segments[i])).toBe(rgbOf(swatches[i]));
+    }
   });
 });

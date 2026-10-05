@@ -539,6 +539,10 @@ export const CreateScopedKeyResponseSchema = z.object({
 });
 export type CreateScopedKeyResponse = z.infer<typeof CreateScopedKeyResponseSchema>;
 
+export const PatchScopedKeyResponseSchema = z.object({
+  key: ScopedApiKeySchema,
+});
+
 export const parseScopedKeys = (data: unknown): readonly ScopedApiKey[] => {
   const parsed = ScopedKeysResponseSchema.safeParse(data);
   if (!parsed.success) {
