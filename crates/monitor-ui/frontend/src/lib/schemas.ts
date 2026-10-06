@@ -510,6 +510,46 @@ export const parseGatewayModels = (data: unknown): GatewayModelsResponse => {
   return parsed.data;
 };
 
+/**
+ * One catalog model with the providers that can serve it. `owned_by` is a
+ * vendor label, so it cannot answer "which of my providers serves this" — the
+ * provider list is what the exclusion keys are drawn from.
+ */
+export const RegistryModelEntrySchema = z.object({
+  id: z.string(),
+  owned_by: z.string().default(""),
+  providers: z.array(z.string()).default([]),
+});
+export type RegistryModelEntry = z.infer<typeof RegistryModelEntrySchema>;
+
+export const RegistryModelsResponseSchema = z.object({
+  models: z.array(RegistryModelEntrySchema).default([]),
+});
+export type RegistryModelsResponse = z.infer<typeof RegistryModelsResponseSchema>;
+
+export const parseRegistryModels = (data: unknown): RegistryModelsResponse => {
+  const parsed = RegistryModelsResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`Failed to parse registry models: ${parsed.error.message}`);
+  }
+  return parsed.data;
+};
+
+/**
+ * Provider id -> disabled model ids. The map is the gateway's own storage shape,
+ * so an id here is exactly what the exclusion rule matches against.
+ */
+export const ExcludedModelsSchema = z.record(z.string(), z.array(z.string()));
+export type ExcludedModels = z.infer<typeof ExcludedModelsSchema>;
+
+export const parseExcludedModels = (data: unknown): ExcludedModels => {
+  const parsed = ExcludedModelsSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`Failed to parse excluded models: ${parsed.error.message}`);
+  }
+  return parsed.data;
+};
+
 export const ScopedApiKeySchema = z.object({
   id: z.string().min(1),
   name: z.string(),

@@ -20,6 +20,8 @@ import { DurableLogs } from "./components/DurableLogs";
 import { NotchSurface } from "./components/NotchSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel } from "./components/ProviderGlyph";
+import { ProviderModelsPanel, withModelDisabled } from "./components/ProviderModelsPanel";
+import type { ExcludedModels, RegistryModelEntry } from "./lib/schemas";
 import { SettingsSurface } from "./components/SettingsSurface";
 import { ToastStack, useToasts } from "./components/Toasts";
 import { TotpVaultSurface } from "./components/TotpVaultSurface";
@@ -243,6 +245,12 @@ export default function App() {
   const [configSource, setConfigSource] = useState<"gateway" | "local">("gateway");
   const [configPath, setConfigPath] = useState("");
   const [gatewayFailure, setGatewayFailure] = useState<GatewayFailure | null>(null);
+  const [modelsProvider, setModelsProvider] = useState<string | null>(null);
+  const [registryModels, setRegistryModels] = useState<readonly RegistryModelEntry[]>([]);
+  const [excludedModels, setExcludedModels] = useState<ExcludedModels>({});
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
   const [scopedKeys, setScopedKeys] = useState<readonly ScopedApiKey[]>([]);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
   const [cliAgents, setCliAgents] = useState<CliAgentStatus[]>([]);
@@ -715,6 +723,47 @@ export default function App() {
       setPending("");
     }
   }, [clients, refresh, setNotice]);
+
+  const openProviderModels = useCallback(
+    async (provider: string) => {
+      setModelsProvider(provider);
+      setModelsLoading(true);
+      setModelsError(null);
+      try {
+        const [models, excluded] = await Promise.all([
+          clients.management.registryModels(),
+          clients.management.excludedModels(),
+        ]);
+        setRegistryModels(models);
+        setExcludedModels(excluded);
+      } catch (error) {
+        setModelsError(actionFailed(error));
+      } finally {
+        setModelsLoading(false);
+      }
+    },
+    [clients],
+  );
+
+  const toggleModelDisabled = useCallback(
+    async (modelId: string, disabled: boolean) => {
+      if (!modelsProvider) return;
+      const previous = excludedModels;
+      const next = withModelDisabled(previous, modelsProvider, modelId, disabled);
+      setExcludedModels(next);
+      setPendingModel(modelId);
+      try {
+        await clients.management.saveExcludedModels(next);
+        await refresh();
+      } catch (error) {
+        setExcludedModels(previous);
+        setNotice(actionFailed(error));
+      } finally {
+        setPendingModel(null);
+      }
+    },
+    [clients, excludedModels, modelsProvider, refresh, setNotice],
+  );
 
   const {
     proxyUrl,
@@ -2002,6 +2051,14 @@ export default function App() {
             onDropCredential={dropCredentialOn}
             onSetDragging={setDragging}
             onContextMenu={(event, account) => openMenu(event, accountMenuItems(account))}
+            onProviderContextMenu={(event, provider) =>
+              openMenu(event, [
+                {
+                  label: "Models…",
+                  run: () => void openProviderModels(provider),
+                },
+              ])
+            }
             credits={
               creditsReady
                 ? {
@@ -2794,6 +2851,19 @@ export default function App() {
         </OverlayLayer>
       ) : null}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {modelsProvider ? (
+        <ProviderModelsPanel
+          provider={modelsProvider}
+          providerLabel={providerLabel(modelsProvider)}
+          models={registryModels}
+          excluded={excludedModels}
+          loading={modelsLoading}
+          error={modelsError}
+          pendingModel={pendingModel}
+          onToggle={toggleModelDisabled}
+          onClose={() => setModelsProvider(null)}
+        />
+      ) : null}
       <ContextMenu menu={menu} onClose={closeMenu} />
     </AppShell>
   );

@@ -475,6 +475,7 @@ export interface AccountsSurfaceProps {
   readonly onDropCredential: (target: NormalizedAccount) => void | Promise<void>;
   readonly onSetDragging: (credentialName: string) => void;
   readonly onContextMenu: (event: MouseEvent, account: NormalizedAccount) => void;
+  readonly onProviderContextMenu?: (event: MouseEvent, provider: string) => void;
 }
 
 export const AccountsSurface = ({
@@ -504,6 +505,7 @@ export const AccountsSurface = ({
   onDropCredential,
   onSetDragging,
   onContextMenu,
+  onProviderContextMenu,
 }: AccountsSurfaceProps) => {
   const popupAccount =
     warmup?.selection?.type === "account"
@@ -527,7 +529,11 @@ export const AccountsSurface = ({
         {providers.map((item) => {
           const stats = providerTabStats.get(item) ?? { total: 0, healthy: 0 };
           return (
-            <label className="provider-tab" key={item}>
+            <label
+              className="provider-tab"
+              key={item}
+              onContextMenu={(event) => onProviderContextMenu?.(event, item)}
+            >
               <input
                 type="radio"
                 name="provider"

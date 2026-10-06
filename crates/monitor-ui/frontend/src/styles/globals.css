@@ -3530,6 +3530,73 @@ h2 {
   color: var(--fg-faint);
   margin-bottom: 12px;
 }
+.models-drawer-summary {
+  color: var(--fg-dim);
+}
+.models-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.models-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.models-empty {
+  color: var(--fg-dim);
+  padding: 18px 2px;
+}
+.models-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  max-height: 58vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.models-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.models-row:hover {
+  background: var(--bg);
+}
+.models-row input {
+  flex: none;
+  cursor: pointer;
+}
+.models-row-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12.5px;
+}
+.models-row-shared,
+.models-row-pending {
+  flex: none;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+.models-row-pending {
+  color: var(--fg-dim);
+}
 .provider-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

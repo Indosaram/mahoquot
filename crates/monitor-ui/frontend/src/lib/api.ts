@@ -52,7 +52,12 @@ import {
   parseLogRecordLine,
   parseLogs,
   parseModelRegistryStatus,
+  parseRegistryModels,
   parseScopedKeys,
+  parseExcludedModels,
+  ExcludedModelsSchema,
+  type ExcludedModels,
+  type RegistryModelEntry,
 } from "./schemas";
 
 const providerAuthStartSchema = z.object({
@@ -183,6 +188,11 @@ export interface GatewayClients {
     configYaml(): Promise<string>;
     saveConfigYaml(yaml: string): Promise<void>;
     usageRefresh(): Promise<void>;
+    /** Catalog models with the providers that can serve each one. */
+    registryModels(): Promise<readonly RegistryModelEntry[]>;
+    /** Provider id -> disabled model ids. */
+    excludedModels(): Promise<ExcludedModels>;
+    saveExcludedModels(excluded: ExcludedModels): Promise<void>;
     removeCredential(name: string): Promise<void>;
     setCredentialDisabled(name: string, disabled: boolean): Promise<void>;
     createZcodeCredential(email: string, apiKey: string): Promise<void>;
@@ -615,6 +625,26 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       },
       usageRefresh: async () => {
         await requestJson(`${base}/admin/usage/refresh`, authHeaders, { method: "POST" });
+      },
+      registryModels: async () =>
+        parseRegistryModels(
+          await requestJson(`${base}/v0/management/model-registry/models`, authHeaders),
+        ).models,
+      excludedModels: async () => {
+        const body = (await requestJson(
+          `${base}/v0/management/oauth-excluded-models`,
+          authHeaders,
+        )) as Record<string, unknown>;
+        return parseExcludedModels(body["oauth-excluded-models"] ?? {});
+      },
+      // The endpoint reads the bare map and falls back to an empty document for
+      // anything else, so a wrapped body would silently disable every model.
+      saveExcludedModels: async (excluded) => {
+        await requestJson(`${base}/v0/management/oauth-excluded-models`, authHeaders, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ExcludedModelsSchema.parse(excluded)),
+        });
       },
       codexCreditsOptIn: async () =>
         codexCreditsOptInListSchema.parse(
