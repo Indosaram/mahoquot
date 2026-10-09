@@ -10,6 +10,7 @@ site/node_modules/
 site/dist/
 site/test-results/
 site/playwright-report/
+/test-results/
 *.tsbuildinfo
 
 # agent/internal artifacts (keep only the route contract used by tests)
