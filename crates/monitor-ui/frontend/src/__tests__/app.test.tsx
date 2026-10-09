@@ -80,12 +80,43 @@ const clickAccountMenuItem = async (label: string, item: string | RegExp) => {
   fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 };
 
-/** Spending a banked reset dispatches immediately from the menu. */
+/** Spending a banked reset arms the card's inline confirmation, then dispatches. */
 const spendBankedReset = async (label: string) => {
   await clickAccountMenuItem(label, `Spend 1 banked reset for ${label}`);
+  fireEvent.click(
+    await screen.findByRole("button", { name: `Confirm spending a banked reset for ${label}` }),
+  );
 };
 
 describe("operations console", () => {
+  it("reauthenticates the selected Antigravity credential instead of adding an account", async () => {
+    const calls: string[] = [];
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/admin/stats")) return new Response(JSON.stringify({ ...stats, accounts: [{
+        id: "verify@example.test", provider: "antigravity", health: { status: "auth_failed" },
+        ok: 0, fails: 1, last_error: { unix_ms: 1, status: 403, message: "Google account verification required (VALIDATION_REQUIRED)" },
+      }] }));
+      if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [{
+        name: "antigravity-original.json", email: "verify@example.test", type: "antigravity",
+        size: 100, auth_index: "0", path: "/fixture/antigravity-original.json",
+        disabled: false, unavailable: false, runtime_only: false,
+      }] }));
+      if (url.includes("antigravity-auth-url")) return new Response(JSON.stringify({ url: "https://accounts.google.com/o/oauth2/v2/auth", state: "fixture-state" }));
+      return new Response(JSON.stringify({ ok: true }));
+    }));
+    await act(async () => { render(<App />); });
+    fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
+    expect(screen.getByText("auth required")).toBeInTheDocument();
+    const menu = await screen.findByRole("button", { name: /More actions for/ });
+    fireEvent.click(menu);
+    await act(async () => { fireEvent.click(await screen.findByRole("menuitem", { name: /re-authenticate/i })); });
+    expect(calls.some((url) => url.endsWith("antigravity-auth-url?credential_name=antigravity-original.json"))).toBe(true);
+    open.mockRestore();
+  });
+
   it("R10 falls back when the stored provider no longer exists", async () => {
     sessionStorage.setItem("mahoquot.provider", "deleted-provider");
     await act(async () => {

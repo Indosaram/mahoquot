@@ -346,6 +346,9 @@ test("scheduler history cost reset flow", async ({ page }) => {
   await page.getByRole("button", { name: "Accounts" }).click();
   await page.getByRole("button", { name: /^More actions for / }).first().click();
   await page.getByRole("menuitem", { name: /^Spend 1 banked reset for / }).click();
+  await page
+    .getByRole("button", { name: /^Confirm spending a banked reset for / })
+    .click();
   await expect
     .poll(() => captured.filter((call) => call.url.includes("/reset")).length)
     .toBeGreaterThan(0);
@@ -393,13 +396,15 @@ test("invalid price is rejected without a success toast", async ({ page }) => {
 });
 
 test("reset denied shows a failure toast", async ({ page }) => {
-  // The spend-reset menu item is gated by a confirm dialog; accept it so the
-  // request that the server denies is actually issued.
-  page.on("dialog", (dialog) => dialog.accept());
+  // The spend-reset menu item arms the card's inline confirmation; accepting
+  // it is what issues the request that the server denies.
   installMocks(page, { resetDenies: true });
   await openAccounts(page);
   await page.getByRole("button", { name: /^More actions for / }).first().click();
   await page.getByRole("menuitem", { name: /^Spend 1 banked reset for / }).click();
+  await page
+    .getByRole("button", { name: /^Confirm spending a banked reset for / })
+    .click();
   await expect(page.locator(".toast.toast-error").first()).toBeVisible();
   await expect(page.locator(".toast").filter({ hasText: "Window reset for" })).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/reset-denied.png`, fullPage: true });

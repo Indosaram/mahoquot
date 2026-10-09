@@ -280,6 +280,10 @@ export const AccountCard = ({
   const rows = quotaRows(account, clineQuotaDisplay);
   const [refreshing, setRefreshing] = useState(false);
   const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
+  // Inline spend confirmation. A window.confirm cannot gate this action:
+  // macOS WKWebView implements no confirm panel, so it answers false without
+  // asking and the spend used to cancel silently.
+  const [confirmingReset, setConfirmingReset] = useState(false);
 
   const errorKey = account.lastError
     ? `${account.lastError.unix_ms}_${account.lastError.status}_${account.lastError.message}`
@@ -360,14 +364,10 @@ export const AccountCard = ({
         ? `Spends one of ${account.resetCreditsAvailable} banked resets to start a fresh quota window`
         : "No banked resets available",
       disabled: !account.runtimeId || isPending || !canSpendReset,
-      // Spending a banked reset costs a finite resource: gate it behind an
-      // explicit confirmation. Only an abort answer (false) cancels; hosts
-      // without dialog support keep dispatching.
-      run: () => {
-        const decision = globalThis.confirm?.(`Spend 1 banked reset for ${account.label}?`);
-        if (decision === false) return;
-        void onRunAccountAction("reset", account);
-      },
+      // Spending a banked reset costs a finite resource: gate it behind the
+      // card's inline confirmation instead of window.confirm, which macOS
+      // WKWebView auto-answers false without ever asking.
+      run: () => setConfirmingReset(true),
     });
   }
   if (credits) {
@@ -559,6 +559,29 @@ export const AccountCard = ({
                 variant="ghost"
                 aria-label={`Cancel removing ${account.label}`}
                 onClick={() => onSetConfirmRemove("")}
+              >
+                <X size={12} /> Cancel
+              </Button>
+            </>
+          ) : confirmingReset ? (
+            <>
+              <Button
+                size="sm"
+                variant="danger"
+                aria-label={`Confirm spending a banked reset for ${account.label}`}
+                disabled={isPending}
+                onClick={() => {
+                  setConfirmingReset(false);
+                  void onRunAccountAction("reset", account);
+                }}
+              >
+                <RotateCcw size={12} /> Confirm
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Cancel spending a banked reset for ${account.label}`}
+                onClick={() => setConfirmingReset(false)}
               >
                 <X size={12} /> Cancel
               </Button>

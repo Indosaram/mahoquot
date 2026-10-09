@@ -483,9 +483,6 @@ for (const viewport of [
 
 test("desktop overview, logs, accounts, actions, and settings truth", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
-  // The spend-reset menu item is gated by a confirm dialog; accept it so the
-  // request under test is actually issued instead of being auto-dismissed.
-  page.on("dialog", (dialog) => dialog.accept());
   await page.clock.install();
   await installMocks(page);
   await page.goto("/management.html");
@@ -563,6 +560,9 @@ test("desktop overview, logs, accounts, actions, and settings truth", async ({ p
   );
   await page.getByRole("button", { name: /^More actions for / }).first().click();
   await page.getByRole("menuitem", { name: /^Spend 1 banked reset for / }).click();
+  await page
+    .getByRole("button", { name: /^Confirm spending a banked reset for / })
+    .click();
   await expect(page.getByText(/Action failed/)).toBeVisible();
   await page.getByRole("button", { name: "Add account" }).click();
   await openProviderCatalog(page, "Coding plan");

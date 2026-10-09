@@ -79,14 +79,13 @@ const openOverflowMenu = (label = "dev@example.com") => {
   fireEvent.click(screen.getByRole("button", { name: `More actions for ${label}` }));
 };
 
-/** Spending a banked reset confirms, then dispatches from the menu. */
+/** Spending a banked reset arms the card's inline confirmation, then dispatches. */
 const spendBankedReset = (label = "dev@example.com") => {
-  vi.stubGlobal(
-    "confirm",
-    vi.fn(() => true),
-  );
   openOverflowMenu(label);
   fireEvent.click(screen.getByRole("menuitem", { name: `Spend 1 banked reset for ${label}` }));
+  fireEvent.click(
+    screen.getByRole("button", { name: `Confirm spending a banked reset for ${label}` }),
+  );
 };
 
 describe("AccountsSurface component", () => {
@@ -175,23 +174,22 @@ describe("AccountsSurface component", () => {
   });
 
   it("dispatches the banked reset only when the confirmation is accepted", () => {
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
     const onRunAccountAction = vi.fn();
     render(<AccountsSurface {...createProps({ onRunAccountAction })} />);
 
     openOverflowMenu();
     fireEvent.click(
       screen.getByRole("menuitem", { name: "Spend 1 banked reset for dev@example.com" }),
+    );
+    // The menu item only arms the inline confirmation.
+    expect(onRunAccountAction).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm spending a banked reset for dev@example.com" }),
     );
     expect(onRunAccountAction).toHaveBeenCalledWith("reset", mockAccount);
   });
 
   it("asks for confirmation before spending a banked reset", () => {
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
     const onRunAccountAction = vi.fn();
     render(<AccountsSurface {...createProps({ onRunAccountAction })} />);
 
@@ -199,9 +197,19 @@ describe("AccountsSurface component", () => {
     fireEvent.click(
       screen.getByRole("menuitem", { name: "Spend 1 banked reset for dev@example.com" }),
     );
-    // A finite banked resource must not be spent without the confirm prompt.
-    expect(confirm).toHaveBeenCalledWith("Spend 1 banked reset for dev@example.com?");
+    // A finite banked resource must not be spent without the inline confirmation.
+    expect(
+      screen.getByRole("button", { name: "Confirm spending a banked reset for dev@example.com" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel spending a banked reset for dev@example.com" }),
+    );
     expect(onRunAccountAction).not.toHaveBeenCalled();
+    // Cancelling returns the card to its overflow menu.
+    openOverflowMenu();
+    expect(
+      screen.getByRole("menuitem", { name: "Spend 1 banked reset for dev@example.com" }),
+    ).toBeInTheDocument();
   });
 
   it("titles the provider warmup dialog with the display label, not the raw id", () => {
