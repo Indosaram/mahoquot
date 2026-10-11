@@ -276,6 +276,31 @@ describe("Logs and Settings characterization pin", () => {
     });
 
     it("handles connection save and URL validation error", async () => {
+      const invoke = vi.fn(async (command: string) => {
+        if (command === "gateway_status") return "running";
+        if (command === "migrate_legacy_secret") return { value: "", remove_legacy: false };
+        if (command === "list_codex_instances" || command === "list_cli_agents") return [];
+        if (command === "tunnel_status") {
+          return {
+            installed: false,
+            enabled: false,
+            running: false,
+            public_url: null,
+            error: null,
+          };
+        }
+        if (command === "native_settings_state") {
+          return {
+            login_start_enabled: false,
+            notifications: "available",
+            action: null,
+            gateway_running: true,
+            notch: "compact",
+          };
+        }
+        return null;
+      });
+      Object.assign(window, { __TAURI_INTERNALS__: { invoke } });
       vi.stubGlobal(
         "fetch",
         vi.fn(async (input: RequestInfo | URL) => {
@@ -309,11 +334,15 @@ describe("Logs and Settings characterization pin", () => {
       ).toBeGreaterThanOrEqual(1);
 
       // Valid URL
-      fireEvent.change(urlInput, { target: { value: "http://127.0.0.1:18801" } });
+      fireEvent.change(urlInput, { target: { value: "http://gateway.example:18801/" } });
       fireEvent.click(screen.getByRole("button", { name: "Save & reconnect" }));
       expect(
         await screen.findByText(/Connection saved — active now for this console/i),
       ).toBeInTheDocument();
+      expect(invoke).toHaveBeenCalledWith("save_gateway_connection", {
+        baseUrl: "http://gateway.example:18801",
+      });
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     });
 
     it("handles API key copy to clipboard", async () => {

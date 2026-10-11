@@ -69,6 +69,7 @@ import {
   requestNativeNotificationPermission,
   restartManagedGateway,
   restoreCliAgent,
+  saveGatewayConnection,
   setLoginStart,
   startManagedGateway,
   startTunnel,
@@ -2218,15 +2219,19 @@ export default function App() {
                   return;
                 }
                 const normalizedBase = baseUrl.trim().replace(/\/+$/, "");
-                setGatewayBaseUrl(baseUrl);
-                setBaseUrlState(normalizedBase);
-                setCommittedBaseUrl(normalizedBase);
-                void writeDesktopSecret(
-                  normalizedBase,
-                  "default",
-                  "management_key",
-                  relayKey.trim(),
-                )
+                void saveGatewayConnection(normalizedBase)
+                  .then(() => {
+                    setGatewayBaseUrl(normalizedBase);
+                    setBaseUrlState(normalizedBase);
+                    setCommittedBaseUrl(normalizedBase);
+                    setNotice("Connection saved — active now for this console.");
+                    return writeDesktopSecret(
+                      normalizedBase,
+                      "default",
+                      "management_key",
+                      relayKey.trim(),
+                    );
+                  })
                   .then(() => {
                     setSecretStoreError(null);
                     // The saved scalars belong to the previous instance; force the
@@ -2241,7 +2246,6 @@ export default function App() {
                     setSecretStoreError(typed);
                     setNotice(typed.message);
                   });
-                setNotice("Connection saved — active now for this console.");
                 void refresh();
               }}
               onRoutingStrategyChange={setRoutingStrategy}

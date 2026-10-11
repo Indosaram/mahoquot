@@ -6,6 +6,7 @@
 mod bootstrap;
 mod cli_config;
 mod codex_launcher;
+mod connection;
 #[cfg(test)]
 mod external_url_tests;
 mod gateway_process;
@@ -261,12 +262,12 @@ impl StopSignal {
     }
 }
 
-/// Mirrors the gateway child's pid for the signal path. A SIGTERM/SIGINT never
-/// reaches `RunEvent::ExitRequested`, so without this the gateway would outlive
-/// the app that owns it and strand the port for the next launch.
+/// Mirrors the owned child's PID for signals and process exit, which can bypass
+/// `RunEvent::ExitRequested` and otherwise strand the gateway's port.
 static GATEWAY_CHILD_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static ATEXIT_REGISTERED: std::sync::Once = std::sync::Once::new();
 
-extern "C" fn terminate_gateway_on_signal(signal: i32) {
+extern "C" fn terminate_gateway_on_exit() {
     tunnel::terminate_tunnel_on_signal();
     let pid = GATEWAY_CHILD_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
     if pid > 0 {
@@ -279,6 +280,10 @@ extern "C" fn terminate_gateway_on_signal(signal: i32) {
             let _ = signal_process_windows(pid);
         }
     }
+}
+
+extern "C" fn terminate_gateway_on_signal(signal: i32) {
+    terminate_gateway_on_exit();
     unsafe {
         signal_raw(signal, 0);
         raise_raw(signal);
@@ -294,6 +299,7 @@ extern "C" {
 // signal/raise exist in both libc and the Windows msvcrt; only kill is
 // POSIX-only.
 extern "C" {
+    fn atexit(cb: extern "C" fn()) -> i32;
     #[link_name = "signal"]
     fn signal_raw(sig: i32, handler: usize) -> usize;
     #[link_name = "raise"]
@@ -316,6 +322,9 @@ extern "system" {
 }
 
 fn install_gateway_signal_guard() {
+    ATEXIT_REGISTERED.call_once(|| unsafe {
+        atexit(terminate_gateway_on_exit);
+    });
     unsafe {
         let handler = terminate_gateway_on_signal as *const () as usize;
         signal_raw(15, handler);
@@ -916,7 +925,9 @@ fn stop_owned_gateway(process: &GatewayProcess, config: Option<&Config>) -> Resu
             return Ok(true);
         }
     }
-    terminate_process(pid, GATEWAY_STOP_TIMEOUT, || process.pid() != pid)?;
+    terminate_process(pid, GATEWAY_STOP_TIMEOUT, || {
+        !process_is_running(pid) || process.pid() != pid
+    })?;
     clear_gateway_pid(&process.pid, pid);
     Ok(true)
 }
@@ -1248,6 +1259,15 @@ fn gateway_status() -> GatewayLifecycleStatus {
     } else {
         GatewayLifecycleStatus::Stopped
     }
+}
+
+#[tauri::command]
+fn save_gateway_connection(base_url: String) -> Result<(), String> {
+    let home = tray::current_home()?;
+    connection::save(
+        &connection::store_path(std::path::Path::new(&home)),
+        &base_url,
+    )
 }
 
 #[tauri::command]
@@ -2141,12 +2161,35 @@ fn main() {
         )
         .init();
 
-    let base_url = std::env::var("MAHOQUOT_URL").unwrap_or_else(|_| LOCAL_GATEWAY_URL.to_string());
+    let home = match tray::current_home() {
+        Ok(home) => home,
+        Err(error) => {
+            tracing::error!(%error, "cannot resolve saved gateway connection");
+            return;
+        }
+    };
+    let connection_path = connection::store_path(std::path::Path::new(&home));
+    let saved = connection::load(&connection_path).and_then(|saved| match saved {
+        Some(url) => Ok(Some(url)),
+        None => connection::legacy_url(std::path::Path::new(&home)),
+    });
+    let saved = match saved {
+        Ok(saved) => saved,
+        Err(error) => {
+            tracing::error!(%error, "saved gateway connection unavailable; refusing local fallback");
+            return;
+        }
+    };
+    let base_url = connection::startup_url(saved, std::env::var("MAHOQUOT_URL").ok());
     let gateway = GatewayProcess::default();
     // The key must be on disk before the child starts: the gateway loads
     // config.yaml at startup, so spawning first makes it miss a freshly
     // minted key until the next launch.
     let master_key = ensure_master_api_key().expect("cannot initialize desktop home");
+    if let Err(error) = connection::save(&connection_path, &base_url) {
+        tracing::error!(%error, "cannot persist gateway connection; refusing local fallback");
+        return;
+    }
     let _ = spawn_gateway(&gateway, &base_url);
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_else(|_| master_key.clone());
     let init_script = bootstrap::console_initialization_script(&base_url, &api_key);
@@ -2192,6 +2235,7 @@ fn main() {
         })
         .append_invoke_initialization_script(init_script)
         .invoke_handler(tauri::generate_handler![
+            save_gateway_connection,
             load_stats,
             gateway_url,
             open_console,
@@ -2295,7 +2339,7 @@ fn main() {
                 let _ = window.set_focus();
             }
         }
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+        if let tauri::RunEvent::ExitRequested { ref api, .. } = event {
             if crate::self_certification::CERTIFY_IN_FLIGHT
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
@@ -2304,22 +2348,33 @@ fn main() {
                 api.prevent_exit();
                 return;
             }
-            platform::cleanup_notch_hover_watch(app);
-            let tunnel = app.state::<tunnel::TunnelManager>();
-            if let Err(error) = tunnel.stop() {
-                tracing::error!(%error, "failed to stop cloudflared on exit");
-            }
-            let codex = app.state::<codex_launcher::CodexLauncher>();
-            if let Err(error) = codex.stop_all() {
-                tracing::error!(%error, "failed to stop Codex instances on exit");
-            }
-            let gateway = app.state::<GatewayProcess>();
-            let config = app.state::<Config>();
-            match stop_owned_gateway(&gateway, Some(&config)) {
-                Ok(true) => tracing::info!("mahoquot-gateway terminated"),
-                Ok(false) => {}
-                Err(error) => tracing::error!(%error, "failed to stop mahoquot-gateway on exit"),
-            }
+            cleanup_on_app_exit(app);
+        }
+        if let tauri::RunEvent::Exit = event {
+            cleanup_on_app_exit(app);
         }
     });
+}
+
+fn cleanup_on_app_exit(app: &tauri::AppHandle) {
+    static CLEANUP_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if CLEANUP_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    platform::cleanup_notch_hover_watch(app);
+    let tunnel = app.state::<tunnel::TunnelManager>();
+    if let Err(error) = tunnel.stop() {
+        tracing::error!(%error, "failed to stop cloudflared on exit");
+    }
+    let codex = app.state::<codex_launcher::CodexLauncher>();
+    if let Err(error) = codex.stop_all() {
+        tracing::error!(%error, "failed to stop Codex instances on exit");
+    }
+    let gateway = app.state::<GatewayProcess>();
+    let config = app.state::<Config>();
+    match stop_owned_gateway(&gateway, Some(&config)) {
+        Ok(true) => tracing::info!("mahoquot-gateway terminated"),
+        Ok(false) => {}
+        Err(error) => tracing::error!(%error, "failed to stop mahoquot-gateway on exit"),
+    }
 }

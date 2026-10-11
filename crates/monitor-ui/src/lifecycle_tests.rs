@@ -285,3 +285,65 @@ fn migrate_legacy_secret_falls_back_and_persists_only_for_matching_endpoint() {
     .unwrap();
     assert_eq!(empty_outcome.value, Some("master-api-key".into()));
 }
+
+#[cfg(unix)]
+static EXIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn stop_owned_gateway_terminates_running_child_and_clears_pid() {
+    #[cfg(unix)]
+    {
+        let _lock = EXIT_TEST_LOCK.lock().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        let (exited_tx, exited_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || exited_tx.send(child.wait()).unwrap());
+        let process = GatewayProcess::default();
+        process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
+        crate::GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+
+        let stopped = stop_owned_gateway(&process, None).expect("stop");
+        assert!(stopped);
+        assert_eq!(process.pid(), 0);
+        assert_eq!(
+            crate::GATEWAY_CHILD_PID.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert!(!exited_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .success());
+    }
+}
+
+#[test]
+fn process_exit_guard_terminates_orphaned_gateway_child() {
+    #[cfg(unix)]
+    {
+        let _lock = EXIT_TEST_LOCK.lock().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        let (exited_tx, exited_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || exited_tx.send(child.wait()).unwrap());
+        crate::GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+
+        crate::terminate_gateway_on_exit();
+
+        assert_eq!(
+            crate::GATEWAY_CHILD_PID.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert!(!exited_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .success());
+    }
+}

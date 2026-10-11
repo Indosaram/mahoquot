@@ -35,6 +35,11 @@ export const stopManagedGateway = (): Promise<GatewayLifecycleStatus> =>
 export const restartManagedGateway = (): Promise<GatewayLifecycleStatus> =>
   invokeLifecycle("restart_gateway");
 
+export const saveGatewayConnection = async (baseUrl: string): Promise<void> => {
+  const native = internals();
+  if (native) await native.invoke<void>("save_gateway_connection", { baseUrl });
+};
+
 /**
  * A gateway outage the native shell will not recover from on its own. `detail`
  * is the child's own stderr tail, which is where a rejected `config.yaml`
