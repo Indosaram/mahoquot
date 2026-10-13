@@ -4091,8 +4091,24 @@ h2 {
 
 .notch-dial-arc {
   fill: none;
+  stroke: var(--ok);
   stroke-width: 5;
   stroke-linecap: round;
+}
+.notch-dial-arc[data-tone="warn"] {
+  stroke: var(--warn);
+}
+.notch-dial-arc[data-tone="bad"] {
+  stroke: var(--bad);
+}
+
+.notch-dial-caption {
+  margin-top: -4px;
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--fg-faint);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .notch-dial-label {
@@ -4107,7 +4123,8 @@ h2 {
   .notch-shell,
   .notch-island-shape,
   .notch-surface,
-  .notch-ring-item {
+  .notch-ring-item,
+  .notch-handle {
     transition: none;
   }
 }
@@ -4119,6 +4136,36 @@ h2 {
 
 .notch-shell.expanded .notch-trigger-strip {
   pointer-events: none;
+}
+
+/* Idle affordance: the compact window is otherwise fully transparent, so the
+   island had no visible entry point. A slim pill on the screen edge marks it
+   and carries the worst pool's status. */
+.notch-handle {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 4px;
+  height: 64px;
+  z-index: 1;
+  border-radius: 999px;
+  background: rgba(161, 161, 170, 0.55);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.18s ease;
+}
+.notch-handle[data-tone="ok"] {
+  background: var(--ok);
+}
+.notch-handle[data-tone="warn"] {
+  background: var(--warn);
+}
+.notch-handle[data-tone="bad"] {
+  background: var(--bad);
+}
+.notch-shell.expanded .notch-handle {
+  opacity: 0;
 }
 
 .notch-ring-item {
@@ -4274,14 +4321,6 @@ h2 {
   text-align: left;
 }
 
-.notch-tooltip-account::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  content: "";
-  background: var(--account-accent, var(--accent));
-}
-
 .notch-tooltip-account-head {
   margin-bottom: 5px;
   padding-left: 2px;
@@ -4343,6 +4382,13 @@ h2 {
   display: block;
   height: 100%;
   border-radius: inherit;
+  background: var(--ok);
+}
+.notch-tooltip-bar i[data-tone="warn"] {
+  background: var(--warn);
+}
+.notch-tooltip-bar i[data-tone="bad"] {
+  background: var(--bad);
 }
 
 .notch-tooltip-meta {

@@ -3,7 +3,6 @@ import { MONOCHROME_LOGOS, ProviderGlyph, providerLogos } from "@/components/Pro
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import { type NormalizedAccount, formatResetTime } from "@/lib/accounts";
 import { groupNotchProviders, providerAtPoint } from "@/lib/notch";
-import { providerColor } from "@/lib/provider-colors";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
@@ -29,6 +28,18 @@ const EMPTY_RING_COPY: Readonly<
   stopped: { label: "Gateway stopped", meta: "Start it in Operations Console" },
   "relay-locked": { label: "Relay locked", meta: "Reconnect in Operations Console" },
 };
+
+type NotchTone = "ok" | "warn" | "bad" | "idle";
+
+/** Same thresholds as the tray tiles: 80% used warns, 100% is exhausted. */
+const usageTone = (usedPercent: number | null): NotchTone => {
+  if (usedPercent === null) return "idle";
+  if (usedPercent >= 100) return "bad";
+  if (usedPercent >= 80) return "warn";
+  return "ok";
+};
+
+const TONE_RANK: Readonly<Record<NotchTone, number>> = { idle: 0, ok: 1, warn: 2, bad: 3 };
 
 const worstUsedPercent = (rows: readonly { usedPercent: number | null }[]): number | null => {
   const values = rows
@@ -156,6 +167,14 @@ export function NotchSurface({
   // providers the column would otherwise outgrow the island, since the CSS
   // sizes dials only for counts 1-7.
   const visibleNotchGroups = notchGroups.slice(0, MAX_NOTCH_RING_ITEMS);
+  // The idle handle advertises the worst pool so a glance at the screen edge
+  // says whether anything needs attention before the island is opened.
+  const handleTone = notchGroups
+    .map((group) => usageTone(worstUsedPercent(group.rows)))
+    .reduce<NotchTone>(
+      (worst, tone) => (TONE_RANK[tone] > TONE_RANK[worst] ? tone : worst),
+      "idle",
+    );
   const emptyState: NotchEmptyState = loadState === "online" ? "empty" : loadState;
   const emptyCopy =
     loadState === "online"
@@ -200,7 +219,10 @@ export function NotchSurface({
                       </small>
                     </div>
                     <div className="notch-tooltip-bar">
-                      <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
+                      <i
+                        data-tone={usageTone(row.usedPercent)}
+                        style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }}
+                      />
                     </div>
                     <div className="notch-tooltip-meta">
                       <span>
@@ -224,20 +246,28 @@ export function NotchSurface({
   );
   return (
     <>
-      <div className="notch-totp-access">
-        <TotpQuickAccess
-          entries={totpEntries}
-          codes={totpCodes}
-          remaining={totpRemaining}
-          onCopyCode={onCopyTotpCode}
-          compact
-        />
-      </div>
+      {totpEntries.length ? (
+        <div className="notch-totp-access">
+          <TotpQuickAccess
+            entries={totpEntries}
+            codes={totpCodes}
+            remaining={totpRemaining}
+            onCopyCode={onCopyTotpCode}
+            compact
+          />
+        </div>
+      ) : null}
       <div
         className={`notch-shell${notchExpanded ? " expanded open" : ""}`}
         data-mahoquot-surface="notch"
       >
         <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
+        <span
+          className="notch-handle"
+          data-testid="notch-handle"
+          data-tone={handleTone}
+          aria-hidden="true"
+        />
         <div className="notch-island-shape" aria-hidden="true">
           <svg
             className="notch-island-shadow"
@@ -305,13 +335,11 @@ export function NotchSurface({
                         {clampedDial !== null && (
                           <circle
                             className="notch-dial-arc"
+                            data-tone={usageTone(worst)}
                             cx="29"
                             cy="29"
                             r="24"
-                            style={{
-                              stroke: providerColor(group.provider),
-                              strokeDasharray: `${used} ${circumference}`,
-                            }}
+                            style={{ strokeDasharray: `${used} ${circumference}` }}
                           />
                         )}
                       </svg>
@@ -321,6 +349,9 @@ export function NotchSurface({
                     </span>
                     <span className="notch-dial-label">
                       {clampedDial === null ? "–" : `${Math.round(clampedDial)}%`}
+                    </span>
+                    <span className="notch-dial-caption">
+                      {clampedDial === null ? "no data" : showRemaining ? "left" : "used"}
                     </span>
                   </button>
                   {renderNotchTooltip(group)}
