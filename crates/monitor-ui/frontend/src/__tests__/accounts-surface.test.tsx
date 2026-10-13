@@ -366,6 +366,37 @@ describe("AccountsSurface component", () => {
     }
   });
 
+  it("locks manual reordering for Claude subscriptions sorted by reset order", () => {
+    const onDropCredential = vi.fn();
+    const claude = {
+      ...mockAccount,
+      id: "claude-1",
+      runtimeId: "claude-1",
+      credentialName: "claude-1.json",
+      provider: "claude",
+      email: "claude@example.com",
+      label: "claude@example.com",
+    } as NormalizedAccount;
+    const { container } = render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [claude],
+          providers: ["claude"],
+          selectedProvider: "claude",
+          visibleAccounts: [claude],
+          dragging: "claude-2.json",
+          onDropCredential,
+        })}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Reorder claude@example.com")).not.toBeInTheDocument();
+    const card = container.querySelector(".account-card");
+    expect(card).toHaveAttribute("draggable", "false");
+    if (card) fireEvent.drop(card);
+    expect(onDropCredential).not.toHaveBeenCalled();
+  });
+
   it("renders confirm and cancel buttons during removal confirmation", () => {
     const onRemoveCredential = vi.fn();
     const onSetConfirmRemove = vi.fn();

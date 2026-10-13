@@ -842,3 +842,49 @@ export const extractDevinSlug = (account: NormalizedAccount): string => {
   }
   return account.id.replace(/^cred-/, "").replace(/\.json$/i, "");
 };
+
+/** Remaining share below which the gateway stops opening new sessions on an account. */
+const CLAUDE_NEW_SESSION_MIN_REMAINING_PERCENT = 10;
+
+/** Only OAuth subscriptions use the reset-order router; relay accounts carry a plan label. */
+export const isClaudeSubscriptionAccount = (account: NormalizedAccount): boolean =>
+  account.provider === "claude" && !account.plan;
+
+const isClaudeNearlySpent = (account: NormalizedAccount, nowUnix: number): boolean =>
+  [account.usage?.primary, account.usage?.secondary].some((window) => {
+    const live = typeof window?.reset_at_unix !== "number" || window.reset_at_unix > nowUnix;
+    return (
+      live &&
+      typeof window?.used_percent === "number" &&
+      100 - window.used_percent < CLAUDE_NEW_SESSION_MIN_REMAINING_PERCENT
+    );
+  });
+
+const activeClaudeResetUnix = (account: NormalizedAccount, nowUnix: number): number => {
+  const reset = account.usage?.primary?.reset_at_unix;
+  return typeof reset === "number" && reset > nowUnix ? reset : Number.MAX_SAFE_INTEGER;
+};
+
+/** Displays Claude subscriptions in gateway routing order while every other card keeps its slot. */
+export const orderClaudeSubscriptionsForDisplay = (
+  accounts: readonly NormalizedAccount[],
+  nowUnix = Math.floor(Date.now() / 1000),
+): NormalizedAccount[] => {
+  const ordered = [...accounts];
+  const slots = ordered.flatMap((account, index) =>
+    isClaudeSubscriptionAccount(account) ? [index] : [],
+  );
+  const claude = slots
+    .map((slot) => ({ account: ordered[slot] as NormalizedAccount, slot }))
+    .sort(
+      (a, b) =>
+        Number(isClaudeNearlySpent(a.account, nowUnix)) -
+          Number(isClaudeNearlySpent(b.account, nowUnix)) ||
+        activeClaudeResetUnix(a.account, nowUnix) - activeClaudeResetUnix(b.account, nowUnix) ||
+        a.slot - b.slot,
+    );
+  slots.forEach((slot, index) => {
+    ordered[slot] = claude[index]?.account as NormalizedAccount;
+  });
+  return ordered;
+};

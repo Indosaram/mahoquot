@@ -39,6 +39,7 @@ import {
   type NormalizedAccount,
   extractDevinSlug,
   mergeAccountsAndCredentials,
+  orderClaudeSubscriptionsForDisplay,
 } from "./lib/accounts";
 import { createGatewayClients, discoverProviderModels, fetchClineModelLists } from "./lib/api";
 import type { HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
@@ -1144,7 +1145,9 @@ export default function App() {
     [accounts],
   );
   const selectedProvider = providers.includes(provider) ? provider : providers[0];
-  const visibleAccounts = accounts.filter((account) => account.provider === selectedProvider);
+  const visibleAccounts = orderClaudeSubscriptionsForDisplay(
+    accounts.filter((account) => account.provider === selectedProvider),
+  );
 
   // Observed Cline daily buckets (the gateway reports every model it served);
   // combined with the live remote list into the Settings candidate set.

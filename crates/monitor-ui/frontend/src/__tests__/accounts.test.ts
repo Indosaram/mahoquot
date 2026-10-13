@@ -6,6 +6,7 @@ import {
   getClineGeminiQuotaDeadline,
   getQuotaCapability,
   mergeAccountsAndCredentials,
+  orderClaudeSubscriptionsForDisplay,
 } from "../lib/accounts";
 import type { AdminStats, AuthFileItem } from "../lib/schemas";
 
@@ -927,5 +928,68 @@ describe("Account Normalization and Quota Capability", () => {
       expect(merged[0]?.cooldownRemainingSecs).toBeGreaterThan(0);
       expect(merged[0]?.cooldownUntilUnixMs).toBe(now + 600_000);
     });
+  });
+});
+
+describe("Claude subscription display order", () => {
+  const now = 10_000;
+  const account = (
+    id: string,
+    provider: string,
+    reset: number | null,
+    used: number,
+    plan: string | null = null,
+  ): NormalizedAccount => ({
+    id,
+    runtimeId: id,
+    credentialName: `${id}.json`,
+    disabled: false,
+    authIndex: id,
+    provider,
+    plan,
+    email: id,
+    label: id,
+    health: "healthy",
+    healthRaw: "available",
+    cooldownUntilUnixMs: null,
+    cooldownRemainingSecs: null,
+    ok: 0,
+    fails: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    failureRate: 0,
+    p50Ms: null,
+    lastError: null,
+    usage: { primary: { used_percent: used, window_minutes: 300, reset_at_unix: reset } },
+    quotaCapability: "supported",
+    isCredentialOnly: false,
+    canReset: false,
+    resetCreditsAvailable: 0,
+    supportsReset: false,
+    resetCredits: [],
+  });
+
+  it("mirrors gateway routing while relay and other providers keep their slots", () => {
+    const ordered = orderClaudeSubscriptionsForDisplay(
+      [
+        account("late", "claude", now + 3_000, 20),
+        account("codex", "codex", now + 100, 0),
+        account("spent", "claude", now + 100, 95),
+        account("relay", "claude", now + 50, 0, "opus-standard"),
+        account("inactive", "claude", now - 1, 0),
+        account("soon", "claude", now + 500, 30),
+      ],
+      now,
+    );
+
+    expect(ordered.map(({ id }) => id)).toEqual([
+      "soon",
+      "codex",
+      "late",
+      "relay",
+      "inactive",
+      "spent",
+    ]);
   });
 });

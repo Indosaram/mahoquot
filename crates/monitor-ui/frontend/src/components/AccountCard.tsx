@@ -21,7 +21,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
+import {
+  type NormalizedAccount,
+  formatResetTime,
+  isClaudeSubscriptionAccount,
+} from "../lib/accounts";
 import { hasCreditDetail } from "../lib/credits";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
@@ -337,6 +341,9 @@ export const AccountCard = ({
   // Only work targeting this account disables this card; a mutation on a
   // sibling card, or a settings save, leaves it interactive.
   const isPending = blocks(pending, "account", account.id);
+  // Claude subscriptions display in the gateway's reset order, so a manual
+  // position would be overwritten on the next render.
+  const reorderLocked = isClaudeSubscriptionAccount(account);
   const rows = quotaRows(account, clineQuotaDisplay);
   const [refreshing, setRefreshing] = useState(false);
   const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null);
@@ -521,25 +528,25 @@ export const AccountCard = ({
     <Card
       className="account-card"
       data-disabled={account.disabled ? "true" : undefined}
-      draggable={Boolean(account.credentialName) && !isPending}
+      draggable={Boolean(account.credentialName) && !isPending && !reorderLocked}
       data-dragging={dragging === account.credentialName ? "true" : undefined}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
         onSetDragging(account.credentialName ?? "");
       }}
       onDragOver={(event) => {
-        if (dragging && account.credentialName) event.preventDefault();
+        if (dragging && account.credentialName && !reorderLocked) event.preventDefault();
       }}
       onDrop={(event) => {
         event.preventDefault();
-        void onDropCredential(account);
+        if (!reorderLocked) void onDropCredential(account);
       }}
       onDragEnd={() => onSetDragging("")}
       onContextMenu={(event) => onContextMenu(event, account)}
     >
       <div className="account-card-head">
         <div className="account-title">
-          {account.credentialName ? (
+          {account.credentialName && !reorderLocked ? (
             <button
               type="button"
               className="account-drag-handle"
