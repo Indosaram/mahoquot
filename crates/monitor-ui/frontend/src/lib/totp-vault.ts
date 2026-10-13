@@ -243,6 +243,9 @@ export class TotpVault {
    * commit() refuses to overwrite stored data it has never read. */
   private loaded = false;
   private loadGeneration = 0;
+  /** Mutations run one at a time: each reads `current` only after the previous
+   * write landed, so two quick edits can never both start from the same snapshot. */
+  private queue: Promise<unknown> = Promise.resolve();
   private readonly now: () => number;
   private readonly createId: () => string;
 
@@ -258,7 +261,12 @@ export class TotpVault {
     return this.current.map((entry: TotpEntry): TotpEntry => ({ ...entry }));
   }
 
-  async load(): Promise<readonly TotpEntry[]> {
+  load(): Promise<readonly TotpEntry[]> {
+    // Queued behind pending writes so a read never races a write in flight.
+    return this.serialize(() => this.read());
+  }
+
+  private async read(): Promise<readonly TotpEntry[]> {
     const generation = ++this.loadGeneration;
     try {
       const raw = await this.store.read();
@@ -281,24 +289,26 @@ export class TotpVault {
       id: this.createId(),
       createdAt: this.now(),
     };
-    await this.commit([...this.current, entry]);
+    await this.serialize(() => this.commit([...this.current, entry]));
     return { ...entry };
   }
 
-  async edit(id: string, patch: TotpEdit): Promise<TotpEntry> {
-    const index = this.current.findIndex((entry: TotpEntry): boolean => entry.id === id);
-    if (index < 0) throw new Error("TOTP entry was not found.");
-    const previous = this.current[index] as TotpEntry;
-    const merged = { ...previous, ...patch };
-    const entry: TotpEntry = {
-      ...parseTotpInput(merged.secret, merged),
-      id: previous.id,
-      createdAt: previous.createdAt,
-    };
-    const next = [...this.current];
-    next[index] = entry;
-    await this.commit(next);
-    return { ...entry };
+  edit(id: string, patch: TotpEdit): Promise<TotpEntry> {
+    return this.serialize(async () => {
+      const index = this.current.findIndex((entry: TotpEntry): boolean => entry.id === id);
+      if (index < 0) throw new Error("TOTP entry was not found.");
+      const previous = this.current[index] as TotpEntry;
+      const merged = { ...previous, ...patch };
+      const entry: TotpEntry = {
+        ...parseTotpInput(merged.secret, merged),
+        id: previous.id,
+        createdAt: previous.createdAt,
+      };
+      const next = [...this.current];
+      next[index] = entry;
+      await this.commit(next);
+      return { ...entry };
+    });
   }
 
   async import(input: string): Promise<readonly TotpEntry[]> {
@@ -314,19 +324,31 @@ export class TotpVault {
         createdAt: this.now(),
       }),
     );
-    await this.commit([...this.current, ...imported]);
+    await this.serialize(() => this.commit([...this.current, ...imported]));
     return imported.map((entry: TotpEntry): TotpEntry => ({ ...entry }));
   }
 
-  async remove(id: string): Promise<void> {
-    if (!this.current.some((entry: TotpEntry): boolean => entry.id === id)) {
-      throw new Error("TOTP entry was not found.");
-    }
-    await this.commit(this.current.filter((entry: TotpEntry): boolean => entry.id !== id));
+  remove(id: string): Promise<void> {
+    return this.serialize(async () => {
+      if (!this.current.some((entry: TotpEntry): boolean => entry.id === id)) {
+        throw new Error("TOTP entry was not found.");
+      }
+      await this.commit(this.current.filter((entry: TotpEntry): boolean => entry.id !== id));
+    });
+  }
+
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(operation);
+    // A failed operation must not wedge the chain for the next one.
+    this.queue = result.catch(() => undefined);
+    return result;
   }
 
   private async commit(entries: readonly TotpEntry[]): Promise<void> {
     if (!this.loaded) throw new Error(TOTP_VAULT_NOT_LOADED_MESSAGE);
+    // A read issued before this write would resolve with pre-write data and
+    // overwrite `current`; invalidate it so only post-write loads can land.
+    this.loadGeneration += 1;
     if (entries.length) await this.store.write(JSON.stringify({ version: 1, entries }));
     else await this.store.delete();
     this.current = entries;

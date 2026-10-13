@@ -227,7 +227,12 @@ const operationsManagement = () =>
     .management as unknown as IntendedOperationsManagement;
 
 const installAppMocks = (options?: { historyUnavailable?: boolean }) => {
-  const calls: Array<{ readonly url: string; readonly method: string; readonly body: string }> = [];
+  const calls: Array<{
+    readonly url: string;
+    readonly method: string;
+    readonly body: string;
+    readonly exportAuthorization: string | null;
+  }> = [];
   let currentOrder = [...schedulerStatus.order];
   let currentPrice = { ...modelPrice };
 
@@ -237,7 +242,12 @@ const installAppMocks = (options?: { historyUnavailable?: boolean }) => {
       const url = new URL(String(input), "http://127.0.0.1:18840");
       const method = init?.method ?? "GET";
       const body = typeof init?.body === "string" ? init.body : "";
-      calls.push({ url: url.toString(), method, body });
+      calls.push({
+        url: url.toString(),
+        method,
+        body,
+        exportAuthorization: new Headers(init?.headers).get("x-mahoquot-export-authorization"),
+      });
 
       if (url.pathname === "/healthz") {
         return new Response(JSON.stringify({ status: "ok", version: "0.1.0", api_schema: 1 }));
@@ -621,10 +631,8 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
       (call) => call.method === "PUT" && new URL(call.url).pathname.includes("/prices/"),
     ).length;
     fireEvent.change(inputRate, { target: { value: "-1" } });
-    fireEvent.click(within(pricing).getByRole("button", { name: "Save gpt-5.6-sol price" }));
-    expect(
-      await screen.findByText("Action failed: model prices must be non-negative."),
-    ).toBeInTheDocument();
+    // An invalid price can no longer reach the gateway: the row's Save stays disabled.
+    expect(within(pricing).getByRole("button", { name: "Save gpt-5.6-sol price" })).toBeDisabled();
     expect(
       calls.filter(
         (call) => call.method === "PUT" && new URL(call.url).pathname.includes("/prices/"),
@@ -634,18 +642,23 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
 
   it("clears and exports durable history from the Settings history card", async () => {
     const { calls } = installAppMocks();
-    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("export-secret");
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0] as HTMLElement);
 
     const pricing = await screen.findByRole("region", { name: "History and pricing" });
+    // The export secret is typed inline; WKWebView implements no prompt() panel.
+    expect(within(pricing).getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    fireEvent.change(within(pricing).getByLabelText("Export authorization secret"), {
+      target: { value: "export-secret" },
+    });
     fireEvent.click(within(pricing).getByRole("button", { name: "Export CSV" }));
     await waitFor(() =>
       expect(
         calls.some(
           (call) =>
             new URL(call.url).pathname === "/v0/management/history/export" &&
-            call.url.includes("format=csv"),
+            call.url.includes("format=csv") &&
+            call.exportAuthorization === "export-secret",
         ),
       ).toBe(true),
     );
@@ -666,7 +679,6 @@ describe("Todo 13 scheduling, history, and price UI states", () => {
       ).toBe(true),
     );
     expect(await screen.findByText("Cleared 3 request records.")).toBeInTheDocument();
-    promptSpy.mockRestore();
   });
 
   it("shows history unavailable as an error instead of zero-valued history", async () => {

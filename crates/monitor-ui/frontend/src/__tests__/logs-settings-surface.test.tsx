@@ -420,6 +420,11 @@ describe("Logs and Settings characterization pin", () => {
             return new Response(JSON.stringify({ "request-retry": 3 }));
           if (url.endsWith("/logging-to-file"))
             return new Response(JSON.stringify({ "logging-to-file": false }));
+          // Strict scalar parsing: every scalar answers under its own key, as the gateway does.
+          if (url.endsWith("/codex-fast-mode"))
+            return new Response(JSON.stringify({ "codex-fast-mode": false }));
+          if (url.endsWith("/proxy-providers"))
+            return new Response(JSON.stringify({ "proxy-providers": {} }));
           return new Response(JSON.stringify({ status: "ok" }));
         }),
       );

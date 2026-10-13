@@ -1,5 +1,5 @@
-import { Check, Copy, Key, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { Check, Copy, Eye, EyeOff, Key, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { normalizeToQuotioProviderId } from "../lib/provider-catalog";
 import type { GatewayModelEntry, ScopedApiKey } from "../lib/schemas";
 import { OverlayLayer } from "./layout";
@@ -138,6 +138,59 @@ const ScopePicker = ({
   );
 };
 
+const FOCUSABLE =
+  'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]';
+
+/**
+ * Modal drawer shell: moves focus inside on open (preferring `data-autofocus`),
+ * keeps Tab within the dialog, and hands focus back to the opener on close.
+ * The restore target is captured on mount only, so inline-callback re-renders
+ * never pull focus back into the dialog.
+ */
+const DrawerDialog = ({
+  label,
+  children,
+}: { readonly label: string; readonly children: ReactNode }) => {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    const dialog = ref.current;
+    (
+      dialog?.querySelector<HTMLElement>("[data-autofocus]") ??
+      dialog?.querySelector<HTMLElement>(FOCUSABLE)
+    )?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
+  return (
+    <OverlayLayer className="drawer-backdrop">
+      <dialog
+        ref={ref}
+        open
+        className="drawer shared-keys-drawer"
+        aria-modal="true"
+        aria-label={label}
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
+          const first = items[0];
+          const last = items.at(-1);
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+      >
+        {children}
+      </dialog>
+    </OverlayLayer>
+  );
+};
+
 export function SharedKeysCard({
   scopedKeys,
   availableModels,
@@ -158,6 +211,7 @@ export function SharedKeysCard({
   const [editKey, setEditKey] = useState<ScopedApiKey | null>(null);
   const [editName, setEditName] = useState("");
   const [editRawKey, setEditRawKey] = useState("");
+  const [showEditRawKey, setShowEditRawKey] = useState(false);
   const [editProviders, setEditProviders] = useState<readonly string[]>([]);
   const [editAccounts, setEditAccounts] = useState<readonly string[]>([]);
   const [editModels, setEditModels] = useState<readonly string[]>([]);
@@ -275,26 +329,29 @@ export function SharedKeysCard({
     setModels((prev) => prev.filter((id) => visibleModels.has(id)));
   };
 
-  const anyOverlayOpen = issueOpen || issuedKey !== null || topUpKey !== null || editKey !== null;
+  // The issued-key panel is deliberately absent: it holds the only copy of the
+  // plaintext secret, so it closes through its explicit Done/close buttons only.
+  const dismissibleOverlayOpen = issueOpen || topUpKey !== null || editKey !== null;
 
   useEffect(() => {
-    if (!anyOverlayOpen) return;
+    if (!dismissibleOverlayOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (editKey) setEditKey(null);
       else if (topUpKey) setTopUpKey(null);
-      else if (issuedKey) setIssuedKey(null);
       else if (issueOpen) setIssueOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [anyOverlayOpen, editKey, issueOpen, issuedKey, topUpKey]);
+  }, [dismissibleOverlayOpen, editKey, issueOpen, topUpKey]);
 
   const openEditDrawer = (key: ScopedApiKey) => {
     setEditKey(key);
     setEditName(key.name);
     setEditRawKey(key.raw_key ?? "");
-    setEditProviders(key.allowed_providers);
+    setShowEditRawKey(false);
+    // Stored scopes may use aliases; chips are canonical, so match on canonical ids.
+    setEditProviders(Array.from(new Set(key.allowed_providers.map(canonicalScopeProvider))));
     setEditAccounts(key.allowed_accounts);
     setEditModels(key.allowed_models);
     setEditLimit(key.token_limit);
@@ -386,10 +443,12 @@ export function SharedKeysCard({
     setTimeout(() => setCopiedPrefixId(null), 1500);
   };
 
+  const topUpTokens = Number.parseInt(topUpAmount, 10);
+  const topUpValid = Number.isFinite(topUpTokens) && topUpTokens > 0;
+
   const handleTopUp = async () => {
-    if (!topUpKey) return;
-    const additional = Number.parseInt(topUpAmount, 10);
-    if (!Number.isFinite(additional) || additional <= 0) return;
+    if (!topUpKey || !topUpValid) return;
+    const additional = topUpTokens;
     await onPatchKey(topUpKey.id, { token_limit: topUpKey.token_limit + additional });
     setTopUpKey(null);
   };
@@ -560,8 +619,7 @@ export function SharedKeysCard({
                   {capped ? (
                     <div
                       className="quota-track"
-                      role="progressbar"
-                      tabIndex={0}
+                      role="meter"
                       aria-label={`${key.name} token usage`}
                       aria-valuemin={0}
                       aria-valuemax={100}
@@ -593,303 +651,291 @@ export function SharedKeysCard({
       )}
 
       {issueOpen ? (
-        <OverlayLayer className="drawer-backdrop">
-          <dialog
-            open
-            className="drawer shared-keys-drawer"
-            aria-modal="true"
-            aria-label="Issue scoped remote key"
-          >
-            <div className="section-head">
-              <div>
-                <span className="kicker">SHARED ACCESS</span>
-                <h2>Issue scoped remote key</h2>
-              </div>
-              <Button aria-label="Close issue key drawer" onClick={() => setIssueOpen(false)}>
-                <X size={15} />
-              </Button>
+        <DrawerDialog label="Issue scoped remote key">
+          <div className="section-head">
+            <div>
+              <span className="kicker">SHARED ACCESS</span>
+              <h2>Issue scoped remote key</h2>
             </div>
+            <Button aria-label="Close issue key drawer" onClick={() => setIssueOpen(false)}>
+              <X size={15} />
+            </Button>
+          </div>
 
-            <Field label="Key name" hint="Who or what will use this key, e.g. Study group laptop.">
+          <Field label="Key name" hint="Who or what will use this key, e.g. Study group laptop.">
+            <Input
+              id={nameInputId}
+              data-autofocus
+              value={name}
+              placeholder="Name"
+              onChange={(event) => {
+                setName(event.target.value);
+                if (error) setError(null);
+              }}
+            />
+          </Field>
+
+          {error ? (
+            <div
+              role="alert"
+              className="field-error"
+              style={{
+                marginTop: "0.5rem",
+                color: "var(--color-bad, #ef4444)",
+                fontSize: "0.85rem",
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+
+          <ScopePicker
+            title="Allowed providers"
+            hint="Empty means every provider."
+            options={providerOptions}
+            selected={selectedProviders}
+            onToggle={(value) =>
+              applyProviderSelection(
+                selectedProviders.includes(value)
+                  ? selectedProviders.filter((entry) => entry !== value)
+                  : [...selectedProviders, value],
+                setSelectedProviders,
+                setSelectedAccounts,
+                setSelectedModels,
+              )
+            }
+            onSelectAll={() =>
+              applyProviderSelection(
+                selectedProviders.length === providerOptions.length
+                  ? []
+                  : providerOptions.map((option) => option.value),
+                setSelectedProviders,
+                setSelectedAccounts,
+                setSelectedModels,
+              )
+            }
+          />
+
+          <ScopePicker
+            title="Allowed accounts"
+            hint="Empty means every registered account."
+            options={accountOptions}
+            selected={selectedAccounts}
+            onToggle={(value) => toggle(setSelectedAccounts, value)}
+            onSelectAll={() =>
+              setSelectedAccounts((prev) =>
+                prev.length === accountOptions.length
+                  ? []
+                  : accountOptions.map((option) => option.value),
+              )
+            }
+          />
+
+          <ScopePicker
+            title="Allowed models"
+            hint="Empty means the whole active catalog."
+            options={modelOptions}
+            selected={selectedModels}
+            onToggle={(value) => toggle(setSelectedModels, value)}
+            onSelectAll={() =>
+              setSelectedModels((prev) =>
+                prev.length === modelOptions.length
+                  ? []
+                  : modelOptions.map((option) => option.value),
+              )
+            }
+            scrollable
+          />
+
+          <section className="scope-picker" aria-label="Token budget">
+            <div className="scope-picker-head">
+              <div>
+                <strong>Token budget</strong>
+                <small>Total tokens this key may spend before it stops serving.</small>
+              </div>
+            </div>
+            <div className="limit-presets">
+              {PRESET_LIMITS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className="limit-preset"
+                  aria-pressed={customLimit.trim() === "" && tokenLimit === preset.value}
+                  onClick={() => {
+                    setTokenLimit(preset.value);
+                    setCustomLimit("");
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <Field label="Custom limit" hint="Overrides the preset while filled in.">
               <Input
-                id={nameInputId}
-                value={name}
-                placeholder="Name"
-                onChange={(event) => {
-                  setName(event.target.value);
-                  if (error) setError(null);
-                }}
+                id={customLimitId}
+                type="number"
+                min={0}
+                placeholder="Custom token limit"
+                value={customLimit}
+                onChange={(event) => setCustomLimit(event.target.value)}
               />
             </Field>
+          </section>
 
-            {error ? (
-              <div
-                role="alert"
-                className="field-error"
-                style={{
-                  marginTop: "0.5rem",
-                  color: "var(--color-bad, #ef4444)",
-                  fontSize: "0.85rem",
-                }}
-              >
-                {error}
-              </div>
-            ) : null}
-
-            <ScopePicker
-              title="Allowed providers"
-              hint="Empty means every provider."
-              options={providerOptions}
-              selected={selectedProviders}
-              onToggle={(value) =>
-                applyProviderSelection(
-                  selectedProviders.includes(value)
-                    ? selectedProviders.filter((entry) => entry !== value)
-                    : [...selectedProviders, value],
-                  setSelectedProviders,
-                  setSelectedAccounts,
-                  setSelectedModels,
-                )
-              }
-              onSelectAll={() =>
-                applyProviderSelection(
-                  selectedProviders.length === providerOptions.length
-                    ? []
-                    : providerOptions.map((option) => option.value),
-                  setSelectedProviders,
-                  setSelectedAccounts,
-                  setSelectedModels,
-                )
-              }
-            />
-
-            <ScopePicker
-              title="Allowed accounts"
-              hint="Empty means every registered account."
-              options={accountOptions}
-              selected={selectedAccounts}
-              onToggle={(value) => toggle(setSelectedAccounts, value)}
-              onSelectAll={() =>
-                setSelectedAccounts((prev) =>
-                  prev.length === accountOptions.length
-                    ? []
-                    : accountOptions.map((option) => option.value),
-                )
-              }
-            />
-
-            <ScopePicker
-              title="Allowed models"
-              hint="Empty means the whole active catalog."
-              options={modelOptions}
-              selected={selectedModels}
-              onToggle={(value) => toggle(setSelectedModels, value)}
-              onSelectAll={() =>
-                setSelectedModels((prev) =>
-                  prev.length === modelOptions.length
-                    ? []
-                    : modelOptions.map((option) => option.value),
-                )
-              }
-              scrollable
-            />
-
-            <section className="scope-picker" aria-label="Token budget">
-              <div className="scope-picker-head">
-                <div>
-                  <strong>Token budget</strong>
-                  <small>Total tokens this key may spend before it stops serving.</small>
-                </div>
-              </div>
-              <div className="limit-presets">
-                {PRESET_LIMITS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    className="limit-preset"
-                    aria-pressed={customLimit.trim() === "" && tokenLimit === preset.value}
-                    onClick={() => {
-                      setTokenLimit(preset.value);
-                      setCustomLimit("");
-                    }}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-              <Field label="Custom limit" hint="Overrides the preset while filled in.">
-                <Input
-                  id={customLimitId}
-                  type="number"
-                  min={0}
-                  placeholder="Custom token limit"
-                  value={customLimit}
-                  onChange={(event) => setCustomLimit(event.target.value)}
-                />
-              </Field>
-            </section>
-
-            <div className="drawer-actions">
-              <Button onClick={() => setIssueOpen(false)}>Cancel</Button>
-              <Button
-                disabled={name.trim() === "" || submitting}
-                onClick={() => void handleCreate()}
-              >
-                {submitting ? "Issuing…" : "Create key"}
-              </Button>
-            </div>
-          </dialog>
-        </OverlayLayer>
+          <div className="drawer-actions">
+            <Button onClick={() => setIssueOpen(false)}>Cancel</Button>
+            <Button disabled={name.trim() === "" || submitting} onClick={() => void handleCreate()}>
+              {submitting ? "Issuing…" : "Create key"}
+            </Button>
+          </div>
+        </DrawerDialog>
       ) : null}
 
       {issuedKey ? (
-        <OverlayLayer className="drawer-backdrop">
-          <dialog
-            open
-            className="drawer shared-keys-drawer"
-            aria-modal="true"
-            aria-label="Shared key created"
-          >
-            <div className="section-head">
-              <div>
-                <span className="kicker">COPY NOW</span>
-                <h2>Key created</h2>
-              </div>
-              <Button aria-label="Close created key drawer" onClick={() => setIssuedKey(null)}>
-                <X size={15} />
-              </Button>
+        <DrawerDialog label="Shared key created">
+          <div className="section-head">
+            <div>
+              <span className="kicker">COPY NOW</span>
+              <h2>Key created</h2>
             </div>
+            <Button aria-label="Close created key drawer" onClick={() => setIssuedKey(null)}>
+              <X size={15} />
+            </Button>
+          </div>
 
-            <div className="tunnel-warning" role="note">
-              <strong>This key is shown only once.</strong>
-              <span>
-                Copy it now and hand it over through a trusted channel. Closing this panel discards
-                the plaintext value permanently.
-              </span>
+          <div className="tunnel-warning" role="note">
+            <strong>This key is shown only once.</strong>
+            <span>
+              Copy it now and hand it over through a trusted channel. Closing this panel discards
+              the plaintext value permanently.
+            </span>
+          </div>
+
+          <div className="shared-key-reveal">
+            <code>{issuedKey.rawKey}</code>
+            <Button
+              data-autofocus
+              aria-label="Copy shared API key"
+              onClick={() => void handleCopyRawKey()}
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+
+          <dl className="shared-key-instructions">
+            <div>
+              <dt>Base URL</dt>
+              <dd>
+                {endpoint ? (
+                  <code>{endpoint}</code>
+                ) : (
+                  <small>
+                    Same-origin only: this gateway has no tunnel or external Base URL. Use this
+                    console's own address with /v1 appended.
+                  </small>
+                )}
+              </dd>
             </div>
-
-            <div className="shared-key-reveal">
-              <code>{issuedKey.rawKey}</code>
-              <Button aria-label="Copy shared API key" onClick={() => void handleCopyRawKey()}>
-                {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy"}
-              </Button>
+            <div>
+              <dt>Header</dt>
+              <dd>
+                <code>Authorization: Bearer {issuedKey.rawKey}</code>
+              </dd>
             </div>
-
-            <dl className="shared-key-instructions">
-              <div>
-                <dt>Base URL</dt>
-                <dd>
-                  {endpoint ? (
-                    <code>{endpoint}</code>
-                  ) : (
-                    <small>
-                      Same-origin only: this gateway has no tunnel or external Base URL. Use this
-                      console's own address with /v1 appended.
-                    </small>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>Header</dt>
-                <dd>
-                  <code>Authorization: Bearer {issuedKey.rawKey}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>Budget</dt>
-                <dd>
-                  {issuedKey.key.token_limit > 0
-                    ? `${issuedKey.key.token_limit.toLocaleString()} tokens`
-                    : "Unlimited"}
-                </dd>
-              </div>
-            </dl>
-
-            <div className="drawer-actions">
-              <Button onClick={() => setIssuedKey(null)}>Done</Button>
+            <div>
+              <dt>Budget</dt>
+              <dd>
+                {issuedKey.key.token_limit > 0
+                  ? `${issuedKey.key.token_limit.toLocaleString()} tokens`
+                  : "Unlimited"}
+              </dd>
             </div>
-          </dialog>
-        </OverlayLayer>
+          </dl>
+
+          <div className="drawer-actions">
+            <Button onClick={() => setIssuedKey(null)}>Done</Button>
+          </div>
+        </DrawerDialog>
       ) : null}
 
       {topUpKey ? (
-        <OverlayLayer className="drawer-backdrop">
-          <dialog
-            open
-            className="drawer shared-keys-drawer"
-            aria-modal="true"
-            aria-label={`Top up ${topUpKey.name}`}
-          >
-            <div className="section-head">
-              <div>
-                <span className="kicker">QUOTA</span>
-                <h2>Top up {topUpKey.name}</h2>
-              </div>
-              <Button aria-label="Close top up drawer" onClick={() => setTopUpKey(null)}>
-                <X size={15} />
-              </Button>
+        <DrawerDialog label={`Top up ${topUpKey.name}`}>
+          <div className="section-head">
+            <div>
+              <span className="kicker">QUOTA</span>
+              <h2>Top up {topUpKey.name}</h2>
             </div>
+            <Button aria-label="Close top up drawer" onClick={() => setTopUpKey(null)}>
+              <X size={15} />
+            </Button>
+          </div>
 
-            <p className="shared-key-topup-current">
-              {topUpKey.token_limit > 0
-                ? `${topUpKey.token_used.toLocaleString()} / ${topUpKey.token_limit.toLocaleString()} tokens used`
-                : `${topUpKey.token_used.toLocaleString()} tokens used (unlimited)`}
-            </p>
+          <p className="shared-key-topup-current">
+            {topUpKey.token_limit > 0
+              ? `${topUpKey.token_used.toLocaleString()} / ${topUpKey.token_limit.toLocaleString()} tokens used`
+              : `${topUpKey.token_used.toLocaleString()} tokens used (unlimited)`}
+          </p>
 
-            <Field label="Add tokens" hint="Raises the total limit by this amount.">
-              <Input
-                id={topUpInputId}
-                type="number"
-                min={0}
-                value={topUpAmount}
-                onChange={(event) => setTopUpAmount(event.target.value)}
-              />
-            </Field>
-
-            <div className="drawer-actions">
-              <Button onClick={() => setTopUpKey(null)}>Cancel</Button>
-              <Button onClick={() => void runMutation(handleTopUp)}>Add quota</Button>
+          <Field label="Add tokens" hint="Raises the total limit by this amount.">
+            <Input
+              id={topUpInputId}
+              data-autofocus
+              type="number"
+              min={1}
+              value={topUpAmount}
+              aria-invalid={!topUpValid}
+              onChange={(event) => setTopUpAmount(event.target.value)}
+            />
+          </Field>
+          {topUpValid ? null : (
+            <div role="alert" className="field-error" style={{ fontSize: "0.85rem" }}>
+              Enter a whole number of tokens greater than 0.
             </div>
-          </dialog>
-        </OverlayLayer>
+          )}
+
+          <div className="drawer-actions">
+            <Button onClick={() => setTopUpKey(null)}>Cancel</Button>
+            <Button disabled={!topUpValid} onClick={() => void runMutation(handleTopUp)}>
+              Add quota
+            </Button>
+          </div>
+        </DrawerDialog>
       ) : null}
 
       {editKey ? (
-        <OverlayLayer className="drawer-backdrop">
-          <dialog
-            open
-            className="drawer shared-keys-drawer"
-            aria-modal="true"
-            aria-label={`Edit ${editKey.name}`}
-          >
-            <div className="section-head">
-              <div>
-                <span className="kicker">SCOPE & BUDGET</span>
-                <h2>Edit {editKey.name}</h2>
-              </div>
-              <Button aria-label="Close edit key drawer" onClick={() => setEditKey(null)}>
-                <X size={15} />
-              </Button>
+        <DrawerDialog label={`Edit ${editKey.name}`}>
+          <div className="section-head">
+            <div>
+              <span className="kicker">SCOPE & BUDGET</span>
+              <h2>Edit {editKey.name}</h2>
             </div>
+            <Button aria-label="Close edit key drawer" onClick={() => setEditKey(null)}>
+              <X size={15} />
+            </Button>
+          </div>
 
-            <Field label="Key name" hint="Who or what will use this key.">
-              <Input
-                id={editNameInputId}
-                value={editName}
-                placeholder="Name"
-                onChange={(event) => {
-                  setEditName(event.target.value);
-                  if (editError) setEditError(null);
-                }}
-              />
-            </Field>
+          <Field label="Key name" hint="Who or what will use this key.">
+            <Input
+              id={editNameInputId}
+              data-autofocus
+              value={editName}
+              placeholder="Name"
+              onChange={(event) => {
+                setEditName(event.target.value);
+                if (editError) setEditError(null);
+              }}
+            />
+          </Field>
 
-            <Field
-              label="API Key value"
-              hint="You can view, copy, or replace the key secret (e.g. mq-sh-...). Leave untouched to keep current."
-            >
+          <Field
+            label="API Key value"
+            hint="You can view, copy, or replace the key secret (e.g. mq-sh-...). Leave untouched to keep current."
+          >
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <Input
                 id={editRawKeyInputId}
+                type={showEditRawKey ? "text" : "password"}
+                autoComplete="off"
                 value={editRawKey}
                 placeholder="Set or regenerate secret key"
                 onChange={(event) => {
@@ -897,129 +943,136 @@ export function SharedKeysCard({
                   if (editError) setEditError(null);
                 }}
               />
-            </Field>
-
-            {editError ? (
-              <div
-                role="alert"
-                className="field-error"
-                style={{
-                  marginTop: "0.5rem",
-                  color: "var(--color-bad, #ef4444)",
-                  fontSize: "0.85rem",
-                }}
-              >
-                {editError}
-              </div>
-            ) : null}
-
-            <ScopePicker
-              title="Allowed providers"
-              hint="Empty means every provider."
-              options={providerOptions}
-              selected={editProviders}
-              onToggle={(value) =>
-                applyProviderSelection(
-                  editProviders.includes(value)
-                    ? editProviders.filter((entry) => entry !== value)
-                    : [...editProviders, value],
-                  setEditProviders,
-                  setEditAccounts,
-                  setEditModels,
-                )
-              }
-              onSelectAll={() =>
-                applyProviderSelection(
-                  editProviders.length === providerOptions.length
-                    ? []
-                    : providerOptions.map((option) => option.value),
-                  setEditProviders,
-                  setEditAccounts,
-                  setEditModels,
-                )
-              }
-            />
-
-            <ScopePicker
-              title="Allowed accounts"
-              hint="Empty means every registered account."
-              options={editAccountOptions}
-              selected={editAccounts}
-              onToggle={(value) => toggle(setEditAccounts, value)}
-              onSelectAll={() =>
-                setEditAccounts((prev) =>
-                  prev.length === editAccountOptions.length
-                    ? []
-                    : editAccountOptions.map((option) => option.value),
-                )
-              }
-            />
-
-            <ScopePicker
-              title="Allowed models"
-              hint="Empty means the whole active catalog."
-              options={editModelOptions}
-              selected={editModels}
-              onToggle={(value) => toggle(setEditModels, value)}
-              onSelectAll={() =>
-                setEditModels((prev) =>
-                  prev.length === editModelOptions.length
-                    ? []
-                    : editModelOptions.map((option) => option.value),
-                )
-              }
-              scrollable
-            />
-
-            <section className="scope-picker" aria-label="Token budget">
-              <div className="scope-picker-head">
-                <div>
-                  <strong>Token budget</strong>
-                  <small>
-                    Total lifetime token limit (current used: {editKey.token_used.toLocaleString()}
-                    ).
-                  </small>
-                </div>
-              </div>
-              <div className="limit-presets">
-                {PRESET_LIMITS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    className="limit-preset"
-                    aria-pressed={editCustomLimit.trim() === "" && editLimit === preset.value}
-                    onClick={() => {
-                      setEditLimit(preset.value);
-                      setEditCustomLimit("");
-                    }}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-              <Field label="Custom limit" hint="Overrides the preset while filled in.">
-                <Input
-                  id={editCustomLimitId}
-                  type="number"
-                  min={0}
-                  placeholder="Custom token limit"
-                  value={editCustomLimit}
-                  onChange={(event) => setEditCustomLimit(event.target.value)}
-                />
-              </Field>
-            </section>
-
-            <div className="drawer-actions">
-              <Button onClick={() => setEditKey(null)}>Cancel</Button>
               <Button
-                disabled={editName.trim() === "" || editSubmitting}
-                onClick={() => void handleSaveEdit()}
+                aria-label={showEditRawKey ? "Hide API key value" : "Show API key value"}
+                aria-pressed={showEditRawKey}
+                onClick={() => setShowEditRawKey((current) => !current)}
               >
-                {editSubmitting ? "Saving…" : "Save changes"}
+                {showEditRawKey ? <EyeOff size={14} /> : <Eye size={14} />}
               </Button>
             </div>
-          </dialog>
-        </OverlayLayer>
+          </Field>
+
+          {editError ? (
+            <div
+              role="alert"
+              className="field-error"
+              style={{
+                marginTop: "0.5rem",
+                color: "var(--color-bad, #ef4444)",
+                fontSize: "0.85rem",
+              }}
+            >
+              {editError}
+            </div>
+          ) : null}
+
+          <ScopePicker
+            title="Allowed providers"
+            hint="Empty means every provider."
+            options={providerOptions}
+            selected={editProviders}
+            onToggle={(value) =>
+              applyProviderSelection(
+                editProviders.includes(value)
+                  ? editProviders.filter((entry) => entry !== value)
+                  : [...editProviders, value],
+                setEditProviders,
+                setEditAccounts,
+                setEditModels,
+              )
+            }
+            onSelectAll={() =>
+              applyProviderSelection(
+                editProviders.length === providerOptions.length
+                  ? []
+                  : providerOptions.map((option) => option.value),
+                setEditProviders,
+                setEditAccounts,
+                setEditModels,
+              )
+            }
+          />
+
+          <ScopePicker
+            title="Allowed accounts"
+            hint="Empty means every registered account."
+            options={editAccountOptions}
+            selected={editAccounts}
+            onToggle={(value) => toggle(setEditAccounts, value)}
+            onSelectAll={() =>
+              setEditAccounts((prev) =>
+                prev.length === editAccountOptions.length
+                  ? []
+                  : editAccountOptions.map((option) => option.value),
+              )
+            }
+          />
+
+          <ScopePicker
+            title="Allowed models"
+            hint="Empty means the whole active catalog."
+            options={editModelOptions}
+            selected={editModels}
+            onToggle={(value) => toggle(setEditModels, value)}
+            onSelectAll={() =>
+              setEditModels((prev) =>
+                prev.length === editModelOptions.length
+                  ? []
+                  : editModelOptions.map((option) => option.value),
+              )
+            }
+            scrollable
+          />
+
+          <section className="scope-picker" aria-label="Token budget">
+            <div className="scope-picker-head">
+              <div>
+                <strong>Token budget</strong>
+                <small>
+                  Total lifetime token limit (current used: {editKey.token_used.toLocaleString()}
+                  ).
+                </small>
+              </div>
+            </div>
+            <div className="limit-presets">
+              {PRESET_LIMITS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className="limit-preset"
+                  aria-pressed={editCustomLimit.trim() === "" && editLimit === preset.value}
+                  onClick={() => {
+                    setEditLimit(preset.value);
+                    setEditCustomLimit("");
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <Field label="Custom limit" hint="Overrides the preset while filled in.">
+              <Input
+                id={editCustomLimitId}
+                type="number"
+                min={0}
+                placeholder="Custom token limit"
+                value={editCustomLimit}
+                onChange={(event) => setEditCustomLimit(event.target.value)}
+              />
+            </Field>
+          </section>
+
+          <div className="drawer-actions">
+            <Button onClick={() => setEditKey(null)}>Cancel</Button>
+            <Button
+              disabled={editName.trim() === "" || editSubmitting}
+              onClick={() => void handleSaveEdit()}
+            >
+              {editSubmitting ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        </DrawerDialog>
       ) : null}
     </Card>
   );

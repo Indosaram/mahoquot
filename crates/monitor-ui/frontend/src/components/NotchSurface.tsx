@@ -2,12 +2,12 @@ import { formatQuotaPercent, quotaDisplay, quotaRows } from "@/components/Accoun
 import { MONOCHROME_LOGOS, ProviderGlyph, providerLogos } from "@/components/ProviderGlyph";
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import { type NormalizedAccount, formatResetTime } from "@/lib/accounts";
-import { type LocalPoint, groupNotchProviders, providerAtPoint } from "@/lib/notch";
+import { groupNotchProviders, providerAtPoint } from "@/lib/notch";
 import { providerColor } from "@/lib/provider-colors";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TotpEntry } from "../lib/totp-vault";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
+import type { TotpEntry } from "../lib/totp-vault";
 import { TotpQuickAccess } from "./TotpVaultSurface";
 
 // Island silhouette matching reference: smooth continuous S-curve flare (55px)
@@ -30,9 +30,7 @@ const EMPTY_RING_COPY: Readonly<
   "relay-locked": { label: "Relay locked", meta: "Reconnect in Operations Console" },
 };
 
-const worstUsedPercent = (
-  rows: readonly { usedPercent: number | null }[],
-): number | null => {
+const worstUsedPercent = (rows: readonly { usedPercent: number | null }[]): number | null => {
   const values = rows
     .map((row) => row.usedPercent)
     .filter((value): value is number => value !== null && Number.isFinite(value));
@@ -58,10 +56,17 @@ const NotchGlyph = ({ provider }: { provider: string }) => {
   );
 };
 
+/** Cursor position in notch-local coordinates, forwarded by the native shell. */
+export type NotchLocalPoint = { x: number; y: number };
+
 interface NotchSurfaceProps {
   accounts: readonly NormalizedAccount[];
   loadState: LoadState;
   showRemaining: boolean;
+  /** Native hover is the sole expansion owner; App forwards it as a prop. */
+  notchExpanded: boolean;
+  /** Native cursor forwarded by App; drives stage-two tooltip hover. */
+  nativeCursor: NotchLocalPoint | null;
   /** Bare slugs of Cline models whose daily bucket renders (Settings). */
   clineQuotaDisplay?: readonly string[];
   totpEntries?: readonly TotpEntry[];
@@ -72,23 +77,22 @@ interface NotchSurfaceProps {
 
 /**
  * The notch webview surface: island geometry, provider dials, hover tooltips,
- * and the native-event plumbing that drives them. The `surface` constant keeps
- * the moved effect guards meaningful in their new home.
+ * and hover tooltips. Native hover/cursor state arrives via props; App owns the
+ * event subscriptions.
  */
 export function NotchSurface({
   accounts,
   loadState,
   showRemaining,
+  notchExpanded,
+  nativeCursor,
   clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
   totpEntries = [],
   totpCodes = {},
   totpRemaining = 0,
   onCopyTotpCode = () => undefined,
 }: NotchSurfaceProps) {
-  const surface = "notch" as const;
-  const [notchExpanded, setNotchExpanded] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
-  const [nativeCursor, setNativeCursor] = useState<LocalPoint | null>(null);
   const hoverCloseTimer = useRef<number | undefined>(undefined);
   useEffect(
     () => () => {
@@ -96,58 +100,6 @@ export function NotchSurface({
     },
     [],
   );
-  // macOS delivers pointer events only to the active app, so an unfocused notch
-  // never sees mouseenter. Native hover is the sole expansion owner; keeping a
-  // DOM/rAF feedback path here deadlocks background WebKit rendering.
-  useEffect(() => {
-    if (surface !== "notch") return;
-    const hover = (event: Event) => {
-      setNotchExpanded(Boolean((event as CustomEvent<unknown>).detail));
-    };
-    const cursor = (event: Event) => {
-      setNativeCursor(((event as CustomEvent<unknown>).detail as LocalPoint | null) ?? null);
-    };
-    window.addEventListener("mahoquot:notch-hover", hover);
-    window.addEventListener("mahoquot:notch-cursor", cursor);
-    return () => {
-      window.removeEventListener("mahoquot:notch-hover", hover);
-      window.removeEventListener("mahoquot:notch-cursor", cursor);
-    };
-  }, [surface]);
-
-  useEffect(() => {
-    if (surface !== "notch") return;
-    const api = (
-      window as {
-        __TAURI__?: {
-          event?: {
-            listen: (
-              event: string,
-              handler: (message: { payload: boolean }) => void,
-            ) => Promise<() => void>;
-          };
-        };
-      }
-    ).__TAURI__;
-    if (!api?.event?.listen) return;
-    const disposers: (() => void)[] = [];
-    let cancelled = false;
-    const subscribe = (event: string, handler: (payload: unknown) => void) => {
-      void api.event
-        ?.listen(event, (message: { payload: unknown }) => handler(message.payload))
-        .then((unlisten) => {
-          if (cancelled) unlisten();
-          else disposers.push(unlisten);
-        });
-    };
-    subscribe("notch-hover", (payload) => setNotchExpanded(Boolean(payload)));
-    subscribe("notch-cursor", (payload) => setNativeCursor((payload as LocalPoint | null) ?? null));
-    return () => {
-      cancelled = true;
-      for (const dispose of disposers) dispose();
-    };
-  }, [surface]);
-
   const openNotchTooltip = useCallback((provider: string) => {
     if (hoverCloseTimer.current) window.clearTimeout(hoverCloseTimer.current);
     hoverCloseTimer.current = undefined;
@@ -167,7 +119,7 @@ export function NotchSurface({
   // The webview gets no pointer events while another app is frontmost, so the
   // forwarded native cursor drives stage-two hover instead.
   useEffect(() => {
-    if (surface !== "notch" || !notchExpanded) return;
+    if (!notchExpanded) return;
     if (!nativeCursor) {
       scheduleNotchTooltipClose();
       return;
@@ -183,7 +135,7 @@ export function NotchSurface({
     const hit = providerAtPoint(nativeCursor, targets);
     if (hit) openNotchTooltip(hit);
     else scheduleNotchTooltipClose();
-  }, [nativeCursor, notchExpanded, surface, openNotchTooltip, scheduleNotchTooltipClose]);
+  }, [nativeCursor, notchExpanded, openNotchTooltip, scheduleNotchTooltipClose]);
 
   const notchGroups =
     loadState === "online" && accounts.length
@@ -239,25 +191,25 @@ export function NotchSurface({
               entry.rows.map((row, index) => {
                 const display = quotaDisplay(row.usedPercent, showRemaining);
                 return (
-                <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
-                  <div className="notch-tooltip-row-head">
-                    <span className="notch-tooltip-label">{row.name}</span>
-                    <small className="notch-tooltip-reset">
-                      Resets{" "}
-                      {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
-                    </small>
+                  <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
+                    <div className="notch-tooltip-row-head">
+                      <span className="notch-tooltip-label">{row.name}</span>
+                      <small className="notch-tooltip-reset">
+                        Resets{" "}
+                        {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
+                      </small>
+                    </div>
+                    <div className="notch-tooltip-bar">
+                      <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
+                    </div>
+                    <div className="notch-tooltip-meta">
+                      <span>
+                        {display === null
+                          ? "Unmeasured"
+                          : `${formatQuotaPercent(display)}% ${showRemaining ? "Left" : "Used"}`}
+                      </span>
+                    </div>
                   </div>
-                  <div className="notch-tooltip-bar">
-                    <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
-                  </div>
-                  <div className="notch-tooltip-meta">
-                    <span>
-                      {display === null
-                        ? "Unmeasured"
-                        : `${formatQuotaPercent(display)}% ${showRemaining ? "Left" : "Used"}`}
-                    </span>
-                  </div>
-                </div>
                 );
               })
             ) : (

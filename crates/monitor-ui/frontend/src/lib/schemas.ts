@@ -10,6 +10,20 @@ export const RawCredentialDocumentSchema = z
     message: "credential document must not be empty",
   });
 
+/**
+ * A string field the gateway may extend with new values: known literals stay
+ * typed, anything else degrades to `fallback` instead of failing the whole parse.
+ */
+export const tolerantEnum = <const T extends readonly [string, ...string[]], F extends string>(
+  values: T,
+  fallback: F,
+) =>
+  z
+    .string()
+    .transform((value): T[number] | F =>
+      (values as readonly string[]).includes(value) ? (value as T[number]) : fallback,
+    );
+
 /** `GET /healthz` - public liveness probe carrying the build + wire version. */
 export const GatewayHealthSchema = z.object({
   status: z.string(),
@@ -29,13 +43,10 @@ export const ModelRegistryLastRefreshSchema = z.object({
 });
 
 export const ModelRegistryStatusSchema = z.object({
-  source: z.enum([
-    "embedded_fallback",
-    "lkg_cache",
-    "remote_signed",
-    "discovered",
-    "local_override",
-  ]),
+  source: tolerantEnum(
+    ["embedded_fallback", "lkg_cache", "remote_signed", "discovered", "local_override"],
+    "unknown",
+  ),
   "catalog-version": z.number().int().nonnegative(),
   generation: z.number().int().positive(),
   "generated-at": z.number().int().nonnegative().nullable(),
@@ -55,17 +66,21 @@ export const ModelRegistryRefreshResponseSchema = z.object({
 });
 export type ModelRegistryRefreshResponse = z.infer<typeof ModelRegistryRefreshResponseSchema>;
 
+// A missing percentile or sample count is unknown, never a measured zero.
 export const TtftSnapshotSchema = z.object({
-  p50_ms: z.number().default(0),
-  p90_ms: z.number().default(0),
-  p99_ms: z.number().default(0),
-  samples: z.number().default(0),
+  p50_ms: z.number().optional(),
+  p90_ms: z.number().optional(),
+  p99_ms: z.number().optional(),
+  samples: z.number().optional(),
 });
 export type TtftSnapshot = z.infer<typeof TtftSnapshotSchema>;
 
+// The gateway always serializes `status` (monitor.rs `LastError.status: u16`),
+// so it stays required: a missing status is never invented as 0. A timestamp
+// the gateway omits stays unknown rather than becoming 1970.
 export const LastErrorSchema = z.object({
-  unix_ms: z.number().default(0),
-  status: z.number().default(0),
+  unix_ms: z.number().optional(),
+  status: z.number(),
   message: z.string().default(""),
 });
 export type LastError = z.infer<typeof LastErrorSchema>;
@@ -174,7 +189,8 @@ export const AccountStatsSchema = z.object({
   reset_at_unix_ms: z.number().nullable().optional(),
   credits_after_limit: z.boolean().optional(),
   model_routability: z.record(z.boolean()).optional(),
-  last_error: LastErrorSchema.nullable().optional(),
+  // A malformed last error is unknown (null), not a reason to drop every account.
+  last_error: LastErrorSchema.nullable().optional().catch(null),
   ttft: z.union([TtftSnapshotSchema, z.number()]).nullable().optional(),
   usage: UsageSchema.nullable().optional(),
   models: z.array(z.string()).nullable().optional(),
@@ -249,7 +265,8 @@ export const AuthFilesResponseSchema = z.object({
 export type AuthFilesResponse = z.infer<typeof AuthFilesResponseSchema>;
 
 export const LogRecordSchema = z.object({
-  kind: z.enum(["request", "proxy"]),
+  // Unknown kinds pass through so one new record kind cannot fail the whole list.
+  kind: z.union([z.enum(["request", "proxy"]), z.string()]),
   timestamp: z.number().nullable().optional(),
   provider: z.string().optional(),
   account: z.string().nullable().optional(),
@@ -291,7 +308,7 @@ export const SchedulerAccountStatusSchema = z.object({
   selected: z.boolean(),
   parked: z.boolean(),
   priority: z.number().int().nonnegative().nullable(),
-  remaining_percent: z.number().int().min(0).max(100).nullable(),
+  remaining_percent: z.number().nullable(),
   reset_at_unix: z.number().int().nullable(),
   consecutive_non_auth_failures: z.number().int().nonnegative(),
 });
@@ -410,16 +427,12 @@ export const parseAdminStats = (data: unknown): AdminStats => {
   if (!parsed.success) {
     throw new Error(`Failed to parse stats response: ${parsed.error.message}`);
   }
-  // Normalize TTFT if it came as a single number
+  // A bare-number TTFT is one latency figure: keep it as p50 only and leave
+  // the other percentiles and the sample count unknown.
   const stats = parsed.data;
   let normalizedTtft: TtftSnapshot | null = null;
   if (typeof stats.ttft === "number") {
-    normalizedTtft = {
-      p50_ms: stats.ttft,
-      p90_ms: stats.ttft,
-      p99_ms: stats.ttft,
-      samples: 1,
-    };
+    normalizedTtft = { p50_ms: stats.ttft };
   } else if (stats.ttft) {
     normalizedTtft = stats.ttft;
   }
@@ -427,12 +440,7 @@ export const parseAdminStats = (data: unknown): AdminStats => {
   const normalizedAccounts = stats.accounts.map((acc) => {
     let accTtft: TtftSnapshot | null = null;
     if (typeof acc.ttft === "number") {
-      accTtft = {
-        p50_ms: acc.ttft,
-        p90_ms: acc.ttft,
-        p99_ms: acc.ttft,
-        samples: 1,
-      };
+      accTtft = { p50_ms: acc.ttft };
     } else if (acc.ttft) {
       accTtft = acc.ttft;
     }
@@ -682,7 +690,7 @@ export type DevinCliImportResponse = z.infer<typeof DevinCliImportResponseSchema
 
 export const DevinAccountStatusSchema = z.object({
   identity_slug: z.string(),
-  status: z.enum(["active", "stale", "uninitialized"]),
+  status: tolerantEnum(["active", "stale", "uninitialized"], "unknown"),
   models: z.array(z.string()).default([]),
   stale: z.boolean().default(false),
   last_refresh_at: z.number().nullable().optional(),

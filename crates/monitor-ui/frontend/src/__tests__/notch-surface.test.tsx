@@ -66,6 +66,8 @@ describe("NotchSurface ring sizing", () => {
         accounts={providers.map((provider, index) => account({ id: `acct-${index}`, provider }))}
         loadState="online"
         showRemaining={false}
+        notchExpanded={false}
+        nativeCursor={null}
       />,
     );
 
@@ -79,7 +81,15 @@ describe("NotchSurface ring sizing", () => {
 
 describe("NotchSurface empty ring states", () => {
   it("reports loading instead of claiming no accounts are connected", () => {
-    render(<NotchSurface accounts={[]} loadState="loading" showRemaining={false} />);
+    render(
+      <NotchSurface
+        accounts={[]}
+        loadState="loading"
+        showRemaining={false}
+        notchExpanded={false}
+        nativeCursor={null}
+      />,
+    );
 
     const tooltip = screen.getByTestId("notch-tooltip-empty");
     expect(tooltip.getAttribute("data-empty-state")).toBe("loading");
@@ -94,6 +104,8 @@ describe("NotchSurface empty ring states", () => {
         ]}
         loadState="stopped"
         showRemaining={false}
+        notchExpanded={false}
+        nativeCursor={null}
       />,
     );
 
@@ -104,7 +116,15 @@ describe("NotchSurface empty ring states", () => {
   });
 
   it("keeps the onboarding copy for a true empty state", () => {
-    render(<NotchSurface accounts={[]} loadState="online" showRemaining={false} />);
+    render(
+      <NotchSurface
+        accounts={[]}
+        loadState="online"
+        showRemaining={false}
+        notchExpanded={false}
+        nativeCursor={null}
+      />,
+    );
 
     const tooltip = screen.getByTestId("notch-tooltip-empty");
     expect(tooltip.getAttribute("data-empty-state")).toBe("empty");
@@ -121,6 +141,8 @@ describe("NotchSurface tooltip structure", () => {
         ]}
         loadState="online"
         showRemaining={false}
+        notchExpanded={false}
+        nativeCursor={null}
       />,
     );
 
@@ -153,6 +175,8 @@ describe("NotchSurface tooltip structure", () => {
           ]}
           loadState="online"
           showRemaining={false}
+          notchExpanded={false}
+          nativeCursor={null}
         />,
       );
 
@@ -178,6 +202,8 @@ describe("NotchSurface dial label clamp", () => {
         accounts={[account({ id: "a1", provider: "codex", usedPercent: 105 })]}
         loadState="online"
         showRemaining={false}
+        notchExpanded={false}
+        nativeCursor={null}
       />,
     );
 
@@ -190,6 +216,8 @@ describe("NotchSurface dial label clamp", () => {
         accounts={[account({ id: "a1", provider: "codex", usedPercent: 105 })]}
         loadState="online"
         showRemaining
+        notchExpanded={false}
+        nativeCursor={null}
       />,
     );
 

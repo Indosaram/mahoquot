@@ -47,6 +47,7 @@ describe("live log stream", () => {
 
     expect(received).toEqual([
       { kind: "request", status: 200, model: "gpt-5.6-sol" },
+      { kind: "not-a-known-kind" },
       { kind: "proxy", message: "upstream retried" },
     ]);
   });

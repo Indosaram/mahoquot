@@ -143,7 +143,6 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
     localStorage.setItem("mahoquot.key", "relay-test-key");
     localStorage.setItem("mahoquot.mgmt", "management-test-key");
     window.open = () => null;
-    window.prompt = () => "export-secret";
   });
 
   void page.route("**/admin/stats", (route) => route.fulfill({ json: stats }));
@@ -477,6 +476,9 @@ test("history export and clear confirmation run the real flows", async ({ page }
   await page.setViewportSize({ width: 1440, height: 900 });
   await openSettings(page);
 
+  // WKWebView has no prompt(): the export secret is typed inline and gates the buttons.
+  await expect(page.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+  await page.getByLabel("Export authorization secret").fill("export-secret");
   await page.getByRole("button", { name: "Export CSV" }).click();
   await expect
     .poll(() => captured.some((call) => call.url.includes("/history/export") && call.url.includes("csv")))

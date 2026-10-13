@@ -35,18 +35,19 @@ export const resolveAccountIdentity = (
     }
   }
 
-  // 4. compare after stripping a leading "<word>-" prefix
+  // 4. compare after stripping a leading "<word>-" prefix from the identifier.
+  // The prefix is a provider hint: when several accounts match the stripped
+  // value (same email under two providers), the provider-matching one wins.
   if (!matched) {
-    const prefixMatch = identifier.match(/^[a-zA-Z0-9]+-(.+)$/);
+    const prefixMatch = identifier.match(/^([a-zA-Z0-9]+)-(.+)$/);
     if (prefixMatch) {
-      const stripped = prefixMatch[1].toLowerCase();
-      matched = accounts.find(
-        (a) =>
-          a.id.toLowerCase() === stripped ||
-          a.email.toLowerCase() === stripped ||
-          a.id.toLowerCase().replace(/^[a-zA-Z0-9]+-/, "") === stripped ||
-          a.email.toLowerCase().replace(/^[a-zA-Z0-9]+-/, "") === stripped,
+      const stripped = prefixMatch[2].toLowerCase();
+      const hint = normalizeToQuotioProviderId(prefixMatch[1]);
+      const candidates = accounts.filter(
+        (a) => a.id.toLowerCase() === stripped || a.email.toLowerCase() === stripped,
       );
+      matched =
+        candidates.find((a) => normalizeToQuotioProviderId(a.provider) === hint) ?? candidates[0];
     }
   }
 

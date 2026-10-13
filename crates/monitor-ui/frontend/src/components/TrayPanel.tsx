@@ -11,9 +11,9 @@ import { useMemo, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import type { GatewayLifecycleStatus } from "../lib/native";
 import { getPlanTierColor } from "../lib/plan-tier";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import type { TotpEntry } from "../lib/totp-vault";
 import { quotaDisplay, quotaRows } from "./AccountsSurface";
-import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { TotpQuickAccess } from "./TotpVaultSurface";
 

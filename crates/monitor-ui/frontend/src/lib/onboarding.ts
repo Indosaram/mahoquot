@@ -41,6 +41,8 @@ export type OnboardingStep =
       readonly apiKey: string;
       readonly baseUrl: string;
       readonly plan: string;
+      /** Set once the user ran Discover in this form; creation reuses it. */
+      readonly discoveredModels?: readonly string[];
     }
   | {
       readonly kind: "devin-token";

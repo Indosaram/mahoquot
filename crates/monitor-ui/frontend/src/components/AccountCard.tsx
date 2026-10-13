@@ -12,23 +12,28 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, type MouseEvent, type ReactNode, useEffect, useState } from "react";
+import {
+  Fragment,
+  type MouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import { hasCreditDetail } from "../lib/credits";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
 import type { Usage, WarmupAccountStatus } from "../lib/schemas";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaDisplay, quotaRows } from "./AccountsSurface";
-import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
+import { type AccountCreditsControl, CreditBalanceRow } from "./CreditsSpendControls";
 import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
-import {
-  CreditBalanceRow,
-  type AccountCreditsControl,
-} from "./CreditsSpendControls";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -97,7 +102,10 @@ export const QuotaFreshnessBadge = ({ usage }: { readonly usage?: Usage | null }
       </Badge>
     );
   }
-  if (usage.refresh_status === "error" || (usage.last_refresh_error && usage.last_refresh_error.length > 0)) {
+  if (
+    usage.refresh_status === "error" ||
+    (usage.last_refresh_error && usage.last_refresh_error.length > 0)
+  ) {
     return (
       <Badge
         tone="bad"
@@ -109,6 +117,29 @@ export const QuotaFreshnessBadge = ({ usage }: { readonly usage?: Usage | null }
     );
   }
   return null;
+};
+
+// Throttling, upstream outages and timeouts clear on their own and are already
+// summarized by the health and freshness badges; they never earn an error row.
+const TRANSIENT_ERROR_PATTERN =
+  /rate.?limit|too many requests|overloaded|unavailable|time(?:d)?[\s-]?out|\b(?:408|429|5\d\d)\b/i;
+const ACTIONABLE_ERROR_PATTERN =
+  /unauthori[sz]ed|forbidden|\bauth(?:entication|orization)?\b|credential|api[\s_-]?key|login|sign[\s-]?in|config|schema|expired|revoked/i;
+
+const isTransientFailure = (status: number | undefined, message: string): boolean =>
+  status === 408 ||
+  status === 429 ||
+  (status !== undefined && status >= 500) ||
+  TRANSIENT_ERROR_PATTERN.test(message);
+
+/** Only auth/config failures the operator can act on may surface as an error row. */
+export const isActionableAccountError = (error: {
+  readonly status: number;
+  readonly message: string;
+}): boolean => {
+  if (error.status === 401 || error.status === 403) return true;
+  if (isTransientFailure(error.status, error.message)) return false;
+  return ACTIONABLE_ERROR_PATTERN.test(error.message);
 };
 
 export interface AccountCardProps {
@@ -169,6 +200,12 @@ interface OverflowAction {
   readonly run: () => void;
 }
 
+const enabledMenuItems = (menu: HTMLElement | null): HTMLButtonElement[] =>
+  Array.from(menu?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
+
+const focusMenuTrigger = (root: HTMLElement | null) =>
+  root?.querySelector<HTMLButtonElement>("button[aria-haspopup]")?.focus();
+
 /**
  * The lifecycle actions a card offers outnumber the width its header can spend
  * on labels, so the rare ones live behind one trigger. Keeping them in a menu
@@ -180,12 +217,18 @@ const AccountOverflowMenu = ({
   actions,
 }: { readonly label: string; readonly actions: readonly OverflowAction[] }) => {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    enabledMenuItems(menuRef.current)[0]?.focus();
     const dismiss = () => setOpen(false);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        focusMenuTrigger(rootRef.current);
+      }
     };
     window.addEventListener("pointerdown", dismiss);
     window.addEventListener("blur", dismiss);
@@ -201,8 +244,22 @@ const AccountOverflowMenu = ({
 
   if (actions.length === 0) return null;
 
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = enabledMenuItems(menuRef.current);
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number;
+    if (event.key === "ArrowDown") next = (current + 1) % items.length;
+    else if (event.key === "ArrowUp") next = (current <= 0 ? items.length : current) - 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    else return;
+    event.preventDefault();
+    items[next]?.focus();
+  };
+
   return (
-    <span className="account-overflow">
+    <span ref={rootRef} className="account-overflow">
       <Button
         size="sm"
         className="button-icon"
@@ -218,9 +275,11 @@ const AccountOverflowMenu = ({
       </Button>
       {open ? (
         <div
+          ref={menuRef}
           className="account-overflow-menu"
           role="menu"
           onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={onMenuKeyDown}
         >
           {actions.map((action) => (
             <button
@@ -237,6 +296,7 @@ const AccountOverflowMenu = ({
               disabled={action.disabled}
               onClick={() => {
                 setOpen(false);
+                focusMenuTrigger(rootRef.current);
                 action.run();
               }}
             >
@@ -596,7 +656,9 @@ export const AccountCard = ({
         </div>
       </div>
       <div className="usage-section">
-        {account.usage?.last_refresh_error ? (
+        {account.usage?.last_refresh_error &&
+        account.usage.refresh_status !== "rate_limited" &&
+        !isTransientFailure(undefined, account.usage.last_refresh_error) ? (
           <div
             className="quota-refresh-error"
             data-testid="quota-refresh-error"
@@ -713,7 +775,9 @@ export const AccountCard = ({
           )}
         </div>
       ) : null}
-      {account.lastError && dismissedErrorKey !== errorKey ? (
+      {account.lastError &&
+      isActionableAccountError(account.lastError) &&
+      dismissedErrorKey !== errorKey ? (
         <div className="account-error">
           <AlertTriangle size={14} />
           <span className="account-error-message">

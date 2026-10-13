@@ -341,6 +341,27 @@ describe("Durable logs surface", () => {
     expect(screen.getByText("account-a failed over to account-b")).toBeInTheDocument();
   });
 
+  it("keeps showing the in-memory tail when durable history fails to load", async () => {
+    const loadHistory = vi.fn(async () => {
+      throw new Error("history disabled");
+    });
+    const { rerender } = render(
+      <DurableLogs records={[]} loadHistory={loadHistory as never} liveTick={0} />,
+    );
+
+    await screen.findByText("Request history unavailable");
+    // The tail arrives after history already failed: it must still reach the table.
+    rerender(
+      <DurableLogs
+        records={requestRecords as never}
+        loadHistory={loadHistory as never}
+        liveTick={0}
+      />,
+    );
+    expect(await screen.findByText("req-success")).toBeInTheDocument();
+    expect(screen.getByText("req-failed")).toBeInTheDocument();
+  });
+
   it("clears the stale history-error banner after a later successful refresh", async () => {
     let failing = true;
     const loadHistory = vi.fn(async () => {

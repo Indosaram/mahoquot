@@ -45,6 +45,12 @@ export interface TelemetrySample {
   readonly accounts: readonly AccountTotal[];
   readonly cumulativeAccounts?: readonly AccountTotal[];
   readonly tokensDerivedFromAccounts?: boolean;
+  /**
+   * Set on samples hydrated from persisted history buckets. Their top-level
+   * counters are per-minute deltas, not cumulative gateway counters, so
+   * `appendTelemetrySample` must never subtract against them.
+   */
+  readonly fromHistory?: boolean;
 }
 
 export type TelemetryRange = "30m" | "1h" | "1d" | "7d" | "30d";
@@ -75,8 +81,13 @@ export const providerTotals = (stats: AdminStats): readonly ProviderTotal[] => {
     .sort((a, b) => b.requests - a.requests || a.provider.localeCompare(b.provider));
 };
 
+/**
+ * Interval delta of a cumulative counter. Without a baseline the interval is
+ * unknowable, so it is 0 and the caller baselines on this reading; a decrease
+ * means the counter reset, so the new reading is the whole interval.
+ */
 const counterDelta = (current: number, previous: number | undefined): number =>
-  previous === undefined || current < previous ? current : current - previous;
+  previous === undefined ? 0 : current < previous ? current : current - previous;
 
 const latency = (stats: AdminStats): { readonly p50Ms: number; readonly p90Ms: number } =>
   typeof stats.ttft === "number"
@@ -88,39 +99,40 @@ export const appendTelemetrySample = (
   stats: AdminStats,
   timestamp: number,
 ): readonly TelemetrySample[] => {
-  const previous = samples.at(-1);
+  const last = samples.at(-1);
+  // Persisted history samples carry per-minute deltas, so they cannot serve as
+  // a cumulative baseline: treat the first live poll after them as a fresh start.
+  const previous = last?.fromHistory ? undefined : last;
   const providers = providerTotals(stats);
-  const previousProviders = new Map(
-    previous?.providers.map((provider) => [provider.provider, provider]) ?? [],
-  );
-  const providerDeltas = providers.map((provider) => {
-    const prior = previousProviders.get(provider.provider);
-    const successes = counterDelta(provider.successes, prior?.successes);
-    const failures = counterDelta(provider.failures, prior?.failures);
-    return { provider: provider.provider, requests: successes + failures, successes, failures };
-  });
+  const providerSums = new Map<string, { successes: number; failures: number }>();
   const previousCumulativeAccounts = new Map(
     previous?.cumulativeAccounts?.map((account) => [account.id, account]) ?? [],
   );
   const accounts: AccountTotal[] = stats.accounts.map((account) => {
     const prev = previousCumulativeAccounts.get(account.id);
-    const successes = counterDelta(account.ok, prev?.successes);
-    const failures = counterDelta(account.fails, prev?.failures);
-    const hasCurrentInput = account.input_tokens !== undefined;
-    const hasCurrentOutput = account.output_tokens !== undefined;
-    const hasTokens = hasCurrentInput || hasCurrentOutput;
-
     // Check if this account or token field was observed in the immediate previous sample.
     // If not (e.g. first observation or reappearing after an omission gap), re-establish baseline
     // so historical counter changes across the gap are not attributed to this single interval.
     const priorInSample = previous?.accounts.some((a) => a.id === account.id);
     const wasAccountOmitted = previous !== undefined && !priorInSample;
+    const successes = wasAccountOmitted ? 0 : counterDelta(account.ok, prev?.successes);
+    const failures = wasAccountOmitted ? 0 : counterDelta(account.fails, prev?.failures);
+    const sums = providerSums.get(account.provider) ?? { successes: 0, failures: 0 };
+    sums.successes += successes;
+    sums.failures += failures;
+    providerSums.set(account.provider, sums);
+    const hasCurrentInput = account.input_tokens !== undefined;
+    const hasCurrentOutput = account.output_tokens !== undefined;
+    const hasTokens = hasCurrentInput || hasCurrentOutput;
+
     const wasInputOmitted = wasAccountOmitted || (previous !== undefined && !prev?.hasRawInput);
     const wasOutputOmitted = wasAccountOmitted || (previous !== undefined && !prev?.hasRawOutput);
     const isNewInput = prev?.inputTokens === undefined || wasInputOmitted;
     const isNewOutput = prev?.outputTokens === undefined || wasOutputOmitted;
 
-    const accountRequests = successes + failures;
+    // A counter-baselining interval reports 0 requests, but an account first
+    // seen with lifetime traffic still has unknown token usage for it, not zero.
+    const accountRequests = prev === undefined ? account.ok + account.fails : successes + failures;
     const inputTokens =
       account.input_tokens !== undefined
         ? isNewInput
@@ -142,10 +154,24 @@ export const appendTelemetrySample = (
     const totalTokens = hasTokens ? (inputTokens ?? 0) + (outputTokens ?? 0) : undefined;
     return {
       id: account.id,
-      requests: accountRequests,
+      requests: successes + failures,
       successes,
       failures,
       ...(hasTokens ? { inputTokens, outputTokens, totalTokens } : {}),
+    };
+  });
+
+  // Provider deltas are the sum of per-account deltas. Differencing summed
+  // provider totals would read an account joining or leaving the set as a
+  // counter reset and emit a phantom spike; per-account deltas already
+  // re-baseline across those gaps.
+  const providerDeltas = providers.map((provider) => {
+    const sums = providerSums.get(provider.provider) ?? { successes: 0, failures: 0 };
+    return {
+      provider: provider.provider,
+      requests: sums.successes + sums.failures,
+      successes: sums.successes,
+      failures: sums.failures,
     };
   });
 
@@ -248,6 +274,7 @@ export const persistedTelemetrySamples = (
       // Persisted buckets are already per-minute deltas, so both views coincide.
       providerDeltas: bucket.providers,
       accounts,
+      fromHistory: true,
     };
   });
 
@@ -256,10 +283,11 @@ export const filterTelemetryRange = <T extends { readonly timestamp: number }>(
   range: TelemetryRange,
   now = Date.now(),
 ): readonly T[] => {
-  const earliest = now - rangeDurationMs[range];
-  return samples.filter(
-    (sample) => sample.timestamp >= earliest && sample.timestamp <= now + 60_000,
-  );
+  // Minute buckets are stamped at their start, so the bucket straddling the
+  // window edge starts before `now - range`; align down to keep it. Nothing
+  // legitimately lies in the future, so `now` is the upper bound.
+  const earliest = Math.floor((now - rangeDurationMs[range]) / 60_000) * 60_000;
+  return samples.filter((sample) => sample.timestamp >= earliest && sample.timestamp <= now);
 };
 
 export interface TokenTotals {
@@ -491,7 +519,7 @@ export const telemetrySeries = (
   }));
 
   for (const sample of samples) {
-    if (sample.timestamp < start || sample.timestamp > now + 60_000) continue;
+    if (sample.timestamp < start || sample.timestamp > now) continue;
     // The final instant belongs to the last bucket rather than a phantom one.
     const index = Math.min(
       bucketCount - 1,

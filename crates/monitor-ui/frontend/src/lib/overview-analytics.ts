@@ -1,6 +1,7 @@
 import type { NormalizedAccount } from "./accounts";
 import type { HistoryStatsQuery } from "./api";
 import { resolveAccountIdentity, resolveProviderIdentity } from "./dimension-identity";
+import { normalizeToQuotioProviderId } from "./provider-catalog";
 import type { HistoryStatsResponse } from "./schemas";
 import {
   type TelemetryRange,
@@ -213,9 +214,14 @@ interface AggregateAccumulator {
   totalLatencyMs: number;
   costUsd: number;
   avgLatencyMsDirect?: number;
+  /** Largest request count of any single group folded into this row; the row's provider follows it. */
+  bestGroupRequests: number;
 }
 
-const withMetricShares = (rows: readonly BreakdownRow[], metric: OverviewMetric): BreakdownRow[] => {
+const withMetricShares = (
+  rows: readonly BreakdownRow[],
+  metric: OverviewMetric,
+): BreakdownRow[] => {
   const sumMetrics = rows.reduce(
     (sum, row) => sum + (metric === "requests" ? row.requests : row.totalTokens),
     0,
@@ -292,11 +298,11 @@ export const buildAnalytics = ({
     const avgLatencyMsDirect =
       current === undefined ? group.totals["average-latency-ms"] : undefined;
 
-    // Prefer provider with more requests if duplicate model entries exist
-    const finalProvider =
-      current === undefined || group.totals.requests > current.requests - group.totals.requests
-        ? provider
-        : current.provider;
+    // Prefer the provider of the single largest group if duplicate model entries exist
+    const takesProvider =
+      current === undefined || group.totals.requests > current.bestGroupRequests;
+    const finalProvider = takesProvider ? provider : current.provider;
+    const bestGroupRequests = takesProvider ? group.totals.requests : current.bestGroupRequests;
 
     aggregates.set(rawKey, {
       key: rawKey,
@@ -312,6 +318,7 @@ export const buildAnalytics = ({
       totalLatencyMs,
       costUsd,
       avgLatencyMsDirect,
+      bestGroupRequests,
     });
   }
 
@@ -346,10 +353,7 @@ export const buildAnalytics = ({
     isUnlinked: a.isUnlinked,
   });
   const topRows: BreakdownRow[] = topAggregates.map(toBreakdownRow);
-  const allRows: BreakdownRow[] = withMetricShares(
-    sortedAggregates.map(toBreakdownRow),
-    metric,
-  );
+  const allRows: BreakdownRow[] = withMetricShares(sortedAggregates.map(toBreakdownRow), metric);
 
   let rows: BreakdownRow[] = topRows;
 
@@ -401,13 +405,21 @@ export const buildAnalytics = ({
   const duration = rangeDurations[range];
   const bucketMs = bucketMsFor(bucketForRange[range]);
   const bucketCount = Math.max(1, Math.floor(duration / bucketMs));
-  const startMs = nowMs - duration;
+  // Gateway buckets start on bucket boundaries, so the grid must too: ending at
+  // the bucket that contains `nowMs` keeps every point boundary-aligned and the
+  // newest bucket visible. A bucket outside the grid (the partial one before the
+  // window, or a future one) is dropped, never clamped into an edge bucket.
+  const startMs = Math.floor(nowMs / bucketMs) * bucketMs - (bucketCount - 1) * bucketMs;
+  const bucketIndex = (ts: number): number | null => {
+    const idx = Math.floor((ts - startMs) / bucketMs);
+    return idx >= 0 && idx < bucketCount ? idx : null;
+  };
 
   const totalSeriesByBucket = new Map<number, number>();
   for (const group of totalSeries.groups) {
     const ts = group["bucket-start-ms"];
-    if (ts !== null && ts !== undefined) {
-      const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((ts - startMs) / bucketMs)));
+    const idx = ts !== null && ts !== undefined ? bucketIndex(ts) : null;
+    if (idx !== null) {
       const val = metric === "requests" ? group.totals.requests : group.totals["total-tokens"];
       totalSeriesByBucket.set(idx, (totalSeriesByBucket.get(idx) ?? 0) + val);
     }
@@ -416,8 +428,8 @@ export const buildAnalytics = ({
   const seriesByBucketAndKey = new Map<number, Map<string, number>>();
   for (const group of series.groups) {
     const ts = group["bucket-start-ms"];
-    if (ts !== null && ts !== undefined) {
-      const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((ts - startMs) / bucketMs)));
+    const idx = ts !== null && ts !== undefined ? bucketIndex(ts) : null;
+    if (idx !== null) {
       // Mirror the ranking key mapping exactly (`group.model ?? "unknown"`):
       // a null key used to fall through `if (key)` below and never reach
       // `values`, so its traffic was attributed to the Other remainder instead
@@ -572,6 +584,20 @@ export const telemetryAnalytics = ({
   let rows: BreakdownRow[] = [];
   let allRows: BreakdownRow[] = [];
 
+  // Account -> canonical provider, resolved once per id with the same fuzzy
+  // matching the account dimension uses.
+  const accountProviders = new Map<string, string>();
+  const providerOfAccount = (id: string): string => {
+    let provider = accountProviders.get(id);
+    if (provider === undefined) {
+      provider = normalizeToQuotioProviderId(resolveAccountIdentity(id, accounts).provider);
+      accountProviders.set(id, provider);
+    }
+    return provider;
+  };
+  const accountTokenTotal = (acc: TelemetrySample["accounts"][number]): number =>
+    acc.totalTokens ?? (acc.inputTokens ?? 0) + (acc.outputTokens ?? 0);
+
   if (dimension === "provider") {
     const providerTokens = new Map<
       string,
@@ -579,8 +605,7 @@ export const telemetryAnalytics = ({
     >();
     for (const sample of filtered) {
       for (const acc of sample.accounts) {
-        const found = accounts.find((a) => a.id === acc.id);
-        const prov = found?.provider ?? "unknown";
+        const prov = providerOfAccount(acc.id);
         const current = providerTokens.get(prov) ?? {
           inputTokens: 0,
           outputTokens: 0,
@@ -595,7 +620,7 @@ export const telemetryAnalytics = ({
     }
 
     const providerRows: BreakdownRow[] = summary.providers.map((p) => {
-      const toks = providerTokens.get(p.provider);
+      const toks = providerTokens.get(normalizeToQuotioProviderId(p.provider));
       return {
         key: p.provider,
         label: p.provider,
@@ -767,17 +792,35 @@ export const telemetryAnalytics = ({
       bucketCount - 1,
       Math.max(0, Math.floor((sample.timestamp - startMs) / bucketMs)),
     );
-    const sampleVal = metric === "requests" ? sample.requests : (sample.totalTokens ?? 0);
+    // Sample-level tokens may be absent while accounts carry them; fall back to
+    // the account sum like `summarizeTelemetry` does.
+    const sampleVal =
+      metric === "requests"
+        ? sample.requests
+        : (sample.totalTokens ?? sample.accounts.reduce((sum, a) => sum + accountTokenTotal(a), 0));
     totalByBucket.set(idx, (totalByBucket.get(idx) ?? 0) + sampleVal);
 
     if (dimension === "provider") {
+      const sampleProviderTokens = new Map<string, number>();
+      if (metric === "tokens") {
+        for (const acc of sample.accounts) {
+          const prov = providerOfAccount(acc.id);
+          sampleProviderTokens.set(
+            prov,
+            (sampleProviderTokens.get(prov) ?? 0) + accountTokenTotal(acc),
+          );
+        }
+      }
       for (const p of sample.providerDeltas ?? sample.providers) {
         let bucketMap = seriesByBucketAndKey.get(idx);
         if (!bucketMap) {
           bucketMap = new Map();
           seriesByBucketAndKey.set(idx, bucketMap);
         }
-        const val = metric === "requests" ? p.requests : 0;
+        const val =
+          metric === "requests"
+            ? p.requests
+            : (sampleProviderTokens.get(normalizeToQuotioProviderId(p.provider)) ?? 0);
         bucketMap.set(p.provider, (bucketMap.get(p.provider) ?? 0) + val);
       }
     } else {

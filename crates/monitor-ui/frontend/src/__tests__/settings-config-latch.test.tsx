@@ -33,6 +33,17 @@ const stubGateway = (scalarReads: string[], configSaves: { count: number }) => {
         if (method === "GET") scalarReads.push(url);
         return new Response(JSON.stringify({ "proxy-url": "" }));
       }
+      // Strict scalar parsing: the remaining settings answer under their own keys, as the gateway does.
+      if (url.endsWith("/routing/strategy"))
+        return new Response(JSON.stringify({ strategy: "round-robin" }));
+      if (url.endsWith("/request-retry"))
+        return new Response(JSON.stringify({ "request-retry": 3 }));
+      if (url.endsWith("/logging-to-file"))
+        return new Response(JSON.stringify({ "logging-to-file": false }));
+      if (url.endsWith("/codex-fast-mode"))
+        return new Response(JSON.stringify({ "codex-fast-mode": false }));
+      if (url.endsWith("/proxy-providers"))
+        return new Response(JSON.stringify({ "proxy-providers": {} }));
       return new Response(JSON.stringify({ ok: true }));
     }),
   );

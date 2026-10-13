@@ -1,3 +1,4 @@
+import { Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
 import {
@@ -9,7 +10,6 @@ import {
   totalsCacheTokens,
 } from "../lib/cache-usage";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
-import { Zap } from "lucide-react";
 import { Button } from "./ui";
 
 export interface DurableLogsProps {
@@ -131,6 +131,9 @@ export function DurableLogs({
   const [pending, setPending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState("");
+  // Durable history can be unavailable (disabled, failing); the in-memory tail
+  // is then the only source, so it must keep feeding the table.
+  const [historyUnavailable, setHistoryUnavailable] = useState(false);
 
   const pageHistoryRef = useRef(pageHistory);
   pageHistoryRef.current = pageHistory;
@@ -174,6 +177,7 @@ export function DurableLogs({
           return;
         // A successful load supersedes any earlier failure banner.
         setActionError("");
+        setHistoryUnavailable(false);
         // Only update the event list if user is still on the first page
         if (pageHistoryRef.current.length === 0) {
           setEvents(page.events);
@@ -188,6 +192,7 @@ export function DurableLogs({
       } catch (error) {
         if (!isBackground && seq === requestSeqRef.current && actionSeq === actionSeqRef.current) {
           setActionError(error instanceof Error ? error.message : "History unavailable");
+          setHistoryUnavailable(true);
         }
       } finally {
         if (!isBackground && actionSeq === actionSeqRef.current) setPending(false);
@@ -198,11 +203,11 @@ export function DurableLogs({
   );
 
   useEffect(() => {
-    if (loadHistory) return;
+    if (loadHistory && !historyUnavailable) return;
     setEvents(initialEvents);
     setNextCursor(initialEvents.length ? 1 : null);
     setProviderOptions([...new Set(initialEvents.map((event) => event.provider))].sort());
-  }, [initialEvents, loadHistory]);
+  }, [historyUnavailable, initialEvents, loadHistory]);
 
   // Initial load
   useEffect(() => {
@@ -507,9 +512,10 @@ export function DurableLogs({
             {proxyRecords.map((record) => {
               const raw = record as Record<string, unknown>;
               const event = raw.event;
-              const requestId = typeof raw["request-id"] === "string" && raw["request-id"]
-                ? String(raw["request-id"])
-                : null;
+              const requestId =
+                typeof raw["request-id"] === "string" && raw["request-id"]
+                  ? String(raw["request-id"])
+                  : null;
               // Stable identity: request-id when present, else timestamp + content,
               // so a new line never shifts indices and remounts the whole tail.
               const rowKey =

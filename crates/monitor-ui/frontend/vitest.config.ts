@@ -6,6 +6,9 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    // App-level tests render the whole console against stubbed fetch; under
+    // machine load they routinely exceed the 5s default without being wrong.
+    testTimeout: 15_000,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
       provider: "istanbul",

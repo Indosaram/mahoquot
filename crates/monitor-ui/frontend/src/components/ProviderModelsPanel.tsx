@@ -1,5 +1,6 @@
 import { AlertTriangle, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { normalizeToQuotioProviderId } from "../lib/provider-catalog";
 import type { ExcludedModels, RegistryModelEntry } from "../lib/schemas";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { OverlayLayer } from "./layout";
@@ -17,13 +18,27 @@ export interface ProviderModelsPanelProps {
   readonly onClose: () => void;
 }
 
+const sameProvider = (a: string, b: string): boolean =>
+  normalizeToQuotioProviderId(a) === normalizeToQuotioProviderId(b);
+
 // The gateway's list is authoritative: `/v1/models` drops excluded models, so
 // inferring "disabled" from the advertised catalog would strand them off.
+// Excluded keys may be aliases of the panel provider (openai vs codex).
 export const isModelDisabled = (
   excluded: ExcludedModels,
   provider: string,
   modelId: string,
-): boolean => (excluded[provider] ?? []).includes(modelId);
+): boolean =>
+  Object.entries(excluded).some(
+    ([key, ids]) => sameProvider(key, provider) && ids.includes(modelId),
+  );
+
+/** Registry models bound to `provider`, matching gateway aliases canonically. */
+export const modelsOwnedBy = (
+  models: readonly RegistryModelEntry[],
+  provider: string,
+): RegistryModelEntry[] =>
+  models.filter((model) => model.providers.some((id) => sameProvider(id, provider)));
 
 export const withModelDisabled = (
   excluded: ExcludedModels,
@@ -31,18 +46,23 @@ export const withModelDisabled = (
   modelId: string,
   disabled: boolean,
 ): ExcludedModels => {
-  const current = excluded[provider] ?? [];
-  const next = disabled
-    ? current.includes(modelId)
-      ? current
-      : [...current, modelId]
-    : current.filter((id) => id !== modelId);
   const result: ExcludedModels = { ...excluded };
-  if (next.length > 0) {
-    result[provider] = next;
-  } else {
-    delete result[provider];
+  const aliasKeys = Object.keys(excluded).filter((key) => sameProvider(key, provider));
+  if (!disabled) {
+    // Enabling must clear the model under every alias key, or it stays excluded.
+    for (const key of aliasKeys) {
+      const next = (excluded[key] ?? []).filter((id) => id !== modelId);
+      if (next.length > 0) {
+        result[key] = next;
+      } else {
+        delete result[key];
+      }
+    }
+    return result;
   }
+  if (isModelDisabled(excluded, provider, modelId)) return result;
+  const key = aliasKeys[0] ?? provider;
+  result[key] = [...(excluded[key] ?? []), modelId];
   return result;
 };
 
@@ -58,21 +78,30 @@ export const ProviderModelsPanel = ({
   onClose,
 }: ProviderModelsPanelProps) => {
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
+  // Mount-only focus management, mirroring WarmupDialog: capture the opener,
+  // focus the search field, handle Escape, and restore focus on unmount.
   useEffect(() => {
+    const previous = document.activeElement;
+    searchRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
 
-  const owned = useMemo(
-    () => models.filter((model) => model.providers.includes(provider)),
-    [models, provider],
-  );
+  const owned = useMemo(() => modelsOwnedBy(models, provider), [models, provider]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -88,7 +117,30 @@ export const ProviderModelsPanel = ({
 
   return (
     <OverlayLayer className="drawer-backdrop">
-      <aside className="drawer models-drawer" aria-label={`Models for ${providerLabel}`}>
+      <dialog
+        open
+        className="drawer models-drawer"
+        aria-modal="true"
+        aria-label={`Models for ${providerLabel}`}
+        onKeyDown={(event) => {
+          if (event.key === "Tab") {
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
+              ),
+            );
+            const first = items[0];
+            const last = items.at(-1);
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        }}
+      >
         <div className="section-head">
           <div>
             <span className="kicker">MODELS</span>
@@ -115,6 +167,7 @@ export const ProviderModelsPanel = ({
         <label className="models-search">
           <Search aria-hidden="true" size={15} />
           <input
+            ref={searchRef}
             aria-label="Search models"
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder="Search models…"
@@ -155,7 +208,7 @@ export const ProviderModelsPanel = ({
             })}
           </Card>
         )}
-      </aside>
+      </dialog>
     </OverlayLayer>
   );
 };

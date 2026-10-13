@@ -92,10 +92,6 @@ describe("durable logs API", () => {
   it("confirms scoped clear and downloads redacted CSV and JSON payloads", async () => {
     const calls: Array<{ url: string; method: string; headers: Headers }> = [];
     vi.stubGlobal(
-      "prompt",
-      vi.fn(() => "export-secret"),
-    );
-    vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -125,8 +121,8 @@ describe("durable logs API", () => {
     await expect(
       management.clearHistory({ accounts: ["account-a"], limit: 50, cursor: 42 }),
     ).resolves.toBe(1);
-    const csv = await management.exportHistory("csv", { providers: ["codex"] });
-    const json = await management.exportHistory("json", { providers: ["codex"] });
+    const csv = await management.exportHistory("csv", { providers: ["codex"] }, "export-secret");
+    const json = await management.exportHistory("json", { providers: ["codex"] }, "export-secret");
     expect(csv).toBeDefined();
     expect(json).toBeDefined();
     if (!csv || !json) throw new Error("export unexpectedly cancelled");

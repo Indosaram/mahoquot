@@ -37,7 +37,11 @@ describe("connection settings robustness", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save & reconnect" }));
     });
-    expect(read).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:18849", "default", "totp");
+    // The save resolves through native IPC before the URL is committed, so wait
+    // for the committed-endpoint read instead of asserting on the same tick.
+    await waitFor(() =>
+      expect(read).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:18849", "default", "totp"),
+    );
   });
 
   it.each(["success", "failure"])(
@@ -52,7 +56,7 @@ describe("connection settings robustness", () => {
       vi.spyOn(native, "readDesktopSecret").mockImplementation((endpoint) =>
         endpoint.endsWith("18848") ? old : Promise.resolve(null),
       );
-      const { result, rerender } = renderHook(({ endpoint }) => useTotpVault(endpoint), {
+      const { result, rerender } = renderHook(({ endpoint }) => useTotpVault(endpoint, true), {
         initialProps: { endpoint: "http://127.0.0.1:18848" },
       });
       await act(async () => {
@@ -130,6 +134,18 @@ describe("connection settings robustness", () => {
           return new Response(
             JSON.stringify({ "proxy-url": saveCount > 0 ? "http://next:18801" : "" }),
           );
+        }
+        if (url.endsWith("/routing/strategy")) {
+          return new Response(JSON.stringify({ strategy: "fill-first" }));
+        }
+        if (url.endsWith("/request-retry")) {
+          return new Response(JSON.stringify({ "request-retry": 3 }));
+        }
+        if (url.endsWith("/logging-to-file")) {
+          return new Response(JSON.stringify({ "logging-to-file": false }));
+        }
+        if (url.endsWith("/codex-fast-mode")) {
+          return new Response(JSON.stringify({ "codex-fast-mode": false }));
         }
         return new Response(JSON.stringify({ ok: true }));
       }),

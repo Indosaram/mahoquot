@@ -18,7 +18,8 @@ const stats = {
 
 const sample = (providers: readonly { provider: string; requests: number }[]): TelemetrySample =>
   ({
-    timestamp: Date.now(),
+    // Strictly before the shared `nowMs`: the range filter no longer admits future samples.
+    timestamp: nowMs - 1_000,
     served: providers.reduce((sum, p) => sum + p.requests, 0),
     requests: providers.reduce((sum, p) => sum + p.requests, 0),
     successes: providers.reduce((sum, p) => sum + p.requests, 0),

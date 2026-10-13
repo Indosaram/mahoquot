@@ -726,7 +726,8 @@ describe("request telemetry sampling", () => {
     expect(r1[0].accounts[0].outputTokens).toBeUndefined();
 
     const summary = summarizeTelemetry(r1);
-    expect(summary.requests).toBe(1);
+    // The baseline poll emits no lifetime counters as interval traffic.
+    expect(summary.requests).toBe(0);
     expect(summary.hasTokenData).toBe(false);
   });
 
@@ -1074,6 +1075,7 @@ describe("request telemetry sampling", () => {
     const summary = summarizeTelemetry(third);
     const codex = summary.providers.find((provider) => provider.provider === "codex");
     expect(codex?.successes).toBe(summary.successes);
-    expect(summary.successes).toBe(30);
+    // The first poll only establishes the baseline (delta 0): 10 -> 20 -> 30.
+    expect(summary.successes).toBe(20);
   });
 });

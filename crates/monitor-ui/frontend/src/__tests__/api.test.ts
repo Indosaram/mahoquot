@@ -15,13 +15,13 @@ describe("credential order resync and raw import guard", () => {
     expect(saved).toEqual(["c.json", "a.json"]);
   });
 
-  it("falls back to an empty order when the server omits names", async () => {
+  it("rejects an order acknowledgement that omits names instead of inventing an empty order", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ status: "ok" }))),
     );
     const clients = createGatewayClients("http://127.0.0.1:18801", "k");
-    expect(await clients.management.saveCredentialOrder(["a.json"])).toEqual([]);
+    await expect(clients.management.saveCredentialOrder(["a.json"])).rejects.toThrow();
   });
 
   it("rejects raw credential documents that are empty or not objects", () => {
@@ -90,7 +90,12 @@ describe("unified gateway auth boundary", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         calls.push({ url: String(input), init });
         return new Response(
-          JSON.stringify({ status: "ok", url: "https://example.com", state: "s" }),
+          JSON.stringify({
+            status: "ok",
+            names: ["b.json", "a.json"],
+            url: "https://example.com",
+            state: "s",
+          }),
         );
       }),
     );
@@ -323,10 +328,7 @@ describe("fetchClineModelLists", () => {
         return new Response(
           JSON.stringify({
             recommended: [{ id: "anthropic/claude-sonnet-5.5" }],
-            free: [
-              { id: "cline-free/mimo-v2.6-flash" },
-              { id: "cline-free/deepseek-v4.1-flash" },
-            ],
+            free: [{ id: "cline-free/mimo-v2.6-flash" }, { id: "cline-free/deepseek-v4.1-flash" }],
             clinePass: [{ id: "cline-pass/glm-5.3" }],
             clineCloud: [{ id: "cline-cloud/kimi-k3" }],
           }),
@@ -335,9 +337,7 @@ describe("fetchClineModelLists", () => {
     );
 
     const lists = await fetchClineModelLists();
-    expect(capturedUrl).toBe(
-      "https://api.cline.bot/api/v1/ai/cline/recommended-models",
-    );
+    expect(capturedUrl).toBe("https://api.cline.bot/api/v1/ai/cline/recommended-models");
     expect(lists.recommended).toEqual(["anthropic/claude-sonnet-5.5"]);
     expect(lists.free).toEqual(["cline-free/mimo-v2.6-flash", "cline-free/deepseek-v4.1-flash"]);
     expect(lists.clinePass).toEqual(["cline-pass/glm-5.3"]);

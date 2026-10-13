@@ -60,8 +60,7 @@ const CREDITS_FORMAT = new Intl.NumberFormat("en", { maximumFractionDigits: 2 })
  * like the rest of the console's numeric output so the same balance renders the
  * same way on every machine.
  */
-export const formatCredits = (amount: number): string =>
-  `${CREDITS_FORMAT.format(amount)} credits`;
+export const formatCredits = (amount: number): string => `${CREDITS_FORMAT.format(amount)} credits`;
 
 /** Human value for a credit row; `unknown` never renders as zero. */
 export const creditBalanceLabel = (balance: CreditBalance): string => {

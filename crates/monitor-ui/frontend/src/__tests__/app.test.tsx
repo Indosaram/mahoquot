@@ -92,28 +92,74 @@ describe("operations console", () => {
   it("reauthenticates the selected Antigravity credential instead of adding an account", async () => {
     const calls: string[] = [];
     const open = vi.spyOn(window, "open").mockReturnValue(null);
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      calls.push(url);
-      if (url.includes("/admin/stats")) return new Response(JSON.stringify({ ...stats, accounts: [{
-        id: "verify@example.test", provider: "antigravity", health: { status: "auth_failed" },
-        ok: 0, fails: 1, last_error: { unix_ms: 1, status: 403, message: "Google account verification required (VALIDATION_REQUIRED)" },
-      }] }));
-      if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [{
-        name: "antigravity-original.json", email: "verify@example.test", type: "antigravity",
-        size: 100, auth_index: "0", path: "/fixture/antigravity-original.json",
-        disabled: false, unavailable: false, runtime_only: false,
-      }] }));
-      if (url.includes("antigravity-auth-url")) return new Response(JSON.stringify({ url: "https://accounts.google.com/o/oauth2/v2/auth", state: "fixture-state" }));
-      return new Response(JSON.stringify({ ok: true }));
-    }));
-    await act(async () => { render(<App />); });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes("/admin/stats"))
+          return new Response(
+            JSON.stringify({
+              ...stats,
+              accounts: [
+                {
+                  id: "verify@example.test",
+                  provider: "antigravity",
+                  health: { status: "auth_failed" },
+                  ok: 0,
+                  fails: 1,
+                  last_error: {
+                    unix_ms: 1,
+                    status: 403,
+                    message: "Google account verification required (VALIDATION_REQUIRED)",
+                  },
+                },
+              ],
+            }),
+          );
+        if (url.includes("auth-files"))
+          return new Response(
+            JSON.stringify({
+              files: [
+                {
+                  name: "antigravity-original.json",
+                  email: "verify@example.test",
+                  type: "antigravity",
+                  size: 100,
+                  auth_index: "0",
+                  path: "/fixture/antigravity-original.json",
+                  disabled: false,
+                  unavailable: false,
+                  runtime_only: false,
+                },
+              ],
+            }),
+          );
+        if (url.includes("antigravity-auth-url"))
+          return new Response(
+            JSON.stringify({
+              url: "https://accounts.google.com/o/oauth2/v2/auth",
+              state: "fixture-state",
+            }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+    await act(async () => {
+      render(<App />);
+    });
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
     expect(screen.getByText("auth required")).toBeInTheDocument();
     const menu = await screen.findByRole("button", { name: /More actions for/ });
     fireEvent.click(menu);
-    await act(async () => { fireEvent.click(await screen.findByRole("menuitem", { name: /re-authenticate/i })); });
-    expect(calls.some((url) => url.endsWith("antigravity-auth-url?credential_name=antigravity-original.json"))).toBe(true);
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("menuitem", { name: /re-authenticate/i }));
+    });
+    expect(
+      calls.some((url) =>
+        url.endsWith("antigravity-auth-url?credential_name=antigravity-original.json"),
+      ),
+    ).toBe(true);
     open.mockRestore();
   });
 
@@ -123,7 +169,7 @@ describe("operations console", () => {
       render(<App />);
     });
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
-    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Codex 1 account" })).toBeChecked();
     expect(document.querySelectorAll(".account-card")).toHaveLength(1);
   });
 
@@ -149,13 +195,13 @@ describe("operations console", () => {
       render(<App />);
     });
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
-    fireEvent.click(screen.getByRole("radio", { name: "codex 1 account" }));
-    fireEvent.click(screen.getByRole("radio", { name: "claude 1 account" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Codex 1 account" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Claude 1 account" }));
     current = { ...stats, accounts: [...stats.accounts] };
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     });
-    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Codex 1 account" })).toBeChecked();
     expect(document.querySelectorAll(".account-card")).toHaveLength(1);
   });
 
@@ -536,7 +582,7 @@ describe("operations console", () => {
         const url = String(input);
         if (init?.method === "PUT" && url.includes("auth-files/order")) {
           bodies.push(String(init.body ?? ""));
-          return new Response(JSON.stringify({ status: "ok" }));
+          return new Response(init.body ?? "{}");
         }
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(orderStats));
         if (url.includes("auth-files")) {
@@ -836,7 +882,7 @@ describe("operations console", () => {
 
     // The imported subscription is one manageable account, not a runtime card plus a
     // phantom "not loaded" credential card.
-    expect(await screen.findByLabelText("claude 1 account")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Claude 1 account")).toBeInTheDocument();
     await openAccountMenu("claude-local");
     expect(
       screen.getByRole("menuitem", { name: "Re-authenticate claude-local" }),
@@ -905,7 +951,7 @@ describe("operations console", () => {
     await waitFor(() => expect(requests.some((url) => url.includes("auth-files"))).toBe(true));
     (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
-    fireEvent.click(await screen.findByLabelText("deepseek 1 account"));
+    fireEvent.click(await screen.findByLabelText("Deepseek 1 account"));
     expect(await screen.findByText("deepseek-main")).toBeInTheDocument();
     await clickAccountMenuItem("deepseek-main", "Re-authenticate deepseek-main");
 
@@ -1651,7 +1697,7 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    expect(await screen.findByRole("radio", { name: "codex 1 account" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "Codex 1 account" })).toBeInTheDocument();
     expect(screen.getByText("Pro")).toBeInTheDocument();
     expect(screen.getByText("Session")).toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
@@ -1701,7 +1747,7 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    const codex = await screen.findByRole("radio", { name: "codex 1 account" });
+    const codex = await screen.findByRole("radio", { name: "Codex 1 account" });
     fireEvent.click(codex);
     expect(await screen.findByText("runtime-id@example.com")).toBeInTheDocument();
     expect(screen.queryByText("gravity@example.com")).not.toBeInTheDocument();
