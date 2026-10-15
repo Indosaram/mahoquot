@@ -955,16 +955,32 @@ fn generate_omo(
             models.push(serde_json::json!({ "id": id, "name": id }));
         }
     }
-    providers.insert(
-        "mahoquot".to_string(),
-        serde_json::json!({
-            "name": "Mahoquot",
-            "api": "openai-completions",
-            "apiKey": token,
-            "baseUrl": format!("{gateway}/v1"),
-            "models": models
-        }),
+    // Overwrite only the keys this feature owns; compat, headers and anything
+    // else the user or omo added stays. A fresh provider gets the default compat.
+    let mut provider = match providers.get("mahoquot") {
+        Some(JsonValue::Object(existing)) => existing.clone(),
+        _ => {
+            let mut fresh = serde_json::Map::new();
+            fresh.insert(
+                "compat".to_string(),
+                serde_json::json!({
+                    "sendSessionAffinityHeaders": true,
+                    "sessionAffinityFormat": "openrouter",
+                    "supportsReasoningEffort": true
+                }),
+            );
+            fresh
+        }
+    };
+    provider.insert("name".to_string(), serde_json::json!("Mahoquot"));
+    provider.insert("api".to_string(), serde_json::json!("openai-completions"));
+    provider.insert("apiKey".to_string(), serde_json::json!(token));
+    provider.insert(
+        "baseUrl".to_string(),
+        serde_json::json!(format!("{gateway}/v1")),
     );
+    provider.insert("models".to_string(), JsonValue::Array(models));
+    providers.insert("mahoquot".to_string(), JsonValue::Object(provider));
     pretty_json(root)
 }
 
@@ -1429,6 +1445,55 @@ mod tests {
                 { "id": "kept", "name": "Kept", "contextWindow": 123 },
                 { "id": "brand-new", "name": "brand-new" }
             ])
+        );
+    }
+
+    #[test]
+    fn omo_configure_preserves_existing_provider_keys_and_merges_models() {
+        let (manager, _, _) = manager("omo-preserve-keys", CliPlatform::Linux);
+        let target = manager.target_path(CliAgentId::Omo);
+        let existing = br#"{"providers":{"mahoquot":{"apiKey":"stale","compat":{"supportsReasoningEffort":false},"headers":{"x":"1"},"models":[{"id":"kept","name":"Kept"}]}}}"#;
+        write_fixture(&target, existing);
+
+        let bytes = manager
+            .preview(ConfigureCliAgentRequest {
+                models: vec!["kept".to_string(), "brand-new".to_string()],
+                ..request(CliAgentId::Omo)
+            })
+            .unwrap()
+            .app_written_bytes;
+        let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
+        let provider = &config["providers"]["mahoquot"];
+        assert_eq!(provider["compat"], serde_json::json!({ "supportsReasoningEffort": false }));
+        assert_eq!(provider["headers"], serde_json::json!({ "x": "1" }));
+        assert_eq!(provider["name"], "Mahoquot");
+        assert_eq!(provider["api"], "openai-completions");
+        assert_eq!(provider["apiKey"], TEST_TOKEN);
+        assert_eq!(provider["baseUrl"], "http://127.0.0.1:18840/v1");
+        assert_eq!(
+            provider["models"],
+            serde_json::json!([
+                { "id": "kept", "name": "Kept" },
+                { "id": "brand-new", "name": "brand-new" }
+            ])
+        );
+    }
+
+    #[test]
+    fn omo_configure_on_a_fresh_file_writes_the_default_compat() {
+        let (manager, _, _) = manager("omo-fresh-compat", CliPlatform::Linux);
+        let target = manager.target_path(CliAgentId::Omo);
+        write_fixture(&target, b"{}");
+
+        let bytes = manager.preview(request(CliAgentId::Omo)).unwrap().app_written_bytes;
+        let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            config["providers"]["mahoquot"]["compat"],
+            serde_json::json!({
+                "sendSessionAffinityHeaders": true,
+                "sessionAffinityFormat": "openrouter",
+                "supportsReasoningEffort": true
+            })
         );
     }
 
