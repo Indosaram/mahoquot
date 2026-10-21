@@ -3,8 +3,13 @@ import type { MouseEvent } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
 import { extractDevinSlug } from "../lib/accounts";
 import { blocks } from "../lib/pending";
+import type {
+  DevinAccountStatus,
+  GatewayModelEntry,
+  ModelRegistryStatus,
+  QuotaWindow,
+} from "../lib/schemas";
 import { CLINE_QUOTA_DISPLAY_DEFAULT, clineQuotaSlug } from "../lib/storage";
-import type { DevinAccountStatus, GatewayModelEntry, ModelRegistryStatus, QuotaWindow } from "../lib/schemas";
 import { AccountCard, HealthBadge } from "./AccountCard";
 import type { ContextMenuItem } from "./ContextMenu";
 import { ProviderGlyph, providerLabel } from "./ProviderGlyph";
@@ -33,10 +38,7 @@ export type QuotaRow = {
 };
 
 /** Remaining-vs-used conversion; `null` in stays `null` out. */
-export const quotaDisplay = (
-  usedPercent: number | null,
-  showRemaining: boolean,
-): number | null => {
+export const quotaDisplay = (usedPercent: number | null, showRemaining: boolean): number | null => {
   if (usedPercent === null) return null;
   return showRemaining ? Math.max(0, 100 - usedPercent) : usedPercent;
 };
@@ -209,7 +211,8 @@ export const quotaRows = (
       window?.used_percent === 0 &&
       typeof window.window_minutes === "number" &&
       window.reset_after_seconds === window.window_minutes * 60
-    ) return null;
+    )
+      return null;
     return resetSeconds(window?.reset_at_unix, window?.reset_after_seconds);
   };
   if (isWindowActive(usage.primary)) {
@@ -232,8 +235,8 @@ export const quotaRows = (
   }
 
   const groupRows: QuotaRow[] = [];
-  usage.groups?.forEach((group) => {
-    group.buckets.forEach((bucket, index) => {
+  for (const group of usage.groups ?? []) {
+    for (const [index, bucket] of group.buckets.entries()) {
       // Display selection: the gateway records a daily bucket for every Cline
       // model it serves; only the slugs picked in Settings render. A bucket
       // without an id stays visible rather than vanish by accident.
@@ -243,7 +246,7 @@ export const quotaRows = (
         bucket.bucket_id &&
         !clineQuotaDisplay.includes(clineQuotaSlug(bucket.bucket_id))
       ) {
-        return;
+        continue;
       }
       if (
         isClineInferredQuotaExpired(
@@ -253,14 +256,11 @@ export const quotaRows = (
           bucket.reset_after_seconds,
         )
       ) {
-        return;
+        continue;
       }
       const raw = bucket.used_percent;
       const measured = typeof raw === "number";
-      const bucketDuration = formatQuotaDuration(
-        bucket.window_minutes,
-        bucket.window,
-      );
+      const bucketDuration = formatQuotaDuration(bucket.window_minutes, bucket.window);
       const rawBucketName =
         bucket.display_name ||
         bucket.bucket_id ||
@@ -282,8 +282,8 @@ export const quotaRows = (
         usedPercent: measured ? raw : null,
         resetSeconds: resetSeconds(bucket.reset_at_unix, bucket.reset_after_seconds),
       });
-    });
-  });
+    }
+  }
 
   // Documented aggregate projection suppression:
   // Antigravity synthesizes primary/secondary flat windows from the worst bucket
@@ -313,8 +313,7 @@ export type ClinePoolModelSummary = {
 // Buckets match on the bare model name so both vendor-prefixed labels
 // ("deepseek/..." from upstream cap errors and "cline-free/..." from live
 // requests) fold into one figure. Quota percentages are gateway estimates.
-const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const clinePoolQuotaSummary = (
   accounts: readonly NormalizedAccount[],

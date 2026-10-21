@@ -215,7 +215,10 @@ interface AggregateAccumulator {
   avgLatencyMsDirect?: number;
 }
 
-const withMetricShares = (rows: readonly BreakdownRow[], metric: OverviewMetric): BreakdownRow[] => {
+const withMetricShares = (
+  rows: readonly BreakdownRow[],
+  metric: OverviewMetric,
+): BreakdownRow[] => {
   const sumMetrics = rows.reduce(
     (sum, row) => sum + (metric === "requests" ? row.requests : row.totalTokens),
     0,
@@ -346,10 +349,7 @@ export const buildAnalytics = ({
     isUnlinked: a.isUnlinked,
   });
   const topRows: BreakdownRow[] = topAggregates.map(toBreakdownRow);
-  const allRows: BreakdownRow[] = withMetricShares(
-    sortedAggregates.map(toBreakdownRow),
-    metric,
-  );
+  const allRows: BreakdownRow[] = withMetricShares(sortedAggregates.map(toBreakdownRow), metric);
 
   let rows: BreakdownRow[] = topRows;
 

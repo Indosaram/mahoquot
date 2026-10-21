@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AccountCard, type AccountCardProps } from "../components/AccountCard";
 import {
   AccountsSurface,
   type AccountsSurfaceProps,
@@ -9,7 +10,6 @@ import {
   isClineInferredQuotaExpired,
   quotaRows,
 } from "../components/AccountsSurface";
-import { AccountCard, type AccountCardProps } from "../components/AccountCard";
 import type { WarmupControlsState } from "../components/WarmupControls";
 import type { NormalizedAccount } from "../lib/accounts";
 
@@ -1094,8 +1094,16 @@ describe("Cline pool quota summary", () => {
   it("uses gateway route candidacy rather than estimated percent or another model's cooldown", () => {
     const account: NormalizedAccount = {
       ...clineAccount("c1", [
-        { display_name: "cline-free/gemini-3.8-flash", used_percent: 99.9, reset_at_unix: nowUnix + 3600 },
-        { display_name: "cline-free/deepseek-v4.1-flash", used_percent: 100, reset_at_unix: nowUnix + 3600 },
+        {
+          display_name: "cline-free/gemini-3.8-flash",
+          used_percent: 99.9,
+          reset_at_unix: nowUnix + 3600,
+        },
+        {
+          display_name: "cline-free/deepseek-v4.1-flash",
+          used_percent: 100,
+          reset_at_unix: nowUnix + 3600,
+        },
       ]),
       modelRoutability: {
         "cline-free/gemini-3.8-flash": false,
@@ -1109,7 +1117,12 @@ describe("Cline pool quota summary", () => {
     expect(deepseek?.exhausted).toBe(0);
     const panel = render(
       <AccountsSurface
-        {...createProps({ accounts: [account], visibleAccounts: [account], providers: ["cline"], selectedProvider: "cline" })}
+        {...createProps({
+          accounts: [account],
+          visibleAccounts: [account],
+          providers: ["cline"],
+          selectedProvider: "cline",
+        })}
       />,
     ).getByTestId("cline-pool-quota-summary");
     expect(panel.textContent).toContain("0 available");
@@ -1297,10 +1310,7 @@ describe("Cline pool quota summary", () => {
 
     it("preserves meaningful limit identity and qualifies with duration", () => {
       expect(
-        formatQuotaWindowName(
-          { window_minutes: 300, limit_name: "Code Review" },
-          "Primary window",
-        ),
+        formatQuotaWindowName({ window_minutes: 300, limit_name: "Code Review" }, "Primary window"),
       ).toBe("Code Review (5h)");
 
       expect(
@@ -1311,10 +1321,7 @@ describe("Cline pool quota summary", () => {
       ).toBe("Chatpass (week)");
 
       expect(
-        formatQuotaWindowName(
-          { window_minutes: 300, limit_name: "5 hour" },
-          "Primary window",
-        ),
+        formatQuotaWindowName({ window_minutes: 300, limit_name: "5 hour" }, "Primary window"),
       ).toBe("5 hour");
 
       expect(
@@ -1417,9 +1424,14 @@ describe("Cline pool quota summary", () => {
       };
       expect(quotaRows(account).map((row) => row.resetSeconds)).toEqual([null, null]);
       expect(quotaRows(account).map((row) => row.usedPercent)).toEqual([0, 0]);
-      expect(quotaRows({ ...account, usage: {
-        primary: { used_percent: 0, window_minutes: 300, reset_after_seconds: 17900 },
-      } })[0]?.resetSeconds).toBe(17900);
+      expect(
+        quotaRows({
+          ...account,
+          usage: {
+            primary: { used_percent: 0, window_minutes: 300, reset_after_seconds: 17900 },
+          },
+        })[0]?.resetSeconds,
+      ).toBe(17900);
     });
 
     it("preserves both flat and group rows even when they have coincident values", () => {
@@ -1603,7 +1615,9 @@ describe("Cline pool quota summary", () => {
 
       expect(screen.getByTestId("quota-refresh-error-badge")).toBeInTheDocument();
       expect(screen.getByText("Refresh failed")).toBeInTheDocument();
-      expect(screen.getByTestId("quota-refresh-error")).toHaveTextContent("rate limit exceeded (429)");
+      expect(screen.getByTestId("quota-refresh-error")).toHaveTextContent(
+        "rate limit exceeded (429)",
+      );
       // Last known quota data is still rendered
       expect(screen.getByText("5h")).toBeInTheDocument();
       expect(screen.getByText("75%")).toBeInTheDocument();

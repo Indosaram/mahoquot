@@ -121,7 +121,6 @@ const buildCachedAnalytics = (
   };
 };
 
-
 export function useOverviewAnalytics({
   clients,
   range,

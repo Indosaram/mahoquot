@@ -6,8 +6,8 @@ import { type LocalPoint, groupNotchProviders, providerAtPoint } from "@/lib/not
 import { providerColor } from "@/lib/provider-colors";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TotpEntry } from "../lib/totp-vault";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
+import type { TotpEntry } from "../lib/totp-vault";
 import { TotpQuickAccess } from "./TotpVaultSurface";
 
 // Island silhouette matching reference: smooth continuous S-curve flare (55px)
@@ -30,9 +30,7 @@ const EMPTY_RING_COPY: Readonly<
   "relay-locked": { label: "Relay locked", meta: "Reconnect in Operations Console" },
 };
 
-const worstUsedPercent = (
-  rows: readonly { usedPercent: number | null }[],
-): number | null => {
+const worstUsedPercent = (rows: readonly { usedPercent: number | null }[]): number | null => {
   const values = rows
     .map((row) => row.usedPercent)
     .filter((value): value is number => value !== null && Number.isFinite(value));
@@ -239,25 +237,25 @@ export function NotchSurface({
               entry.rows.map((row, index) => {
                 const display = quotaDisplay(row.usedPercent, showRemaining);
                 return (
-                <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
-                  <div className="notch-tooltip-row-head">
-                    <span className="notch-tooltip-label">{row.name}</span>
-                    <small className="notch-tooltip-reset">
-                      Resets{" "}
-                      {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
-                    </small>
+                  <div className="notch-tooltip-row" key={`${row.name}-${index}`}>
+                    <div className="notch-tooltip-row-head">
+                      <span className="notch-tooltip-label">{row.name}</span>
+                      <small className="notch-tooltip-reset">
+                        Resets{" "}
+                        {row.resetSeconds === null ? "later" : formatResetTime(row.resetSeconds)}
+                      </small>
+                    </div>
+                    <div className="notch-tooltip-bar">
+                      <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
+                    </div>
+                    <div className="notch-tooltip-meta">
+                      <span>
+                        {display === null
+                          ? "Unmeasured"
+                          : `${formatQuotaPercent(display)}% ${showRemaining ? "Left" : "Used"}`}
+                      </span>
+                    </div>
                   </div>
-                  <div className="notch-tooltip-bar">
-                    <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
-                  </div>
-                  <div className="notch-tooltip-meta">
-                    <span>
-                      {display === null
-                        ? "Unmeasured"
-                        : `${formatQuotaPercent(display)}% ${showRemaining ? "Left" : "Used"}`}
-                    </span>
-                  </div>
-                </div>
                 );
               })
             ) : (

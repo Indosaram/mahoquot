@@ -2,75 +2,108 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayClients } from "../lib/api";
 import type { LogRecord } from "../lib/schemas";
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  closed = false;
-
-  constructor(readonly url: string) {
-    FakeEventSource.instances.push(this);
-  }
-
-  close() {
-    this.closed = true;
-  }
-
-  deliver(data: string) {
-    this.onmessage?.({ data } as MessageEvent<string>);
-  }
-}
-
-const subscribe = (baseUrl: string, apiKey: string) => {
-  FakeEventSource.instances = [];
-  vi.stubGlobal("EventSource", FakeEventSource);
-  const received: LogRecord[] = [];
-  const dispose = createGatewayClients(baseUrl, apiKey).management.subscribeLogs((record) =>
-    received.push(record),
-  );
-  const source = FakeEventSource.instances[0];
-  if (!source) throw new Error("no stream was opened");
-  return { source, received, dispose };
-};
-
 afterEach(() => {
+  window.__MAHOQUOT_MANAGEMENT__ = undefined;
   vi.unstubAllGlobals();
 });
 
 describe("live log stream", () => {
-  it("keeps streaming past a malformed or unrecognised line", () => {
-    const { source, received } = subscribe("http://127.0.0.1:18801", "k");
-
-    source.deliver(JSON.stringify({ kind: "request", status: 200, model: "gpt-5.6-sol" }));
-    source.deliver("}{ not json");
-    source.deliver(JSON.stringify({ kind: "not-a-known-kind" }));
-    source.deliver(JSON.stringify({ kind: "proxy", message: "upstream retried" }));
-
-    expect(received).toEqual([
-      { kind: "request", status: 200, model: "gpt-5.6-sol" },
-      { kind: "proxy", message: "upstream retried" },
-    ]);
-  });
-
-  it("carries the management key in the query string because SSE cannot send headers", () => {
-    const { source } = subscribe("http://127.0.0.1:18801/", "needs escaping/+&");
-
-    expect(source.url).toBe(
-      "http://127.0.0.1:18801/v0/management/logs/stream?key=needs%20escaping%2F%2B%26",
+  it("recovers a missing bootstrap key through the native dedicated profile", async () => {
+    window.__MAHOQUOT_MANAGEMENT__ = { endpoint: "http://127.0.0.1:18840", key: "" };
+    const invoke = vi.fn().mockResolvedValue("recovered-dedicated-key");
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createGatewayClients(
+      "http://127.0.0.1:18840",
+      "inference-only",
+    ).management.removeCredential("fixture.json");
+    expect(invoke).toHaveBeenCalledWith("read_secret", {
+      request: {
+        endpoint: "http://127.0.0.1:18840",
+        profile: "default",
+        kind: "management_key",
+      },
+    });
+    expect(fetchMock.mock.calls[0]?.[1].headers.Authorization).toBe(
+      "Bearer recovered-dedicated-key",
     );
   });
 
-  it("opens an unauthenticated stream when no key is configured", () => {
-    const { source } = subscribe("http://127.0.0.1:18801", "");
-
-    expect(source.url).toBe("http://127.0.0.1:18801/v0/management/logs/stream");
+  it("keeps streaming past malformed lines and sends dedicated auth in headers", async () => {
+    window.__MAHOQUOT_MANAGEMENT__ = { endpoint: "http://127.0.0.1:18840", key: "dedicated" };
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            [
+              'data: {"kind":"request","status":200,"model":"gpt-5.6-sol"}\n\n',
+              "data: }{ not json\n\n",
+              'data: {"kind":"not-a-known-kind"}\n\n',
+              'data: {"kind":"proxy","message":"upstream retried"}\n\n',
+            ].join(""),
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(stream));
+    vi.stubGlobal("fetch", fetchMock);
+    const received: LogRecord[] = [];
+    let resolveReceived: () => void = () => {};
+    const delivered = new Promise<void>((resolve) => {
+      resolveReceived = resolve;
+    });
+    const dispose = createGatewayClients(
+      "http://127.0.0.1:18840/",
+      "inference-only",
+    ).management.subscribeLogs((record) => {
+      received.push(record);
+      if (received.length === 2) resolveReceived();
+    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        delivered,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("log delivery timed out")), 1000);
+        }),
+      ]);
+      expect(received).toEqual([
+        { kind: "request", status: 200, model: "gpt-5.6-sol" },
+        { kind: "proxy", message: "upstream retried" },
+      ]);
+      expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:18840/v0/management/logs/stream", {
+        headers: { Authorization: "Bearer dedicated" },
+        signal: expect.any(AbortSignal),
+      });
+    } finally {
+      clearTimeout(timeout);
+      dispose();
+    }
   });
 
-  it("closes the underlying stream when the subscriber disposes", () => {
-    const { source, received, dispose } = subscribe("http://127.0.0.1:18801", "k");
-
+  it("aborts the underlying stream when disposed", async () => {
+    let signal: AbortSignal | null | undefined;
+    let started: () => void = () => {};
+    const opened = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      signal = init.signal;
+      started();
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+          once: true,
+        });
+      });
+    });
+    const dispose = createGatewayClients(
+      "http://127.0.0.1:18840",
+      "remote-key",
+    ).management.subscribeLogs(() => {});
+    await opened;
     dispose();
-
-    expect(source.closed).toBe(true);
-    expect(received).toEqual([]);
+    expect(signal?.aborted).toBe(true);
   });
 });

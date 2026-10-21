@@ -1,19 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
-  CreditBalanceRow,
-} from "../components/CreditsSpendControls";
-import {
   AccountsSurface,
   type AccountsSurfaceProps,
   type CreditSpendProps,
 } from "../components/AccountsSurface";
-import {
-  creditBalanceLabel,
-  formatCredits,
-  interpretCreditBalance,
-} from "../lib/credits";
+import { CreditBalanceRow } from "../components/CreditsSpendControls";
 import type { NormalizedAccount } from "../lib/accounts";
+import { creditBalanceLabel, formatCredits, interpretCreditBalance } from "../lib/credits";
 import type { Usage } from "../lib/schemas";
 
 const codexAccount = (id: string, label = id): NormalizedAccount => ({
@@ -118,16 +112,11 @@ describe("credit balance display", () => {
   it("renders unlimited without an amount", () => {
     render(<CreditBalanceRow usage={{ credits_unlimited: true, credits_balance: null }} />);
     expect(screen.getByTestId("account-credit-value")).toHaveTextContent("Unlimited");
-    expect(screen.getByTestId("account-credit-balance")).toHaveAttribute(
-      "data-state",
-      "unlimited",
-    );
+    expect(screen.getByTestId("account-credit-balance")).toHaveAttribute("data-state", "unlimited");
   });
 
   it("marks overage while keeping the reported amount in credits", () => {
-    render(
-      <CreditBalanceRow usage={{ credits_balance: 12.5, overage_limit_reached: true }} />,
-    );
+    render(<CreditBalanceRow usage={{ credits_balance: 12.5, overage_limit_reached: true }} />);
     expect(screen.getByTestId("account-credit-value")).toHaveTextContent(
       "12.5 credits · overage limit reached",
     );
@@ -141,9 +130,7 @@ describe("credit balance display", () => {
 
   it("keeps unknown distinct through the label helper", () => {
     expect(creditBalanceLabel(interpretCreditBalance(undefined))).toBe("Unknown");
-    expect(creditBalanceLabel(interpretCreditBalance({ credits_balance: 0 }))).toBe(
-      "0 credits",
-    );
+    expect(creditBalanceLabel(interpretCreditBalance({ credits_balance: 0 }))).toBe("0 credits");
     expect(formatCredits(1234.5)).toBe("1,234.5 credits");
   });
 });
@@ -155,7 +142,9 @@ describe("account menu credit controls", () => {
   };
 
   it("keeps settings out of cards and exposes the current value in the menu", () => {
-    render(<AccountsSurface {...surfaceProps([codexAccount("codex-1")])} credits={creditProps({})} />);
+    render(
+      <AccountsSurface {...surfaceProps([codexAccount("codex-1")])} credits={creditProps({})} />,
+    );
     expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
     expect(screen.queryByTestId("account-credits-toggle")).not.toBeInTheDocument();
     expect(open("codex-1")).toHaveAttribute("aria-checked", "false");
@@ -164,14 +153,24 @@ describe("account menu credit controls", () => {
   it.each([false, true])("requests the opposite value when enabled is %s", (enabled) => {
     const account = codexAccount("codex-1");
     const onToggleAccount = vi.fn();
-    render(<AccountsSurface {...surfaceProps([account])} credits={creditProps({ "codex-1": enabled }, { onToggleAccount })} />);
+    render(
+      <AccountsSurface
+        {...surfaceProps([account])}
+        credits={creditProps({ "codex-1": enabled }, { onToggleAccount })}
+      />,
+    );
     fireEvent.click(open(account.id));
     expect(onToggleAccount).toHaveBeenCalledWith(account, !enabled);
   });
 
   it("disables only the pending account menu setting", () => {
     const onToggleAccount = vi.fn();
-    render(<AccountsSurface {...surfaceProps([codexAccount("codex-1"), codexAccount("codex-2")])} credits={creditProps({}, { pending: "credits:codex-1", onToggleAccount })} />);
+    render(
+      <AccountsSurface
+        {...surfaceProps([codexAccount("codex-1"), codexAccount("codex-2")])}
+        credits={creditProps({}, { pending: "credits:codex-1", onToggleAccount })}
+      />,
+    );
     const pending = open("codex-1");
     expect(pending).toBeDisabled();
     expect(pending).toHaveAttribute("aria-busy", "true");
@@ -182,7 +181,12 @@ describe("account menu credit controls", () => {
   });
 
   it("omits the setting for unsupported providers", () => {
-    render(<AccountsSurface {...surfaceProps([{ ...codexAccount("ag-1"), provider: "antigravity" }])} credits={creditProps({})} />);
+    render(
+      <AccountsSurface
+        {...surfaceProps([{ ...codexAccount("ag-1"), provider: "antigravity" }])}
+        credits={creditProps({})}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "More actions for ag-1" }));
     expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
   });

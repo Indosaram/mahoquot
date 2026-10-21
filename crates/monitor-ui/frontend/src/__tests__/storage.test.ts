@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   CLINE_QUOTA_DISPLAY_DEFAULT,
   clineQuotaSlug,
-  getGatewayBaseUrl,
   getClineQuotaDisplay,
+  getGatewayBaseUrl,
   getLegacyRelayKey,
   getOverviewDimension,
   getOverviewMetric,
@@ -130,10 +130,7 @@ describe("Storage and Port Migration", () => {
     // Damaged or non-string stored values fall back instead of throwing.
     localStorage.setItem("mahoquot.cline-quota-display", "not-json");
     expect(getClineQuotaDisplay()).toEqual(CLINE_QUOTA_DISPLAY_DEFAULT);
-    localStorage.setItem(
-      "mahoquot.cline-quota-display",
-      JSON.stringify({ nope: true }),
-    );
+    localStorage.setItem("mahoquot.cline-quota-display", JSON.stringify({ nope: true }));
     expect(getClineQuotaDisplay()).toEqual(CLINE_QUOTA_DISPLAY_DEFAULT);
     localStorage.setItem(
       "mahoquot.cline-quota-display",

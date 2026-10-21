@@ -11,9 +11,12 @@ import {
   DevinModelRefreshResponseSchema,
   type DevinModelsStatusResponse,
   DevinModelsStatusResponseSchema,
+  type ExcludedModels,
+  ExcludedModelsSchema,
   type GatewayHealth,
   GatewayHealthSchema,
   type GatewayModelEntry,
+  GatewayModelEntrySchema,
   type HistoryEvent,
   HistoryEventDetailResponseSchema,
   type HistoryEventsResponse,
@@ -31,6 +34,7 @@ import {
   ModelRegistryRefreshResponseSchema,
   type ModelRegistryStatus,
   PatchScopedKeyResponseSchema,
+  type RegistryModelEntry,
   type SchedulerSettings,
   SchedulerSettingsSchema,
   type SchedulerStatus,
@@ -48,16 +52,13 @@ import {
   WarmupStatusResponseSchema,
   parseAdminStats,
   parseAuthFiles,
+  parseExcludedModels,
   parseGatewayModels,
   parseLogRecordLine,
   parseLogs,
   parseModelRegistryStatus,
   parseRegistryModels,
   parseScopedKeys,
-  parseExcludedModels,
-  ExcludedModelsSchema,
-  type ExcludedModels,
-  type RegistryModelEntry,
 } from "./schemas";
 
 const providerAuthStartSchema = z.object({
@@ -222,11 +223,15 @@ export interface GatewayClients {
     ): Promise<{ readonly id: string; readonly credits_after_limit: boolean }>;
     setCodexCreditsOptInAll(enabled: boolean): Promise<{ readonly ids: readonly string[] }>;
 
-    beginProviderAuth(provider: string, credentialName?: string): Promise<{ readonly url: string; readonly state: string }>;
+    beginProviderAuth(
+      provider: string,
+      credentialName?: string,
+    ): Promise<{ readonly url: string; readonly state: string }>;
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
     scalar(path: string): Promise<Record<string, unknown>>;
     saveScalar(path: string, value: ScalarValue): Promise<void>;
     models(): Promise<readonly GatewayModelEntry[]>;
+    modelDetail(id: string): Promise<GatewayModelEntry>;
     modelRegistryStatus(): Promise<ModelRegistryStatus>;
     refreshModelRegistry(): Promise<ModelRegistryRefreshResponse>;
     scopedKeys(): Promise<readonly ScopedApiKey[]>;
@@ -277,6 +282,51 @@ const describeFailure = async (response: Response): Promise<string> => {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
+declare global {
+  interface Window {
+    __MAHOQUOT_MANAGEMENT__?: { readonly endpoint: string; readonly key: string };
+  }
+}
+
+const managementHeaders = async (url: string, headers: HeadersInit): Promise<HeadersInit> => {
+  let target: URL;
+  try {
+    target = new URL(url, globalThis.location?.href ?? "http://localhost/");
+  } catch {
+    return headers;
+  }
+  if (
+    !target.pathname.startsWith("/v0/management/") &&
+    !target.pathname.startsWith("/v8/management/") &&
+    !target.pathname.startsWith("/admin/") &&
+    !target.pathname.startsWith("/api/codex-auth/")
+  )
+    return headers;
+  const native = window.__MAHOQUOT_MANAGEMENT__;
+  if (!native || target.origin !== new URL(native.endpoint).origin) return headers;
+  if (!native.key) {
+    const bridge = z
+      .object({
+        invoke: z.custom<(command: string, args: Record<string, unknown>) => Promise<unknown>>(
+          (value) => typeof value === "function",
+        ),
+      })
+      .safeParse(Reflect.get(window, "__TAURI_INTERNALS__"));
+    if (bridge.success) {
+      const result = z
+        .string()
+        .nullable()
+        .parse(
+          await bridge.data.invoke("read_secret", {
+            request: { endpoint: native.endpoint, profile: "default", kind: "management_key" },
+          }),
+        );
+      if (result) return { Authorization: `Bearer ${result}` };
+    }
+  }
+  return native.key ? { Authorization: `Bearer ${native.key}` } : {};
+};
+
 const requestResponse = async (
   url: string,
   headers: HeadersInit,
@@ -297,7 +347,7 @@ const requestResponse = async (
     const response = await fetch(url, {
       ...init,
       signal: controller.signal,
-      headers: { ...headers, ...init?.headers },
+      headers: { ...(await managementHeaders(url, headers)), ...init?.headers },
     });
     if (!response.ok) {
       throw new GatewayError(await describeFailure(response), response.status);
@@ -396,16 +446,43 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             authHeaders,
           ),
         ),
-      // EventSource cannot carry an Authorization header, so the gateway's
-      // query-parameter key form is used for the stream only.
       subscribeLogs: (onRecord) => {
-        const url = `${base}/v0/management/logs/stream${apiKey ? `?key=${encodeURIComponent(apiKey)}` : ""}`;
-        const source = new EventSource(url);
-        source.onmessage = (event: MessageEvent<string>) => {
-          const record = parseLogRecordLine(event.data);
-          if (record) onRecord(record);
-        };
-        return () => source.close();
+        const controller = new AbortController();
+        const url = `${base}/v0/management/logs/stream`;
+        void managementHeaders(url, authHeaders)
+          .then((headers) => fetch(url, { headers, signal: controller.signal }))
+          .then(async (response) => {
+            if (!response.ok)
+              throw new GatewayError(await describeFailure(response), response.status);
+            const reader = response.body?.getReader();
+            if (!reader) return;
+            const decoder = new TextDecoder();
+            let buffer = "";
+            try {
+              for (;;) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                buffer += decoder.decode(chunk.value, { stream: true });
+                const frames = buffer.split(/\r?\n\r?\n/);
+                buffer = frames.pop() ?? "";
+                for (const frame of frames) {
+                  const data = frame
+                    .split(/\r?\n/)
+                    .filter((line) => line.startsWith("data:"))
+                    .map((line) => line.slice(5).trimStart())
+                    .join("\n");
+                  const record = parseLogRecordLine(data);
+                  if (record) onRecord(record);
+                }
+              }
+            } finally {
+              reader.releaseLock();
+            }
+          })
+          .catch((error: unknown) => {
+            if (!controller.signal.aborted) console.error("Gateway log stream failed", error);
+          });
+        return () => controller.abort();
       },
       schedulerSettings: async () =>
         SchedulerSettingsSchema.parse(
@@ -695,17 +772,22 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           claude: "anthropic-auth-url",
           cursor: "cursor-auth-url",
           kimi: "kimi-auth-url",
+          "kimi-ai": "kimi-ai-auth-url",
           qwen: "qwen-auth-url",
           nous: "nous-auth-url",
           "github-copilot": "github-copilot-auth-url",
           "command-code": "command-code-auth-url",
           xai: "xai-auth-url",
           zcode: "zcode-auth-url",
+          devin: "devin-auth-url",
         };
         const route = endpoint[provider];
         if (!route) throw new GatewayError(`Unsupported provider: ${provider}`, 400);
         return providerAuthStartSchema.parse(
-          await requestJson(`${base}/v0/management/${route}${credentialName ? `?credential_name=${encodeURIComponent(credentialName)}` : ""}`, authHeaders),
+          await requestJson(
+            `${base}/v0/management/${route}${credentialName ? `?credential_name=${encodeURIComponent(credentialName)}` : ""}`,
+            authHeaders,
+          ),
         );
       },
       providerAuthStatus: async (state) =>
@@ -729,6 +811,13 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       models: async () => {
         const response = await requestJson(`${base}/v1/models`, authHeaders);
         return parseGatewayModels(response).data;
+      },
+      modelDetail: async (id: string) => {
+        const response = await requestJson(
+          `${base}/v1/models/${encodeURIComponent(id)}`,
+          authHeaders,
+        );
+        return GatewayModelEntrySchema.parse(response);
       },
       modelRegistryStatus: async () =>
         parseModelRegistryStatus(

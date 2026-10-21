@@ -23,6 +23,12 @@ fn seed_if_absent(storage_key: &str, value: &str) -> String {
     )
 }
 
+pub fn management_initialization_script(base_url: &str, management_key: &str) -> String {
+    let value =
+        serde_json::json!({"endpoint": base_url.trim_end_matches('/'), "key": management_key});
+    format!("window.__MAHOQUOT_MANAGEMENT__={value};")
+}
+
 fn sanitize(value: &str) -> String {
     value
         .chars()
@@ -33,6 +39,20 @@ fn sanitize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn management_bootstrap_is_separate_from_saved_connection_and_inference_key() {
+        let script = management_initialization_script("http://127.0.0.1:18840/", "dedicated-key");
+        let encoded = script
+            .strip_prefix("window.__MAHOQUOT_MANAGEMENT__=")
+            .unwrap()
+            .strip_suffix(';')
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(encoded).unwrap();
+        assert_eq!(payload["key"], "dedicated-key");
+        assert_eq!(payload["endpoint"], "http://127.0.0.1:18840");
+        assert!(!script.contains("localStorage"));
+    }
 
     #[test]
     fn seeds_storage_with_the_launched_gateway_coordinates() {

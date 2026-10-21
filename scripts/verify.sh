@@ -6,18 +6,33 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 frontend="crates/monitor-ui/frontend"
+proxy_dir="mahoquot-proxy"
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
-step "cargo fmt"
+# 1. Gateway workspace checks (when mahoquot-proxy exists)
+if [ -d "$proxy_dir" ]; then
+  step "gateway cargo fmt"
+  (cd "$proxy_dir" && cargo fmt --all -- --check)
+
+  step "gateway cargo clippy"
+  (cd "$proxy_dir" && cargo clippy --workspace --all-targets -- -D warnings)
+
+  step "gateway cargo test"
+  (cd "$proxy_dir" && cargo test --workspace --all-features)
+fi
+
+# 2. Desktop monitor-ui workspace checks
+step "desktop cargo fmt"
 cargo fmt --all -- --check
 
-step "cargo clippy"
+step "desktop cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "cargo test"
+step "desktop cargo test"
 cargo test --workspace
 
+# 3. Frontend checks
 step "frontend typecheck"
 (cd "$frontend" && bun run typecheck)
 
@@ -29,6 +44,13 @@ step "frontend test"
 
 step "site typecheck and build"
 (cd site && bun run build)
+
+# 4. Parity QA harness cases
+if [ -f "scripts/qa/cliproxy-parity.mjs" ]; then
+  step "cliproxy parity QA suite"
+  bun scripts/qa/cliproxy-parity.mjs --list-cases >/dev/null
+  echo "parity QA harness verified and cases listed"
+fi
 
 step "bundled console freshness"
 # The e2e suite serves ui/index.html, so a stale artifact makes those specs

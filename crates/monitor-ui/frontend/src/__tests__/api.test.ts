@@ -323,10 +323,7 @@ describe("fetchClineModelLists", () => {
         return new Response(
           JSON.stringify({
             recommended: [{ id: "anthropic/claude-sonnet-5.5" }],
-            free: [
-              { id: "cline-free/mimo-v2.6-flash" },
-              { id: "cline-free/deepseek-v4.1-flash" },
-            ],
+            free: [{ id: "cline-free/mimo-v2.6-flash" }, { id: "cline-free/deepseek-v4.1-flash" }],
             clinePass: [{ id: "cline-pass/glm-5.3" }],
             clineCloud: [{ id: "cline-cloud/kimi-k3" }],
           }),
@@ -335,9 +332,7 @@ describe("fetchClineModelLists", () => {
     );
 
     const lists = await fetchClineModelLists();
-    expect(capturedUrl).toBe(
-      "https://api.cline.bot/api/v1/ai/cline/recommended-models",
-    );
+    expect(capturedUrl).toBe("https://api.cline.bot/api/v1/ai/cline/recommended-models");
     expect(lists.recommended).toEqual(["anthropic/claude-sonnet-5.5"]);
     expect(lists.free).toEqual(["cline-free/mimo-v2.6-flash", "cline-free/deepseek-v4.1-flash"]);
     expect(lists.clinePass).toEqual(["cline-pass/glm-5.3"]);

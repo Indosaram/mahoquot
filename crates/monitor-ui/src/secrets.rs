@@ -6,7 +6,20 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "isolated-secret-tests"))]
 #[allow(dead_code)]
-const SECRET_SERVICE: &str = "mahoquot.desktop";
+const DEFAULT_SECRET_SERVICE: &str = "mahoquot.desktop";
+
+#[cfg(not(feature = "isolated-secret-tests"))]
+pub(crate) fn resolved_secret_service() -> String {
+    secret_service_from(std::env::var("MAHOQUOT_KEYCHAIN_SERVICE").ok().as_deref())
+}
+
+#[cfg(not(feature = "isolated-secret-tests"))]
+fn secret_service_from(override_value: Option<&str>) -> String {
+    match override_value.map(str::trim) {
+        Some(service) if !service.is_empty() => service.to_string(),
+        _ => DEFAULT_SECRET_SERVICE.to_string(),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -215,7 +228,8 @@ pub struct KeyringBackend;
 #[allow(dead_code)]
 impl KeyringBackend {
     fn entry(account: &str) -> Result<Entry, SecretStoreError> {
-        Entry::new(SECRET_SERVICE, account).map_err(map_keyring_error)
+        let service = resolved_secret_service();
+        Entry::new(&service, account).map_err(map_keyring_error)
     }
 }
 
@@ -262,6 +276,14 @@ impl<B: SecretBackend> SecretStore<B> {
 
     pub fn delete(&self, secret: &SecretRef) -> Result<(), SecretStoreError> {
         self.backend.delete(&secret.account())
+    }
+
+    pub fn write_verified(&self, secret: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
+        self.write(secret, value)?;
+        match self.read(secret)? {
+            Some(stored) if stored == value => Ok(()),
+            _ => Err(SecretStoreError::VerificationFailed),
+        }
     }
 
     pub fn migrate_legacy(
@@ -830,6 +852,18 @@ mod tests {
             "{messages:?}"
         );
         assert!(messages[3].contains("disk is on fire"), "{messages:?}");
+    }
+
+    #[cfg(not(feature = "isolated-secret-tests"))]
+    #[test]
+    fn keychain_service_resolution_prefers_environment_override_over_default() {
+        assert_eq!(secret_service_from(None), DEFAULT_SECRET_SERVICE);
+        assert_eq!(secret_service_from(Some("")), DEFAULT_SECRET_SERVICE);
+        assert_eq!(secret_service_from(Some("   ")), DEFAULT_SECRET_SERVICE);
+        assert_eq!(
+            secret_service_from(Some(" mahoquot.qa.test-namespace ")),
+            "mahoquot.qa.test-namespace"
+        );
     }
 
     #[cfg(not(feature = "isolated-secret-tests"))]

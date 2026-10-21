@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::{
     gateway_target_policy, migrate_legacy_secret_inner, read_secret_inner, reclaim_listener_policy,
-    request_gateway_shutdown, secrets, stop_owned_gateway, stop_signal_order, Config,
-    DesktopSecretStore, GatewayProcess, GatewayTargetPolicy, MigrateLegacySecretRequest,
+    request_gateway_shutdown, secrets, stop_owned_gateway, stop_signal_order, target_gateway_port,
+    Config, DesktopSecretStore, GatewayProcess, GatewayTargetPolicy, MigrateLegacySecretRequest,
     ReclaimListenerPolicy, SecretRequest, StopSignal,
 };
 
@@ -39,6 +39,36 @@ fn a_remote_gateway_target_never_launches_or_reclaims_the_local_port() {
 }
 
 #[test]
+fn target_gateway_port_resolution_and_qa_loopback_policy() {
+    assert_eq!(target_gateway_port("http://127.0.0.1:18801"), 18801);
+    assert_eq!(target_gateway_port("http://127.0.0.1:18845"), 18845);
+    assert_eq!(target_gateway_port("not-a-valid-url"), 18801);
+
+    // Without MAHOQUOT_QA_LOOPBACK_ONLY, non-18801 loopback is UseConfigured
+    assert_eq!(
+        gateway_target_policy("http://127.0.0.1:18845"),
+        GatewayTargetPolicy::UseConfigured
+    );
+
+    // With MAHOQUOT_QA_LOOPBACK_ONLY set, loopback URLs become ManageLocal
+    std::env::set_var("MAHOQUOT_QA_LOOPBACK_ONLY", "1");
+    assert_eq!(
+        gateway_target_policy("http://127.0.0.1:18845"),
+        GatewayTargetPolicy::ManageLocal
+    );
+    assert_eq!(
+        gateway_target_policy("http://localhost:18845"),
+        GatewayTargetPolicy::ManageLocal
+    );
+    // Remote URLs remain UseConfigured even with QA flag
+    assert_eq!(
+        gateway_target_policy("http://remote.host.test:18845"),
+        GatewayTargetPolicy::UseConfigured
+    );
+    std::env::remove_var("MAHOQUOT_QA_LOOPBACK_ONLY");
+}
+
+#[test]
 fn stop_policy_attempts_graceful_shutdown_before_forcing_exit() {
     assert_eq!(
         stop_signal_order(),
@@ -50,6 +80,7 @@ fn config_for(base_url: &str, api_key: &str) -> Config {
     Config {
         base_url: base_url.to_string(),
         api_key: api_key.to_string(),
+        management_key: api_key.to_string(),
         client: reqwest::Client::new(),
     }
 }

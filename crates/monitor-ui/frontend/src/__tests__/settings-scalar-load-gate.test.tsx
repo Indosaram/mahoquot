@@ -1,9 +1,9 @@
 import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import App from "../App";
-import { createGatewayClients } from "../lib/api";
 import { getSettingsScalarsStatus, useConnectionSettings } from "../hooks/useConnectionSettings";
 import type { LoadState } from "../hooks/useGatewayPolling";
+import { createGatewayClients } from "../lib/api";
 
 const SCALAR_SUFFIXES = [
   "/proxy-url",

@@ -21,7 +21,6 @@ import { NotchSurface } from "./components/NotchSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel } from "./components/ProviderGlyph";
 import { ProviderModelsPanel, withModelDisabled } from "./components/ProviderModelsPanel";
-import type { ExcludedModels, RegistryModelEntry } from "./lib/schemas";
 import { SettingsSurface } from "./components/SettingsSurface";
 import { ToastStack, useToasts } from "./components/Toasts";
 import { TotpVaultSurface } from "./components/TotpVaultSurface";
@@ -93,6 +92,7 @@ import type { OverviewDimension, OverviewMetric } from "./lib/overview-analytics
 import { blocks, pendingKey } from "./lib/pending";
 import { GENERIC_PROVIDER_OPTIONS } from "./lib/provider-catalog";
 import { RELAY_PLAN_GROUPS, buildRelayCredential, isRelayTarget } from "./lib/relay-plans";
+import type { ExcludedModels, RegistryModelEntry } from "./lib/schemas";
 import type {
   WarmupAccountPolicy,
   WarmupProviderPolicy,
@@ -122,13 +122,13 @@ import {
   getQuotaShowRemaining,
   getTelemetryRange,
   getTheme,
+  setClineQuotaDisplay as persistClineQuotaDisplay,
   setTheme as persistTheme,
   removeLegacyRelayKey,
   setGatewayBaseUrl,
   setOverviewDimension,
   setOverviewMetric,
   setQuotaShowRemaining,
-  setClineQuotaDisplay as persistClineQuotaDisplay,
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "./lib/storage";
@@ -203,9 +203,8 @@ export default function App() {
   // Cline daily-quota display preference: which bare model slugs render a
   // "(Daily limit)" row. The gateway tracks every model it serves; this list
   // only decides what the surfaces show (App owns persistence per AGENTS).
-  const [clineQuotaDisplay, setClineQuotaDisplayState] = useState<readonly string[]>(
-    getClineQuotaDisplay,
-  );
+  const [clineQuotaDisplay, setClineQuotaDisplayState] =
+    useState<readonly string[]>(getClineQuotaDisplay);
   const [clineQuotaRemoteSlugs, setClineQuotaRemoteSlugs] = useState<readonly string[]>([]);
   const clineQuotaListLoaded = useRef(false);
   const updateClineQuotaDisplay = useCallback((slugs: readonly string[]) => {
@@ -1583,7 +1582,7 @@ export default function App() {
     setOnboardingOpen(true);
     await beginOnboarding(
       dedicated ? account.provider : `generic:${account.provider}`,
-      account.provider === "antigravity" ? account.credentialName ?? undefined : undefined,
+      account.provider === "antigravity" ? (account.credentialName ?? undefined) : undefined,
     );
   };
 

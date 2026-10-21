@@ -19,16 +19,13 @@ import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { relayPlanLabel } from "../lib/relay-plans";
 import type { Usage, WarmupAccountStatus } from "../lib/schemas";
+import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { AccountResetCredits } from "./AccountResetCredits";
 import { formatQuotaPercent, quotaDisplay, quotaRows } from "./AccountsSurface";
-import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
+import { type AccountCreditsControl, CreditBalanceRow } from "./CreditsSpendControls";
 import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
-import {
-  CreditBalanceRow,
-  type AccountCreditsControl,
-} from "./CreditsSpendControls";
 
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
@@ -97,7 +94,10 @@ export const QuotaFreshnessBadge = ({ usage }: { readonly usage?: Usage | null }
       </Badge>
     );
   }
-  if (usage.refresh_status === "error" || (usage.last_refresh_error && usage.last_refresh_error.length > 0)) {
+  if (
+    usage.refresh_status === "error" ||
+    (usage.last_refresh_error && usage.last_refresh_error.length > 0)
+  ) {
     return (
       <Badge
         tone="bad"

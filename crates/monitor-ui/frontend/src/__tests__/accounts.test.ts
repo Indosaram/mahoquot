@@ -463,14 +463,18 @@ describe("Account Normalization and Quota Capability", () => {
             "cline-free/deepseek-v4.1-flash": false,
           },
           usage: {
-            groups: [{
-              display_name: "Cline Free Limits",
-              buckets: [{
-                display_name: "cline-free/gemini-3.8-flash",
-                used_percent: 99.9,
-                reset_at_unix: nowSecs + 3600,
-              }],
-            }],
+            groups: [
+              {
+                display_name: "Cline Free Limits",
+                buckets: [
+                  {
+                    display_name: "cline-free/gemini-3.8-flash",
+                    used_percent: 99.9,
+                    reset_at_unix: nowSecs + 3600,
+                  },
+                ],
+              },
+            ],
           },
         },
       ];

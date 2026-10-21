@@ -74,6 +74,7 @@ async fn native_reservations_cover_launch_rollback_stop_and_reap() {
     let config = Config {
         base_url: base_url.clone(),
         api_key: "fixture-key".into(),
+        management_key: "fixture-key".into(),
         client: reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()

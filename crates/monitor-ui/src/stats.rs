@@ -221,24 +221,18 @@ fn cline_free_cooldown_deadline(usage: &Usage, now_unix_ms: i64) -> Option<(i64,
 
     let mut expired_match = None;
     for bucket in &group.buckets {
-        let is_free_model = if let Some(id) = bucket.bucket_id.as_deref().filter(|s| !s.is_empty()) {
+        let is_free_model = if let Some(id) = bucket.bucket_id.as_deref().filter(|s| !s.is_empty())
+        {
             id.to_ascii_lowercase().contains("gemini")
                 || id.to_ascii_lowercase().contains("deepseek")
         } else {
-            bucket
-                .display_name
-                .as_deref()
-                .is_some_and(|name| {
-                    name.to_ascii_lowercase().contains("gemini")
-                        || name.to_ascii_lowercase().contains("deepseek")
-                })
-                || bucket
-                    .window
-                    .as_deref()
-                    .is_some_and(|w| {
-                        w.to_ascii_lowercase().contains("gemini")
-                            || w.to_ascii_lowercase().contains("deepseek")
-                    })
+            bucket.display_name.as_deref().is_some_and(|name| {
+                name.to_ascii_lowercase().contains("gemini")
+                    || name.to_ascii_lowercase().contains("deepseek")
+            }) || bucket.window.as_deref().is_some_and(|w| {
+                w.to_ascii_lowercase().contains("gemini")
+                    || w.to_ascii_lowercase().contains("deepseek")
+            })
         };
         if !is_free_model {
             continue;

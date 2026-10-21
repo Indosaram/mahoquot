@@ -72,9 +72,7 @@ const installFetch = (options: FetchOptions): { readonly puts: RecordedPut[] } =
   return { puts };
 };
 
-const codexStats = (
-  overrides?: Partial<Record<string, unknown>>,
-): readonly unknown[] => [
+const codexStats = (overrides?: Partial<Record<string, unknown>>): readonly unknown[] => [
   {
     id: "zero@example.com",
     provider: "codex",
@@ -113,7 +111,9 @@ const openAccounts = async () => {
 };
 
 const accountSwitch = (id: string) => {
-  const existing = screen.queryByRole("menuitemcheckbox", { name: `Use credits after limit for ${id}` });
+  const existing = screen.queryByRole("menuitemcheckbox", {
+    name: `Use credits after limit for ${id}`,
+  });
   if (existing) return existing;
   fireEvent.keyDown(document, { key: "Escape" });
   fireEvent.click(screen.getByRole("button", { name: `More actions for ${id}` }));
@@ -179,7 +179,9 @@ describe("codex credit policy in the operations console", () => {
     await openAccounts();
 
     const toggle = await waitFor(() => accountSwitch("zero@example.com"));
-    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() =>
+      expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"),
+    );
 
     await act(async () => {
       fireEvent.click(toggle);
@@ -206,7 +208,9 @@ describe("codex credit policy in the operations console", () => {
     await openAccounts();
 
     const toggle = await waitFor(() => accountSwitch("zero@example.com"));
-    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() =>
+      expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"),
+    );
 
     await act(async () => {
       fireEvent.click(toggle);
@@ -235,7 +239,9 @@ describe("codex credit policy in the operations console", () => {
       await gate;
     });
 
-    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "false"));
+    await waitFor(() =>
+      expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "false"),
+    );
     expect(accountSwitch("zero@example.com")).not.toHaveAttribute("aria-busy");
     expect(
       await screen.findByText("Credits after limit off for zero@example.com."),
@@ -250,7 +256,9 @@ describe("codex credit policy in the operations console", () => {
       expect(screen.getAllByTestId("account-usage-totals")).toHaveLength(2);
     });
     expect(screen.queryByTestId("global-credits-toggle")).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitemcheckbox", { name: /Use credits after limit/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitemcheckbox", { name: /Use credits after limit/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the acked value while a pre-ack stats snapshot still claims the old flag", async () => {
@@ -281,7 +289,9 @@ describe("codex credit policy in the operations console", () => {
     await openAccounts();
 
     const toggle = await waitFor(() => accountSwitch("zero@example.com"));
-    await waitFor(() => expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() =>
+      expect(accountSwitch("zero@example.com")).toHaveAttribute("aria-checked", "true"),
+    );
 
     await act(async () => {
       fireEvent.click(toggle);

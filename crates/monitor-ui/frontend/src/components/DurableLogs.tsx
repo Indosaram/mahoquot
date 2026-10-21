@@ -1,3 +1,4 @@
+import { Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsQuery } from "../lib/api";
 import {
@@ -9,7 +10,6 @@ import {
   totalsCacheTokens,
 } from "../lib/cache-usage";
 import type { HistoryEvent, HistoryEventsResponse, HistoryTotals, LogRecord } from "../lib/schemas";
-import { Zap } from "lucide-react";
 import { Button } from "./ui";
 
 export interface DurableLogsProps {
@@ -507,9 +507,10 @@ export function DurableLogs({
             {proxyRecords.map((record) => {
               const raw = record as Record<string, unknown>;
               const event = raw.event;
-              const requestId = typeof raw["request-id"] === "string" && raw["request-id"]
-                ? String(raw["request-id"])
-                : null;
+              const requestId =
+                typeof raw["request-id"] === "string" && raw["request-id"]
+                  ? String(raw["request-id"])
+                  : null;
               // Stable identity: request-id when present, else timestamp + content,
               // so a new line never shifts indices and remounts the whole tail.
               const rowKey =
