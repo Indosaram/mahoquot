@@ -240,17 +240,28 @@ export function useGatewayPolling(clients: GatewayClients) {
   );
 
   const spinTimerRef = useRef<number | undefined>(undefined);
+  const manualRefreshInFlight = useRef(false);
   useEffect(() => () => window.clearTimeout(spinTimerRef.current), []);
 
   // Only a refresh the user asked for spins the tray icon; the 10s poll must
-  // not make it spin on its own.
+  // not make it spin on its own. The spinner covers the whole manual round:
+  // the forced usage pass waits on every account's upstream quota call, so
+  // spinning only after it settled left the button looking dead for seconds.
+  // A click while a round is in flight is dropped instead of stacking another
+  // full quota pass.
   const refreshNow = useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
     setRefreshing(true);
     window.clearTimeout(spinTimerRef.current);
     const start = Date.now();
     try {
+      // Usage first, so the snapshot read next carries the new quota rather
+      // than the previous poll's.
+      await refreshUsage(true);
       await refresh();
     } finally {
+      manualRefreshInFlight.current = false;
       const elapsed = Date.now() - start;
       const minSpinMs = 500;
       if (elapsed < minSpinMs) {
@@ -259,7 +270,7 @@ export function useGatewayPolling(clients: GatewayClients) {
         setRefreshing(false);
       }
     }
-  }, [refresh]);
+  }, [refresh, refreshUsage]);
 
   useEffect(() => {
     // Polls every 10s on a healthy gateway; each failed round doubles the

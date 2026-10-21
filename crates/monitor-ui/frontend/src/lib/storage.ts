@@ -101,6 +101,63 @@ export const setOverviewMetric = (value: StoredOverviewMetric): void => {
   localStorage.setItem("mahoquot.overview.metric", value);
 };
 
+const PROVIDER_ORDER_KEY = "mahoquot.provider-order";
+
+/** Display order for the accounts provider tabs. Empty means alphabetical. */
+export const getProviderOrder = (): readonly string[] => {
+  const raw = localStorage.getItem(PROVIDER_ORDER_KEY);
+  if (raw === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const entry of parsed) {
+      if (typeof entry !== "string") continue;
+      const id = entry.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      order.push(id);
+    }
+    return order;
+  } catch {
+    return [];
+  }
+};
+
+export const setProviderOrder = (providers: readonly string[]): void => {
+  localStorage.setItem(PROVIDER_ORDER_KEY, JSON.stringify([...providers]));
+};
+
+/**
+ * Applies a saved tab order. Providers missing from the saved list stay in
+ * alphabetical order after the saved ones, so a newly connected provider does
+ * not insert itself into the middle of a custom arrangement.
+ */
+export const orderProviders = (
+  providers: readonly string[],
+  savedOrder: readonly string[] = [],
+): string[] => {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const provider of providers) {
+    if (seen.has(provider)) continue;
+    seen.add(provider);
+    unique.push(provider);
+  }
+  if (savedOrder.length === 0) return unique.sort();
+
+  const remaining = new Set(unique);
+  const ordered: string[] = [];
+  for (const id of savedOrder) {
+    if (!remaining.has(id)) continue;
+    remaining.delete(id);
+    ordered.push(id);
+  }
+  const rest = unique.filter((id) => remaining.has(id)).sort();
+  return [...ordered, ...rest];
+};
+
 export const getTheme = (): "dark" | "light" => {
   const saved = localStorage.getItem("mahoquot.theme");
   if (saved === "light" || saved === "dark") {

@@ -124,9 +124,11 @@ import {
   getLegacyRelayKey,
   getOverviewDimension,
   getOverviewMetric,
+  getProviderOrder,
   getQuotaShowRemaining,
   getTelemetryRange,
   getTheme,
+  orderProviders,
   setClineQuotaDisplay as persistClineQuotaDisplay,
   setTheme as persistTheme,
   removeLegacyRelayKey,
@@ -134,6 +136,7 @@ import {
   setOverviewDimension,
   setOverviewMetric,
   setQuotaShowRemaining,
+  setProviderOrder as setStoredProviderOrder,
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "./lib/storage";
@@ -232,6 +235,7 @@ export default function App() {
   const [provider, setProvider] = useState(
     () => window.sessionStorage.getItem("mahoquot.provider") ?? "all",
   );
+  const [providerOrder, setProviderOrder] = useState<readonly string[]>(getProviderOrder);
   const { toasts, pushToast, dismissToast } = useToasts();
   const setNotice = useCallback((message: string) => pushToast(message), [pushToast]);
   const [pending, setPending] = useState("");
@@ -1140,9 +1144,14 @@ export default function App() {
     samples: telemetry,
     enabled: surface === "overview",
   });
+  // Empty saved order keeps alphabetical tabs. A saved order is display-only.
   const providers = useMemo(
-    () => [...new Set(accounts.map((account) => account.provider))].sort(),
-    [accounts],
+    () =>
+      orderProviders(
+        accounts.map((account) => account.provider),
+        providerOrder,
+      ),
+    [accounts, providerOrder],
   );
   const selectedProvider = providers.includes(provider) ? provider : providers[0];
   const visibleAccounts = orderClaudeSubscriptionsForDisplay(
@@ -1320,6 +1329,39 @@ export default function App() {
     if (from < 0 || to < 0) return;
     names.splice(to, 0, ...names.splice(from, 1));
     await applyCredentialOrder(names, target.id);
+  };
+
+  const commitProviderOrder = (nextVisible: readonly string[]) => {
+    const visible = new Set(nextVisible);
+    const retained = providerOrder.filter((id) => !visible.has(id));
+    const next = [...nextVisible, ...retained];
+    setProviderOrder(next);
+    setStoredProviderOrder(next);
+  };
+
+  const moveProvider = (providerId: string, direction: -1 | 1) => {
+    const index = providers.indexOf(providerId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= providers.length) return;
+    const next = [...providers];
+    const current = next[index];
+    const swapped = next[nextIndex];
+    if (current === undefined || swapped === undefined) return;
+    next[index] = swapped;
+    next[nextIndex] = current;
+    commitProviderOrder(next);
+  };
+
+  const dropProviderOn = (source: string, target: string) => {
+    if (!source || source === target) return;
+    const next = [...providers];
+    const from = next.indexOf(source);
+    const to = next.indexOf(target);
+    if (from < 0 || to < 0) return;
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    commitProviderOrder(next);
   };
 
   const applyCredentialOrder = async (names: readonly string[], accountId: string) => {
@@ -2152,11 +2194,7 @@ export default function App() {
               <Button
                 aria-label="Refresh snapshot"
                 disabled={refreshing}
-                onClick={() => {
-                  // Usage first, so the snapshot the manual refresh reads
-                  // carries the new quota rather than the previous poll's.
-                  void refreshUsage(true).finally(() => void refreshNow());
-                }}
+                onClick={() => void refreshNow()}
               >
                 <RefreshCw size={15} className={refreshing ? "spin" : ""} /> Refresh
               </Button>
@@ -2263,14 +2301,23 @@ export default function App() {
             onDropCredential={dropCredentialOn}
             onSetDragging={setDragging}
             onContextMenu={(event, account) => openMenu(event, accountMenuItems(account))}
-            onProviderContextMenu={(event, provider) =>
+            onMoveProvider={moveProvider}
+            onDropProvider={dropProviderOn}
+            onProviderContextMenu={(event, providerId) => {
+              const index = providers.indexOf(providerId);
               openMenu(event, [
+                ...(index > 0
+                  ? [{ label: "Move left", run: () => moveProvider(providerId, -1) }]
+                  : []),
+                ...(index >= 0 && index < providers.length - 1
+                  ? [{ label: "Move right", run: () => moveProvider(providerId, 1) }]
+                  : []),
                 {
                   label: "Models…",
-                  run: () => void openProviderModels(provider),
+                  run: () => void openProviderModels(providerId),
                 },
-              ])
-            }
+              ]);
+            }}
             credits={
               creditsReady
                 ? {

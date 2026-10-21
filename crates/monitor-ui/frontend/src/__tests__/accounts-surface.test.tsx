@@ -366,6 +366,41 @@ describe("AccountsSurface component", () => {
     }
   });
 
+  it("reorders provider tabs by dragging and Alt+Arrow", () => {
+    const onDropProvider = vi.fn();
+    const onMoveProvider = vi.fn();
+    const { container } = render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [mockAccount, { ...mockAccount, id: "claude-1", provider: "claude" }],
+          providers: ["claude", "codex"],
+          selectedProvider: "claude",
+          onDropProvider,
+          onMoveProvider,
+        })}
+      />,
+    );
+
+    const tabs = [...container.querySelectorAll(".provider-tab")];
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]).toHaveAttribute("draggable", "true");
+    expect(tabs[0]).toHaveAttribute("title", "Drag to reorder");
+    const dataTransfer = { effectAllowed: "", setData: vi.fn() };
+    fireEvent.dragStart(tabs[1] as HTMLElement, { dataTransfer });
+    expect(tabs[1]).toHaveAttribute("data-dragging", "true");
+    fireEvent.dragOver(tabs[0] as HTMLElement);
+    fireEvent.drop(tabs[0] as HTMLElement);
+    expect(onDropProvider).toHaveBeenCalledWith("codex", "claude");
+
+    fireEvent.keyDown(tabs[0]?.querySelector("input") as HTMLElement, {
+      key: "ArrowRight",
+      altKey: true,
+    });
+    expect(onMoveProvider).toHaveBeenCalledWith("claude", 1);
+    fireEvent.keyDown(tabs[0]?.querySelector("input") as HTMLElement, { key: "ArrowRight" });
+    expect(onMoveProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("locks manual reordering for Claude subscriptions sorted by reset order", () => {
     const onDropCredential = vi.fn();
     const claude = {

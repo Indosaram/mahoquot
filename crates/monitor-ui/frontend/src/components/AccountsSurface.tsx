@@ -1,5 +1,5 @@
-import { AlertTriangle } from "lucide-react";
-import type { MouseEvent } from "react";
+import { AlertTriangle, GripVertical } from "lucide-react";
+import { type MouseEvent, useRef, useState } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
 import { extractDevinSlug } from "../lib/accounts";
 import { blocks } from "../lib/pending";
@@ -475,6 +475,8 @@ export interface AccountsSurfaceProps {
   readonly onSetDragging: (credentialName: string) => void;
   readonly onContextMenu: (event: MouseEvent, account: NormalizedAccount) => void;
   readonly onProviderContextMenu?: (event: MouseEvent, provider: string) => void;
+  readonly onMoveProvider?: (provider: string, direction: -1 | 1) => void;
+  readonly onDropProvider?: (source: string, target: string) => void;
 }
 
 export const AccountsSurface = ({
@@ -505,7 +507,15 @@ export const AccountsSurface = ({
   onSetDragging,
   onContextMenu,
   onProviderContextMenu,
+  onMoveProvider,
+  onDropProvider,
 }: AccountsSurfaceProps) => {
+  const draggingProviderId = useRef("");
+  const [draggingProvider, setDraggingProvider] = useState("");
+  const setDraggingProviderId = (id: string) => {
+    draggingProviderId.current = id;
+    setDraggingProvider(id);
+  };
   const popupAccount =
     warmup?.selection?.type === "account"
       ? accounts.find((account) => account.id === warmup.selection?.id)
@@ -527,11 +537,34 @@ export const AccountsSurface = ({
       <div className="provider-tabs" role="radiogroup" aria-label="Providers">
         {providers.map((item) => {
           const stats = providerTabStats.get(item) ?? { total: 0, healthy: 0 };
+          const reorderable = Boolean(onDropProvider);
           return (
             <label
               className="provider-tab"
               key={item}
+              draggable={reorderable ? true : undefined}
+              data-dragging={draggingProvider === item ? "true" : undefined}
+              title={reorderable ? "Drag to reorder" : undefined}
               onContextMenu={(event) => onProviderContextMenu?.(event, item)}
+              onDragStart={(event) => {
+                if (!reorderable) return;
+                if (event.dataTransfer) {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", item);
+                }
+                setDraggingProviderId(item);
+              }}
+              onDragOver={(event) => {
+                const source = draggingProviderId.current;
+                if (source && source !== item) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const source = draggingProviderId.current;
+                setDraggingProviderId("");
+                if (source && source !== item) onDropProvider?.(source, item);
+              }}
+              onDragEnd={() => setDraggingProviderId("")}
             >
               <input
                 type="radio"
@@ -540,8 +573,17 @@ export const AccountsSurface = ({
                 aria-label={`${providerLabel(item)} ${stats.total} account${stats.total === 1 ? "" : "s"}`}
                 checked={selectedProvider === item}
                 onChange={(event) => onSelectProvider(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (!onMoveProvider || !event.altKey) return;
+                  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                  event.preventDefault();
+                  onMoveProvider(item, event.key === "ArrowLeft" ? -1 : 1);
+                }}
               />
               <span className="provider-tab-content">
+                {reorderable ? (
+                  <GripVertical className="provider-tab-grip" aria-hidden="true" size={12} />
+                ) : null}
                 <span className="provider-tab-icon">
                   <ProviderGlyph provider={item} />
                 </span>

@@ -208,6 +208,7 @@ describe("operations console", () => {
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
     localStorage.removeItem("mahoquot.theme");
+    localStorage.removeItem("mahoquot.provider-order");
     sessionStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     vi.stubGlobal(
@@ -624,6 +625,64 @@ describe("operations console", () => {
         "Account priority saved. Top accounts are used first in Fill-first routing.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("reorders provider tabs and remembers that order", async () => {
+    const orderStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "claude@example.com",
+          provider: "claude",
+          health: { status: "available" },
+          ok: 1,
+          fails: 0,
+        },
+        {
+          id: "codex@example.com",
+          provider: "codex",
+          health: { status: "available" },
+          ok: 1,
+          fails: 0,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(orderStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    const claude = await screen.findByRole("radio", { name: "Claude 1 account" });
+    const codex = screen.getByRole("radio", { name: "Codex 1 account" });
+    const tabLabels = () =>
+      [...document.querySelectorAll(".provider-tab strong")].map((node) => node.textContent);
+    expect(tabLabels()).toEqual(["Claude", "Codex"]);
+
+    const dataTransfer = { effectAllowed: "", setData: vi.fn() };
+    fireEvent.dragStart(codex.closest(".provider-tab") as HTMLElement, { dataTransfer });
+    fireEvent.dragOver(claude.closest(".provider-tab") as HTMLElement, { dataTransfer });
+    fireEvent.drop(claude.closest(".provider-tab") as HTMLElement, { dataTransfer });
+
+    await waitFor(() => expect(tabLabels()).toEqual(["Codex", "Claude"]));
+    expect(JSON.parse(localStorage.getItem("mahoquot.provider-order") ?? "[]")).toEqual([
+      "codex",
+      "claude",
+    ]);
+
+    fireEvent.contextMenu(screen.getByRole("radio", { name: "Codex 1 account" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move right" }));
+    await waitFor(() => expect(tabLabels()).toEqual(["Claude", "Codex"]));
   });
 
   it("adds a Z.ai account by writing a provisioned key credential", async () => {

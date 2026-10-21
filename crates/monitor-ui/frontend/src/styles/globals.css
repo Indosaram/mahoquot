@@ -2099,6 +2099,20 @@ h2 {
   position: relative;
   cursor: pointer;
 }
+.provider-tab[draggable="true"] {
+  -webkit-user-drag: element;
+  user-select: none;
+}
+.provider-tab[draggable="true"] .provider-tab-grip {
+  cursor: grab;
+}
+.provider-tab[data-dragging="true"] .provider-tab-content {
+  opacity: 0.45;
+}
+.provider-tab-grip {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
 .provider-tab > input {
   position: absolute;
   opacity: 0;
