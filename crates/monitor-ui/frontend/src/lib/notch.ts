@@ -86,7 +86,9 @@ const worstAccount = (
       resetSeconds: typeof accountReset === "number" ? accountReset : currentReset,
     };
   }
-  if (accountWorst > currentWorst && typeof accountReset === "number") {
+  if (accountWorst > currentWorst) {
+    // The reset follows the worst account even when that account has none: a
+    // stale countdown from a less-loaded account would mislabel this row.
     return { worst: accountWorst, resetSeconds: accountReset };
   }
   return { worst: Math.max(currentWorst, accountWorst), resetSeconds: currentReset };

@@ -55,7 +55,7 @@ test("R12 keeps unlimited keys unlimited while finite top ups PATCH the increase
   const unlimited = page.locator(".shared-key-row").filter({ hasText: "Unlimited Partner" });
   await expect(unlimited).toBeVisible();
   expect(await unlimited.getByRole("button", { name: "Top up Unlimited Partner" }).count()).toBe(0);
-  expect(await unlimited.getByRole("progressbar").count()).toBe(0);
+  expect(await unlimited.getByRole("meter").count()).toBe(0);
   await expect(unlimited.getByRole("button", { name: "Edit Unlimited Partner" })).toBeEnabled();
   expect(patches).toEqual([]);
 
@@ -70,5 +70,5 @@ test("R12 keeps unlimited keys unlimited while finite top ups PATCH the increase
   expect(patches).toEqual([{ id: "finite", payload: { token_limit: 1_500_000 } }]);
   expect(keys[0].token_limit).toBe(0);
   expect(keys[0].token_used).toBe(1_000_000);
-  await expect(page.getByRole("progressbar", { name: "Finite Partner token usage" })).toHaveAttribute("aria-valuenow", "17");
+  await expect(page.getByRole("meter", { name: "Finite Partner token usage" })).toHaveAttribute("aria-valuenow", "17");
 });

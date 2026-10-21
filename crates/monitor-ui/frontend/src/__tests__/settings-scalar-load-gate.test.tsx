@@ -14,6 +14,20 @@ const SCALAR_SUFFIXES = [
   "/proxy-providers",
 ] as const;
 
+/** Gateway-shaped answer for each settings scalar: every key under its own name, correctly typed. */
+const scalarResponse = (url: string): Response | null => {
+  const values: Record<string, Record<string, unknown>> = {
+    "/proxy-url": { "proxy-url": "" },
+    "/routing/strategy": { strategy: "round-robin" },
+    "/request-retry": { "request-retry": 3 },
+    "/logging-to-file": { "logging-to-file": false },
+    "/codex-fast-mode": { "codex-fast-mode": false },
+    "/proxy-providers": { "proxy-providers": {} },
+  };
+  const suffix = Object.keys(values).find((key) => url.endsWith(key));
+  return suffix ? new Response(JSON.stringify(values[suffix])) : null;
+};
+
 const isScalarGet = (url: string, method: string): boolean =>
   method === "GET" && SCALAR_SUFFIXES.some((suffix) => url.endsWith(suffix));
 
@@ -35,7 +49,7 @@ describe("settings scalar load gate (H1)", () => {
         }
         if (isScalarGet(url, method)) {
           await scalarGate;
-          return new Response(JSON.stringify({ "proxy-url": "" }));
+          return scalarResponse(url) ?? new Response(JSON.stringify({ status: "ok" }));
         }
         return new Response(JSON.stringify({ status: "ok" }));
       }),
@@ -93,7 +107,7 @@ describe("connection-settings latch (M1, hook half)", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/proxy-url")) proxyUrlReads += 1;
-        return new Response(JSON.stringify({ "proxy-url": "", status: "ok" }));
+        return scalarResponse(url) ?? new Response(JSON.stringify({ status: "ok" }));
       }),
     );
 

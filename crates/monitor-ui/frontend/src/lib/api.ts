@@ -59,6 +59,7 @@ import {
   parseModelRegistryStatus,
   parseRegistryModels,
   parseScopedKeys,
+  tolerantEnum,
 } from "./schemas";
 
 const providerAuthStartSchema = z.object({
@@ -67,7 +68,8 @@ const providerAuthStartSchema = z.object({
 });
 
 const providerAuthStatusSchema = z.object({
-  status: z.enum(["pending", "ok", "error"]),
+  // An unrecognised state is not an outcome: keep polling as if still pending.
+  status: tolerantEnum(["pending", "ok", "error"], "pending"),
   provider: z.string().optional(),
   error: z.string().optional(),
 });
@@ -107,13 +109,42 @@ const codexCreditsOptInListSchema = z.object({
   credit_codex_account_ids: z.array(z.string()).optional(),
 });
 
-/** Per-account PUT ack: the gateway echoes the applied value before we trust it. */
-const codexCreditsAccountAckSchema = z.object({
-  id: z.string(),
-  credits_after_limit: z.boolean(),
-  creditsAfterLimit: z.boolean().optional(),
-  ok: z.boolean().optional(),
-});
+/** Per-account PUT ack: the gateway echoes the applied value before we trust it.
+ * Either spelling of the applied flag is accepted; at least one is required. */
+const codexCreditsAccountAckSchema = z
+  .object({
+    id: z.string(),
+    credits_after_limit: z.boolean().optional(),
+    creditsAfterLimit: z.boolean().optional(),
+    ok: z.boolean().optional(),
+  })
+  .transform((ack, ctx) => {
+    const applied = ack.credits_after_limit ?? ack.creditsAfterLimit;
+    if (applied === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "credits_after_limit is required" });
+      return z.NEVER;
+    }
+    return { ...ack, credits_after_limit: applied };
+  });
+
+const credentialOrderAckSchema = z.object({ names: z.array(z.string()) });
+
+/** GET returns `{"oauth-excluded-models": map}`; a bare map (the PUT shape) is
+ * also accepted. Anything else is a contract break, not "no exclusions". */
+const excludedModelsResponseSchema = z.union([
+  z
+    .object({ "oauth-excluded-models": ExcludedModelsSchema })
+    .transform((body) => body["oauth-excluded-models"]),
+  ExcludedModelsSchema,
+]);
+
+/** Management scalar routes are fixed lowercase slugs; anything else could
+ * escape the management namespace or smuggle a query/fragment. */
+const SCALAR_PATH = /^[a-z0-9-]+(\/[a-z0-9-]+)*$/;
+const scalarPath = (path: string): string => {
+  if (!SCALAR_PATH.test(path)) throw new GatewayError(`Invalid management path: ${path}`, 400);
+  return path;
+};
 
 /** Bulk PUT ack: `ids` is the server-resolved codex set the write touched. */
 const codexCreditsAllAckSchema = z.object({
@@ -171,8 +202,13 @@ export interface GatewayClients {
     saveWarmupAccount(id: string, policy: WarmupAccountPolicy): Promise<WarmupAccountPolicy>;
     credentials(): Promise<readonly AuthFileItem[]>;
     logs(limit?: number): Promise<LogsResponse>;
-    /** Live gateway log lines. Returns an unsubscribe callback. */
-    subscribeLogs(onRecord: (record: LogRecord) => void): () => void;
+    /** Live gateway log lines. Returns an unsubscribe callback. `onError`
+     * receives `closed: true` when the stream gave up (e.g. 401) rather than
+     * reconnecting. */
+    subscribeLogs(
+      onRecord: (record: LogRecord) => void,
+      onError?: (closed: boolean) => void,
+    ): () => void;
     schedulerSettings(): Promise<SchedulerSettings>;
     schedulerStatus(): Promise<SchedulerStatus>;
     saveSchedulerSettings(patch: Partial<SchedulerSettings>): Promise<SchedulerStatus>;
@@ -182,7 +218,11 @@ export interface GatewayClients {
     historyEvent(eventId: string): Promise<HistoryEvent>;
     historyCount(query?: HistoryStatsQuery): Promise<number>;
     clearHistory(query?: HistoryStatsQuery): Promise<number>;
-    exportHistory(format: "csv" | "json", query?: HistoryStatsQuery): Promise<Blob | undefined>;
+    exportHistory(
+      format: "csv" | "json",
+      query: HistoryStatsQuery,
+      authorization: string,
+    ): Promise<Blob | undefined>;
     historyHealth(): Promise<HistoryHealth>;
     modelPrices(): Promise<readonly ModelPrice[]>;
     saveModelPrice(price: ModelPrice): Promise<ModelPrice>;
@@ -327,11 +367,14 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
   return native.key ? { Authorization: `Bearer ${native.key}` } : {};
 };
 
-const requestResponse = async (
+/** Runs `fetch` and `read` (the body read) under one deadline, so a gateway
+ * that sends headers and then stalls mid-body still times out. */
+const requestBody = async <T>(
   url: string,
   headers: HeadersInit,
-  init?: RequestInit,
-): Promise<Response> => {
+  init: RequestInit | undefined,
+  read: (response: Response) => Promise<T>,
+): Promise<T> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   // A caller-supplied signal must not displace the timeout: both have to be
@@ -352,7 +395,7 @@ const requestResponse = async (
     if (!response.ok) {
       throw new GatewayError(await describeFailure(response), response.status);
     }
-    return response;
+    return await read(response);
   } catch (error) {
     if (controller.signal.aborted && !(callerSignal?.aborted ?? false)) {
       throw new GatewayError(`gateway request timed out after ${REQUEST_TIMEOUT_MS}ms`, 0);
@@ -364,15 +407,13 @@ const requestResponse = async (
   }
 };
 
-const requestJson = async (
-  url: string,
-  headers: HeadersInit,
-  init?: RequestInit,
-): Promise<unknown> => {
-  const response = await requestResponse(url, headers, init);
-  if (response.status === 204) return null;
-  return response.json();
-};
+/** An empty body (204, or a 200 with no content) is `null`, not a parse error. */
+const requestJson = (url: string, headers: HeadersInit, init?: RequestInit): Promise<unknown> =>
+  requestBody(url, headers, init, async (response) => {
+    if (response.status === 204) return null;
+    const text = await response.text();
+    return text.trim() === "" ? null : (JSON.parse(text) as unknown);
+  });
 
 export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayClients => {
   const base = baseUrl.replace(/\/$/, "");
@@ -446,7 +487,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             authHeaders,
           ),
         ),
-      subscribeLogs: (onRecord) => {
+      subscribeLogs: (onRecord, onError) => {
         const controller = new AbortController();
         const url = `${base}/v0/management/logs/stream`;
         void managementHeaders(url, authHeaders)
@@ -480,7 +521,9 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             }
           })
           .catch((error: unknown) => {
-            if (!controller.signal.aborted) console.error("Gateway log stream failed", error);
+            if (controller.signal.aborted) return;
+            console.error("Gateway log stream failed", error);
+            onError?.(true);
           });
         return () => controller.abort();
       },
@@ -551,23 +594,25 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           );
         return response.deleted;
       },
-      exportHistory: async (format, query = {}) => {
+      // The export secret is collected by the caller; the client never prompts.
+      exportHistory: async (format, query, authorization) => {
         const queryString = historyQueryString({ ...query, cursor: undefined, limit: undefined });
-        const exportAuthorization = window.prompt("Enter the gateway export authorization secret.");
-        if (exportAuthorization === null) return undefined;
         const exportHeaders = {
           ...authHeaders,
-          "x-mahoquot-export-authorization": exportAuthorization,
+          "x-mahoquot-export-authorization": authorization,
         };
-        const response = await requestResponse(
+        return requestBody(
           `${base}/v0/management/history/export${queryString}${queryString ? "&" : "?"}format=${format}`,
           exportHeaders,
+          undefined,
+          async (response) => {
+            if (format === "json") {
+              const document = await response.json();
+              return new Blob([JSON.stringify(document)], { type: "application/json" });
+            }
+            return response.blob();
+          },
         );
-        if (format === "json") {
-          const document = await response.json();
-          return new Blob([JSON.stringify(document)], { type: "application/json" });
-        }
-        return response.blob();
       },
       historyHealth: async () =>
         HistoryHealthSchema.parse(
@@ -595,15 +640,10 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             },
           ),
         ),
-      configYaml: async () => {
-        const response = await fetch(`${base}/v0/management/config.yaml`, {
-          headers: authHeaders,
-        });
-        if (!response.ok) {
-          throw new GatewayError(await describeFailure(response), response.status);
-        }
-        return response.text();
-      },
+      configYaml: async () =>
+        requestBody(`${base}/v0/management/config.yaml`, authHeaders, undefined, (response) =>
+          response.text(),
+        ),
       saveConfigYaml: async (yaml) => {
         await requestJson(`${base}/v0/management/config.yaml`, authHeaders, {
           method: "PUT",
@@ -707,13 +747,12 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
         parseRegistryModels(
           await requestJson(`${base}/v0/management/model-registry/models`, authHeaders),
         ).models,
-      excludedModels: async () => {
-        const body = (await requestJson(
-          `${base}/v0/management/oauth-excluded-models`,
-          authHeaders,
-        )) as Record<string, unknown>;
-        return parseExcludedModels(body["oauth-excluded-models"] ?? {});
-      },
+      excludedModels: async () =>
+        parseExcludedModels(
+          excludedModelsResponseSchema.parse(
+            await requestJson(`${base}/v0/management/oauth-excluded-models`, authHeaders),
+          ),
+        ),
       // The endpoint reads the bare map and falls back to an empty document for
       // anything else, so a wrapped body would silently disable every model.
       saveExcludedModels: async (excluded) => {
@@ -757,14 +796,14 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           body: JSON.stringify({ name, disabled }),
         });
       },
-      saveCredentialOrder: async (names) => {
-        const result = (await requestJson(`${base}/v0/management/auth-files/order`, authHeaders, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ names }),
-        })) as { names?: string[] } | null;
-        return result?.names ?? [];
-      },
+      saveCredentialOrder: async (names) =>
+        credentialOrderAckSchema.parse(
+          await requestJson(`${base}/v0/management/auth-files/order`, authHeaders, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ names }),
+          }),
+        ).names,
       beginProviderAuth: async (provider, credentialName) => {
         const endpoint: Record<string, string> = {
           codex: "codex-auth-url",
@@ -800,9 +839,9 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       scalar: async (path) =>
         z
           .record(z.unknown())
-          .parse(await requestJson(`${base}/v0/management/${path}`, authHeaders)),
+          .parse(await requestJson(`${base}/v0/management/${scalarPath(path)}`, authHeaders)),
       saveScalar: async (path, value) => {
-        await requestJson(`${base}/v0/management/${path}`, authHeaders, {
+        await requestJson(`${base}/v0/management/${scalarPath(path)}`, authHeaders, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ value }),
@@ -912,7 +951,9 @@ export interface ClineModelLists {
 }
 
 export const fetchClineModelLists = async (): Promise<ClineModelLists> => {
-  const response = await fetch(`${CLINE_API_BASE_URL}/ai/cline/recommended-models`);
+  const response = await fetch(`${CLINE_API_BASE_URL}/ai/cline/recommended-models`, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new GatewayError(await describeFailure(response), response.status);
   }
@@ -942,7 +983,7 @@ export const discoverProviderModels = async (
   if (apiKey?.trim()) {
     headers.Authorization = `Bearer ${apiKey.trim()}`;
   }
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (!response.ok) {
     throw new GatewayError(await describeFailure(response), response.status);
   }

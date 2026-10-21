@@ -15,13 +15,13 @@ describe("credential order resync and raw import guard", () => {
     expect(saved).toEqual(["c.json", "a.json"]);
   });
 
-  it("falls back to an empty order when the server omits names", async () => {
+  it("rejects an order acknowledgement that omits names instead of inventing an empty order", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ status: "ok" }))),
     );
     const clients = createGatewayClients("http://127.0.0.1:18801", "k");
-    expect(await clients.management.saveCredentialOrder(["a.json"])).toEqual([]);
+    await expect(clients.management.saveCredentialOrder(["a.json"])).rejects.toThrow();
   });
 
   it("rejects raw credential documents that are empty or not objects", () => {
@@ -90,7 +90,12 @@ describe("unified gateway auth boundary", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         calls.push({ url: String(input), init });
         return new Response(
-          JSON.stringify({ status: "ok", url: "https://example.com", state: "s" }),
+          JSON.stringify({
+            status: "ok",
+            names: ["b.json", "a.json"],
+            url: "https://example.com",
+            state: "s",
+          }),
         );
       }),
     );

@@ -127,6 +127,12 @@ const statsPayload = (query: URLSearchParams) => {
 };
 
 const routeGateway = async (page: Page): Promise<void> => {
+  // Fallback first: Playwright tries the most recently registered route first,
+  // so every endpoint below wins and anything unlisted answers 404 here instead
+  // of reaching whatever gateway happens to listen on 18801.
+  await page.route(/\/(v0\/management|v1)\//, (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+  );
   await page.route("**/management.json*", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
   );

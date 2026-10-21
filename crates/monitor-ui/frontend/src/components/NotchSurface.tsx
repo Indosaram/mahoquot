@@ -2,8 +2,7 @@ import { formatQuotaPercent, quotaDisplay, quotaRows } from "@/components/Accoun
 import { MONOCHROME_LOGOS, ProviderGlyph, providerLogos } from "@/components/ProviderGlyph";
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import { type NormalizedAccount, formatResetTime } from "@/lib/accounts";
-import { type LocalPoint, groupNotchProviders, providerAtPoint } from "@/lib/notch";
-import { providerColor } from "@/lib/provider-colors";
+import { groupNotchProviders, providerAtPoint } from "@/lib/notch";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
@@ -29,6 +28,18 @@ const EMPTY_RING_COPY: Readonly<
   stopped: { label: "Gateway stopped", meta: "Start it in Operations Console" },
   "relay-locked": { label: "Relay locked", meta: "Reconnect in Operations Console" },
 };
+
+type NotchTone = "ok" | "warn" | "bad" | "idle";
+
+/** Same thresholds as the tray tiles: 80% used warns, 100% is exhausted. */
+const usageTone = (usedPercent: number | null): NotchTone => {
+  if (usedPercent === null) return "idle";
+  if (usedPercent >= 100) return "bad";
+  if (usedPercent >= 80) return "warn";
+  return "ok";
+};
+
+const TONE_RANK: Readonly<Record<NotchTone, number>> = { idle: 0, ok: 1, warn: 2, bad: 3 };
 
 const worstUsedPercent = (rows: readonly { usedPercent: number | null }[]): number | null => {
   const values = rows
@@ -56,10 +67,17 @@ const NotchGlyph = ({ provider }: { provider: string }) => {
   );
 };
 
+/** Cursor position in notch-local coordinates, forwarded by the native shell. */
+export type NotchLocalPoint = { x: number; y: number };
+
 interface NotchSurfaceProps {
   accounts: readonly NormalizedAccount[];
   loadState: LoadState;
   showRemaining: boolean;
+  /** Native hover is the sole expansion owner; App forwards it as a prop. */
+  notchExpanded: boolean;
+  /** Native cursor forwarded by App; drives stage-two tooltip hover. */
+  nativeCursor: NotchLocalPoint | null;
   /** Bare slugs of Cline models whose daily bucket renders (Settings). */
   clineQuotaDisplay?: readonly string[];
   totpEntries?: readonly TotpEntry[];
@@ -70,23 +88,22 @@ interface NotchSurfaceProps {
 
 /**
  * The notch webview surface: island geometry, provider dials, hover tooltips,
- * and the native-event plumbing that drives them. The `surface` constant keeps
- * the moved effect guards meaningful in their new home.
+ * and hover tooltips. Native hover/cursor state arrives via props; App owns the
+ * event subscriptions.
  */
 export function NotchSurface({
   accounts,
   loadState,
   showRemaining,
+  notchExpanded,
+  nativeCursor,
   clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
   totpEntries = [],
   totpCodes = {},
   totpRemaining = 0,
   onCopyTotpCode = () => undefined,
 }: NotchSurfaceProps) {
-  const surface = "notch" as const;
-  const [notchExpanded, setNotchExpanded] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
-  const [nativeCursor, setNativeCursor] = useState<LocalPoint | null>(null);
   const hoverCloseTimer = useRef<number | undefined>(undefined);
   useEffect(
     () => () => {
@@ -94,58 +111,6 @@ export function NotchSurface({
     },
     [],
   );
-  // macOS delivers pointer events only to the active app, so an unfocused notch
-  // never sees mouseenter. Native hover is the sole expansion owner; keeping a
-  // DOM/rAF feedback path here deadlocks background WebKit rendering.
-  useEffect(() => {
-    if (surface !== "notch") return;
-    const hover = (event: Event) => {
-      setNotchExpanded(Boolean((event as CustomEvent<unknown>).detail));
-    };
-    const cursor = (event: Event) => {
-      setNativeCursor(((event as CustomEvent<unknown>).detail as LocalPoint | null) ?? null);
-    };
-    window.addEventListener("mahoquot:notch-hover", hover);
-    window.addEventListener("mahoquot:notch-cursor", cursor);
-    return () => {
-      window.removeEventListener("mahoquot:notch-hover", hover);
-      window.removeEventListener("mahoquot:notch-cursor", cursor);
-    };
-  }, [surface]);
-
-  useEffect(() => {
-    if (surface !== "notch") return;
-    const api = (
-      window as {
-        __TAURI__?: {
-          event?: {
-            listen: (
-              event: string,
-              handler: (message: { payload: boolean }) => void,
-            ) => Promise<() => void>;
-          };
-        };
-      }
-    ).__TAURI__;
-    if (!api?.event?.listen) return;
-    const disposers: (() => void)[] = [];
-    let cancelled = false;
-    const subscribe = (event: string, handler: (payload: unknown) => void) => {
-      void api.event
-        ?.listen(event, (message: { payload: unknown }) => handler(message.payload))
-        .then((unlisten) => {
-          if (cancelled) unlisten();
-          else disposers.push(unlisten);
-        });
-    };
-    subscribe("notch-hover", (payload) => setNotchExpanded(Boolean(payload)));
-    subscribe("notch-cursor", (payload) => setNativeCursor((payload as LocalPoint | null) ?? null));
-    return () => {
-      cancelled = true;
-      for (const dispose of disposers) dispose();
-    };
-  }, [surface]);
-
   const openNotchTooltip = useCallback((provider: string) => {
     if (hoverCloseTimer.current) window.clearTimeout(hoverCloseTimer.current);
     hoverCloseTimer.current = undefined;
@@ -165,7 +130,7 @@ export function NotchSurface({
   // The webview gets no pointer events while another app is frontmost, so the
   // forwarded native cursor drives stage-two hover instead.
   useEffect(() => {
-    if (surface !== "notch" || !notchExpanded) return;
+    if (!notchExpanded) return;
     if (!nativeCursor) {
       scheduleNotchTooltipClose();
       return;
@@ -181,7 +146,7 @@ export function NotchSurface({
     const hit = providerAtPoint(nativeCursor, targets);
     if (hit) openNotchTooltip(hit);
     else scheduleNotchTooltipClose();
-  }, [nativeCursor, notchExpanded, surface, openNotchTooltip, scheduleNotchTooltipClose]);
+  }, [nativeCursor, notchExpanded, openNotchTooltip, scheduleNotchTooltipClose]);
 
   const notchGroups =
     loadState === "online" && accounts.length
@@ -202,6 +167,14 @@ export function NotchSurface({
   // providers the column would otherwise outgrow the island, since the CSS
   // sizes dials only for counts 1-7.
   const visibleNotchGroups = notchGroups.slice(0, MAX_NOTCH_RING_ITEMS);
+  // The idle handle advertises the worst pool so a glance at the screen edge
+  // says whether anything needs attention before the island is opened.
+  const handleTone = notchGroups
+    .map((group) => usageTone(worstUsedPercent(group.rows)))
+    .reduce<NotchTone>(
+      (worst, tone) => (TONE_RANK[tone] > TONE_RANK[worst] ? tone : worst),
+      "idle",
+    );
   const emptyState: NotchEmptyState = loadState === "online" ? "empty" : loadState;
   const emptyCopy =
     loadState === "online"
@@ -246,7 +219,10 @@ export function NotchSurface({
                       </small>
                     </div>
                     <div className="notch-tooltip-bar">
-                      <i style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }} />
+                      <i
+                        data-tone={usageTone(row.usedPercent)}
+                        style={{ width: `${display === null ? 0 : Math.min(100, display)}%` }}
+                      />
                     </div>
                     <div className="notch-tooltip-meta">
                       <span>
@@ -270,20 +246,28 @@ export function NotchSurface({
   );
   return (
     <>
-      <div className="notch-totp-access">
-        <TotpQuickAccess
-          entries={totpEntries}
-          codes={totpCodes}
-          remaining={totpRemaining}
-          onCopyCode={onCopyTotpCode}
-          compact
-        />
-      </div>
+      {totpEntries.length ? (
+        <div className="notch-totp-access">
+          <TotpQuickAccess
+            entries={totpEntries}
+            codes={totpCodes}
+            remaining={totpRemaining}
+            onCopyCode={onCopyTotpCode}
+            compact
+          />
+        </div>
+      ) : null}
       <div
         className={`notch-shell${notchExpanded ? " expanded open" : ""}`}
         data-mahoquot-surface="notch"
       >
         <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
+        <span
+          className="notch-handle"
+          data-testid="notch-handle"
+          data-tone={handleTone}
+          aria-hidden="true"
+        />
         <div className="notch-island-shape" aria-hidden="true">
           <svg
             className="notch-island-shadow"
@@ -351,13 +335,11 @@ export function NotchSurface({
                         {clampedDial !== null && (
                           <circle
                             className="notch-dial-arc"
+                            data-tone={usageTone(worst)}
                             cx="29"
                             cy="29"
                             r="24"
-                            style={{
-                              stroke: providerColor(group.provider),
-                              strokeDasharray: `${used} ${circumference}`,
-                            }}
+                            style={{ strokeDasharray: `${used} ${circumference}` }}
                           />
                         )}
                       </svg>
@@ -367,6 +349,9 @@ export function NotchSurface({
                     </span>
                     <span className="notch-dial-label">
                       {clampedDial === null ? "–" : `${Math.round(clampedDial)}%`}
+                    </span>
+                    <span className="notch-dial-caption">
+                      {clampedDial === null ? "no data" : showRemaining ? "left" : "used"}
                     </span>
                   </button>
                   {renderNotchTooltip(group)}

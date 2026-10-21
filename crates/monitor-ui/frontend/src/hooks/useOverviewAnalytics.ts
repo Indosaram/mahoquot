@@ -1,5 +1,6 @@
 import type { NormalizedAccount } from "@/lib/accounts";
 import type { GatewayClients } from "@/lib/api";
+import { GatewayError } from "@/lib/api";
 import {
   EMPTY_ANALYTICS,
   type OverviewAnalytics,
@@ -28,6 +29,16 @@ const describeAnalyticsFailure = (error: unknown): string => {
   }
   return "Usage history is unavailable right now.";
 };
+
+/// Only failures an operator can act on (auth, version skew) earn a banner;
+/// rate limits, 5xx and timeouts are operational and fall back silently.
+const isActionableAnalyticsFailure = (error: unknown): boolean =>
+  (error instanceof Error && error.name === "ZodError") ||
+  (error instanceof GatewayError && (error.status === 401 || error.status === 403));
+
+const isOperationalAnalyticsFailure = (error: unknown): boolean =>
+  error instanceof GatewayError &&
+  (error.status === 0 || error.status === 429 || error.status >= 500);
 
 export interface UseOverviewAnalyticsArgs {
   readonly clients: GatewayClients;
@@ -354,8 +365,17 @@ export function useOverviewAnalytics({
           return;
         }
 
-        const message = describeAnalyticsFailure(err);
-        setError(message);
+        // A cached round for this key is still truthful history: keep showing
+        // it instead of swapping to the telemetry fallback. Only a failure the
+        // operator must act on raises the banner over it.
+        const actionable = isActionableAnalyticsFailure(err);
+        if (cacheRef.current.has(currentKey)) {
+          if (actionable) setError(describeAnalyticsFailure(err));
+          return;
+        }
+        setError(
+          actionable || !isOperationalAnalyticsFailure(err) ? describeAnalyticsFailure(err) : "",
+        );
 
         const fallback = telemetryAnalytics({
           samples: samplesRef.current,
@@ -397,8 +417,16 @@ export function useOverviewAnalytics({
       void executeRoundRef.current();
     }, 60000);
 
+    // Rounds are skipped while hidden; catch up the moment the window is shown
+    // instead of serving history up to a minute behind the stats poll.
+    const onVisibility = () => {
+      if (!document.hidden) void executeRoundRef.current();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [enabled]);
 

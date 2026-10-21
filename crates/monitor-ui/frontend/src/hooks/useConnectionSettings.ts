@@ -2,8 +2,28 @@ import type { LoadState } from "@/hooks/useGatewayPolling";
 import type { GatewayClients } from "@/lib/api";
 import { pendingKey } from "@/lib/pending";
 import type { ProviderProxyPolicy, ProxyProvidersMap } from "@/lib/schemas";
-import { parseProxyProviders } from "@/lib/schemas";
+import { ProxyProvidersMapSchema } from "@/lib/schemas";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { z } from "zod";
+
+// Each scalar must answer under its own key with the expected type: a missing
+// or wrong-typed key would otherwise leave the form on hardcoded defaults that
+// a Save then writes over the gateway's live values.
+const ScalarsSchema = z.tuple([
+  z.object({ "proxy-url": z.string() }),
+  z.object({ strategy: z.string() }),
+  z.object({ "request-retry": z.number().int().nonnegative() }),
+  z.object({ "logging-to-file": z.boolean() }),
+  z.object({ "codex-fast-mode": z.boolean() }),
+]);
+
+/** Strict provider-table read: null means "not loaded", never an empty table. */
+const parseLoadedProxyProviders = (data: Record<string, unknown>): ProxyProvidersMap | null => {
+  const parsed = ProxyProvidersMapSchema.safeParse(
+    "proxy-providers" in data ? data["proxy-providers"] : data,
+  );
+  return parsed.success ? parsed.data : null;
+};
 
 type SetText = (value: string) => void;
 
@@ -71,11 +91,15 @@ export function useConnectionSettings({
   const [loggingToFile, setLoggingToFile] = useState(false);
   const [codexFastMode, setCodexFastMode] = useState(false);
   const [settingsLoaded, setSettingsLoadedState] = useState(false);
+  // Tracked apart from the other scalars: a failed provider-table read must not
+  // block them, but must block saving a table the form never read.
+  const [providersLoaded, setProvidersLoaded] = useState(false);
 
   // App.tsx drops this latch directly after connection/config/gateway changes;
   // wrap it so every drop also flips the external status the Save gate reads.
   const setSettingsLoaded = useCallback((loaded: boolean) => {
     setSettingsLoadedState(loaded);
+    if (!loaded) setProvidersLoaded(false);
     setSettingsScalarsStatus(loaded ? "loaded" : "loading");
   }, []);
 
@@ -115,23 +139,20 @@ export function useConnectionSettings({
       clients.management.scalar("request-retry"),
       clients.management.scalar("logging-to-file"),
       clients.management.scalar("codex-fast-mode"),
-      clients.management.scalar("proxy-providers").catch(() => ({})),
+      clients.management.scalar("proxy-providers").then(parseLoadedProxyProviders, () => null),
     ])
       .then(([proxy, routing, retry, logging, fastMode, providers]) => {
         if (!active) return;
-        if (typeof proxy["proxy-url"] === "string") setProxyUrl(proxy["proxy-url"]);
-        if (typeof routing.strategy === "string") setRoutingStrategy(routing.strategy);
-        if (typeof retry["request-retry"] === "number") {
-          setRequestRetry(String(retry["request-retry"]));
-        }
-        if (typeof logging["logging-to-file"] === "boolean") {
-          setLoggingToFile(logging["logging-to-file"]);
-        }
-        if (typeof fastMode["codex-fast-mode"] === "boolean") {
-          setCodexFastMode(fastMode["codex-fast-mode"]);
-        }
-        setProxyProviders(parseProxyProviders(providers));
+        const [proxyValue, routingValue, retryValue, loggingValue, fastModeValue] =
+          ScalarsSchema.parse([proxy, routing, retry, logging, fastMode]);
+        setProxyUrl(proxyValue["proxy-url"]);
+        setRoutingStrategy(routingValue.strategy);
+        setRequestRetry(String(retryValue["request-retry"]));
+        setLoggingToFile(loggingValue["logging-to-file"]);
+        setCodexFastMode(fastModeValue["codex-fast-mode"]);
+        if (providers) setProxyProviders(providers);
         setSettingsLoaded(true);
+        setProvidersLoaded(providers !== null);
       })
       .catch((error: unknown) => {
         if (active) {
@@ -139,7 +160,11 @@ export function useConnectionSettings({
           // Only surface the failure while the settings card is visible; elsewhere
           // the Save gate + inline alert cover it when the user arrives.
           if (surface === "settings") {
-            setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+            setNotice(
+              error instanceof z.ZodError
+                ? "Action failed: the gateway returned settings this console does not understand."
+                : `Action failed: ${error instanceof Error ? error.message : "unknown error"}`,
+            );
           }
         }
       });
@@ -147,6 +172,25 @@ export function useConnectionSettings({
       active = false;
     };
   }, [clients, loadState, setNotice, settingsLoaded, setSettingsLoaded, surface]);
+
+  // The provider table failed while the other scalars loaded: retry just that
+  // read on the same triggers (gateway back online, settings reopened) so the
+  // provider Save gate can open without re-reading the whole batch.
+  useEffect(() => {
+    if (!settingsLoaded || providersLoaded || loadState === "relay-locked") return;
+    let active = true;
+    void clients.management
+      .scalar("proxy-providers")
+      .then(parseLoadedProxyProviders, () => null)
+      .then((providers) => {
+        if (!active || !providers) return;
+        setProxyProviders(providers);
+        setProvidersLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [clients, loadState, providersLoaded, settingsLoaded]);
 
   const saveProxySettings = useCallback(async () => {
     const retry = Number(requestRetry);
@@ -198,6 +242,12 @@ export function useConnectionSettings({
       setNotice("Gateway settings have not loaded yet; wait for them before saving.");
       return;
     }
+    // The provider table failed to load (or is re-loading): saving the form's
+    // table would replace the gateway's routing with whatever the form holds.
+    if (!providersLoaded) {
+      setNotice("Provider proxy routing has not loaded yet; wait for it before saving.");
+      return;
+    }
     setPending(pendingKey.settingsSave);
     setNotice("");
     try {
@@ -211,7 +261,7 @@ export function useConnectionSettings({
     } finally {
       setPending("");
     }
-  }, [clients, proxyProviders, setNotice, setPending]);
+  }, [clients, providersLoaded, proxyProviders, setNotice, setPending]);
 
   const updateProxyProviderPolicy = useCallback(
     (provider: string, patch: Partial<ProviderProxyPolicy>) => {
@@ -250,6 +300,7 @@ export function useConnectionSettings({
     setCodexFastMode,
     settingsLoaded,
     setSettingsLoaded,
+    providersLoaded,
     saveProxySettings,
     saveProviderProxySettings,
   };

@@ -59,7 +59,7 @@ describe("live log stream", () => {
       "inference-only",
     ).management.subscribeLogs((record) => {
       received.push(record);
-      if (received.length === 2) resolveReceived();
+      if (received.length === 3) resolveReceived();
     });
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -71,6 +71,7 @@ describe("live log stream", () => {
       ]);
       expect(received).toEqual([
         { kind: "request", status: 200, model: "gpt-5.6-sol" },
+        { kind: "not-a-known-kind" },
         { kind: "proxy", message: "upstream retried" },
       ]);
       expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:18840/v0/management/logs/stream", {

@@ -17,6 +17,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type LoadState = "loading" | "online" | "starting" | "stopped" | "relay-locked";
 
+/** Outcome of one refresh round. A superseded round (a newer refresh started
+ * while it was in flight) says nothing about gateway health, so the poll loop
+ * must not back off on it. */
+type RoundOutcome = "ok" | "failed" | "superseded";
+
 const POLL_INTERVAL_MS = 10_000;
 const STARTUP_RETRY_MS = 2_000;
 
@@ -107,8 +112,11 @@ export function useGatewayPolling(clients: GatewayClients) {
 
   // The gateway publishes its management wire version on the public /healthz
   // probe; a mismatch means IPC calls may silently misbehave, so the console
-  // says so instead of failing feature-by-feature.
+  // says so instead of failing feature-by-feature. Re-probed whenever the
+  // gateway comes (back) online: a restart or upgrade under the same URL can
+  // fix or introduce a mismatch.
   useEffect(() => {
+    if (loadState !== "online") return;
     let active = true;
     void clients.admin
       .health()
@@ -128,7 +136,7 @@ export function useGatewayPolling(clients: GatewayClients) {
     return () => {
       active = false;
     };
-  }, [clients]);
+  }, [clients, loadState]);
 
   const refreshUsage = useCallback(
     async (force = false) => {
@@ -152,13 +160,12 @@ export function useGatewayPolling(clients: GatewayClients) {
     [clients],
   );
 
-  const refresh = useCallback(async (): Promise<boolean> => {
+  const runRound = useCallback(async (): Promise<RoundOutcome> => {
     const generation = ++pollGeneration.current;
     if (firstLoad.current) setLoadState("loading");
-    let succeeded = true;
     try {
       const nextStats = await clients.admin.stats();
-      if (generation !== pollGeneration.current) return false;
+      if (generation !== pollGeneration.current) return "superseded";
       setStats(nextStats);
       const now = Date.now();
       setTelemetry((samples) => {
@@ -172,8 +179,7 @@ export function useGatewayPolling(clients: GatewayClients) {
       setGatewayLifecycle("running");
       firstLoad.current = false;
     } catch (error) {
-      if (generation !== pollGeneration.current) return false;
-      succeeded = false;
+      if (generation !== pollGeneration.current) return "superseded";
       setLoadState(
         error instanceof GatewayError && error.status === 401
           ? "relay-locked"
@@ -182,9 +188,9 @@ export function useGatewayPolling(clients: GatewayClients) {
             : "starting",
       );
       firstLoad.current = false;
-      return false;
+      return "failed";
     }
-    if (generation !== pollGeneration.current) return false;
+    if (generation !== pollGeneration.current) return "superseded";
     hasSucceeded.current = true;
     // These are independent so failures in optional services do not strip credentials.
     const [credentialResult, logResult, registryResult, modelsResult] = await Promise.allSettled([
@@ -193,12 +199,13 @@ export function useGatewayPolling(clients: GatewayClients) {
       clients.management.modelRegistryStatus(),
       clients.management.models(),
     ]);
-    if (generation !== pollGeneration.current) return false;
+    if (generation !== pollGeneration.current) return "superseded";
+    // A transient rejection keeps the last good inventory/models (unknown is
+    // not empty); the [clients] reset effect clears them on a gateway switch.
     if (credentialResult.status === "fulfilled") {
       setCredentials(credentialResult.value);
       setCredentialsError("");
     } else {
-      setCredentials([]);
       setCredentialsError(
         credentialResult.reason instanceof Error
           ? credentialResult.reason.message
@@ -223,29 +230,47 @@ export function useGatewayPolling(clients: GatewayClients) {
     }
     if (modelsResult.status === "fulfilled") {
       setGatewayModels(modelsResult.value);
-    } else {
-      setGatewayModels([]);
     }
-    return succeeded;
+    return "ok";
   }, [clients]);
 
+  const refresh = useCallback(
+    async (): Promise<boolean> => (await runRound()) === "ok",
+    [runRound],
+  );
+
+  const spinTimerRef = useRef<number | undefined>(undefined);
+  const manualRefreshInFlight = useRef(false);
+  useEffect(() => () => window.clearTimeout(spinTimerRef.current), []);
+
   // Only a refresh the user asked for spins the tray icon; the 10s poll must
-  // not make it spin on its own.
+  // not make it spin on its own. The spinner covers the whole manual round:
+  // the forced usage pass waits on every account's upstream quota call, so
+  // spinning only after it settled left the button looking dead for seconds.
+  // A click while a round is in flight is dropped instead of stacking another
+  // full quota pass.
   const refreshNow = useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
     setRefreshing(true);
+    window.clearTimeout(spinTimerRef.current);
     const start = Date.now();
     try {
+      // Usage first, so the snapshot read next carries the new quota rather
+      // than the previous poll's.
+      await refreshUsage(true);
       await refresh();
     } finally {
+      manualRefreshInFlight.current = false;
       const elapsed = Date.now() - start;
       const minSpinMs = 500;
       if (elapsed < minSpinMs) {
-        setTimeout(() => setRefreshing(false), minSpinMs - elapsed);
+        spinTimerRef.current = window.setTimeout(() => setRefreshing(false), minSpinMs - elapsed);
       } else {
         setRefreshing(false);
       }
     }
-  }, [refresh]);
+  }, [refresh, refreshUsage]);
 
   useEffect(() => {
     // Polls every 10s on a healthy gateway; each failed round doubles the
@@ -259,8 +284,10 @@ export function useGatewayPolling(clients: GatewayClients) {
         timer = window.setTimeout(tick, delay);
         return;
       }
-      const ok = await refresh();
-      delay = nextPollDelayMs(ok, hasSucceeded.current, delay);
+      const outcome = await runRound();
+      if (outcome !== "superseded") {
+        delay = nextPollDelayMs(outcome === "ok", hasSucceeded.current, delay);
+      }
       if (!cancelled) timer = window.setTimeout(tick, delay);
     };
     void tick();
@@ -269,7 +296,7 @@ export function useGatewayPolling(clients: GatewayClients) {
       pollGeneration.current += 1;
       window.clearTimeout(timer);
     };
-  }, [refresh]);
+  }, [runRound]);
 
   useEffect(() => {
     // The console window is created hidden; the moment the OS brings it to

@@ -249,7 +249,7 @@ describe("AccountsSurface component", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the raw provider key as the tab accessible name and the display label visible", () => {
+  it("names each provider tab with its display label and keeps the label visible", () => {
     const agAccount = { ...mockAccount, id: "ag-1", provider: "google-antigravity" };
     render(
       <AccountsSurface
@@ -262,11 +262,11 @@ describe("AccountsSurface component", () => {
       />,
     );
 
-    // Accessible name is keyed on the raw provider contract; the visible tab
-    // text shows the display label, and counts come from one inventory pass.
-    const tab = screen.getByRole("radio", { name: "google-antigravity 1 account" });
+    // The accessible name matches the visible display label; counts come from
+    // one inventory pass.
+    const tab = screen.getByRole("radio", { name: "Google Antigravity 1 account" });
     expect(tab).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Codex 1 account" })).toBeInTheDocument();
     expect(tab.closest("label")?.querySelector("strong")).toHaveTextContent("Google Antigravity");
   });
 
@@ -364,6 +364,72 @@ describe("AccountsSurface component", () => {
       fireEvent.contextMenu(card);
       expect(onContextMenu).toHaveBeenCalled();
     }
+  });
+
+  it("reorders provider tabs by dragging and Alt+Arrow", () => {
+    const onDropProvider = vi.fn();
+    const onMoveProvider = vi.fn();
+    const { container } = render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [mockAccount, { ...mockAccount, id: "claude-1", provider: "claude" }],
+          providers: ["claude", "codex"],
+          selectedProvider: "claude",
+          onDropProvider,
+          onMoveProvider,
+        })}
+      />,
+    );
+
+    const tabs = [...container.querySelectorAll(".provider-tab")];
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]).toHaveAttribute("draggable", "true");
+    expect(tabs[0]).toHaveAttribute("title", "Drag to reorder");
+    const dataTransfer = { effectAllowed: "", setData: vi.fn() };
+    fireEvent.dragStart(tabs[1] as HTMLElement, { dataTransfer });
+    expect(tabs[1]).toHaveAttribute("data-dragging", "true");
+    fireEvent.dragOver(tabs[0] as HTMLElement);
+    fireEvent.drop(tabs[0] as HTMLElement);
+    expect(onDropProvider).toHaveBeenCalledWith("codex", "claude");
+
+    fireEvent.keyDown(tabs[0]?.querySelector("input") as HTMLElement, {
+      key: "ArrowRight",
+      altKey: true,
+    });
+    expect(onMoveProvider).toHaveBeenCalledWith("claude", 1);
+    fireEvent.keyDown(tabs[0]?.querySelector("input") as HTMLElement, { key: "ArrowRight" });
+    expect(onMoveProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks manual reordering for Claude subscriptions sorted by reset order", () => {
+    const onDropCredential = vi.fn();
+    const claude = {
+      ...mockAccount,
+      id: "claude-1",
+      runtimeId: "claude-1",
+      credentialName: "claude-1.json",
+      provider: "claude",
+      email: "claude@example.com",
+      label: "claude@example.com",
+    } as NormalizedAccount;
+    const { container } = render(
+      <AccountsSurface
+        {...createProps({
+          accounts: [claude],
+          providers: ["claude"],
+          selectedProvider: "claude",
+          visibleAccounts: [claude],
+          dragging: "claude-2.json",
+          onDropCredential,
+        })}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Reorder claude@example.com")).not.toBeInTheDocument();
+    const card = container.querySelector(".account-card");
+    expect(card).toHaveAttribute("draggable", "false");
+    if (card) fireEvent.drop(card);
+    expect(onDropCredential).not.toHaveBeenCalled();
   });
 
   it("renders confirm and cancel buttons during removal confirmation", () => {
@@ -1586,7 +1652,7 @@ describe("Cline pool quota summary", () => {
         provider: "codex",
         usage: {
           refresh_status: "error",
-          last_refresh_error: "rate limit exceeded (429)",
+          last_refresh_error: "token refresh rejected: unauthorized (401)",
           primary: {
             window_minutes: 300,
             used_percent: 75,
@@ -1615,9 +1681,7 @@ describe("Cline pool quota summary", () => {
 
       expect(screen.getByTestId("quota-refresh-error-badge")).toBeInTheDocument();
       expect(screen.getByText("Refresh failed")).toBeInTheDocument();
-      expect(screen.getByTestId("quota-refresh-error")).toHaveTextContent(
-        "rate limit exceeded (429)",
-      );
+      expect(screen.getByTestId("quota-refresh-error")).toHaveTextContent("unauthorized (401)");
       // Last known quota data is still rendered
       expect(screen.getByText("5h")).toBeInTheDocument();
       expect(screen.getByText("75%")).toBeInTheDocument();

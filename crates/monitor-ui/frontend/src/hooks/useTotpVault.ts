@@ -21,7 +21,7 @@ const PROFILE = "default";
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Desktop TOTP vault failed.";
 
-export const useTotpVault = (endpoint: string, enabled = true) => {
+export const useTotpVault = (endpoint: string, enabled: boolean) => {
   const store = useMemo<TotpSecretStore>(
     () => ({
       read: () => readDesktopSecret(endpoint, PROFILE, "totp"),
@@ -38,6 +38,14 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
   const [now, setNow] = useState(Date.now);
   const loadGeneration = useRef(0);
 
+  // A new endpoint is a different vault: never keep showing (or generating
+  // codes for) the previous endpoint's entries while the new one loads.
+  const [prevVault, setPrevVault] = useState(vault);
+  if (prevVault !== vault) {
+    setPrevVault(vault);
+    setEntries([]);
+    setCodes({});
+  }
   const reload = useCallback(async () => {
     const generation = ++loadGeneration.current;
     let loaded: readonly TotpEntry[];
@@ -45,6 +53,8 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
       loaded = await vault.load();
     } catch (reason) {
       if (generation === loadGeneration.current) {
+        setEntries([]);
+        setCodes({});
         setError(errorMessage(reason));
         setPoisoned(true);
       }
@@ -152,7 +162,17 @@ export const useTotpVault = (endpoint: string, enabled = true) => {
   );
   const copyCode = useCallback((_entry: TotpEntry, code: string) => {
     if (!code) return;
-    void navigator.clipboard?.writeText(code);
+    if (!navigator.clipboard) {
+      setError("Clipboard is unavailable; copy the code manually.");
+      return;
+    }
+    navigator.clipboard.writeText(code).catch((reason: unknown) => {
+      setError(
+        reason instanceof Error && reason.message
+          ? `Copy failed: ${reason.message}`
+          : "Copy failed; copy the code manually.",
+      );
+    });
   }, []);
 
   const remaining = entries.length

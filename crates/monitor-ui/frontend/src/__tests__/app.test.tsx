@@ -169,7 +169,7 @@ describe("operations console", () => {
       render(<App />);
     });
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
-    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Codex 1 account" })).toBeChecked();
     expect(document.querySelectorAll(".account-card")).toHaveLength(1);
   });
 
@@ -195,19 +195,20 @@ describe("operations console", () => {
       render(<App />);
     });
     fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
-    fireEvent.click(screen.getByRole("radio", { name: "codex 1 account" }));
-    fireEvent.click(screen.getByRole("radio", { name: "claude 1 account" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Codex 1 account" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Claude 1 account" }));
     current = { ...stats, accounts: [...stats.accounts] };
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     });
-    expect(screen.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Codex 1 account" })).toBeChecked();
     expect(document.querySelectorAll(".account-card")).toHaveLength(1);
   });
 
   beforeEach(() => {
     localStorage.setItem("mahoquot.base", "http://127.0.0.1:18801");
     localStorage.removeItem("mahoquot.theme");
+    localStorage.removeItem("mahoquot.provider-order");
     sessionStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     vi.stubGlobal(
@@ -582,7 +583,7 @@ describe("operations console", () => {
         const url = String(input);
         if (init?.method === "PUT" && url.includes("auth-files/order")) {
           bodies.push(String(init.body ?? ""));
-          return new Response(JSON.stringify({ status: "ok" }));
+          return new Response(init.body ?? "{}");
         }
         if (url.includes("/admin/stats")) return new Response(JSON.stringify(orderStats));
         if (url.includes("auth-files")) {
@@ -624,6 +625,64 @@ describe("operations console", () => {
         "Account priority saved. Top accounts are used first in Fill-first routing.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("reorders provider tabs and remembers that order", async () => {
+    const orderStats = {
+      ...stats,
+      accounts: [
+        {
+          id: "claude@example.com",
+          provider: "claude",
+          health: { status: "available" },
+          ok: 1,
+          fails: 0,
+        },
+        {
+          id: "codex@example.com",
+          provider: "codex",
+          health: { status: "available" },
+          ok: 1,
+          fails: 0,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) return new Response(JSON.stringify(orderStats));
+        if (url.includes("auth-files")) return new Response(JSON.stringify({ files: [] }));
+        if (url.includes("/logs"))
+          return new Response(
+            JSON.stringify({ records: [], "request-count": 0, "proxy-count": 0 }),
+          );
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
+    const claude = await screen.findByRole("radio", { name: "Claude 1 account" });
+    const codex = screen.getByRole("radio", { name: "Codex 1 account" });
+    const tabLabels = () =>
+      [...document.querySelectorAll(".provider-tab strong")].map((node) => node.textContent);
+    expect(tabLabels()).toEqual(["Claude", "Codex"]);
+
+    const dataTransfer = { effectAllowed: "", setData: vi.fn() };
+    fireEvent.dragStart(codex.closest(".provider-tab") as HTMLElement, { dataTransfer });
+    fireEvent.dragOver(claude.closest(".provider-tab") as HTMLElement, { dataTransfer });
+    fireEvent.drop(claude.closest(".provider-tab") as HTMLElement, { dataTransfer });
+
+    await waitFor(() => expect(tabLabels()).toEqual(["Codex", "Claude"]));
+    expect(JSON.parse(localStorage.getItem("mahoquot.provider-order") ?? "[]")).toEqual([
+      "codex",
+      "claude",
+    ]);
+
+    fireEvent.contextMenu(screen.getByRole("radio", { name: "Codex 1 account" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move right" }));
+    await waitFor(() => expect(tabLabels()).toEqual(["Claude", "Codex"]));
   });
 
   it("adds a Z.ai account by writing a provisioned key credential", async () => {
@@ -882,7 +941,7 @@ describe("operations console", () => {
 
     // The imported subscription is one manageable account, not a runtime card plus a
     // phantom "not loaded" credential card.
-    expect(await screen.findByLabelText("claude 1 account")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Claude 1 account")).toBeInTheDocument();
     await openAccountMenu("claude-local");
     expect(
       screen.getByRole("menuitem", { name: "Re-authenticate claude-local" }),
@@ -951,7 +1010,7 @@ describe("operations console", () => {
     await waitFor(() => expect(requests.some((url) => url.includes("auth-files"))).toBe(true));
     (await screen.findAllByText("Requests"))[0];
     fireEvent.click(screen.getAllByText("Accounts").at(0) as HTMLElement);
-    fireEvent.click(await screen.findByLabelText("deepseek 1 account"));
+    fireEvent.click(await screen.findByLabelText("Deepseek 1 account"));
     expect(await screen.findByText("deepseek-main")).toBeInTheDocument();
     await clickAccountMenuItem("deepseek-main", "Re-authenticate deepseek-main");
 
@@ -1697,7 +1756,7 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    expect(await screen.findByRole("radio", { name: "codex 1 account" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "Codex 1 account" })).toBeInTheDocument();
     expect(screen.getByText("Pro")).toBeInTheDocument();
     expect(screen.getByText("Session")).toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
@@ -1747,7 +1806,7 @@ describe("operations console", () => {
     const accounts = screen.getAllByText("Accounts").at(0);
     if (!accounts) throw new Error("Accounts navigation missing");
     fireEvent.click(accounts);
-    const codex = await screen.findByRole("radio", { name: "codex 1 account" });
+    const codex = await screen.findByRole("radio", { name: "Codex 1 account" });
     fireEvent.click(codex);
     expect(await screen.findByText("runtime-id@example.com")).toBeInTheDocument();
     expect(screen.queryByText("gravity@example.com")).not.toBeInTheDocument();

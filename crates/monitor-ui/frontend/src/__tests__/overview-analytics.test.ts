@@ -565,7 +565,8 @@ describe("buildAnalytics ranking, folding, and series", () => {
 
   it("Series zero-fill: a response with one populated bucket in a 1h window produces 60 points, exactly one non-zero", () => {
     const range: TelemetryRange = "1h"; // duration 3600000 ms, bucket "minute" = 60000 ms -> 60 points
-    const startMs = nowMs - 3600000;
+    // Gateway buckets are minute-aligned; the grid ends at the bucket containing nowMs.
+    const startMs = Math.floor(nowMs / 60000) * 60000 - 59 * 60000;
     const populatedBucketTs = startMs + 10 * 60000; // index 10
 
     const ranking = makeResponse([
@@ -631,7 +632,8 @@ describe("buildAnalytics ranking, folding, and series", () => {
 
   it("Other series clamping: a totalSeries bucket smaller than the sum of top-N values yields 0, never a negative number", () => {
     const range: TelemetryRange = "1h";
-    const startMs = nowMs - 3600000;
+    // Gateway buckets are minute-aligned; the grid ends at the bucket containing nowMs.
+    const startMs = Math.floor(nowMs / 60000) * 60000 - 59 * 60000;
     const populatedBucketTs = startMs + 5 * 60000;
 
     // Create 7 models to trigger Top-N folding (6 top + 1 other)

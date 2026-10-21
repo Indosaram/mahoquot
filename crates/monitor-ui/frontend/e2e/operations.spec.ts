@@ -630,7 +630,8 @@ test("tray dropdown panel surfaces proxy, provider chips, and quota cards", asyn
   await installMocks(page);
   await page.goto("/management.html?surface=tray");
 
-  await expect(page.getByText("Same-origin gateway")).toBeVisible();
+  // No committed URL: the tray names the default gateway the console actually polls.
+  await expect(page.getByText("http://127.0.0.1:18801")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Codex" })).toBeVisible();
   await expect(page.getByText("56% left")).toBeVisible();
   await expect(page.getByText("Gemini Pro")).toBeVisible();
@@ -752,6 +753,11 @@ const installStressMocks = async (page: Page, options?: { empty?: boolean; logCo
     route.fulfill({
       json: { records: logRecords, "request-count": logRecords.length, "proxy-count": 0 },
     }),
+  );
+  // Durable history is out of scope for these stress specs; answer it here so
+  // the page never reaches whatever gateway happens to listen on 18801.
+  await page.route(/\/v0\/management\/history(?:\/.*)?(?:\?.*)?$/, (route) =>
+    route.fulfill({ status: 404, json: { error: "history disabled in stress fixture" } }),
   );
   await page.route(/\/v0\/management\/config\.yaml$/, (route) =>
     route.fulfill({
@@ -931,14 +937,24 @@ test("content stress under empty data and extreme unbroken tokens", async ({ pag
 });
 
 test("content stress under 10,000 high-volume log lines and logs containment", async ({ page }) => {
+  // Rendering 10,000 rows is the point of this test; on a loaded machine the
+  // layout pass alone can exceed the suite's 30s default.
+  test.setTimeout(120_000);
   await installStressMocks(page, { logCount: 10_000 });
   await page.setViewportSize({ width: 1100, height: 720 });
+  // The fallback rows come from the first /logs read; wait for that 10k-line
+  // payload before opening Logs instead of racing its transfer.
+  const logsLoaded = page.waitForResponse(/\/v0\/management\/logs\?/);
   await page.goto("/management.html");
+  await logsLoaded;
   await page.getByRole("button", { name: "Logs" }).click();
 
   const logWrap = page.locator(".durable-logs-table-wrap");
   await expect(logWrap).toBeVisible();
-  await expect(page.locator(".durable-logs-table tbody tr").first()).toBeVisible();
+  // 10,000 rows take seconds to lay out on a loaded machine.
+  await expect(page.locator(".durable-logs-table tbody tr").first()).toBeVisible({
+    timeout: 60_000,
+  });
 
   const logsStressGeometry = await page.evaluate(() => {
     const doc = document.documentElement;
@@ -1287,7 +1303,6 @@ test("console surface passes the axe WCAG audit", async ({ page }) => {
 
 test("logs pages and exports 10000 rows", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  page.on("dialog", (dialog) => dialog.accept("task-15-export-secret"));
   await page.addInitScript(() => {
     localStorage.setItem("mahoquot.base", "");
     localStorage.setItem("mahoquot.key", "task-15-management-key");
@@ -1476,6 +1491,9 @@ test("logs pages and exports 10000 rows", async ({ page }) => {
   await expect(clearDialog).toContainText("Proxy file logs are not affected");
   await clearDialog.getByRole("button", { name: "Cancel" }).click();
 
+  // WKWebView has no prompt(): the export secret is typed inline and gates both buttons.
+  await expect(pricing.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+  await pricing.getByLabel("Export authorization secret").fill("task-15-export-secret");
   await pricing.getByRole("button", { name: "Export CSV" }).click();
   await pricing.getByRole("button", { name: "Export JSON" }).click();
   await expect.poll(() => downloads.length).toBe(2);

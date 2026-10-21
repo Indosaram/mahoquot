@@ -87,7 +87,7 @@ describe("SharedKeysCard", () => {
     expect(screen.getByText("250,000 / 1,000,000 tokens")).toBeInTheDocument();
     expect(screen.getByText("25%")).toBeInTheDocument();
 
-    const progress = screen.getByRole("progressbar", { name: "Research Partner token usage" });
+    const progress = screen.getByRole("meter", { name: "Research Partner token usage" });
     expect(progress).toHaveAttribute("aria-valuenow", "25");
 
     const scopes = screen.getByText("Providers").closest("dl");
@@ -116,7 +116,7 @@ describe("SharedKeysCard", () => {
     expect(screen.getAllByText("All")).toHaveLength(3);
     expect(screen.getByText("4,200 tokens used")).toBeInTheDocument();
     expect(screen.getByText("Unlimited")).toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByRole("meter")).toBeNull();
   });
 
   it("marks exhausted and paused keys with distinct status badges", () => {

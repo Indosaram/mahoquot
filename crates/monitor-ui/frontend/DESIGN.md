@@ -113,7 +113,9 @@ The application exposes exactly four top-level operational destinations plus one
    - Must NOT introduce a secondary navigation rail or sub-tabs.
 5. Notch (`?surface=notch`):
    - Native floating desktop status surface running under `:root[data-surface="notch"]`.
-   - Bounded to 8px idle strip and 420x480 expanded window with Brink-derived hover corridor, provider grouping, and tooltip behavior.
+   - Bounded to 8px idle strip and 420x560 expanded window with Brink-derived hover corridor, provider grouping, and tooltip behavior.
+   - The idle strip shows a 4x64px edge handle tinted by the worst pool's status so the surface is discoverable without hovering.
+   - Quota status color (handle, dial arc, tooltip bar) uses semantic tokens on used percent, matching the tray: `--ok` below 80%, `--warn` from 80%, `--bad` at 100%, neutral when unmeasured. Provider identity is carried by the logo, not the arc color. Each dial is captioned `left`/`used` per the display preference.
    - Completely isolated from main application shell classes, sidebars, and global overflow styles.
 
 ## 9. Interaction, Motion, and Accessibility

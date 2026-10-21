@@ -44,7 +44,7 @@ test("R09-R11 committed connection, provider fallback, and quota mode", async ({
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
-  await expect(page.getByRole("radio", { name: "codex 1 account" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Codex 1 account" })).toBeChecked();
   await expect(page.locator(".account-card")).toHaveCount(1);
   await expect(page.getByRole("meter", { name: "Session remaining" })).toHaveAttribute("aria-valuenow", "75");
   await page.getByRole("button", { name: "Settings", exact: true }).click();

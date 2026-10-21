@@ -272,6 +272,8 @@ describe("cross-surface TOTP parity", () => {
         accounts: [],
         loadState: "online",
         showRemaining: true,
+        notchExpanded: false,
+        nativeCursor: null,
         ...common,
       }),
     );

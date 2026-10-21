@@ -387,10 +387,8 @@ test("invalid price is rejected without a success toast", async ({ page }) => {
   const priceInput = page.getByLabel("Input price for gpt-5.6-sol");
   await expect(priceInput).toHaveValue("2");
   await priceInput.fill("-1");
-  await page.getByRole("button", { name: "Save gpt-5.6-sol price" }).click();
-  await expect(
-    page.locator(".toast").filter({ hasText: "Action failed: model prices must be non-negative." }),
-  ).toBeVisible();
+  // An invalid price never reaches the gateway: the row's Save is disabled.
+  await expect(page.getByRole("button", { name: "Save gpt-5.6-sol price" })).toBeDisabled();
   await expect(page.locator(".toast").filter({ hasText: "Model price saved." })).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/invalid-price-denied.png`, fullPage: true });
 });

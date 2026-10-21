@@ -22,6 +22,7 @@ import type {
   UpdateStatus,
 } from "../lib/native";
 import { blocks } from "../lib/pending";
+import { normalizeToQuotioProviderId } from "../lib/provider-catalog";
 import type {
   HistoryHealth,
   HistoryStatsResponse,
@@ -41,6 +42,19 @@ import { SharedKeysCard } from "./SharedKeysCard";
 import { TunnelCard } from "./TunnelCard";
 import { OverlayLayer } from "./layout";
 import { Badge, Button, Card, Field, Input } from "./ui";
+
+const EMPTY_MODEL_PRICES: readonly ModelPrice[] = [];
+
+/** A price draft is saveable only when it parses to a finite, non-negative rate. */
+const parsePriceDraft = (text: string): number | null => {
+  if (text.trim() === "") return null;
+  const value = Number(text);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+};
+
+// Transient upstream conditions are operational, not actionable config errors.
+const TRANSIENT_REJECTION =
+  /\b(429|5\d\d)\b|rate.?limit|timed? ?out|timeout|network|connect|unavailable|temporar|unreachable/i;
 
 function ModelPriceEstimate({ value }: { readonly value: number | null }) {
   return value === null ? (
@@ -131,6 +145,7 @@ export interface SettingsSurfaceProps {
   readonly exportHistory?: (
     format: "csv" | "json",
     query: HistoryStatsQuery,
+    authorization: string,
   ) => Promise<Blob | undefined>;
   readonly onHistoryCleared?: (deleted: number) => void;
   readonly schedulerSettings?: SchedulerSettings | null;
@@ -221,7 +236,7 @@ export function SettingsSurface({
   schedulerPending = false,
   onSaveSchedulerSettings = () => undefined,
   onSaveSchedulerOrder = () => undefined,
-  modelPrices = [],
+  modelPrices = EMPTY_MODEL_PRICES,
   onSaveModelPrice,
   tunnelStatus,
   tunnelBusy,
@@ -235,7 +250,10 @@ export function SettingsSurface({
   agentsSlot,
   totpVaultSlot,
 }: SettingsSurfaceProps) {
-  const [draftPrices, setDraftPrices] = useState<readonly ModelPrice[]>(modelPrices);
+  // Only rows the user has edited carry a draft; every other row renders the
+  // server value, so server updates merge into non-dirty rows automatically.
+  const [priceDrafts, setPriceDrafts] = useState<Readonly<Record<string, string>>>({});
+  const [exportSecret, setExportSecret] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearCount, setClearCount] = useState<number | null>(null);
   const [historyBusy, setHistoryBusy] = useState<"" | "csv" | "json" | "clear">("");
@@ -267,7 +285,22 @@ export function SettingsSurface({
     };
   }, [confirmClear]);
 
-  useEffect(() => setDraftPrices(modelPrices), [modelPrices]);
+  // A draft that now matches the server value is no longer dirty; drop it.
+  useEffect(() => {
+    setPriceDrafts((current) => {
+      const next: Record<string, string> = {};
+      let changed = false;
+      for (const [model, text] of Object.entries(current)) {
+        const saved = modelPrices.find((item) => item.model === model);
+        if (!saved || parsePriceDraft(text) === saved["input-per-million"]) {
+          changed = true;
+        } else {
+          next[model] = text;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [modelPrices]);
 
   const downloadBlob = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -279,11 +312,11 @@ export function SettingsSurface({
   };
 
   const runHistoryExport = async (format: "csv" | "json") => {
-    if (!exportHistory) return;
+    if (!exportHistory || exportSecret === "") return;
     setHistoryBusy(format);
     setHistoryActionError("");
     try {
-      const blob = await exportHistory(format, {});
+      const blob = await exportHistory(format, {}, exportSecret);
       if (blob) downloadBlob(blob, `mahoquot-request-history.${format}`);
     } catch (error) {
       setHistoryActionError(error instanceof Error ? error.message : "History export failed");
@@ -332,7 +365,7 @@ export function SettingsSurface({
   const estimatedSpend = (price: ModelPrice): number | null => {
     const totals = historyStats?.totals;
     const savedPrice = modelPrices.find((item) => item.model === price.model);
-    if (!totals || !savedPrice) return 0;
+    if (!totals || !savedPrice) return null;
     const nonCached = nonCachedInputTokens(totals);
     if (nonCached.state !== "measured") return null;
     return (
@@ -719,22 +752,23 @@ export function SettingsSurface({
               </header>
               <div className="proxy-settings-grid">
                 {(() => {
-                  const configuredProviders = Object.keys(proxyProviders);
-                  const accountProviders = availableAccounts.map((a) => a.provider.toLowerCase());
-                  const standardProviders = [
-                    "cline",
-                    "codex",
-                    "antigravity",
-                    "claude",
-                    "cursor",
-                    "kiro",
-                    "zcode",
-                  ];
+                  // Canonical ids only: configured keys and account providers may use
+                  // aliases (openai vs codex) that must collapse onto one policy row.
                   const allProviders = Array.from(
-                    new Set([...configuredProviders, ...accountProviders, ...standardProviders]),
+                    new Set(
+                      [...Object.keys(proxyProviders), ...availableAccounts.map((a) => a.provider)]
+                        .map(normalizeToQuotioProviderId)
+                        .filter((provider) => provider !== ""),
+                    ),
                   ).sort();
 
-                  return allProviders.map((provider) => {
+                  return allProviders.map((canonical) => {
+                    // Writes go to the configured key when one exists (it may be an
+                    // alias), so toggles update the policy the gateway already holds.
+                    const provider =
+                      Object.keys(proxyProviders).find(
+                        (key) => normalizeToQuotioProviderId(key) === canonical,
+                      ) ?? canonical;
                     const policy = proxyProviders[provider] ?? {
                       enabled: false,
                       sticky: true,
@@ -743,7 +777,7 @@ export function SettingsSurface({
                     };
                     return (
                       <div
-                        key={provider}
+                        key={canonical}
                         style={{
                           display: "grid",
                           gap: "8px",
@@ -763,7 +797,7 @@ export function SettingsSurface({
                           }}
                         >
                           <input
-                            aria-label={`Enable proxy for ${provider}`}
+                            aria-label={`Enable proxy for ${canonical}`}
                             type="checkbox"
                             checked={policy.enabled}
                             onChange={(e) =>
@@ -771,8 +805,8 @@ export function SettingsSurface({
                             }
                           />
                           <span>
-                            <strong style={{ textTransform: "capitalize" }}>{provider}</strong>
-                            <small>Enable upstream proxy for {provider} accounts</small>
+                            <strong style={{ textTransform: "capitalize" }}>{canonical}</strong>
+                            <small>Enable upstream proxy for {canonical} accounts</small>
                           </span>
                         </label>
                         {policy.enabled ? (
@@ -794,7 +828,7 @@ export function SettingsSurface({
                               }}
                             >
                               <input
-                                aria-label={`Sticky session for ${provider}`}
+                                aria-label={`Sticky session for ${canonical}`}
                                 type="checkbox"
                                 checked={policy.sticky}
                                 onChange={(e) =>
@@ -815,7 +849,7 @@ export function SettingsSurface({
                               hint="0 = pool default (10m in global-egress). Positive = rotate exit IP every N seconds."
                             >
                               <Input
-                                aria-label={`Session TTL for ${provider}`}
+                                aria-label={`Session TTL for ${canonical}`}
                                 type="number"
                                 min="0"
                                 step="60"
@@ -835,7 +869,7 @@ export function SettingsSurface({
                               hint="Leave blank to use global upstream proxy URL above."
                             >
                               <Input
-                                aria-label={`Proxy URL override for ${provider}`}
+                                aria-label={`Proxy URL override for ${canonical}`}
                                 placeholder="http://127.0.0.1:3128"
                                 value={policy.url ?? ""}
                                 onChange={(e) =>
@@ -912,9 +946,17 @@ export function SettingsSurface({
                 </header>
                 {modelRegistryStatus?.["last-refresh"].outcome === "error" &&
                 modelRegistryStatus["last-refresh"]["rejection-reason"] ? (
-                  <div className="state-panel warning" role="alert">
-                    Refresh failure: {modelRegistryStatus["last-refresh"]["rejection-reason"]}
-                  </div>
+                  TRANSIENT_REJECTION.test(
+                    modelRegistryStatus["last-refresh"]["rejection-reason"],
+                  ) ? (
+                    <p className="settings-registry-note">
+                      Last refresh failed: {modelRegistryStatus["last-refresh"]["rejection-reason"]}
+                    </p>
+                  ) : (
+                    <div className="state-panel warning" role="alert">
+                      Refresh failure: {modelRegistryStatus["last-refresh"]["rejection-reason"]}
+                    </div>
+                  )
                 ) : null}
                 {modelRegistryError ? (
                   <div className="state-panel warning" role="alert">
@@ -1099,7 +1141,7 @@ export function SettingsSurface({
             <p>Durable request history records, model pricing ledger, and console appearance.</p>
           </header>
           <div className="settings-section-cards">
-            {historyHealth || draftPrices.length > 0 ? (
+            {historyHealth || modelPrices.length > 0 ? (
               <Card className="settings-card" aria-label="History and pricing">
                 <header className="settings-card-head">
                   <div className="settings-icon">
@@ -1131,14 +1173,22 @@ export function SettingsSurface({
                   <div className="state-panel warning">{historyActionError}</div>
                 ) : null}
                 <div className="settings-actions">
+                  <Input
+                    aria-label="Export authorization secret"
+                    autoComplete="off"
+                    placeholder="Management secret for export"
+                    type="password"
+                    value={exportSecret}
+                    onChange={(event) => setExportSecret(event.currentTarget.value)}
+                  />
                   <Button
-                    disabled={!exportHistory || historyBusy !== ""}
+                    disabled={!exportHistory || exportSecret === "" || historyBusy !== ""}
                     onClick={() => void runHistoryExport("csv")}
                   >
                     {historyBusy === "csv" ? "Exporting…" : "Export CSV"}
                   </Button>
                   <Button
-                    disabled={!exportHistory || historyBusy !== ""}
+                    disabled={!exportHistory || exportSecret === "" || historyBusy !== ""}
                     onClick={() => void runHistoryExport("json")}
                   >
                     {historyBusy === "json" ? "Exporting…" : "Export JSON"}
@@ -1151,36 +1201,51 @@ export function SettingsSurface({
                     {historyBusy === "clear" ? "Clearing…" : "Clear history"}
                   </Button>
                 </div>
-                {draftPrices.map((price, index) => (
-                  <div className="model-price-row" key={price.model}>
-                    <Field
-                      label={`Input price for ${price.model}`}
-                      hint="USD per million input tokens."
-                    >
-                      <Input
-                        aria-label={`Input price for ${price.model}`}
-                        type="number"
-                        step="0.01"
-                        value={price["input-per-million"]}
-                        onChange={(event) => {
-                          const next = [...draftPrices];
-                          next[index] = {
-                            ...price,
-                            "input-per-million": Number(event.target.value),
-                          };
-                          setDraftPrices(next);
-                        }}
-                      />
-                    </Field>
-                    <div className="model-price-estimate">
-                      <small>Estimated spend</small>
-                      <ModelPriceEstimate value={estimatedSpend(price)} />
+                {modelPrices.map((saved) => {
+                  const draftText = priceDrafts[saved.model];
+                  const parsed =
+                    draftText === undefined
+                      ? saved["input-per-million"]
+                      : parsePriceDraft(draftText);
+                  const price: ModelPrice =
+                    parsed === null ? saved : { ...saved, "input-per-million": parsed };
+                  return (
+                    <div className="model-price-row" key={saved.model}>
+                      <Field
+                        label={`Input price for ${saved.model}`}
+                        hint="USD per million input tokens."
+                      >
+                        <Input
+                          aria-label={`Input price for ${saved.model}`}
+                          aria-invalid={parsed === null}
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={draftText ?? String(saved["input-per-million"])}
+                          onChange={(event) => {
+                            const text = event.target.value;
+                            setPriceDrafts((current) => ({ ...current, [saved.model]: text }));
+                          }}
+                        />
+                        {parsed === null ? (
+                          <small className="field-error">Enter a finite price of 0 or more.</small>
+                        ) : null}
+                      </Field>
+                      <div className="model-price-estimate">
+                        <small>Estimated spend</small>
+                        <ModelPriceEstimate
+                          value={parsed === null ? null : estimatedSpend(price)}
+                        />
+                      </div>
+                      <Button
+                        disabled={parsed === null}
+                        onClick={() => void onSaveModelPrice(price)}
+                      >
+                        Save {saved.model} price
+                      </Button>
                     </div>
-                    <Button onClick={() => void onSaveModelPrice(price)}>
-                      Save {price.model} price
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
               </Card>
             ) : null}
             <Card className="settings-card">
@@ -1278,7 +1343,11 @@ export function SettingsSurface({
               ) : null}
               <div className="settings-actions">
                 <Button onClick={() => setConfirmClear(false)}>Cancel</Button>
-                <Button className="danger" onClick={() => void confirmHistoryClear()}>
+                <Button
+                  className="danger"
+                  disabled={historyBusy !== ""}
+                  onClick={() => void confirmHistoryClear()}
+                >
                   Clear history
                 </Button>
               </div>

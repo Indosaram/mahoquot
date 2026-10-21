@@ -7,14 +7,17 @@ import {
   getLegacyRelayKey,
   getOverviewDimension,
   getOverviewMetric,
+  getProviderOrder,
   getTelemetryRange,
   getTheme,
   migrateStoredGatewayUrl,
+  orderProviders,
   removeLegacyRelayKey,
   setClineQuotaDisplay,
   setGatewayBaseUrl,
   setOverviewDimension,
   setOverviewMetric,
+  setProviderOrder,
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "../lib/storage";
@@ -140,5 +143,29 @@ describe("Storage and Port Migration", () => {
     // Slug extraction strips any vendor prefix for matching and display.
     expect(clineQuotaSlug("cline-free/mimo-v2.6-flash")).toBe("mimo-v2.6-flash");
     expect(clineQuotaSlug("glm-4.7")).toBe("glm-4.7");
+  });
+
+  it("persists provider tab order and ignores damaged values", () => {
+    expect(getProviderOrder()).toEqual([]);
+    setProviderOrder(["codex", "claude"]);
+    expect(getProviderOrder()).toEqual(["codex", "claude"]);
+    expect(localStorage.getItem("mahoquot.provider-order")).toBe('["codex","claude"]');
+    localStorage.setItem("mahoquot.provider-order", "not-json");
+    expect(getProviderOrder()).toEqual([]);
+    localStorage.setItem(
+      "mahoquot.provider-order",
+      JSON.stringify(["claude", 4, "", "  codex  ", "claude", "codex"]),
+    );
+    expect(getProviderOrder()).toEqual(["claude", "codex"]);
+  });
+
+  it("places saved providers first and appends the rest alphabetically", () => {
+    expect(orderProviders(["codex", "claude", "codex"])).toEqual(["claude", "codex"]);
+    expect(orderProviders(["claude", "codex", "antigravity"], ["codex", "missing"])).toEqual([
+      "codex",
+      "antigravity",
+      "claude",
+    ]);
+    expect(orderProviders(["codex"], ["claude", "codex", "codex"])).toEqual(["codex"]);
   });
 });

@@ -135,7 +135,9 @@ test("quota accuracy: duration labels, preserved groups, and stale/error states"
   await page.reload();
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await expect(page.getByTestId("quota-refresh-error-badge")).toBeVisible();
-  await expect(page.getByTestId("quota-refresh-error")).toContainText("rate limit exceeded (429)");
+  // A 429 refresh failure is operational, not actionable: the freshness badge
+  // still reports it, but no error row is raised for a rate limit.
+  await expect(page.getByTestId("quota-refresh-error")).toHaveCount(0);
 
   for (const width of [1280, 375]) {
     await page.setViewportSize({ width, height: 900 });

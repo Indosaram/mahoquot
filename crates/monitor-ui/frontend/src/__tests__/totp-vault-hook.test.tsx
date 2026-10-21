@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 const mountVault = async () => {
-  const view = renderHook(() => useTotpVault(ENDPOINT));
+  const view = renderHook(() => useTotpVault(ENDPOINT, true));
   await act(async () => {});
   return view;
 };
