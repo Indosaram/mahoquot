@@ -2,6 +2,12 @@
 # Serialize wire-QA case runs: every case binds fixed ports 18840/18841.
 # Usage: scripts/qa/run-case-locked.sh <case> <happy|failure> <task-number>
 set -u
+# desktop-parity drives the real app on the user's screen (cursor warp,
+# window activation, clicks, tray Quit). It never runs unless asked for.
+if [ "$1" = "desktop-parity" ] && [ "${MAHOQUOT_ALLOW_SCREEN_QA:-}" != "1" ]; then
+  echo "SKIP desktop-parity: drives the real screen; set MAHOQUOT_ALLOW_SCREEN_QA=1 to run it" >&2
+  exit 3
+fi
 LOCK=/Volumes/T9-Mac/tmp/cliproxy-qa.lock.d
 mkdir -p /Volumes/T9-Mac/tmp
 until mkdir "$LOCK" 2>/dev/null; do

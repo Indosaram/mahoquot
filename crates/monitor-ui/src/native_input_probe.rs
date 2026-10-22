@@ -267,6 +267,7 @@ fn navigate(app: &AppHandle, label: &str) -> Result<(), String> {
             x: center["x"].as_f64().ok_or("navigation x")?,
             y: center["y"].as_f64().ok_or("navigation y")?,
         };
+        ensure_key_window(app, crate::MAIN_WINDOW_LABEL)?;
         click_webview(app, crate::MAIN_WINDOW_LABEL, point)?;
         if wait_until(Duration::from_secs(3), || {
             evaluate(app, crate::MAIN_WINDOW_LABEL, &heading)
@@ -452,6 +453,34 @@ fn tray_menu_action(app: &AppHandle, title: &'static str) -> Result<(), String> 
         let _: () = msg_send![menu, performActionForItemAtIndex: index];
         Ok(())
     })?
+}
+
+/// AppKit treats a click into a window that is not key as an activation
+/// click and does not deliver it to the page, so navigation clicks wait for
+/// the app to be active and the window to be key first.
+fn ensure_key_window(app: &AppHandle, label: &str) -> Result<(), String> {
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("missing {label} window"))?;
+    let ns_window = window.ns_window().map_err(|error| error.to_string())? as usize;
+    let is_key = |app: &AppHandle| {
+        on_main(app, move |_| unsafe {
+            let application: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+            let window = ns_window as *mut Object;
+            let active: objc::runtime::BOOL = msg_send![application, isActive];
+            let key: objc::runtime::BOOL = msg_send![window, isKeyWindow];
+            if active == objc::runtime::NO || key == objc::runtime::NO {
+                let _: () = msg_send![application, activateIgnoringOtherApps: objc::runtime::YES];
+                let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<Object>()];
+                return None;
+            }
+            Some(())
+        })
+        .ok()
+        .flatten()
+    };
+    wait_until(STEP_TIMEOUT, || is_key(app))
+        .ok_or_else(|| format!("{label} window never became key in an active app"))
 }
 
 fn click_webview(app: &AppHandle, label: &str, point: Point) -> Result<(), String> {
