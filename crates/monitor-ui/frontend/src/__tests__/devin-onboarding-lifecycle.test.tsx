@@ -966,11 +966,11 @@ describe("globals.css theme token integrity (p9 F2-F5)", () => {
     expect(css).not.toContain("rgba(35, 35, 44");
   });
 
-  it("tray TOTP text over hard-coded dark surfaces is forced light (F3)", async () => {
+  it("tray TOTP overrides are gone along with the tray quick-access branch (F3)", async () => {
+    // The tray surface no longer accepts totpEntries, so any .tray-totp-access
+    // rule would be styling markup that cannot render. The contract is absence.
     const css = await readGlobalsCss();
-    expect(css).toMatch(/\.tray-totp-access \.totp-quick-head > span[^{}]*\{[^}]*color:\s*#f5f5f7/);
-    expect(css).toMatch(/\.tray-totp-access \.totp-code-button\s*\{[^}]*color:\s*#f5f5f7/);
-    expect(css).toMatch(/\.tray-totp-access \.totp-quick-head\s*[,{][^}]*color:\s*#f5f5f7/);
+    expect(css).not.toContain(".tray-totp-access");
   });
 
   it("notch tooltip count uses a defined token instead of undefined --muted (F4)", async () => {

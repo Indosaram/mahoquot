@@ -9,7 +9,6 @@ export interface TotpQuickAccessProps {
   readonly codes: Readonly<Record<string, string>>;
   readonly remaining: number;
   readonly onCopyCode: (entry: TotpEntry, code: string) => void;
-  readonly compact?: boolean;
 }
 
 export const TotpQuickAccess = ({
@@ -17,12 +16,8 @@ export const TotpQuickAccess = ({
   codes,
   remaining,
   onCopyCode,
-  compact = false,
 }: TotpQuickAccessProps) => (
-  <section
-    className={`totp-quick-access${compact ? " compact" : ""}`}
-    aria-label="2FA quick access"
-  >
+  <section className="totp-quick-access" aria-label="2FA quick access">
     <div className="totp-quick-head">
       <span>
         <KeyRound size={14} aria-hidden="true" /> 2FA
@@ -43,7 +38,7 @@ export const TotpQuickAccess = ({
           >
             <span>
               <strong>{entry.label}</strong>
-              {!compact ? <small>{entry.account ?? entry.issuer ?? "TOTP"}</small> : null}
+              <small>{entry.account ?? entry.issuer ?? "TOTP"}</small>
             </span>
             <code>{code}</code>
             <Copy size={12} aria-hidden="true" />

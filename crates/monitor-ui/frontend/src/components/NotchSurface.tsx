@@ -12,9 +12,7 @@ import { quotaTone } from "@/lib/quota-tone";
 import { LoaderCircle, Lock, Plug, PowerOff, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
-import type { TotpEntry } from "../lib/totp-vault";
 import { providerLabel } from "./ProviderGlyph";
-import { TotpQuickAccess } from "./TotpVaultSurface";
 
 // Island silhouette matching reference: smooth continuous S-curve flare (55px)
 // with vertical screen tangents, rounded convex shoulders, and straight vertical wall.
@@ -194,10 +192,6 @@ interface NotchSurfaceProps {
   nativeCursor: NotchLocalPoint | null;
   /** Bare slugs of Cline models whose daily bucket renders (Settings). */
   clineQuotaDisplay?: readonly string[];
-  totpEntries?: readonly TotpEntry[];
-  totpCodes?: Readonly<Record<string, string>>;
-  totpRemaining?: number;
-  onCopyTotpCode?: (entry: TotpEntry, code: string) => void;
 }
 
 /**
@@ -212,10 +206,6 @@ export function NotchSurface({
   notchExpanded,
   nativeCursor,
   clineQuotaDisplay = CLINE_QUOTA_DISPLAY_DEFAULT,
-  totpEntries = [],
-  totpCodes = {},
-  totpRemaining = 0,
-  onCopyTotpCode = () => undefined,
 }: NotchSurfaceProps) {
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const tooltipId = useId();
@@ -405,17 +395,6 @@ export function NotchSurface({
   };
   return (
     <>
-      {totpEntries.length ? (
-        <div className="notch-totp-access">
-          <TotpQuickAccess
-            entries={totpEntries}
-            codes={totpCodes}
-            remaining={totpRemaining}
-            onCopyCode={onCopyTotpCode}
-            compact
-          />
-        </div>
-      ) : null}
       <div
         className={`notch-shell${notchExpanded ? " expanded open" : ""}`}
         data-mahoquot-surface="notch"
@@ -477,10 +456,15 @@ export function NotchSurface({
                 const used = clampedDial === null ? 0 : (clampedDial / 100) * circumference;
                 // Health rides a corner dot instead of tinting the arc: the arc
                 // is quota, the dot is reachability. Silence means healthy.
-                const status = group.accounts
+                const degraded = group.accounts
                   .map((entry) => accountStatus(entry))
                   .filter((entry): entry is NotchAccountStatus => entry !== null)
-                  .sort((a, b) => TONE_RANK[b.tone] - TONE_RANK[a.tone])[0];
+                  .sort((a, b) => TONE_RANK[b.tone] - TONE_RANK[a.tone]);
+                const status = degraded[0];
+                // At 9px on a 34-58px dial the dot can only carry a tone, not a
+                // lane name. The scope still reaches assistive tech: a pooled
+                // provider states how many of its lanes are degraded, and the
+                // tooltip names each one.
                 return (
                   // The tooltip is fixed-positioned against the surface box, so it
                   // sits beside the button: a div inside a button violates the
@@ -497,7 +481,7 @@ export function NotchSurface({
                     <button
                       type="button"
                       className="notch-ring-item"
-                      aria-label={`${providerLabel(group.provider)} ${clampedDial === null ? "no quota data" : `${Math.round(clampedDial)}% ${showRemaining ? "left" : "used"}`}${status ? `, ${status.text}` : ""}`}
+                      aria-label={`${providerLabel(group.provider)} ${clampedDial === null ? "no quota data" : `${Math.round(clampedDial)}% ${showRemaining ? "left" : "used"}`}${status ? `, ${status.text}${degraded.length > 1 || group.accountCount > 1 ? ` (${degraded.length} of ${group.accountCount} accounts)` : ""}` : ""}`}
                       aria-describedby={
                         activeTooltip === group.provider
                           ? `${tooltipId}-${group.provider}`
@@ -545,6 +529,7 @@ export function NotchSurface({
                           <span
                             className="notch-health-dot"
                             data-tone={status.tone}
+                            data-degraded-count={degraded.length}
                             aria-hidden="true"
                           />
                         ) : null}

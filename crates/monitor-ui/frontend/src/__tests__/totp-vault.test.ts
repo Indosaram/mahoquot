@@ -241,11 +241,14 @@ describe("TotpVaultSurface load-failure gating", () => {
 });
 
 describe("cross-surface TOTP parity", () => {
-  it("exposes the same quick access in console, notch, and tray", () => {
+  // Upstream removed the notch and tray quick-access branches: the host has
+  // disabled useTotpVault on both surfaces since the client review, so those
+  // wrappers could never be populated. The real contract is that quick access
+  // exists in the console and nowhere else.
+  it("exposes quick access in the console and no longer accepts it on notch or tray", () => {
     const entries = [entry()];
     const codes = { "rfc-entry": "94287082" };
     const onCopyTotpCode = vi.fn();
-    const common = { totpEntries: entries, totpCodes: codes, totpRemaining: 1, onCopyTotpCode };
 
     const consoleView = render(
       createElement(TotpVaultSurface, {
@@ -274,12 +277,11 @@ describe("cross-surface TOTP parity", () => {
         showRemaining: true,
         notchExpanded: false,
         nativeCursor: null,
-        ...common,
       }),
     );
     expect(
-      within(notchView.container).getByRole("region", { name: "2FA quick access", hidden: true }),
-    ).toHaveTextContent("94287082");
+      within(notchView.container).queryByRole("region", { name: "2FA quick access" }),
+    ).toBeNull();
     notchView.unmount();
 
     const trayView = render(
@@ -296,11 +298,10 @@ describe("cross-surface TOTP parity", () => {
         onQuit: vi.fn(),
         onStartGateway: vi.fn(),
         onStopGateway: vi.fn(),
-        ...common,
       }),
     );
     expect(
-      within(trayView.container).getByRole("region", { name: "2FA quick access", hidden: true }),
-    ).toHaveTextContent("94287082");
+      within(trayView.container).queryByRole("region", { name: "2FA quick access" }),
+    ).toBeNull();
   });
 });
