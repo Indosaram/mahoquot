@@ -13,6 +13,16 @@ Pinned reference links:
 - SaaS settings recipe: `https://github.com/changeroa/StyleGallery/blob/38ecef0e5fa9eb83e865e71f969e0c004992a8f9/recipes/saas-settings.md`
 - Motion vocabulary: `https://github.com/changeroa/StyleGallery/blob/38ecef0e5fa9eb83e865e71f969e0c004992a8f9/motion/vocabulary.md`
 
+### Research Log (notch redesign, 2026-11-08)
+
+- Embedded references: `references/design/apple.md` (material depth, restrained instrument dials), `redesign-skill.md` (fix the diagnosis before restyling), `perfection/craft-floor.md` (no nested cards, 4.5:1 caption contrast). Read in full.
+- StyleGallery: `patterns/media-fit/icon-frame.md`, `patterns/containment/box.md`, `patterns/viewport-shell/cover.md` at the pinned commit. Used for the fixed dial slot, popover padding, and vertical balance of the dial column.
+- Lazyweb: SKIPPED. `references/lazyweb.md` was read only at its head in this pass, so no live search was run and no shipped-product screens were reviewed. The popover shape was decided from the embedded references and StyleGallery instead. The flat-single-surface rule is therefore an inference from `perfection/craft-floor.md` (no nested cards), not a measured comparison against shipped quota meters.
+- beui.dev Dynamic Island and Tooltip source (`/r/dynamic-island/raw`, `/r/tooltip/raw`): shell resize belongs to the host, content cross-fades, and one label may be open at a time. Adopted as constraints, no code vendored. (Cited from the reference notes; the raw responses were not re-fetched in this pass.)
+- Skipped: `ui-ux-db` lookup (the surface reuses the existing token palette; no new palette decision was open).
+- Nine findings drove the redesign, each from the before-captures in `.omo/evidence/notch-redesign/before/`: (1) the island was near-invisible against a dark desktop with no material or rim light; (2) compact/idle read as absent — the only visible mark was a 4x64px hairline handle; (3) the popover was a card inside a card, floating disconnected; (4) every row printed "Resets later"; (5) the dial number and a 9.5px `--fg-faint` caption fell to roughly 3.4:1; (6) the empty state clipped a ring at the island edge over a large black slab; (7) `.notch-ring-cell` had no rule, leaving two competing ring implementations; (8) health, cooldown, banked resets, and last error never reached the UI despite being normalized; (9) the dial summarized the worst *serving* account while the popover listed the worst *overall*, so the two numbers disagreed silently.
+- Follow-up pass after the after-captures: the fixed 520px SVG silhouette still painted a dead black field around a one- or two-provider island, so the shape now tracks content height (`notch-body` wrapper plus `height: calc(100% - 96px)` when expanded, 300px when docked). The idle edge handle no longer reports all-clear when a lane is merely cooling down; it now aggregates lane reachability with the pool's usage tone.
+
 ## 1. Design Philosophy and Identity
 
 - Mode: Operate. High information density, rapid scanability, truthful metrics, tabular numbers, and system fonts.
@@ -54,6 +64,14 @@ Pinned reference links:
 - Numerical data: Tabular numerals enabled via `font-variant-numeric: tabular-nums`
 
 ## 4. Spacing and Radius
+
+Layout: notch island - a 1-7 dial column plus a hover popover must fit a 108px dock without nested cards -> icon-frame (dial slots) + box (popover padding) + cover (vertical centering) (`https://github.com/changeroa/StyleGallery/blob/38ecef0e5fa9eb83e865e71f969e0c004992a8f9/patterns/media-fit/icon-frame.md`); scroll owner: `.notch-tooltip` (the popover clamps to the viewport and scrolls internally, nothing else scrolls); anti-patterns: nesting a bordered card per account, letting the dial column outgrow the island, giving the popover page-level scroll, and printing a reset line when no reset is known.
+
+Notch load-bearing constraints:
+- The dial slot is fixed (`icon-frame`): the ring box does not change size between states, only the `data-count` tiers resize it.
+- The popover is a single `box`: one card, accounts separated by full-bleed bands and hairlines, never a card inside a card.
+- Vertical balance is `cover`-like: the dial column centers inside the island and the island hugs its content, so fewer providers leave no dead slab.
+- Native hover remains the sole expansion owner; nothing in this surface subscribes to pointer expansion.
 
 - Base spacing unit: 4px rhythm (`4px`, `8px`, `12px`, `16px`, `24px`).
 - Radius: `4px` (small buttons, badges), `8px` (inputs, standard buttons), `12px` (cards, drawers, dialogs).
@@ -115,6 +133,9 @@ The application exposes exactly four top-level operational destinations plus one
    - Native floating desktop status surface running under `:root[data-surface="notch"]`.
    - Bounded to 8px idle strip and 420x560 expanded window with Brink-derived hover corridor, provider grouping, and tooltip behavior.
    - The idle strip shows a 4x64px edge handle tinted by the worst pool's status so the surface is discoverable without hovering.
+   - The island is one material stack: a cast shadow under the silhouette, a near-black base gradient, a top rim light, and a hairline edge. The dials sit on that material; they never paint their own opaque panel.
+   - The dial arc reports quota only. Provider reachability (cooldown, error, auth, disabled) is a separate corner dot plus popover text, so an exhausted pool and an unreachable pool never read as the same state.
+   - The hover popover is a single card. Accounts are full-bleed bands separated by hairlines, quota rows are two lines (name and known reset on the left, value on the right, bar under), and a pooled provider states how many lanes are serving.
    - Quota status color (handle, dial arc, tooltip bar) uses semantic tokens on used percent, matching the tray: `--ok` below 80%, `--warn` from 80%, `--bad` at 100%, neutral when unmeasured. Provider identity is carried by the logo, not the arc color. Each dial is captioned `left`/`used` per the display preference.
    - Completely isolated from main application shell classes, sidebars, and global overflow styles.
 
@@ -144,6 +165,11 @@ The application exposes exactly four top-level operational destinations plus one
 - Must NOT leak global styles or app-shell classes into `:root[data-surface="notch"]`.
 
 ## 12. Accepted Debt
+
+- Notch redesign gap ledger (2026-11-08): the island now carries layered material, a rim light, and a cast shadow sized to its content; the popover is one card with per-account bands; reset copy prints only when a reset is known; captions use `--fg-dim` at 10px (>= 4.5:1 on the island); the empty state reuses the provider dial primitive (the second 43px ring implementation is gone); provider health, cooldown, and banked reset credits surface as text in the popover plus a corner dot on the dial; the pooled dial reports the worst serving lane and the popover states the serving count so the two numbers never disagree silently.
+- Residual: the dial's corner dot is decorative and has no tooltip of its own; the popover text carries the same information for assistive tech. The dot is per-dial, so a pooled provider with one bad lane of three cannot say which lane is bad from the collapsed surface alone; the popover is the authority.
+- Residual: the Lazyweb comparison lane was skipped this pass (see the research log). Re-run it before treating the popover layout as benchmarked against shipped quota meters rather than inferred from the no-nested-cards rule.
+- Residual: `.notch-totp-access` is not reachable on the notch surface because the `useTotpVault` hook is disabled for both notch and tray, so that wrapper renders nothing today.
 
 - Dependencies remain frozen. Radix, shadcn, and external UI component libraries are not used.
 - React developer inspection packages (react-grab, react-scan, react-doctor) are accepted verification debt for this increment and are not persisted in package.json or production bundles.

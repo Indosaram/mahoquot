@@ -37,7 +37,15 @@ export interface NotchQuotaRow {
   readonly resetSeconds: number | null;
 }
 
-export interface NotchProviderEntry {
+export interface NotchLaneStatus {
+  /** Normalized account health; drives the dial's reachability dot. */
+  readonly health?: string | null;
+  readonly cooldownSeconds?: number | null;
+  readonly errorStatus?: number | null;
+  readonly bankedResets?: number;
+}
+
+export interface NotchProviderEntry extends NotchLaneStatus {
   readonly provider: string;
   readonly label?: string;
   /** Unique account id; keeps React keys stable when labels collide. */
@@ -45,7 +53,7 @@ export interface NotchProviderEntry {
   readonly rows: readonly NotchQuotaRow[];
 }
 
-export interface NotchAccountEntry {
+export interface NotchAccountEntry extends NotchLaneStatus {
   readonly label: string;
   /** Unique account id; keeps React keys stable when labels collide. */
   readonly id?: string;
@@ -113,6 +121,10 @@ export const groupNotchProviders = (
     accountsByProvider.get(provider)?.push({
       label: entry.label ?? provider,
       id: entry.id,
+      health: entry.health ?? null,
+      cooldownSeconds: entry.cooldownSeconds ?? null,
+      errorStatus: entry.errorStatus ?? null,
+      bankedResets: entry.bankedResets ?? 0,
       rows: entry.rows,
     });
 
