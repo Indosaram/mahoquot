@@ -240,80 +240,102 @@ export const OverviewDashboard = ({
         ) : null}
       </Cluster>
 
-      <IntrinsicGrid className="minimal-kpis">
-        <div>
-          <span>Requests</span>
-          <strong>{isLoading ? "—" : compact.format(viewAnalytics.totals.requests)}</strong>
-        </div>
-        <div>
-          <span>Success</span>
-          <strong>{isLoading ? "—" : successRateLabel}</strong>
-        </div>
-        <div>
-          <span>Failed</span>
-          <strong>{isLoading ? "—" : compact.format(viewAnalytics.totals.failures)}</strong>
-        </div>
-        <div>
-          <span>In flight</span>
-          <strong>{stats.in_flight}</strong>
-        </div>
-        <div>
-          <span>p50</span>
-          <strong>{latency(stats, "p50_ms")}</strong>
-        </div>
-        <div>
-          <span>p90</span>
-          <strong>{latency(stats, "p90_ms")}</strong>
-        </div>
-      </IntrinsicGrid>
-
-      <section className="minimal-chart-section">
-        <header>
-          <h2>Request activity</h2>
-          <span>{range}</span>
+      <section className="overview-summary" aria-label="Window summary">
+        <header className="flex flex-wrap items-baseline justify-between gap-2 pb-2">
+          <h2 className="text-sm font-semibold">Window summary</h2>
+          <output className="text-xs text-muted-foreground" aria-live="polite">
+            {isLoading
+              ? "Loading selected window…"
+              : viewAnalytics.totals.requests === 0
+                ? "No requests in this window"
+                : `${range} window`}
+            {" · Current in flight and latency"}
+          </output>
         </header>
-        <OverviewBreakdownChart analytics={viewAnalytics} loading={isLoading} />
+        <IntrinsicGrid
+          className="minimal-kpis"
+          aria-busy={isLoading}
+          data-state={isLoading ? "loading" : "ready"}
+        >
+          <div className="overview-kpi-primary">
+            <span>Requests</span>
+            <strong>{isLoading ? "—" : compact.format(viewAnalytics.totals.requests)}</strong>
+          </div>
+          <div className="overview-kpi-primary">
+            <span>Success</span>
+            <strong>{isLoading ? "—" : successRateLabel}</strong>
+          </div>
+          <div
+            className="overview-kpi-primary"
+            data-tone={!isLoading && viewAnalytics.totals.failures > 0 ? "bad" : undefined}
+          >
+            <span>Failed</span>
+            <strong>{isLoading ? "—" : compact.format(viewAnalytics.totals.failures)}</strong>
+          </div>
+          <div>
+            <span>In flight</span>
+            <strong>{stats.in_flight}</strong>
+          </div>
+          <div>
+            <span>p50</span>
+            <strong>{latency(stats, "p50_ms")}</strong>
+          </div>
+          <div>
+            <span>p90</span>
+            <strong>{latency(stats, "p90_ms")}</strong>
+          </div>
+        </IntrinsicGrid>
       </section>
 
-      <section className="minimal-provider-mix" aria-label={mixTitle}>
-        <header>
-          <h2>{mixTitle}</h2>
-          <span>{range}</span>
-        </header>
-        <div className="provider-mix-track" aria-hidden="true">
-          {mixRows.map((row) => (
-            <i
-              key={row.key}
-              style={{
-                width: `${row.share * 100}%`,
-                background: seedColor(row.key, row.provider),
-              }}
-            />
-          ))}
-        </div>
-        <Cluster className="provider-mix-labels">
-          {mixRows.length ? (
-            mixRows.map((row) => {
-              const color = seedColor(row.key, row.provider);
-              return (
-                <span key={row.key}>
-                  <i className="provider-mix-dot" style={{ background: color }} />
-                  <strong>
-                    {effectiveAnalytics.dimension === "provider"
-                      ? providerName(row.label)
-                      : row.label}
-                  </strong>
-                  {Math.round(row.share * 100)}%
-                </span>
-              );
-            })
-          ) : (
-            <span>
-              {isLoading ? "Loading usage…" : `No ${effectiveAnalytics.dimension} traffic`}
-            </span>
-          )}
-        </Cluster>
-      </section>
+      <Stack className="overview-activity-group" style={{ gap: 12 }}>
+        <section className="minimal-chart-section">
+          <header>
+            <h2 style={{ fontSize: 15, fontWeight: 600 }}>Request activity</h2>
+            <span>{range}</span>
+          </header>
+          <OverviewBreakdownChart analytics={viewAnalytics} loading={isLoading} />
+        </section>
+
+        <section className="minimal-provider-mix" aria-label={mixTitle}>
+          <header>
+            <h2>{mixTitle}</h2>
+            <span>{range}</span>
+          </header>
+          <div className="provider-mix-track" aria-hidden="true">
+            {mixRows.map((row) => (
+              <i
+                key={row.key}
+                style={{
+                  width: `${row.share * 100}%`,
+                  background: seedColor(row.key, row.provider),
+                }}
+              />
+            ))}
+          </div>
+          <Cluster className="provider-mix-labels">
+            {mixRows.length ? (
+              mixRows.map((row) => {
+                const color = seedColor(row.key, row.provider);
+                return (
+                  <span key={row.key}>
+                    <i className="provider-mix-dot" style={{ background: color }} />
+                    <strong>
+                      {effectiveAnalytics.dimension === "provider"
+                        ? providerName(row.label)
+                        : row.label}
+                    </strong>
+                    {Math.round(row.share * 100)}%
+                  </span>
+                );
+              })
+            ) : (
+              <span>
+                {isLoading ? "Loading usage…" : `No ${effectiveAnalytics.dimension} traffic`}
+              </span>
+            )}
+          </Cluster>
+        </section>
+      </Stack>
 
       <OverviewBreakdownTable
         analytics={effectiveAnalytics}

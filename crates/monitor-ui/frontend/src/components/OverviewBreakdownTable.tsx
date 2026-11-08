@@ -80,7 +80,12 @@ export const OverviewBreakdownTable = ({
   const visibleRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
 
   return (
-    <section className="overview-breakdown" aria-label="Usage breakdown">
+    <section
+      className="overview-breakdown"
+      aria-label="Usage breakdown"
+      aria-busy={loading}
+      style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 16 }}
+    >
       <header>
         <h2>Usage breakdown</h2>
         <div className="overview-token-header-meta">

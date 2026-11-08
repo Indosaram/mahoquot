@@ -70,8 +70,14 @@ export const OverviewBreakdownChart = ({
   if (loading) {
     return (
       <div
-        className="overview-breakdown-chart flex items-center justify-center text-xs text-muted-foreground"
-        style={{ height }}
+        className="overview-breakdown-chart overview-chart-loading flex items-center justify-center text-xs text-muted-foreground"
+        aria-busy="true"
+        style={{
+          height,
+          border: "1px dashed var(--line-soft)",
+          borderRadius: 6,
+          background: "var(--panel-2)",
+        }}
       >
         Loading activity…
       </div>

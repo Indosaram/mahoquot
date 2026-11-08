@@ -1296,6 +1296,29 @@ h2 {
 .minimal-kpis small {
   margin-top: 6px;
 }
+/* Overview: the three outcome KPIs outrank in-flight and latency, so they get
+   the raised panel and a larger figure. The rest keep the base 22px scale. */
+.minimal-kpis > .overview-kpi-primary {
+  background: var(--panel-2);
+}
+.minimal-kpis > .overview-kpi-primary strong {
+  font-size: 28px;
+}
+.minimal-kpis > .overview-kpi-primary[data-tone="bad"] strong {
+  color: var(--bad);
+}
+.minimal-kpis > div:not(.overview-kpi-primary) strong {
+  font-size: 18px;
+}
+.minimal-kpis[data-state="loading"] {
+  opacity: 0.55;
+}
+.overview-summary > header {
+  margin-bottom: 2px;
+}
+.overview-activity-group {
+  margin-top: 4px;
+}
 .minimal-chart-section,
 .minimal-provider-mix {
   min-width: 0;
@@ -1351,6 +1374,12 @@ h2 {
 }
 .minimal-provider-mix {
   padding-top: 3px;
+}
+/* The mix bar sits directly under the chart legend, so it needs a separator to
+   read as its own section rather than a third legend row. */
+.overview-activity-group > .minimal-provider-mix {
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
 }
 .provider-mix-track {
   display: flex;
@@ -2000,6 +2029,28 @@ h2 {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+.logs-head-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* The text query is the last control in the row; unlike the provider select it
+   must not claim the auto margin, and it needs a bounded width because the
+   shared .input class is width:100%. */
+.logs-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.logs-search-field input {
+  width: 180px;
+  max-width: 100%;
+  font-size: 11px;
+  padding: 4px 8px;
 }
 .logs-provider-filter span {
   color: var(--fg-faint);

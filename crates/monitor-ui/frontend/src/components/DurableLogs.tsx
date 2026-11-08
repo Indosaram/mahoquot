@@ -115,6 +115,7 @@ export function DurableLogs({
 }: DurableLogsProps) {
   const [tab, setTab] = useState<"requests" | "proxy">("requests");
   const [provider, setProvider] = useState("all");
+  const [query, setQuery] = useState("");
   const initialEvents = useMemo(
     () => records.filter((record) => record.kind === "request").map(toHistoryEvent),
     [records],
@@ -311,17 +312,39 @@ export function DurableLogs({
     }
   };
 
-  const visibleEvents =
+  const providerEvents =
     loadHistory || provider === "all"
       ? events
       : events.filter((event) => event.provider === provider);
+  const searchActive = query.length > 0;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleEvents = searchActive
+    ? providerEvents.filter((event) =>
+        [
+          event["event-id"],
+          event.provider,
+          event.model,
+          String(event.status),
+          event.succeeded ? "success" : "failed",
+        ].some((value) => value.toLowerCase().includes(normalizedQuery)),
+      )
+    : providerEvents;
+  // The KPI strip describes the window the gateway reported, never the filtered
+  // subset: a query that matches nothing must not print "0 tokens / 0 success"
+  // while 24k requests exist. The match count belongs to the pagination line,
+  // which reads visibleEvents.
   const activeTotals = totals
     ? { ...totals, "cache-write-tokens": totals["cache-write-tokens"] ?? 0 }
-    : totalsOf(visibleEvents);
+    : totalsOf(providerEvents);
   const cacheWriteReading = totalsCacheTokens(activeTotals, "cache-write-tokens");
-  const totalCount = activeTotals.requests;
-  const firstVisible = visibleEvents.length ? loadedBefore + 1 : 0;
-  const lastVisible = loadedBefore + visibleEvents.length;
+  // Two different denominators, deliberately: the KPI strip reports the window
+  // the gateway measured, while the pagination line reports the rows actually on
+  // screen. Under a query the pager must never claim "0-0 of 24,918".
+  const windowTotal = activeTotals.requests;
+  const pageMatchTotal = searchActive ? visibleEvents.length : activeTotals.requests;
+  const visibleOffset = searchActive ? 0 : loadedBefore;
+  const firstVisible = visibleEvents.length ? visibleOffset + 1 : 0;
+  const lastVisible = visibleEvents.length ? visibleOffset + visibleEvents.length : 0;
 
   return (
     <div className="durable-logs">
@@ -330,7 +353,7 @@ export function DurableLogs({
           <div>
             {fromMemoryTail ? <p>File logging is off — showing the in-memory tail.</p> : null}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <div className="logs-head-controls">
             <output className="logs-live-indicator">
               <span className={`logs-live-dot${refreshing ? " active" : ""}`} aria-hidden="true" />
               Live
@@ -351,6 +374,22 @@ export function DurableLogs({
                 ))}
               </select>
             </label>
+            <label className="logs-search-field">
+              <span>Search</span>
+              <input
+                className="input"
+                type="search"
+                placeholder="Filter loaded rows"
+                aria-label="Search loaded requests"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            {searchActive ? (
+              <Button aria-label="Clear log search" onClick={() => setQuery("")}>
+                Clear search
+              </Button>
+            ) : null}
           </div>
         </header>
 
@@ -388,7 +427,7 @@ export function DurableLogs({
               <section className="durable-logs-summary" aria-label="Request totals">
                 <div>
                   <span>Total</span>
-                  <strong>{totalCount.toLocaleString("en-US")}</strong>
+                  <strong>{windowTotal.toLocaleString("en-US")}</strong>
                 </div>
                 <div>
                   <span>Success</span>
@@ -471,17 +510,27 @@ export function DurableLogs({
               </table>
               {visibleEvents.length === 0 && !actionError ? (
                 <div className="logs-empty">
-                  <span>No request records.</span>
-                  <small>No durable request history.</small>
+                  {searchActive ? (
+                    <>
+                      <span>No requests match “{query}” on this page.</span>
+                      <Button onClick={() => setQuery("")}>Clear search</Button>
+                    </>
+                  ) : (
+                    <>
+                      <span>No request records.</span>
+                      <small>No durable request history.</small>
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>
 
-            {visibleEvents.length || nextCursor !== null ? (
+            {visibleEvents.length || nextCursor !== null || pageHistory.length ? (
               <div className="durable-logs-pagination">
                 <span>
                   {firstVisible.toLocaleString("en-US")}–{lastVisible.toLocaleString("en-US")} of{" "}
-                  {totalCount.toLocaleString("en-US")}
+                  {pageMatchTotal.toLocaleString("en-US")}
+                  {searchActive ? " matches on this page" : null}
                 </span>
                 <div className="durable-logs-page-actions">
                   <Button
