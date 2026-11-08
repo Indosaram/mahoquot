@@ -29,6 +29,7 @@ import {
 import { hasCreditDetail } from "../lib/credits";
 import { blocks } from "../lib/pending";
 import { getPlanTierColor } from "../lib/plan-tier";
+import { quotaTone } from "../lib/quota-tone";
 import { relayPlanLabel } from "../lib/relay-plans";
 import type { Usage, WarmupAccountStatus } from "../lib/schemas";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
@@ -740,10 +741,13 @@ export const AccountCard = ({
                       aria-valuenow={percent === null ? 0 : Math.min(100, percent)}
                       aria-valuetext={percent === null ? "unmeasured" : undefined}
                     >
-                      <i style={{ width: `${percent === null ? 0 : Math.min(100, percent)}%` }} />
+                      <i
+                        data-tone={quotaTone(row.usedPercent)}
+                        style={{ width: `${percent === null ? 0 : Math.min(100, percent)}%` }}
+                      />
                     </span>
                     <span className="quota-meta">
-                      <strong>
+                      <strong data-tone={quotaTone(row.usedPercent)}>
                         {percent === null ? "unmeasured" : `${formatQuotaPercent(percent)}%`}
                       </strong>
                       {row.resetSeconds !== null ? (

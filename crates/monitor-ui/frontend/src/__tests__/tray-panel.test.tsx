@@ -111,6 +111,20 @@ describe("TrayPanel", () => {
     expect(screen.getByTestId("tray-windows").textContent).toContain("$522.39");
     expect(screen.getByText("Weekly")).toBeTruthy();
     expect(screen.getByText("0% left")).toBeTruthy();
+
+    // The percent text must carry the same severity the bar paints. It used to
+    // be hardcoded green and only turned red at exactly 100%, so a nearly
+    // exhausted window read as healthy beside its own amber bar (and beside
+    // the notch, which already graded it).
+    // 46% used -> ok, 82% used -> warn, 100% used -> bad. The old hardcoded
+    // rule produced ["ok", "ok", "bad"]: the 82% window read as healthy.
+    const percentTones = screen
+      .getAllByText(/% left$/)
+      .map((node) => node.getAttribute("data-tone"));
+    expect(percentTones).toEqual(["ok", "warn", "bad"]);
+    expect(screen.getByText("54% left").getAttribute("data-tone")).toBe("ok");
+    expect(screen.getByText("18% left").getAttribute("data-tone")).toBe("warn");
+    expect(screen.getByText("0% left").getAttribute("data-tone")).toBe("bad");
     expect(screen.getAllByText("12 seconds ago").length).toBe(2);
     const spinners = screen
       .getAllByRole("button")

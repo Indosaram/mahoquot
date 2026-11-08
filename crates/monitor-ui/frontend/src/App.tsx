@@ -41,6 +41,7 @@ import {
   mergeAccountsAndCredentials,
   orderClaudeSubscriptionsForDisplay,
 } from "./lib/accounts";
+import { actionFailed } from "./lib/action-failure";
 import { createGatewayClients, discoverProviderModels, fetchClineModelLists } from "./lib/api";
 import type { HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
@@ -165,9 +166,6 @@ type AuthorizationSession = {
   readonly status: ProviderAuthStatus["status"];
   readonly error?: string;
 };
-
-const actionFailed = (reason: unknown): string =>
-  `Action failed: ${reason instanceof Error ? reason.message : "unknown error"}`;
 
 export default function App() {
   const [surface, setSurface] = useState<Surface>(getInitialSurface);

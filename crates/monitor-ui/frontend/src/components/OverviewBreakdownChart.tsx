@@ -1,11 +1,10 @@
-import { dimensionDitherColor } from "@/lib/dimension-colors";
-import { type BreakdownRow, OTHER_KEY, type OverviewAnalytics } from "@/lib/overview-analytics";
+import { assignDimensionSeeds } from "@/lib/dimension-colors";
+import type { BreakdownRow, OverviewAnalytics } from "@/lib/overview-analytics";
 import { type JSX, useMemo } from "react";
 import { Area } from "./dither-kit/area";
 import { AreaChart } from "./dither-kit/area-chart";
 import { BlockLegend } from "./dither-kit/block-legend";
 import type { ChartConfig } from "./dither-kit/chart-context";
-import type { DitherColor } from "./dither-kit/palette";
 
 export interface OverviewBreakdownChartProps {
   readonly analytics: OverviewAnalytics;
@@ -14,15 +13,6 @@ export interface OverviewBreakdownChartProps {
    * claiming the window is empty or showing the previous window's data (F-M1). */
   readonly loading?: boolean;
 }
-
-const PALETTE_CHOICES: readonly DitherColor[] = [
-  "green",
-  "blue",
-  "purple",
-  "pink",
-  "orange",
-  "red",
-];
 
 const isReducedMotion = (): boolean => {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -57,33 +47,9 @@ export const OverviewBreakdownChart = ({
 
   // 5. const config
   const config = useMemo(() => {
-    const usedSeeds = new Set<DitherColor>();
-    const assignedColors = new Map<string, DitherColor>();
-
-    // Process every key whose row is NOT isOther first
-    for (const key of analytics.seriesKeys) {
-      const row = rowMap.get(key);
-      if (key === OTHER_KEY || row?.isOther) continue;
-      const provider = row ? row.provider : key;
-      const preferred = dimensionDitherColor(analytics.dimension, key, provider);
-
-      if (!usedSeeds.has(preferred)) {
-        usedSeeds.add(preferred);
-        assignedColors.set(key, preferred);
-      } else {
-        const fallback = PALETTE_CHOICES.find((c) => !usedSeeds.has(c)) ?? preferred;
-        usedSeeds.add(fallback);
-        assignedColors.set(key, fallback);
-      }
-    }
-
-    // Process OTHER_KEY last: always assign "grey"
-    for (const key of analytics.seriesKeys) {
-      const row = rowMap.get(key);
-      if (key === OTHER_KEY || row?.isOther) {
-        assignedColors.set(key, "grey");
-      }
-    }
+    // One shared assignment: the mix bar and legend below resolve their hues
+    // from this same map, so a key can never be two colours on one screen.
+    const assignedColors = assignDimensionSeeds(analytics);
 
     const result: ChartConfig = {};
     for (const key of analytics.seriesKeys) {
@@ -93,7 +59,7 @@ export const OverviewBreakdownChart = ({
       result[key] = { label, color };
     }
     return result;
-  }, [analytics.dimension, analytics.seriesKeys, rowMap]);
+  }, [analytics, rowMap]);
 
   // 6. const animate
   const animate = !isReducedMotion();

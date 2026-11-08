@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { PALETTE } from "../components/dither-kit/palette";
 import type { NormalizedAccount } from "../lib/accounts";
-import { dimensionColor, dimensionDitherColor } from "../lib/dimension-colors";
+import {
+  assignDimensionSeeds,
+  dimensionColor,
+  dimensionDitherColor,
+} from "../lib/dimension-colors";
 import {
   resolveAccountIdentity,
   resolveProviderIdentity,
@@ -331,5 +335,63 @@ describe("dimension-colors", () => {
     expect(allowed.has(d2)).toBe(true);
     const dOther = dimensionDitherColor("model", OTHER_KEY, "other");
     expect(dOther).toBe("grey");
+  });
+});
+
+describe("assignDimensionSeeds", () => {
+  const row = (key: string, provider: string, isOther = false) => ({ key, provider, isOther });
+
+  it("gives colliding providers distinct seeds instead of one shared hue", () => {
+    // antigravity, zai, zcode, and cline all prefer "blue" in the dither map.
+    const seeds = assignDimensionSeeds({
+      dimension: "provider",
+      seriesKeys: ["antigravity", "zcode", "cline"],
+      rows: [row("antigravity", "antigravity"), row("zcode", "zcode"), row("cline", "cline")],
+    });
+    const colors = [seeds.get("antigravity"), seeds.get("zcode"), seeds.get("cline")];
+    expect(new Set(colors).size).toBe(3);
+    // The first key keeps its preferred seed; later ones are demoted, not reshuffled.
+    expect(colors[0]).toBe("blue");
+  });
+
+  it("folds every isOther row to grey without consuming a palette seed", () => {
+    const seeds = assignDimensionSeeds({
+      dimension: "provider",
+      seriesKeys: ["antigravity", OTHER_KEY],
+      rows: [row("antigravity", "antigravity"), row(OTHER_KEY, "other", true)],
+    });
+    expect(seeds.get(OTHER_KEY)).toBe("grey");
+    expect(seeds.get("antigravity")).toBe("blue");
+  });
+
+  it("is deterministic for the same input", () => {
+    const input = {
+      dimension: "provider" as const,
+      seriesKeys: ["codex", "claude", "antigravity", "zcode"],
+      rows: [
+        row("codex", "codex"),
+        row("claude", "claude"),
+        row("antigravity", "antigravity"),
+        row("zcode", "zcode"),
+      ],
+    };
+    expect([...assignDimensionSeeds(input)]).toEqual([...assignDimensionSeeds(input)]);
+  });
+
+  it("explains why a focused view must resolve seeds over the full analytics", () => {
+    const full = assignDimensionSeeds({
+      dimension: "provider",
+      seriesKeys: ["antigravity", "zcode"],
+      rows: [row("antigravity", "antigravity"), row("zcode", "zcode")],
+    });
+    const narrowed = assignDimensionSeeds({
+      dimension: "provider",
+      seriesKeys: ["zcode"],
+      rows: [row("zcode", "zcode")],
+    });
+    // Resolving over a narrowed view would promote zcode back to its preferred
+    // blue and silently repaint the row the operator just focused.
+    expect(narrowed.get("zcode")).toBe("blue");
+    expect(full.get("zcode")).not.toBe("blue");
   });
 });

@@ -76,4 +76,37 @@ describe("toast stack", () => {
     fireEvent.click(screen.getByRole("button", { name: "push" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
+
+  it("collapses an identical message into one toast instead of stacking it", () => {
+    const repeated = "Action failed: gateway unreachable";
+    render(<Harness messages={[repeated, repeated, repeated]} />);
+    fireEvent.click(screen.getByRole("button", { name: "push" }));
+
+    expect(screen.getAllByText(repeated)).toHaveLength(1);
+  });
+
+  it("keeps a repeated toast alive for a full error window from its last push", () => {
+    const repeated = "Action failed: gateway unreachable";
+    const HarnessOnce = ({ message }: { readonly message: string }) => {
+      const { toasts, pushToast, dismissToast } = useToasts();
+      return (
+        <div>
+          <button type="button" onClick={() => pushToast(message)}>
+            push
+          </button>
+          <ToastStack toasts={toasts} onDismiss={dismissToast} />
+        </div>
+      );
+    };
+    render(<HarnessOnce message={repeated} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "push" }));
+    act(() => vi.advanceTimersByTime(7_000));
+    fireEvent.click(screen.getByRole("button", { name: "push" }));
+    act(() => vi.advanceTimersByTime(7_000));
+
+    expect(screen.getByText(repeated)).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.queryByText(repeated)).not.toBeInTheDocument();
+  });
 });

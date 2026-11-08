@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { NormalizedAccount } from "../lib/accounts";
-import { dimensionColor } from "../lib/dimension-colors";
+import { assignDimensionSeeds, dimensionColor } from "../lib/dimension-colors";
 import type {
   OverviewAnalytics,
   OverviewDimension,
@@ -148,6 +148,13 @@ export const OverviewDashboard = ({
   // previous window's traffic to the range named above them (F-M1).
   const mixRows = isLoading ? [] : viewAnalytics.rows;
 
+  // Resolved over the FULL, unfocused analytics: focusing a row narrows the
+  // stack to one key, and deriving the map from that narrowed view would drop
+  // every other key's claim and repaint the survivor in a different hue.
+  const seeds = useMemo(() => assignDimensionSeeds(effectiveAnalytics), [effectiveAnalytics]);
+  const seedColor = (key: string, provider: string): string =>
+    dimensionColor(effectiveAnalytics.dimension, key, provider, seeds.get(key));
+
   const mixTitle =
     effectiveAnalytics.dimension === "model"
       ? "Model mix"
@@ -224,11 +231,7 @@ export const OverviewDashboard = ({
           >
             <i
               style={{
-                background: dimensionColor(
-                  effectiveAnalytics.dimension,
-                  focusedRow.key,
-                  focusedRow.provider,
-                ),
+                background: seedColor(focusedRow.key, focusedRow.provider),
               }}
             />
             <span>{focusedRow.label}</span>
@@ -283,7 +286,7 @@ export const OverviewDashboard = ({
               key={row.key}
               style={{
                 width: `${row.share * 100}%`,
-                background: dimensionColor(effectiveAnalytics.dimension, row.key, row.provider),
+                background: seedColor(row.key, row.provider),
               }}
             />
           ))}
@@ -291,7 +294,7 @@ export const OverviewDashboard = ({
         <Cluster className="provider-mix-labels">
           {mixRows.length ? (
             mixRows.map((row) => {
-              const color = dimensionColor(effectiveAnalytics.dimension, row.key, row.provider);
+              const color = seedColor(row.key, row.provider);
               return (
                 <span key={row.key}>
                   <i className="provider-mix-dot" style={{ background: color }} />

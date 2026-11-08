@@ -11,6 +11,7 @@ import { useMemo, useState } from "react";
 import { type NormalizedAccount, formatResetTime } from "../lib/accounts";
 import type { GatewayLifecycleStatus } from "../lib/native";
 import { getPlanTierColor } from "../lib/plan-tier";
+import { quotaTone } from "../lib/quota-tone";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import type { TotpEntry } from "../lib/totp-vault";
 import { quotaDisplay, quotaRows } from "./AccountsSurface";
@@ -265,11 +266,7 @@ export const TrayPanel = ({
                     <div className="tray-tile-row">
                       <span className="tray-tile-name">{tile.label}</span>
                       {tile.resetIn && <span className="tray-tile-reset">{tile.resetIn}</span>}
-                      <span
-                        className={`tray-tile-percent${
-                          tile.usedPercent !== null && tile.usedPercent >= 100 ? " full" : ""
-                        }`}
-                      >
+                      <span className="tray-tile-percent" data-tone={quotaTone(tile.usedPercent)}>
                         {display === null
                           ? "unmeasured"
                           : `${display}% ${showRemaining ? "left" : "used"}`}
@@ -310,8 +307,9 @@ export const TrayPanel = ({
 };
 
 function tileTone(usedPercent: number | null): string {
-  if (usedPercent === null) return "tray-bar";
-  if (usedPercent >= 100) return "tray-bar full";
-  if (usedPercent >= 80) return "tray-bar amber";
+  const tone = quotaTone(usedPercent);
+  if (tone === "idle") return "tray-bar";
+  if (tone === "bad") return "tray-bar full";
+  if (tone === "warn") return "tray-bar amber";
   return "tray-bar";
 }
