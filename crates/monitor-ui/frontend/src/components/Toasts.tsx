@@ -17,17 +17,26 @@ export const toastTone = (message: string): ToastTone =>
 
 export const useToasts = () => {
   const [toasts, setToasts] = useState<readonly Toast[]>([]);
+  const toastsRef = useRef<readonly Toast[]>([]);
   const nextId = useRef(0);
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
-  const dismissToast = useCallback((id: number) => {
-    setToasts((current) => current.filter((toast) => toast.id !== id));
+  const clearToastTimer = useCallback((id: number) => {
     const timer = timers.current.get(id);
     if (timer) {
       clearTimeout(timer);
       timers.current.delete(id);
     }
   }, []);
+
+  const dismissToast = useCallback(
+    (id: number) => {
+      clearToastTimer(id);
+      toastsRef.current = toastsRef.current.filter((toast) => toast.id !== id);
+      setToasts(toastsRef.current);
+    },
+    [clearToastTimer],
+  );
 
   useEffect(
     () => () => {
@@ -39,16 +48,34 @@ export const useToasts = () => {
   const pushToast = useCallback(
     (message: string) => {
       if (!message) return;
-      const id = nextId.current + 1;
-      nextId.current = id;
       const tone = toastTone(message);
-      setToasts((current) => [...current.slice(-(MAX_TOASTS - 1)), { id, message, tone }]);
+      const ttl = tone === "error" ? ERROR_TTL_MS : INFO_TTL_MS;
+
+      // Same message already visible: restart its timer rather than stacking a duplicate.
+      const duplicate = toastsRef.current.find((toast) => toast.message === message);
+      if (duplicate) {
+        clearToastTimer(duplicate.id);
+        timers.current.set(
+          duplicate.id,
+          setTimeout(() => dismissToast(duplicate.id), ttl),
+        );
+        return;
+      }
+
+      nextId.current += 1;
+      const id = nextId.current;
+      const next = [...toastsRef.current.slice(-(MAX_TOASTS - 1)), { id, message, tone }];
+      for (const dropped of toastsRef.current) {
+        if (!next.some((toast) => toast.id === dropped.id)) clearToastTimer(dropped.id);
+      }
+      toastsRef.current = next;
+      setToasts(next);
       timers.current.set(
         id,
-        setTimeout(() => dismissToast(id), tone === "error" ? ERROR_TTL_MS : INFO_TTL_MS),
+        setTimeout(() => dismissToast(id), ttl),
       );
     },
-    [dismissToast],
+    [clearToastTimer, dismissToast],
   );
 
   return { toasts, pushToast, dismissToast };

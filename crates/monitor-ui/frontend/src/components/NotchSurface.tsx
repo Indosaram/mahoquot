@@ -3,6 +3,7 @@ import { MONOCHROME_LOGOS, ProviderGlyph, providerLogos } from "@/components/Pro
 import type { LoadState } from "@/hooks/useGatewayPolling";
 import { type NormalizedAccount, formatResetTime } from "@/lib/accounts";
 import { groupNotchProviders, providerAtPoint } from "@/lib/notch";
+import { quotaTone } from "@/lib/quota-tone";
 import { TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
@@ -32,12 +33,7 @@ const EMPTY_RING_COPY: Readonly<
 type NotchTone = "ok" | "warn" | "bad" | "idle";
 
 /** Same thresholds as the tray tiles: 80% used warns, 100% is exhausted. */
-const usageTone = (usedPercent: number | null): NotchTone => {
-  if (usedPercent === null) return "idle";
-  if (usedPercent >= 100) return "bad";
-  if (usedPercent >= 80) return "warn";
-  return "ok";
-};
+const usageTone = (usedPercent: number | null): NotchTone => quotaTone(usedPercent);
 
 const TONE_RANK: Readonly<Record<NotchTone, number>> = { idle: 0, ok: 1, warn: 2, bad: 3 };
 

@@ -182,7 +182,7 @@ html {
   --fg: #ececf1;
   --fg-rgb: 236 236 241;
   --fg-dim: #a1a1aa;
-  --fg-faint: #71717a;
+  --fg-faint: #8f8f98;
   --accent: #f0801a;
   --accent-rgb: 240 128 26;
   --accent-dim: rgba(240, 128, 26, 0.15);
@@ -831,6 +831,9 @@ h2 {
 .badge-bad {
   color: var(--bad);
   background: var(--bad-dim);
+}
+:root[data-theme="light"] .badge-bad {
+  color: #b31d28;
 }
 .badge-neutral {
   color: var(--fg-dim);
@@ -2509,6 +2512,15 @@ h2 {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.quota-meta strong[data-tone="warn"] {
+  color: var(--warn);
+}
+.quota-meta strong[data-tone="bad"] {
+  color: var(--bad);
+}
+.quota-meta strong[data-tone="idle"] {
+  color: var(--fg-dim);
+}
 .quota-meta small {
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -2524,6 +2536,16 @@ h2 {
   height: 100%;
   border-radius: inherit;
   background: var(--ok);
+}
+.quota-track i[data-tone="warn"] {
+  background: var(--warn);
+}
+.quota-track i[data-tone="bad"] {
+  background: var(--bad);
+}
+.quota-track i[data-tone="idle"] {
+  background: var(--fg-faint);
+  opacity: 0.35;
 }
 .quota-empty {
   color: var(--fg-faint);
@@ -2933,7 +2955,7 @@ h2 {
 .settings-jump-link.active {
   border-color: var(--accent-dim);
   background: var(--accent-dim);
-  color: var(--accent);
+  color: var(--accent-fg, var(--accent));
 }
 .settings-section {
   scroll-margin-top: 84px;
@@ -2957,7 +2979,7 @@ h2 {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: .12em;
-  color: var(--accent);
+  color: var(--accent-fg, var(--accent));
 }
 .settings-section-head h2 {
   font-size: 15px;
@@ -4921,8 +4943,14 @@ h2 {
   color: #30d158;
   flex: none;
 }
-.tray-tile-percent.full {
+.tray-tile-percent[data-tone="warn"] {
+  color: #ffd60a;
+}
+.tray-tile-percent[data-tone="bad"] {
   color: #ff453a;
+}
+.tray-tile-percent[data-tone="idle"] {
+  color: #6e6e73;
 }
 .tray-bar {
   height: 4px;
@@ -5059,11 +5087,17 @@ h2 {
   border-radius: 8px;
   background: rgba(64, 156, 255, 0.08);
   font-size: 12px;
-  color: #a8a8ad;
+  color: var(--fg-dim);
 }
 .usage-totals strong {
-  color: #6ea8ff;
+  color: #1d5da3;
   font-variant-numeric: tabular-nums;
+}
+:root[data-theme="dark"] .usage-totals {
+  color: #a8a8ad;
+}
+:root[data-theme="dark"] .usage-totals strong {
+  color: #6ea8ff;
 }
 
 /* Relay window deltas (3h/24h/7d): only populated for prefix-gated relay

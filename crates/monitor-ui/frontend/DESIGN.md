@@ -32,13 +32,14 @@ Pinned reference links:
 | `--line-soft` | `#1c1c22` | `#eaecef` | Subtle row separators |
 | `--fg` | `#ececf1` | `#111827` | Primary text |
 | `--fg-dim` | `#a1a1aa` | `#4b5563` | Secondary text, field labels |
-| `--fg-faint` | `#71717a` | `#6b7280` | Muted timestamps, hints |
-| `--accent` | `#f0801a` | `#d96b0b` | Brand orange, focus ring, active items |
-| `--accent-dim` | `rgba(240, 128, 26, 0.15)` | `rgba(217, 107, 11, 0.12)` | Active pill backgrounds |
-| `--ok` | `#3fb950` | `#1a7f37` | Healthy, available, 200 responses |
-| `--ok-dim` | `rgba(63, 185, 80, 0.15)` | `rgba(26, 127, 55, 0.12)` | Healthy pill background |
-| `--warn` | `#d29922` | `#9a6700` | Cooldown, retry warning |
-| `--warn-dim` | `rgba(210, 153, 34, 0.15)` | `rgba(154, 103, 0, 0.12)` | Warning pill background |
+| `--fg-faint` | `#8f8f98` | `#59616d` | Muted timestamps, hints |
+| `--accent` | `#f0801a` | `#c25400` | Brand orange, focus ring, active items |
+| `--accent-dim` | `rgba(240, 128, 26, 0.15)` | `rgba(194, 84, 0, 0.12)` | Active pill backgrounds |
+| `--accent-fg` | `#f0801a` | `#9a4200` | Accent-colored text on tinted backgrounds |
+| `--ok` | `#3fb950` | `#156f30` | Healthy, available, 200 responses |
+| `--ok-dim` | `rgba(63, 185, 80, 0.15)` | `rgba(21, 111, 48, 0.12)` | Healthy pill background |
+| `--warn` | `#d29922` | `#8c5d00` | Cooldown, retry warning |
+| `--warn-dim` | `rgba(210, 153, 34, 0.15)` | `rgba(140, 93, 0, 0.12)` | Warning pill background |
 | `--bad` | `#f85149` | `#cf222e` | Errors, failed accounts, locked access |
 | `--bad-dim` | `rgba(248, 81, 73, 0.15)` | `rgba(207, 34, 46, 0.12)` | Error banner background |
 
@@ -148,3 +149,50 @@ The application exposes exactly four top-level operational destinations plus one
 - Dependencies remain frozen. Radix, shadcn, and external UI component libraries are not used.
 - React developer inspection packages (react-grab, react-scan, react-doctor) are accepted verification debt for this increment and are not persisted in package.json or production bundles.
 - StyleGallery serves as a structural spatial contract rather than a pixel mockup source.
+
+## 13. Grounding Gap Ledger
+
+Measured against the built artifact (`ui/index.html`) served to Playwright with a
+fixed gateway fixture. `axe-core` tags `wcag2a, wcag2aa, wcag21a, wcag21aa,
+wcag22aa`, 4 surfaces x 2 themes x 2 widths (1440, 390).
+
+Baseline: 59 `color-contrast` nodes across 13 of 16 surface/theme/width combos.
+After: 0 violations in 16 of 16.
+
+### Recorded exception to §11 (color tokens)
+
+§11 forbids altering color tokens and §9 requires WCAG 2.2 AA. These collided:
+
+`--fg-faint: #71717a` measured 3.55-4.07:1 on dark surfaces and could not reach
+4.5:1 on any of them (best case 4.07 on `--bg`). It styles 10-11px meta text
+(timestamps, kickers, hints), which is normal-size text under WCAG, so the AA
+mandate could not be met without a value change.
+
+Resolution: `--fg-faint` dark raised to `#8f8f98` (4.87:1 on `--panel-3`,
+5.36:1 on `--panel-2`, 5.73:1 on `--panel`, 6.13:1 on `--bg`), still
+unmistakably dimmer than `--fg-dim`. This is the only token value changed, and
+it is recorded here as a deliberate, measured exception. Light mode was already
+compliant and is untouched.
+
+Layout: no grid, breakpoint, or scroll-ownership rule changed to fix contrast.
+All 26 captures keep identical geometry before and after.
+
+### Contrast fixes that did not touch tokens
+
+| Location | Was | Now | Reason |
+|---|---|---|---|
+| `.usage-totals` / `strong` | hardcoded `#a8a8ad` / `#6ea8ff` in both themes | `--fg-dim` + `#1d5da3`; dark keeps the original pair under `[data-theme="dark"]` | Light mode measured 2.19:1 and 2.23:1 on the blue tint |
+| `.badge-bad` (light) | `--bad` on `--bad-dim` at 4.05:1 | `#b31d28` at 5.09:1 | 429/error badge text |
+| `.settings-jump-link.active` | `--accent` on `--accent-dim` at 3.59:1 | `--accent-fg` at 5.20:1 | Active pill in the on-this-page rail |
+| `.settings-section-head .kicker` | `--accent` at 4.19:1 | `--accent-fg` at 6.07:1 | Section kicker at 10px |
+
+### Non-contrast defects fixed
+
+| Defect | Evidence | Fix |
+|---|---|---|
+| Quota bars painted `--ok` at any usage, including 100% used | fixture: 99% and 100% used rendered green | `lib/quota-tone.ts` shared by account card, tray, notch; `data-tone` on bar and value |
+| Zod issue array reached a toast verbatim | `Action failed: [ { "code": "invalid_type", ... } ]` | `lib/action-failure.ts` maps Zod/secret-store failures to operator sentences |
+| Identical failures stacked separate toasts | 3 error toasts for one condition | `pushToast` collapses an identical visible message and restarts its timer |
+| Two distinct providers painted one hue, then disagreed with their own legend | `antigravity`, `zcode`, `cline`, `zai` all resolved to `#358ff3`; the chart de-duplicated seeds but the mix bar and legend did not, so zcode was purple in the chart and blue beside it | `assignDimensionSeeds` is now the single assignment shared by chart, legend, mix bar, and focus chip; collisions demote the later key instead of repeating a hue |
+| Tray quota text stayed green until exactly 100% | a `1% left` window rendered green in the tray while the notch graded the same value amber | tray percent text carries `data-tone` from the shared `quotaTone`; `usageTone` in the notch now delegates to it, so console, tray, and notch cannot drift |
+| Capture harness could reach a live gateway | 4 unmocked calls hit `127.0.0.1:18801` | containment route registered first; fixture answers `prices`, `healthz`, `/v1/models`, Devin status, Cline catalog, native settings |

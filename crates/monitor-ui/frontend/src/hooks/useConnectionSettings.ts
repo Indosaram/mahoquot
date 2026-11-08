@@ -1,4 +1,5 @@
 import type { LoadState } from "@/hooks/useGatewayPolling";
+import { actionFailed } from "@/lib/action-failure";
 import type { GatewayClients } from "@/lib/api";
 import { pendingKey } from "@/lib/pending";
 import type { ProviderProxyPolicy, ProxyProvidersMap } from "@/lib/schemas";
@@ -160,11 +161,7 @@ export function useConnectionSettings({
           // Only surface the failure while the settings card is visible; elsewhere
           // the Save gate + inline alert cover it when the user arrives.
           if (surface === "settings") {
-            setNotice(
-              error instanceof z.ZodError
-                ? "Action failed: the gateway returned settings this console does not understand."
-                : `Action failed: ${error instanceof Error ? error.message : "unknown error"}`,
-            );
+            setNotice(actionFailed(error));
           }
         }
       });
@@ -219,7 +216,7 @@ export function useConnectionSettings({
       // instance; drop the loaded-settings latch so its scalars re-read.
       setSettingsLoaded(false);
     } catch (error) {
-      setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      setNotice(actionFailed(error));
     } finally {
       setPending("");
     }
@@ -257,7 +254,7 @@ export function useConnectionSettings({
       );
       setNotice("Provider proxy routing saved and applied live.");
     } catch (error) {
-      setNotice(`Action failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      setNotice(actionFailed(error));
     } finally {
       setPending("");
     }

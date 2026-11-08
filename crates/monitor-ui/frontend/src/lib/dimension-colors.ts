@@ -70,4 +70,54 @@ export const dimensionColor = (
   dimension: OverviewDimension,
   key: string,
   provider: string,
-): string => PALETTE_CSS[dimensionDitherColor(dimension, key, provider)];
+  seed?: DitherColor,
+): string => PALETTE_CSS[seed ?? dimensionDitherColor(dimension, key, provider)];
+
+/**
+ * Assigns one seed per visible key, resolving collisions deterministically.
+ *
+ * `dimensionDitherColor` alone is a single-key lookup, and the provider table
+ * intentionally gives several providers the same preferred seed (`antigravity`,
+ * `zai`, `zcode`, and `cline` all prefer `blue`). Painting a stack from that
+ * lookup alone makes two series identical; de-duplicating in only one consumer
+ * makes one provider two colours on one screen. Both the activity chart and the
+ * mix bar read this map, so a key has exactly one hue everywhere.
+ *
+ * `seriesKeys` and `rows` are the same order by contract (`OverviewAnalytics`).
+ * Keys missing a row, and every row flagged `isOther`, resolve to `grey`.
+ */
+export const assignDimensionSeeds = (analytics: {
+  readonly dimension: OverviewDimension;
+  readonly seriesKeys: readonly string[];
+  readonly rows: readonly {
+    readonly key: string;
+    readonly provider: string;
+    readonly isOther?: boolean;
+  }[];
+}): Map<string, DitherColor> => {
+  const rowByKey = new Map(analytics.rows.map((row) => [row.key, row]));
+  const isFolded = (key: string): boolean =>
+    key === OTHER_KEY || rowByKey.get(key)?.isOther === true;
+  const used = new Set<DitherColor>();
+  const assigned = new Map<string, DitherColor>();
+
+  // Named keys claim their preferred seed first, so a collision demotes the
+  // later key rather than reshuffling one that is already drawn.
+  for (const key of analytics.seriesKeys) {
+    if (isFolded(key)) continue;
+    const provider = rowByKey.get(key)?.provider ?? key;
+    const preferred = dimensionDitherColor(analytics.dimension, key, provider);
+    const seed = used.has(preferred)
+      ? (DITHER_PALETTE.find((candidate) => !used.has(candidate)) ?? preferred)
+      : preferred;
+    used.add(seed);
+    assigned.set(key, seed);
+  }
+
+  // The folded row is always grey, matching the chart's dedicated other track.
+  for (const key of analytics.seriesKeys) {
+    if (isFolded(key)) assigned.set(key, "grey");
+  }
+
+  return assigned;
+};
