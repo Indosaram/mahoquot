@@ -13,10 +13,8 @@ import type { GatewayLifecycleStatus } from "../lib/native";
 import { getPlanTierColor } from "../lib/plan-tier";
 import { quotaTone } from "../lib/quota-tone";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
-import type { TotpEntry } from "../lib/totp-vault";
 import { quotaDisplay, quotaRows } from "./AccountsSurface";
 import { ProviderGlyph } from "./ProviderGlyph";
-import { TotpQuickAccess } from "./TotpVaultSurface";
 
 interface TrayTile {
   readonly label: string;
@@ -87,10 +85,6 @@ interface TrayPanelProps {
   readonly onQuit: () => void;
   readonly onStartGateway: () => void;
   readonly onStopGateway: () => void;
-  readonly totpEntries?: readonly TotpEntry[];
-  readonly totpCodes?: Readonly<Record<string, string>>;
-  readonly totpRemaining?: number;
-  readonly onCopyTotpCode?: (entry: TotpEntry, code: string) => void;
 }
 
 export const TrayPanel = ({
@@ -107,10 +101,6 @@ export const TrayPanel = ({
   onQuit,
   onStartGateway,
   onStopGateway,
-  totpEntries = [],
-  totpCodes = {},
-  totpRemaining = 0,
-  onCopyTotpCode = () => undefined,
 }: TrayPanelProps) => {
   const [filter, setFilter] = useState<string>("all");
 
@@ -142,16 +132,6 @@ export const TrayPanel = ({
       <header className="tray-header">
         <strong>mahoquot</strong>
       </header>
-
-      <div className="tray-totp-access">
-        <TotpQuickAccess
-          entries={totpEntries}
-          codes={totpCodes}
-          remaining={totpRemaining}
-          onCopyCode={onCopyTotpCode}
-          compact
-        />
-      </div>
 
       <div className={`tray-proxy ${online ? "online" : "offline"}`}>
         <span className="tray-proxy-dot" aria-hidden />

@@ -2081,10 +2081,6 @@ export default function App() {
         loadState={loadState}
         showRemaining={showRemaining}
         clineQuotaDisplay={clineQuotaDisplay}
-        totpEntries={totp.entries}
-        totpCodes={totp.codes}
-        totpRemaining={totp.remaining}
-        onCopyTotpCode={totp.copyCode}
         notchExpanded={notchExpanded}
         nativeCursor={nativeCursor}
       />
@@ -2113,10 +2109,6 @@ export default function App() {
         onQuit={() => void api?.core?.invoke("quit_app")}
         onStartGateway={() => void api?.core?.invoke("start_gateway")}
         onStopGateway={() => void api?.core?.invoke("stop_gateway")}
-        totpEntries={totp.entries}
-        totpCodes={totp.codes}
-        totpRemaining={totp.remaining}
-        onCopyTotpCode={totp.copyCode}
       />
     );
   }
