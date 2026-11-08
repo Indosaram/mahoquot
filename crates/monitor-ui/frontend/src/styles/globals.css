@@ -3977,6 +3977,16 @@ h2 {
   will-change: transform;
 }
 
+.notch-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 108px;
+  height: 100%;
+  pointer-events: none;
+}
+
 .notch-island-shape {
   position: absolute;
   top: 50%;
@@ -3986,8 +3996,9 @@ h2 {
   overflow: visible;
   pointer-events: none;
   transform: translate(100px, -50%);
-  transition: transform 0.38s cubic-bezier(0.32, 0.9, 0.35, 1);
-  will-change: transform;
+  transition: transform 0.38s cubic-bezier(0.32, 0.9, 0.35, 1), height 0.38s
+    cubic-bezier(0.32, 0.9, 0.35, 1);
+  will-change: transform, height;
 }
 
 .notch-island-shadow,
@@ -3999,29 +4010,34 @@ h2 {
   overflow: visible;
 }
 
+.notch-island-shadow {
+  filter: drop-shadow(0 14px 30px rgba(0, 0, 0, 0.62)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+}
+
 .notch-island-shadow path {
-  fill: #0b0b10;
+  fill: #04040a;
 }
 
 .notch-island-glass {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, #15161d 0%, #0b0b10 34%, #09090e 100%);
+  background: radial-gradient(140% 46% at 116% 0%, rgba(255, 255, 255, 0.1), transparent 62%),
+    radial-gradient(120% 38% at 108% 100%, rgba(255, 255, 255, 0.045), transparent 60%),
+    linear-gradient(180deg, #1b1c25 0%, #12131a 38%, #0a0a10 100%);
 }
 
 .notch-island-edge path {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.06);
+  stroke: rgba(255, 255, 255, 0.09);
+  stroke-width: 1;
 }
 
 .notch-surface.expanded {
   /* Brink sizes the tab to its rings; a fixed height leaves dead black space
      below the icons whenever fewer providers are connected. */
   height: auto;
-  max-height: 460px;
+  max-height: 500px;
   border-radius: 0;
-  padding: 36px 0 42px;
-  gap: 22px;
+  padding: 34px 0 40px;
+  gap: 20px;
   justify-content: center;
   overflow: visible;
   box-shadow: none;
@@ -4031,8 +4047,8 @@ h2 {
 /* Icon dials shrink as providers join so the column always fits the island:
    1-3 keep the reference 58px, then step down per added ring. */
 .notch-surface[data-count="4"] {
-  gap: 18px;
-  padding: 30px 0 36px;
+  gap: 16px;
+  padding: 26px 0 32px;
 }
 .notch-surface[data-count="4"] .notch-dial {
   width: 50px;
@@ -4047,8 +4063,8 @@ h2 {
 }
 
 .notch-surface[data-count="5"] {
-  gap: 16px;
-  padding: 26px 0 30px;
+  gap: 13px;
+  padding: 20px 0 26px;
 }
 .notch-surface[data-count="5"] .notch-dial {
   width: 44px;
@@ -4064,26 +4080,44 @@ h2 {
 
 .notch-surface[data-count="6"],
 .notch-surface[data-count="7"] {
-  gap: 12px;
-  padding: 20px 0 24px;
+  gap: 8px;
+  padding: 16px 0 20px;
+}
+.notch-surface[data-count="6"] .notch-ring-item,
+.notch-surface[data-count="7"] .notch-ring-item {
+  gap: 2px;
 }
 .notch-surface[data-count="6"] .notch-dial,
 .notch-surface[data-count="7"] .notch-dial {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
 }
 .notch-surface[data-count="6"] .notch-ring-logo .provider-logo,
 .notch-surface[data-count="7"] .notch-ring-logo .provider-logo {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 .notch-surface[data-count="6"] .notch-dial-label,
 .notch-surface[data-count="7"] .notch-dial-label {
   font-size: 11px;
 }
+.notch-surface[data-count="6"] .notch-dial-caption,
+.notch-surface[data-count="7"] .notch-dial-caption {
+  font-size: 9px;
+}
 
 .notch-shell.expanded .notch-island-shape {
+  /* The silhouette hugs the dials: a fixed 520px slab left a large empty
+     black field above and below a one- or two-provider island. */
+  height: calc(100% - 96px);
+  max-height: 464px;
   transform: translate(0, -50%);
+}
+
+.notch-shell:not(.expanded) .notch-island-shape {
+  /* Collapsed, only the 108px strip is on screen: keep the silhouette sized
+     to it so the flare does not paint above the docked edge. */
+  height: 300px;
 }
 
 .notch-ring-item {
@@ -4120,8 +4154,8 @@ h2 {
 }
 
 .notch-dial-track {
-  fill: #14151c;
-  stroke: rgba(90, 93, 115, 0.45);
+  fill: rgba(255, 255, 255, 0.03);
+  stroke: rgba(138, 142, 168, 0.34);
   stroke-width: 5;
 }
 
@@ -4130,29 +4164,55 @@ h2 {
   stroke: var(--ok);
   stroke-width: 5;
   stroke-linecap: round;
+  filter: drop-shadow(0 0 5px rgba(63, 185, 80, 0.4));
 }
 .notch-dial-arc[data-tone="warn"] {
   stroke: var(--warn);
+  filter: drop-shadow(0 0 5px rgba(210, 153, 34, 0.4));
 }
 .notch-dial-arc[data-tone="bad"] {
   stroke: var(--bad);
+  filter: drop-shadow(0 0 5px rgba(248, 81, 73, 0.42));
 }
 
-.notch-dial-caption {
-  margin-top: -4px;
-  font-size: 9.5px;
-  font-weight: 500;
-  color: var(--fg-faint);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+/* Reachability, not quota: the arc already speaks for usage. */
+.notch-health-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid #12131a;
+  background: var(--fg-dim);
+}
+.notch-health-dot[data-tone="ok"] {
+  background: var(--ok);
+}
+.notch-health-dot[data-tone="warn"] {
+  background: var(--warn);
+}
+.notch-health-dot[data-tone="bad"] {
+  background: var(--bad);
 }
 
 .notch-dial-label {
   font-size: 14px;
   font-weight: 700;
+  line-height: 1.1;
   color: #ffffff;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.notch-dial-caption {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--fg-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4181,27 +4241,44 @@ h2 {
   position: absolute;
   top: 50%;
   right: 2px;
-  width: 4px;
-  height: 64px;
+  width: 5px;
+  height: 88px;
   z-index: 1;
   border-radius: 999px;
-  background: rgba(161, 161, 170, 0.55);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  background: rgba(161, 161, 170, 0.72);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 12px rgba(0, 0, 0, 0.55);
   pointer-events: none;
   transform: translateY(-50%);
   transition: opacity 0.18s ease;
 }
 .notch-handle[data-tone="ok"] {
   background: var(--ok);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(63, 185, 80, 0.45);
 }
 .notch-handle[data-tone="warn"] {
   background: var(--warn);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(210, 153, 34, 0.45);
 }
 .notch-handle[data-tone="bad"] {
   background: var(--bad);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(248, 81, 73, 0.45);
 }
 .notch-shell.expanded .notch-handle {
   opacity: 0;
+}
+
+/* One dial cell: the button plus its hover card. The wrapper owns stacking so
+   the fixed-position card can sit above every other ring. */
+.notch-ring-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 1;
+}
+
+.notch-ring-cell.react-visible {
+  z-index: 12;
 }
 
 .notch-ring-item {
@@ -4209,12 +4286,19 @@ h2 {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 3px;
   border: 0;
-  padding: 0;
+  border-radius: 16px;
+  padding: 2px 4px;
   background: transparent;
   color: inherit;
   font: inherit;
+  cursor: default;
+}
+
+.notch-ring-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .notch-dial .notch-ring-logo {
@@ -4227,21 +4311,6 @@ h2 {
 .notch-ring-logo .provider-logo {
   width: 25px;
   height: 25px;
-}
-
-.notch-ring-wrap {
-  position: relative;
-  width: 43px;
-  height: 43px;
-  border-radius: 50%;
-  border: 7px solid rgba(89, 91, 108, 0.62);
-  background: rgba(18, 18, 27, 0.92);
-  transition: border-color 0.18s ease, background 0.18s ease;
-}
-
-.notch-ring-item:hover .notch-ring-wrap {
-  border-color: rgba(116, 119, 139, 0.82);
-  background: rgba(25, 25, 36, 0.96);
 }
 
 .notch-ring-logo {
@@ -4263,15 +4332,15 @@ h2 {
 }
 
 /* Fixed against the viewport: the tooltip renders beside the icon column
-   (96px wide, docked right) without inheriting the icon's vertical offset,
-   so a long account list is clamped inside the 420x480 native window and
-   never collapses under the pointer. React hover-intent owns visibility,
-   including the icon→tooltip gap. The container below only aligns it; the
-   tooltip itself keeps pointer events so the list stays reachable. */
+   (108px wide, docked right) without inheriting the icon's vertical offset,
+   so a long account list is clamped inside the native window and never
+   collapses under the pointer. React hover-intent owns visibility, including
+   the icon→tooltip gap. The container below only aligns it; the tooltip
+   itself keeps pointer events so the list stays reachable. */
 .notch-tooltip-anchor {
   position: fixed;
   top: 0;
-  right: 122px;
+  right: 120px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -4292,12 +4361,15 @@ h2 {
   .notch-tooltip {
     animation: none;
   }
+  .notch-empty-spin {
+    animation: none;
+  }
 }
 
 @keyframes notch-card-in {
   from {
     opacity: 0;
-    transform: translateX(14px);
+    transform: translateX(10px);
   }
   to {
     opacity: 1;
@@ -4305,20 +4377,28 @@ h2 {
   }
 }
 
+@keyframes notch-empty-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* One card, full-bleed bands: account blocks read as rows of the same surface
+   rather than cards stacked inside a card. */
 .notch-tooltip {
   /* Brink's card pop-in: spring(response: 0.42, dampingFraction: 0.68). */
   animation: notch-card-in 0.42s cubic-bezier(0.3, 0.9, 0.25, 1);
-  width: 270px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
+  width: 276px;
+  max-height: calc(100vh - 40px);
+  overflow: hidden auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 15px;
-  padding: 10px 12px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--fg-faint));
+  border-radius: 14px;
+  padding: 0;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.58), 0 2px 8px rgba(0, 0, 0, 0.38);
   pointer-events: auto;
-  overscroll-behavior: contain;
   text-align: left;
 }
 
@@ -4326,7 +4406,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  padding: 10px 12px 9px;
   text-align: left;
 }
 
@@ -4334,37 +4414,46 @@ h2 {
 .notch-tooltip-head svg {
   width: 16px;
   height: 16px;
+  flex: none;
+}
+
+.notch-tooltip-head strong {
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .notch-tooltip-count {
   margin-left: auto;
-  font-size: 11px;
+  flex: none;
+  font-size: 10.5px;
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
-}
-
-.notch-tooltip-account + .notch-tooltip-account {
-  margin-top: 6px;
+  white-space: nowrap;
 }
 
 .notch-tooltip-account {
   position: relative;
-  padding: 8px 10px 9px;
-  overflow: hidden;
+  padding: 9px 12px 10px;
   background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border-block-start: 1px solid var(--line);
   text-align: left;
 }
 
 .notch-tooltip-account-head {
-  margin-bottom: 5px;
-  padding-left: 2px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
   text-align: left;
 }
 
 .notch-tooltip-account-head strong {
-  display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: var(--fg);
   font-size: 11px;
@@ -4374,13 +4463,47 @@ h2 {
   text-align: left;
 }
 
-.notch-tooltip-head strong {
-  font-size: 13px;
-  letter-spacing: -0.01em;
+.notch-tooltip-credits {
+  flex: none;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: var(--accent-dim);
+  color: var(--accent-fg);
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.notch-tooltip-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 7px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--fg-dim);
+}
+
+.notch-tooltip-status::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.notch-tooltip-status[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.notch-tooltip-status[data-tone="bad"] {
+  color: var(--bad);
 }
 
 .notch-tooltip-row + .notch-tooltip-row {
-  margin-top: 7px;
+  margin-top: 8px;
 }
 
 .notch-tooltip-row {
@@ -4391,26 +4514,40 @@ h2 {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 3px;
+  gap: 8px;
+  margin-bottom: 4px;
 }
 
 .notch-tooltip-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-dim);
   font-size: 10.5px;
   font-weight: 500;
-  color: var(--fg-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
 }
 
-.notch-tooltip-reset {
-  font-size: 9.5px;
-  color: var(--fg-faint);
+.notch-tooltip-value {
+  flex: none;
+  color: var(--fg);
+  font-size: 11.5px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.notch-tooltip-value small {
+  color: var(--fg-dim);
+  font-size: 9.5px;
+  font-weight: 500;
 }
 
 .notch-tooltip-bar {
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.09);
   overflow: hidden;
 }
 
@@ -4426,22 +4563,25 @@ h2 {
 .notch-tooltip-bar i[data-tone="bad"] {
   background: var(--bad);
 }
+.notch-tooltip-bar i[data-tone="idle"] {
+  background: var(--fg-faint);
+}
 
 .notch-tooltip-meta {
   display: flex;
   align-items: baseline;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .notch-tooltip-meta span {
+  color: var(--fg-dim);
   font-size: 9.5px;
-  color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
 
 .notch-tooltip-empty {
-  font-size: 10px;
-  color: var(--fg-faint);
+  color: var(--fg-dim);
+  font-size: 10.5px;
   padding: 1px 0;
 }
 
@@ -4675,20 +4815,47 @@ h2 {
   }
 }
 
+.notch-empty-cell {
+  justify-content: center;
+}
+
 .notch-empty-ring {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex: 1;
-  gap: 2px;
+  gap: 3px;
 }
 
-.notch-empty-ring .notch-ring-logo strong {
-  color: var(--fg-faint);
-  font-size: 13px;
-  font-weight: 700;
+.notch-empty-ring .notch-dial-ring {
+  opacity: 0.9;
+}
+
+.notch-empty-ring svg {
+  color: var(--fg-dim);
+}
+
+.notch-empty-ring[data-tone="warn"] svg {
+  color: var(--warn);
+}
+
+.notch-empty-ring[data-tone="bad"] svg {
+  color: var(--bad);
+}
+
+.notch-empty-spin {
+  animation: notch-empty-spin 1.4s linear infinite;
+}
+
+/* Full-bleed bands: every account block is a row of the same card, separated
+   by a hairline, never a bordered card nested in another card. */
+.notch-tooltip-account {
+  border-block-start: 1px solid var(--line);
+}
+
+.notch-tooltip[data-empty-state] .notch-tooltip-account-head {
+  margin-bottom: 3px;
 }
 
 /* ── Tray dropdown panel (menu bar) — mirrors the incumbent Quotio tray ── */
