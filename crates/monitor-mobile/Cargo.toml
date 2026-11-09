@@ -1,0 +1,29 @@
+[package]
+name = "mahoquot-mobile"
+version = "0.1.7"
+edition = "2021"
+description = "Mahoquot operations console for iOS and Android"
+
+# Tauri mobile links the app as a library: staticlib for iOS, cdylib for
+# Android. The rlib keeps the desktop host build usable for `cargo check`.
+[lib]
+name = "mahoquot_mobile"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "mahoquot-mobile"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

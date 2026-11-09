@@ -103,3 +103,48 @@ describe("poll cadence decision", () => {
     expect(nextPollDelayMs(false, true, 100_000)).toBe(60_000);
   });
 });
+
+describe("unauthorized gateway", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  // The gateway bans an IP after five failed management auths for 30 minutes.
+  // A first run has no key yet, so every poll is a failed auth: retrying on a
+  // timer self-bans the machine before the user can paste a key in.
+  it("stops polling after a 401 instead of tripping the brute-force ban", async () => {
+    vi.useFakeTimers();
+    try {
+      let statsCalls = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          if (statsUrl.test(String(input))) {
+            statsCalls += 1;
+            return new Response(JSON.stringify({ error: "invalid management key" }), {
+              status: 401,
+            });
+          }
+          return new Response(JSON.stringify({ ok: true }));
+        }),
+      );
+      const clients = makeClients();
+      const { result } = renderHook(() => useGatewayPolling(clients));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(statsCalls).toBe(1);
+      expect(result.current.loadState).toBe("relay-locked");
+
+      // Ten minutes of wall clock, well past the 2s startup retry: the loop
+      // must have stopped instead of firing five times and banning us.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600_000);
+      });
+      expect(statsCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

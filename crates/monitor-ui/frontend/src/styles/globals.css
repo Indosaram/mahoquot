@@ -1670,7 +1670,9 @@ h2 {
 }
 .durable-logs-summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* Six totals, so the track count has to match or the last one orphans onto
+     its own row and leaves a dead gap under the others. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border-block: 1px solid var(--line-soft);
   background: var(--panel-2);
 }
@@ -1952,6 +1954,12 @@ h2 {
   .durable-logs-summary {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+  .durable-logs-summary > div:nth-child(3n) {
+    border-right: 0;
+  }
+  .durable-logs-summary > div:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--line-soft);
+  }
 }
 @media (max-width: 760px) {
   .durable-logs-head {
@@ -1970,12 +1978,20 @@ h2 {
   .logs-search-field input {
     width: 100%;
   }
+  /* Stacking all six tall totals pushed the table several screens down, which
+     on a phone is the whole first view. Two columns keeps the summary a band. */
   .durable-logs-summary {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .durable-logs-summary > div {
-    border-right: 0;
+    border-right: 1px solid var(--line-soft);
     border-bottom: 1px solid var(--line-soft);
+  }
+  .durable-logs-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+  .durable-logs-summary > div:nth-child(n + 5) {
+    border-bottom: 0;
   }
   .durable-proxy-tail article {
     grid-template-columns: 1fr;
@@ -4782,20 +4798,38 @@ h2 {
   .minimal-dashboard {
     gap: 20px;
   }
+  /* Keep three tracks: the three outcome KPIs own the raised band, and a
+     two-track grid put the third one alone on a second row, so the raised
+     panel painted an L instead of a band. */
   .minimal-kpis {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .minimal-kpis > div {
-    padding: 14px 12px;
+    padding: 14px 10px;
   }
-  .minimal-kpis > div:nth-child(odd) {
+  .minimal-kpis > div:nth-child(3n + 1) {
     padding-left: 0;
+  }
+  .minimal-kpis > div:nth-child(3n) {
+    border-right: 0;
+    padding-right: 0;
   }
   .minimal-kpis strong {
     font-size: 21px;
   }
   .provider-mix-labels {
     gap: 7px 13px;
+  }
+  /* A phone cannot show the provider strip and the account list at once if the
+     strip scrolls: the last tab is sliced mid-label with nothing to say more
+     are hidden. Wrapping keeps every provider visible and reachable. */
+  .provider-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .provider-tab-content {
+    height: 38px;
+    padding: 0 11px 0 7px;
   }
   .range-selector,
   .overview-dimension-selector,

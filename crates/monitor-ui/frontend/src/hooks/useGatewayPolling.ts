@@ -19,8 +19,9 @@ export type LoadState = "loading" | "online" | "starting" | "stopped" | "relay-l
 
 /** Outcome of one refresh round. A superseded round (a newer refresh started
  * while it was in flight) says nothing about gateway health, so the poll loop
- * must not back off on it. */
-type RoundOutcome = "ok" | "failed" | "superseded";
+ * must not back off on it. A relay-locked round means the gateway rejected our
+ * credentials, which no amount of retrying can fix. */
+type RoundOutcome = "ok" | "failed" | "relay-locked" | "superseded";
 
 const POLL_INTERVAL_MS = 10_000;
 const STARTUP_RETRY_MS = 2_000;
@@ -180,15 +181,16 @@ export function useGatewayPolling(clients: GatewayClients) {
       firstLoad.current = false;
     } catch (error) {
       if (generation !== pollGeneration.current) return "superseded";
+      const locked = error instanceof GatewayError && error.status === 401;
       setLoadState(
-        error instanceof GatewayError && error.status === 401
+        locked
           ? "relay-locked"
           : gatewayLifecycleRef.current === "stopped"
             ? "stopped"
             : "starting",
       );
       firstLoad.current = false;
-      return "failed";
+      return locked ? "relay-locked" : "failed";
     }
     if (generation !== pollGeneration.current) return "superseded";
     hasSucceeded.current = true;
@@ -285,6 +287,12 @@ export function useGatewayPolling(clients: GatewayClients) {
         return;
       }
       const outcome = await runRound();
+      // A 401 means the key is missing or wrong, so every retry is another
+      // failed management auth. Five of those trip the gateway's brute-force
+      // guard and ban this machine for 30 minutes, which a first run without a
+      // key would do within ten seconds. Stop until the key changes: a new key
+      // rebuilds `clients`, which restarts this effect and polls at once.
+      if (outcome === "relay-locked") return;
       if (outcome !== "superseded") {
         delay = nextPollDelayMs(outcome === "ok", hasSucceeded.current, delay);
       }

@@ -1,0 +1,4 @@
+# Tauri regenerates the native projects with `tauri ios init` / `tauri android init`.
+# They embed absolute paths and multi-hundred-megabyte static libs, so they stay
+# out of the repo; the checked-in configuration is tauri.conf.json + src/.
+/gen/
