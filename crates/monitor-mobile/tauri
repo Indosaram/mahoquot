@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+// Entry point for the Gradle Android build.
+//
+// Tauri's generated gen/android/buildSrc runs `node tauri android
+// android-studio-script` from this directory. The repository exposes the CLI
+// only through the root `bun run tauri` shim, so that task failed and Gradle
+// packaged a stale placeholder library instead of the built one. Forwarding to
+// the same pinned CLI keeps `tauri android build` and a plain `./gradlew`
+// install working without hand-copying the .so.
+const { spawnSync } = require("node:child_process");
+
+const CLI = "@tauri-apps/cli@2.11.4";
+const result = spawnSync("bunx", [CLI, ...process.argv.slice(2)], {
+  stdio: "inherit",
+  env: process.env,
+});
+
+if (result.error) {
+  console.error(`tauri shim: failed to launch bunx: ${result.error.message}`);
+  process.exit(1);
+}
+process.exit(result.status ?? 1);

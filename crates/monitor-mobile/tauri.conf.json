@@ -11,7 +11,7 @@
       {
         "label": "main",
         "title": "Mahoquot",
-        "url": "index.html",
+        "url": "index.html?remote=1",
         "width": 430,
         "height": 932,
         "minWidth": 320,

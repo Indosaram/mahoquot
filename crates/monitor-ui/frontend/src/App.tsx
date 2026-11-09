@@ -31,7 +31,7 @@ import { TotpVaultSurface } from "./components/TotpVaultSurface";
 import { TrayPanel } from "./components/TrayPanel";
 import { defaultWarmupPolicy } from "./components/WarmupControls";
 import { AppShell, OverlayLayer } from "./components/layout";
-import { Button } from "./components/ui";
+import { Button, Field, Input } from "./components/ui";
 import { useGatewayPolling } from "./hooks/useGatewayPolling";
 import { useOverviewAnalytics } from "./hooks/useOverviewAnalytics";
 import { useTotpVault } from "./hooks/useTotpVault";
@@ -129,6 +129,7 @@ import {
   getQuotaShowRemaining,
   getTelemetryRange,
   getTheme,
+  isRemoteOnlyShell,
   orderProviders,
   setClineQuotaDisplay as persistClineQuotaDisplay,
   setTheme as persistTheme,
@@ -2110,6 +2111,40 @@ export default function App() {
         onStartGateway={() => void api?.core?.invoke("start_gateway")}
         onStopGateway={() => void api?.core?.invoke("stop_gateway")}
       />
+    );
+  }
+
+  if (isRemoteOnlyShell() && !committedBaseUrl) {
+    return (
+      <AppShell className="app mobile-connect" data-mahoquot-app="mobile-connect">
+        <div className="mobile-connect-body">
+          <h1>Connect to your gateway</h1>
+          <p>
+            This app reads usage from a gateway you already run elsewhere. Enter its address to
+            start.
+          </p>
+          <Field label="Gateway URL" hint="For example http://100.78.73.127:18801">
+            <Input
+              aria-label="Gateway URL"
+              value={baseUrl}
+              placeholder="http://100.78.73.127:18801"
+              onChange={(event) => setBaseUrlState(event.target.value)}
+            />
+          </Field>
+          {gatewayUrlError ? <small className="field-error">{gatewayUrlError}</small> : null}
+          <Button
+            disabled={baseUrl.trim() === "" || gatewayUrlError !== null}
+            onClick={() => {
+              const normalized = baseUrl.trim().replace(/\/+$/, "");
+              setGatewayBaseUrl(normalized);
+              setBaseUrlState(normalized);
+              setCommittedBaseUrl(normalized);
+            }}
+          >
+            Connect
+          </Button>
+        </div>
+      </AppShell>
     );
   }
 

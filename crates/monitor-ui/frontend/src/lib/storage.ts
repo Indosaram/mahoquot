@@ -8,6 +8,21 @@ export const isTauriEnvironment = (): boolean => {
   );
 };
 
+/** True in the iOS/Android shell, which owns no gateway process and can only
+ * reach a remote endpoint. Uses signals available before the first render: the
+ * injected marker, an explicit URL flag, and the webview user agent (the only
+ * shells that cannot spawn a gateway child are the mobile ones). */
+export const isRemoteOnlyShell = (): boolean => {
+  if (typeof window === "undefined") return false;
+  if (
+    (window as unknown as { __MAHOQUOT_REMOTE_ONLY__?: boolean }).__MAHOQUOT_REMOTE_ONLY__ === true
+  )
+    return true;
+  if (new URLSearchParams(window.location.search).get("remote") === "1") return true;
+  if (!isTauriEnvironment()) return false;
+  return /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+};
+
 export const migrateStoredGatewayUrl = (): string => {
   const current = localStorage.getItem("mahoquot.base");
   if (current === OBSOLETE_GATEWAY_URL) {
@@ -16,6 +31,9 @@ export const migrateStoredGatewayUrl = (): string => {
   }
   if (current !== null) {
     return current;
+  }
+  if (isRemoteOnlyShell()) {
+    return "";
   }
   if (isTauriEnvironment()) {
     return DEFAULT_GATEWAY_URL;

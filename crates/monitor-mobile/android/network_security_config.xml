@@ -1,19 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Release builds must reach a gateway the user hosts themselves. Those can be
-  plain HTTP on a LAN or on the handset's own loopback, which Android blocks by
-  default. Permit cleartext only where a self-hosted gateway can actually live:
-  loopback and the RFC 1918 / link-local ranges. Every public destination still
-  requires TLS, so a gateway reached over the internet keeps full protection.
+  The mobile app is remote-only: it reads usage from a gateway the user already
+  runs, typically over a private overlay such as Tailscale, which serves plain
+  HTTP. Android blocks cleartext by default, so a release build could not reach
+  that gateway at all.
 
-  Tauri regenerates gen/android on `tauri android init`, so this file is kept in
-  crates/monitor-mobile/android/ and copied in by scripts/patch-android.sh.
+  Cleartext is therefore permitted globally here, and TLS is still used for any
+  endpoint the user configures with https://. This is the only viable policy
+  because Android <domain> entries cannot express the arbitrary IP a private
+  overlay assigns, and the app cannot know it ahead of time.
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">localhost</domain>
-        <domain includeSubdomains="false">127.0.0.1</domain>
-        <domain includeSubdomains="false">10.0.2.2</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

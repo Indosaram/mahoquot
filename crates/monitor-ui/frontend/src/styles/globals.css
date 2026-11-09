@@ -5403,3 +5403,32 @@ h2 {
 :root[data-theme="light"] .gateway-failure-body pre {
   background: rgb(127 29 29 / 8%);
 }
+
+/* First-run connection screen for the remote-only mobile shell. It renders
+   outside the main column, so it carries its own padding and status-bar inset. */
+.mobile-connect {
+  display: block;
+  overflow-y: auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 32px) 20px
+    calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+.mobile-connect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+.mobile-connect-body h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.mobile-connect-body p {
+  margin: 0;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.mobile-connect-body button {
+  align-self: flex-start;
+}
