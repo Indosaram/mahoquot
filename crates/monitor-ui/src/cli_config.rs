@@ -1464,7 +1464,10 @@ mod tests {
             .app_written_bytes;
         let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
         let provider = &config["providers"]["mahoquot"];
-        assert_eq!(provider["compat"], serde_json::json!({ "supportsReasoningEffort": false }));
+        assert_eq!(
+            provider["compat"],
+            serde_json::json!({ "supportsReasoningEffort": false })
+        );
         assert_eq!(provider["headers"], serde_json::json!({ "x": "1" }));
         assert_eq!(provider["name"], "Mahoquot");
         assert_eq!(provider["api"], "openai-completions");
@@ -1485,7 +1488,10 @@ mod tests {
         let target = manager.target_path(CliAgentId::Omo);
         write_fixture(&target, b"{}");
 
-        let bytes = manager.preview(request(CliAgentId::Omo)).unwrap().app_written_bytes;
+        let bytes = manager
+            .preview(request(CliAgentId::Omo))
+            .unwrap()
+            .app_written_bytes;
         let config: JsonValue = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             config["providers"]["mahoquot"]["compat"],

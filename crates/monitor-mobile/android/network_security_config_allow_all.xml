@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Opt-in variant: permits cleartext to any host. Used only when a build passes
+  -PmahoquotCleartext=true for a gateway that is plain HTTP on a LAN address
+  (Android's <domain> entries cannot express IP ranges, so the private-range
+  restriction in network_security_config.xml cannot cover an arbitrary LAN IP).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
