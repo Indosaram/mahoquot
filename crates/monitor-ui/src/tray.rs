@@ -246,12 +246,27 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
 /// out the same key, so a second hand-rolled parser would let them drift.
 pub fn extract_first_api_key(yaml: &str) -> Result<Option<String>, String> {
     let config = parse_master_key_config(yaml)?;
-    Ok(config
-        .get("api-keys")
-        .and_then(serde_yaml::Value::as_sequence)
+    Ok(master_keys(&config)
         .and_then(|keys| keys.first())
         .and_then(serde_yaml::Value::as_str)
         .map(str::to_owned))
+}
+
+/// Config-version 8 moved inbound client keys under `access`, leaving the
+/// top-level `api-keys` for provider credential groups. Both shapes stay
+/// readable so the app keeps the same master key across the migration, and the
+/// canonical `access.api-keys` wins whenever it is present.
+fn master_keys(config: &serde_yaml::Mapping) -> Option<&Vec<serde_yaml::Value>> {
+    config
+        .get("access")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|access| access.get("api-keys"))
+        .and_then(serde_yaml::Value::as_sequence)
+        .or_else(|| {
+            config
+                .get("api-keys")
+                .and_then(serde_yaml::Value::as_sequence)
+        })
 }
 
 fn parse_master_key_config(yaml: &str) -> Result<serde_yaml::Mapping, String> {
@@ -262,17 +277,34 @@ fn parse_master_key_config(yaml: &str) -> Result<serde_yaml::Mapping, String> {
             .map_err(|error| format!("invalid gateway config YAML: {error}"))?
     };
     if let Some(value) = config.get("api-keys") {
-        let keys = value
-            .as_sequence()
-            .ok_or_else(|| "gateway api-keys must be a sequence of strings".to_string())?;
-        if keys
-            .iter()
-            .any(|key| !matches!(key.as_str(), Some(key) if !key.trim().is_empty()))
-        {
-            return Err("gateway api-keys must contain only nonempty strings".to_string());
+        // A mapping here is the V8 provider-credential block, not the master
+        // key list; only sequence-shaped values are the legacy key list.
+        if value.as_mapping().is_none() {
+            validate_master_keys(value)?;
+        }
+    }
+    if let Some(access) = config.get("access") {
+        let access = access
+            .as_mapping()
+            .ok_or_else(|| "gateway access must be a mapping".to_string())?;
+        if let Some(value) = access.get("api-keys") {
+            validate_master_keys(value)?;
         }
     }
     Ok(config)
+}
+
+fn validate_master_keys(value: &serde_yaml::Value) -> Result<(), String> {
+    let keys = value
+        .as_sequence()
+        .ok_or_else(|| "gateway api-keys must be a sequence of strings".to_string())?;
+    if keys
+        .iter()
+        .any(|key| !matches!(key.as_str(), Some(key) if !key.trim().is_empty()))
+    {
+        return Err("gateway api-keys must contain only nonempty strings".to_string());
+    }
+    Ok(())
 }
 
 /// The config.yaml body that must be on disk for `generated` to be the
@@ -289,15 +321,45 @@ pub fn config_with_master_api_key(
         return Err("generated gateway API key must not be empty".to_string());
     }
     let mut config = parse_master_key_config(existing.unwrap_or_default())?;
-    let key = serde_yaml::Value::String("api-keys".to_string());
-    let mut keys = match config.remove(&key) {
-        Some(serde_yaml::Value::Sequence(keys)) => keys,
-        _ => Vec::new(), // The parser has already validated the optional sequence.
-    };
-    keys.insert(0, serde_yaml::Value::String(generated.to_string()));
-    config.insert(key, serde_yaml::Value::Sequence(keys));
+    insert_master_key(&mut config, generated);
     serde_yaml::to_string(&config)
         .map_err(|error| format!("failed to serialize gateway config YAML: {error}"))
+}
+
+/// The destination follows the document's own shape: a V8 file keeps its
+/// inbound keys under `access.api-keys`, and writing the pre-V8 top-level list
+/// there instead would be migrated over the provider groups and drop them.
+fn insert_master_key(config: &mut serde_yaml::Mapping, generated: &str) {
+    let canonical = config
+        .get("access")
+        .and_then(serde_yaml::Value::as_mapping)
+        .is_some()
+        || config
+            .get("api-keys")
+            .is_some_and(|value| value.as_mapping().is_some());
+    if !canonical {
+        let key = serde_yaml::Value::String("api-keys".to_string());
+        let mut keys = match config.remove(&key) {
+            Some(serde_yaml::Value::Sequence(keys)) => keys,
+            _ => Vec::new(), // The parser has already validated the optional sequence.
+        };
+        keys.insert(0, serde_yaml::Value::String(generated.to_string()));
+        config.insert(key, serde_yaml::Value::Sequence(keys));
+        return;
+    }
+    let access_key = serde_yaml::Value::String("access".to_string());
+    let mut access = match config.remove(&access_key) {
+        Some(serde_yaml::Value::Mapping(access)) => access,
+        _ => serde_yaml::Mapping::new(),
+    };
+    let keys_key = serde_yaml::Value::String("api-keys".to_string());
+    let mut keys = match access.remove(&keys_key) {
+        Some(serde_yaml::Value::Sequence(keys)) => keys,
+        _ => Vec::new(),
+    };
+    keys.insert(0, serde_yaml::Value::String(generated.to_string()));
+    access.insert(keys_key, serde_yaml::Value::Sequence(keys));
+    config.insert(access_key, serde_yaml::Value::Mapping(access));
 }
 
 /// The app owns its credential store at `~/.mahoquot/auth`.
