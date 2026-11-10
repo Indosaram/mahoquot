@@ -328,6 +328,14 @@ declare global {
   }
 }
 
+const storedGatewayEndpoint = (): string => {
+  try {
+    return localStorage.getItem("mahoquot.base") ?? "";
+  } catch {
+    return "";
+  }
+};
+
 const managementHeaders = async (url: string, headers: HeadersInit): Promise<HeadersInit> => {
   let target: URL;
   try {
@@ -343,28 +351,26 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
   )
     return headers;
   const native = window.__MAHOQUOT_MANAGEMENT__;
-  if (!native || target.origin !== new URL(native.endpoint).origin) return headers;
-  if (!native.key) {
-    const bridge = z
-      .object({
-        invoke: z.custom<(command: string, args: Record<string, unknown>) => Promise<unknown>>(
-          (value) => typeof value === "function",
-        ),
-      })
-      .safeParse(Reflect.get(window, "__TAURI_INTERNALS__"));
-    if (bridge.success) {
-      const result = z
-        .string()
-        .nullable()
-        .parse(
-          await bridge.data.invoke("read_secret", {
-            request: { endpoint: native.endpoint, profile: "default", kind: "management_key" },
-          }),
-        );
-      if (result) return { Authorization: `Bearer ${result}` };
-    }
-  }
-  return native.key ? { Authorization: `Bearer ${native.key}` } : {};
+  const endpoint = native?.endpoint ?? storedGatewayEndpoint();
+  if (!endpoint || target.origin !== new URL(endpoint).origin) return headers;
+  if (native?.key) return { ...headers, Authorization: `Bearer ${native.key}` };
+  const bridge = z
+    .object({
+      invoke: z.custom<(command: string, args: Record<string, unknown>) => Promise<unknown>>(
+        (value) => typeof value === "function",
+      ),
+    })
+    .safeParse(Reflect.get(window, "__TAURI_INTERNALS__"));
+  if (!bridge.success) return headers;
+  const result = z
+    .string()
+    .nullable()
+    .parse(
+      await bridge.data.invoke("read_secret", {
+        request: { endpoint, profile: "default", kind: "management_key" },
+      }),
+    );
+  return result ? { ...headers, Authorization: `Bearer ${result}` } : headers;
 };
 
 /** Runs `fetch` and `read` (the body read) under one deadline, so a gateway
