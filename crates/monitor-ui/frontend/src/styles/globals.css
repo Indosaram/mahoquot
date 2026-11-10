@@ -1692,11 +1692,54 @@ h2 {
   }
 }
 .logs-provider-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
+}
+.logs-provider-filter span {
+  color: var(--fg-faint);
+  font-size: 11px;
 }
 .logs-provider-filter select {
   width: auto;
   min-width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.logs-head-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-left: auto;
+  min-width: 0;
+}
+/* The text query is the last control in the row; unlike the provider select it
+   must not claim the auto margin, and it needs a bounded width because the
+   shared .input class is width:100%. */
+.logs-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.logs-search-field span {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.logs-search-field input {
+  width: 160px;
+  min-width: 100px;
+  max-width: 100%;
+  font-size: 11px;
+  padding: 4px 8px;
 }
 .durable-logs-pagination {
   display: flex;
@@ -2046,7 +2089,12 @@ h2 {
   .logs-head-controls {
     justify-content: flex-start;
     flex-wrap: wrap;
+    flex-shrink: 1;
+    margin-left: 0;
     width: 100%;
+  }
+  .logs-provider-filter {
+    margin-left: auto;
   }
   .logs-search-field {
     flex: 1 1 100%;
@@ -2120,53 +2168,6 @@ h2 {
   color: var(--fg);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
-}
-.logs-provider-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-.logs-head-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  margin-left: auto;
-  min-width: 0;
-}
-/* The text query is the last control in the row; unlike the provider select it
-   must not claim the auto margin, and it needs a bounded width because the
-   shared .input class is width:100%. */
-.logs-search-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.logs-search-field span {
-  color: var(--fg-faint);
-  font-size: 11px;
-}
-.logs-search-field input {
-  width: 160px;
-  min-width: 100px;
-  max-width: 100%;
-  font-size: 11px;
-  padding: 4px 8px;
-}
-.logs-provider-filter span {
-  color: var(--fg-faint);
-  font-size: 11px;
-}
-.logs-provider-filter select {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-2);
-  color: var(--fg);
-  font-size: 11px;
-  padding: 4px 8px;
 }
 .logs-table-wrap {
   min-height: 0;
