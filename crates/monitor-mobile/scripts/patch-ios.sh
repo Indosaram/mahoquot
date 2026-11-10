@@ -11,6 +11,10 @@
 #   3. Nothing copies frontendDist into gen/apple/assets, so the generated
 #      directory stays empty and the app launches to a blank screen with no
 #      HTML bundled.
+#
+# A fourth step declares the UIScene manifest that builds made with the iOS 27
+# SDK must carry, then asserts Tauri resolves to tao >= 0.37 which fixed the
+# release-build crash in that path.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd -P)"
@@ -107,6 +111,47 @@ cp -R "$ui/." "$gen/assets/"
 if [ ! -f "$gen/assets/index.html" ]; then
   echo "patch-ios: frontendDist did not copy into gen/apple/assets" >&2
   exit 1
+fi
+
+plist="$gen/mahoquot-mobile_iOS/Info.plist"
+if [ -f "$plist" ]; then
+  python3 - "$plist" <<'PY'
+import plistlib
+import sys
+
+path = sys.argv[1]
+data = plistlib.load(open(path, "rb"))
+data["UIApplicationSceneManifest"] = {"UIApplicationSupportsMultipleScenes": False}
+plistlib.dump(data, open(path, "wb"))
+PY
+  echo "patch-ios: UIScene manifest declared in Info.plist"
+else
+  echo "patch-ios: $plist not found" >&2
+  exit 1
+fi
+
+tao_version="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' 2>/dev/null || true)"
+lock="$root/Cargo.lock"
+if [ -f "$lock" ]; then
+  tao_major_minor="$(python3 - "$lock" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1]).read()
+match = re.search(r'name = "tao"\nversion = "(\d+)\.(\d+)', text)
+print(f"{match.group(1)}.{match.group(2)}" if match else "unknown")
+PY
+)"
+  case "$tao_major_minor" in
+    0.3[7-9]|0.[4-9]*|1.*|2.*)
+      echo "patch-ios: tao $tao_major_minor carries the UIScene release fix"
+      ;;
+    *)
+      echo "patch-ios: tao $tao_major_minor predates the UIScene release fix; require tauri >= 2.12" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 echo "patch-ios: target/profile fixed, frontend bundled into gen/apple/assets"

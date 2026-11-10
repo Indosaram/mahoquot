@@ -40,8 +40,15 @@ export function ConnectScreen({ onConnected }: { readonly onConnected: () => voi
   };
 
   return (
-    <AppShell className="app mobile-connect" data-mahoquot-app="mobile-connect">
+    <AppShell className="mobile-connect" data-mahoquot-app="mobile-connect">
       <div className="mobile-connect-body">
+        <div className="mobile-connect-brand">
+          <span className="brand-mark">Q</span>
+          <div>
+            <strong>Mahoquot</strong>
+            <small>Operations console</small>
+          </div>
+        </div>
         <h1>Connect to your gateway</h1>
         <p>
           This app reads usage from a gateway you already run elsewhere. Enter its address and
