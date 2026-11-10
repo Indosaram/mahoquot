@@ -716,6 +716,63 @@ fn master_key_writer_preserves_other_values_and_existing_keys() {
 }
 
 #[test]
+fn v8_master_key_lives_under_access_and_survives_provider_groups() {
+    // The gateway's own config-version 8 migration moved inbound client keys to
+    // `access.api-keys` and reused the top-level `api-keys` for provider
+    // credential groups. Reading only the top level made every launch fail
+    // with "must be a sequence of strings" on a perfectly valid config.
+    let existing = "management:\n  secret-key: mq-master-live\napi-keys:\n  gemini: []\n  claude: []\naccess:\n  api-keys:\n  - mq-master-live\n  - mq-master-spare\nconfig-version: 8\n";
+    assert_eq!(
+        crate::tray::extract_first_api_key(existing)
+            .unwrap()
+            .as_deref(),
+        Some("mq-master-live")
+    );
+
+    // Minting on a V8 document must keep the provider groups and write the
+    // inbound key where the gateway reads it.
+    let rendered =
+        crate::tray::config_with_master_api_key(Some(existing), "mq-master-new").unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+    assert_eq!(
+        parsed["access"]["api-keys"][0].as_str(),
+        Some("mq-master-new")
+    );
+    assert_eq!(
+        parsed["access"]["api-keys"][1].as_str(),
+        Some("mq-master-live")
+    );
+    assert!(parsed["api-keys"].as_mapping().is_some());
+    assert_eq!(parsed["config-version"].as_u64(), Some(8));
+    assert_eq!(
+        parsed["management"]["secret-key"].as_str(),
+        Some("mq-master-live")
+    );
+}
+
+#[test]
+fn v8_documents_without_access_keys_are_minted_under_access() {
+    // A V8 file that predates the migration has no `access` block yet; its
+    // provider groups must not be overwritten by a new inbound key list.
+    let existing = "api-keys:\n  gemini: []\n  claude: []\nconfig-version: 8\n";
+    assert_eq!(crate::tray::extract_first_api_key(existing).unwrap(), None);
+    let rendered =
+        crate::tray::config_with_master_api_key(Some(existing), "mq-master-new").unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+    assert_eq!(
+        parsed["access"]["api-keys"][0].as_str(),
+        Some("mq-master-new")
+    );
+    assert_eq!(parsed["api-keys"]["gemini"].as_sequence().unwrap().len(), 0);
+    assert_eq!(
+        crate::tray::extract_first_api_key(&rendered)
+            .unwrap()
+            .as_deref(),
+        Some("mq-master-new")
+    );
+}
+
+#[test]
 fn malformed_master_key_config_is_rejected_without_replacement() {
     for original in [
         "api-keys: [unterminated",
@@ -726,6 +783,9 @@ fn malformed_master_key_config_is_rejected_without_replacement() {
         "api-keys: ['  ']",
         "api-keys: [alpha]\napi-keys: [beta]",
         "- not-a-root-mapping",
+        "access:\n  api-keys: not-a-list\n",
+        "access:\n  api-keys: [alpha, 42]\n",
+        "access: not-a-mapping\n",
     ] {
         assert!(crate::tray::extract_first_api_key(original).is_err());
         let mut persisted = original.to_string();

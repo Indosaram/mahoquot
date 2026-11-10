@@ -61,11 +61,17 @@ pub fn provision_management_key_from_profiles<
     };
     let document: serde_yaml::Value = serde_yaml::from_str(&existing)
         .map_err(|error| format!("Repair gateway YAML before management key migration: {error}"))?;
-    let configured = document
-        .get("remote-management")
-        .and_then(|value| value.get("secret-key"))
-        .and_then(serde_yaml::Value::as_str)
+    // Config-version 8 renamed `remote-management` to `management`. Reading only
+    // the old root mints a second key the gateway never loads; the V8 root wins
+    // because the gateway's migration keeps it and drops the legacy block.
+    let configured = management_block(&document, "management")
+        .or_else(|| management_block(&document, "remote-management"))
         .unwrap_or("");
+    let management_root = if document.get("management").is_some() {
+        "management"
+    } else {
+        "remote-management"
+    };
     let stored = store.read(&reference).map_err(|error| error.to_string())?;
     if !configured.is_empty() {
         let key = if configured.starts_with("$2") {
@@ -115,7 +121,7 @@ pub fn provision_management_key_from_profiles<
         .map_err(|error| error.to_string())?;
     let digest = bcrypt::hash(&key, bcrypt::DEFAULT_COST).map_err(|error| error.to_string())?;
     let quoted = serde_json::to_string(&digest).map_err(|error| error.to_string())?;
-    let updated = config_with_management_key(&existing, &quoted)?;
+    let updated = config_with_management_key(&existing, &quoted, management_root)?;
     let parent = config_path
         .parent()
         .ok_or("Owned gateway configuration has no parent")?;
@@ -157,21 +163,25 @@ pub fn provision_management_key_from_profiles<
     Ok(key)
 }
 
-fn config_with_management_key(existing: &str, quoted: &str) -> Result<String, String> {
+/// The management secret carried by a config root, whichever schema wrote it.
+fn management_block<'a>(document: &'a serde_yaml::Value, root: &str) -> Option<&'a str> {
+    document
+        .get(root)
+        .and_then(|value| value.get("secret-key"))
+        .and_then(serde_yaml::Value::as_str)
+        .filter(|value| !value.is_empty())
+}
+
+fn config_with_management_key(existing: &str, quoted: &str, root: &str) -> Result<String, String> {
     let mut lines: Vec<String> = existing.lines().map(str::to_owned).collect();
-    if let Some(start) = lines
-        .iter()
-        .position(|line| line.starts_with("remote-management:"))
-    {
-        let tail = lines[start]
-            .strip_prefix("remote-management:")
-            .unwrap_or("")
-            .trim();
+    let root_prefix = format!("{root}:");
+    if let Some(start) = lines.iter().position(|line| line.starts_with(&root_prefix)) {
+        let tail = lines[start].strip_prefix(&root_prefix).unwrap_or("").trim();
         if !tail.is_empty() && !tail.starts_with('#') {
             let document: serde_yaml::Value =
                 serde_yaml::from_str(existing).map_err(|error| error.to_string())?;
             let mut management = document
-                .get("remote-management")
+                .get(root)
                 .cloned()
                 .unwrap_or(serde_yaml::Value::Null);
             if management.is_null() {
@@ -179,7 +189,7 @@ fn config_with_management_key(existing: &str, quoted: &str) -> Result<String, St
             }
             let map = management
                 .as_mapping_mut()
-                .ok_or("remote-management must be a YAML mapping")?;
+                .ok_or_else(|| format!("{root} must be a YAML mapping"))?;
             let value: serde_yaml::Value =
                 serde_yaml::from_str(quoted).map_err(|error| error.to_string())?;
             map.insert(serde_yaml::Value::String("secret-key".into()), value);
@@ -216,9 +226,9 @@ fn config_with_management_key(existing: &str, quoted: &str) -> Result<String, St
                 })
                 .unwrap_or("");
             lines[start] = if comment.is_empty() {
-                "remote-management:".into()
+                root_prefix.clone()
             } else {
-                format!("remote-management: {comment}")
+                format!("{root_prefix} {comment}")
             };
             for (offset, line) in block.lines().enumerate() {
                 lines.insert(start + 1 + offset, format!("  {line}"));
@@ -241,7 +251,7 @@ fn config_with_management_key(existing: &str, quoted: &str) -> Result<String, St
             }
         }
     } else {
-        lines.push("remote-management:".into());
+        lines.push(root_prefix);
         lines.push(format!("  secret-key: {quoted}"));
     }
     let updated = lines.join("\n") + "\n";
@@ -417,9 +427,62 @@ mod tests {
     }
 
     #[test]
+    fn v8_management_root_is_read_and_written_in_place() {
+        // Config-version 8 renamed `remote-management` to `management`. The
+        // gateway migrates a legacy block on load and drops it, so reading only
+        // the old root minted a key the gateway never accepted.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let yaml = "management:\n  allow-remote: true\n  secret-key: operator-key\n  disable-control-panel: false\napi-keys:\n  gemini: []\nconfig-version: 8\n";
+        std::fs::write(&path, yaml).unwrap();
+        let store = crate::secrets::SecretStore::new(crate::secrets::PlainFileBackend::for_path(
+            dir.path().join("secrets.json"),
+        ));
+        assert_eq!(
+            provision_management_key(&store, &path, "http://127.0.0.1:18840").unwrap(),
+            "operator-key"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), yaml);
+    }
+
+    #[test]
+    fn v8_management_key_is_minted_under_the_management_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let yaml = "management:\n  allow-remote: false\napi-keys:\n  gemini: []\n";
+        std::fs::write(&path, yaml).unwrap();
+        let store = crate::secrets::SecretStore::new(crate::secrets::PlainFileBackend::for_path(
+            dir.path().join("secrets.json"),
+        ));
+        let key = provision_management_key(&store, &path, "http://127.0.0.1:18840").unwrap();
+        let documented: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let digest = documented["management"]["secret-key"]
+            .as_str()
+            .expect("management secret-key");
+        assert!(
+            digest.starts_with("$2"),
+            "secret must stay hashed: {digest}"
+        );
+        assert!(bcrypt::verify(&key, digest).unwrap());
+        assert_eq!(
+            documented["management"]["allow-remote"].as_bool(),
+            Some(false)
+        );
+        assert!(documented.get("remote-management").is_none());
+        // A second run adopts the stored key instead of rewriting the file.
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            provision_management_key(&store, &path, "http://127.0.0.1:18840").unwrap(),
+            key
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
     fn inline_yaml_migration_preserves_explicit_values_without_inventing_defaults() {
         let yaml = "# retained\nremote-management: {allow-remote: false, disable-control-panel: true, panel-github-repository: '', custom: {enabled: false}} # operator\nrouting: {strategy: fill-first}\n";
-        let updated = config_with_management_key(yaml, "\"digest\"").unwrap();
+        let updated = config_with_management_key(yaml, "\"digest\"", "remote-management").unwrap();
         let before: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
         let mut after: serde_yaml::Value = serde_yaml::from_str(&updated).unwrap();
         assert_eq!(
