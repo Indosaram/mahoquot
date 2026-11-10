@@ -330,6 +330,14 @@ declare global {
   }
 }
 
+const storedGatewayEndpoint = (): string => {
+  try {
+    return localStorage.getItem("mahoquot.base") ?? "";
+  } catch {
+    return "";
+  }
+};
+
 /** Flattens any `HeadersInit` into a record without normalizing key casing.
  * `Headers` lowercases every name, which would break callers that read or
  * forward `Authorization` exactly as they wrote it. */
@@ -365,37 +373,41 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
   )
     return headers;
   const native = window.__MAHOQUOT_MANAGEMENT__;
-  if (!native || target.origin !== new URL(native.endpoint).origin) return headers;
-  // Preserve the caller's headers as a plain record. Switching to `Headers`
-  // dropped them for every caller that keeps its own Content-Type and broke
-  // the documented object contract of the management boundary.
-  const resolved = toHeaderRecord(headers);
-  delete resolved.Authorization;
-  delete resolved.authorization;
-  if (!native.key) {
-    const bridge = z
-      .object({
-        invoke: z.custom<(command: string, args: Record<string, unknown>) => Promise<unknown>>(
-          (value) => typeof value === "function",
-        ),
-      })
-      .safeParse(Reflect.get(window, "__TAURI_INTERNALS__"));
-    if (bridge.success) {
-      const result = z
-        .string()
-        .nullable()
-        .parse(
-          await bridge.data.invoke("read_secret", {
-            request: { endpoint: native.endpoint, profile: "default", kind: "management_key" },
-          }),
-        );
-      if (result) {
-        resolved.Authorization = `Bearer ${result}`;
-        return resolved;
-      }
-    }
+  // The mobile shell injects no bridge, so fall back to the committed endpoint.
+  const endpoint = native?.endpoint ?? storedGatewayEndpoint();
+  if (!endpoint || target.origin !== new URL(endpoint).origin) return headers;
+  const stripAuth = (): Record<string, string> => {
+    const resolved = toHeaderRecord(headers);
+    delete resolved.Authorization;
+    delete resolved.authorization;
+    return resolved;
+  };
+  // A management bridge owns this boundary: its key replaces whatever the
+  // caller supplied. Without one, the caller's own header must survive.
+  if (native?.key) {
+    const resolved = stripAuth();
+    resolved.Authorization = `Bearer ${native.key}`;
+    return resolved;
   }
-  if (native.key) resolved.Authorization = `Bearer ${native.key}`;
+  const bridge = z
+    .object({
+      invoke: z.custom<(command: string, args: Record<string, unknown>) => Promise<unknown>>(
+        (value) => typeof value === "function",
+      ),
+    })
+    .safeParse(Reflect.get(window, "__TAURI_INTERNALS__"));
+  if (!bridge.success) return headers;
+  const result = z
+    .string()
+    .nullable()
+    .parse(
+      await bridge.data.invoke("read_secret", {
+        request: { endpoint, profile: "default", kind: "management_key" },
+      }),
+    );
+  if (!result) return native ? stripAuth() : headers;
+  const resolved = stripAuth();
+  resolved.Authorization = `Bearer ${result}`;
   return resolved;
 };
 
