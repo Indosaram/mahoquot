@@ -74,6 +74,7 @@ The application exposes exactly four top-level operational destinations plus one
 4. Settings:
    - Single stacked destination for connection configuration, gateway lifecycle controls, proxy URLs, routing strategies, retry policies, file logging, theme selection, and advanced YAML drawer fallback.
    - Must NOT introduce a secondary navigation rail or sub-tabs.
+   - Layout: settings surface - five operational configuration domains must scan and edit cleanly without full-viewport input stretching or nested cards -> fixed-sidenav-shell + content-limiter + stack (`https://github.com/changeroa/StyleGallery/blob/38ecef0e5fa9eb83e865e71f969e0c004992a8f9/recipes/saas-settings.md`); scroll owner: `main`; anti-patterns: letting form inputs stretch unconstrained across wide viewports, nesting bordered toggle boxes or provider sub-cards inside a settings card, mixing immediate UI display preferences into restart-required gateway proxy forms, and losing vertical scroll on compact viewports (`<=760px`).
 5. Notch (`?surface=notch`):
    - Native floating desktop status surface running under `:root[data-surface="notch"]`.
    - Bounded to 8px idle strip and 420x480 expanded window with Brink-derived hover corridor, provider grouping, and tooltip behavior.

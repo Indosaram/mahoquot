@@ -123,14 +123,21 @@ export const TotpVaultSurface = ({
             </div>
           </div>
           <div className="totp-add-grid">
-            <label>
+            <label className="field">
               <span>Label</span>
-              <input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
+              <input
+                className="input"
+                placeholder="GitHub Primary"
+                value={label}
+                onChange={(event) => setLabel(event.currentTarget.value)}
+              />
             </label>
-            <label>
+            <label className="field">
               <span>Secret or URI</span>
               <input
+                className="input"
                 type="password"
+                placeholder="Base32 secret or otpauth://totp/…"
                 value={input}
                 autoComplete="off"
                 spellCheck={false}
@@ -163,6 +170,8 @@ export const TotpVaultSurface = ({
           </div>
           <textarea
             aria-label="TOTP import values"
+            className="input"
+            placeholder="JBSWY3DPEHPK3PXP&#10;otpauth://totp/Issuer:user?secret=…"
             value={importInput}
             autoComplete="off"
             spellCheck={false}

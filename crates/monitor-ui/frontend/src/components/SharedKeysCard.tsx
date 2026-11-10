@@ -207,6 +207,8 @@ export function SharedKeysCard({
   const [issuedKey, setIssuedKey] = useState<{ rawKey: string; key: ScopedApiKey } | null>(null);
   const [topUpKey, setTopUpKey] = useState<ScopedApiKey | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("500000");
+  const [topUpSubmitting, setTopUpSubmitting] = useState(false);
+  const [topUpError, setTopUpError] = useState<string | null>(null);
 
   const [editKey, setEditKey] = useState<ScopedApiKey | null>(null);
   const [editName, setEditName] = useState("");
@@ -447,10 +449,18 @@ export function SharedKeysCard({
   const topUpValid = Number.isFinite(topUpTokens) && topUpTokens > 0;
 
   const handleTopUp = async () => {
-    if (!topUpKey || !topUpValid) return;
-    const additional = topUpTokens;
-    await onPatchKey(topUpKey.id, { token_limit: topUpKey.token_limit + additional });
-    setTopUpKey(null);
+    if (!topUpKey || !topUpValid || topUpSubmitting) return;
+    setTopUpSubmitting(true);
+    setTopUpError(null);
+    try {
+      const additional = topUpTokens;
+      await onPatchKey(topUpKey.id, { token_limit: topUpKey.token_limit + additional });
+      setTopUpKey(null);
+    } catch (err: unknown) {
+      setTopUpError(err instanceof Error ? err.message : "Failed to top up key");
+    } finally {
+      setTopUpSubmitting(false);
+    }
   };
 
   /**
@@ -497,6 +507,7 @@ export function SharedKeysCard({
           {onRefresh ? (
             <Button
               aria-label="Refresh shared keys"
+              title="Refresh shared keys"
               disabled={busy}
               onClick={() => void onRefresh()}
             >
@@ -583,6 +594,7 @@ export function SharedKeysCard({
                         aria-label={`Top up ${key.name}`}
                         onClick={() => {
                           setTopUpAmount("500000");
+                          setTopUpError(null);
                           setTopUpKey(key);
                         }}
                       >
@@ -662,9 +674,15 @@ export function SharedKeysCard({
             </Button>
           </div>
 
-          <Field htmlFor={nameInputId} hintId={`${nameInputId}-hint`} label="Key name" hint="Who or what will use this key, e.g. Study group laptop.">
+          <Field
+            htmlFor={nameInputId}
+            hintId={`${nameInputId}-hint`}
+            label="Key name"
+            hint="Who or what will use this key, e.g. Study group laptop."
+          >
             <Input
-              id={nameInputId} aria-describedby={`${nameInputId}-hint`}
+              id={nameInputId}
+              aria-describedby={`${nameInputId}-hint`}
               data-autofocus
               value={name}
               placeholder="Name"
@@ -770,9 +788,15 @@ export function SharedKeysCard({
                 </button>
               ))}
             </div>
-            <Field htmlFor={customLimitId} hintId={`${customLimitId}-hint`} label="Custom limit" hint="Overrides the preset while filled in.">
+            <Field
+              htmlFor={customLimitId}
+              hintId={`${customLimitId}-hint`}
+              label="Custom limit"
+              hint="Overrides the preset while filled in."
+            >
               <Input
-                id={customLimitId} aria-describedby={`${customLimitId}-hint`}
+                id={customLimitId}
+                aria-describedby={`${customLimitId}-hint`}
                 type="number"
                 min={0}
                 placeholder="Custom token limit"
@@ -876,15 +900,24 @@ export function SharedKeysCard({
               : `${topUpKey.token_used.toLocaleString()} tokens used (unlimited)`}
           </p>
 
-          <Field htmlFor={topUpInputId} hintId={`${topUpInputId}-hint`} label="Add tokens" hint="Raises the total limit by this amount.">
+          <Field
+            htmlFor={topUpInputId}
+            hintId={`${topUpInputId}-hint`}
+            label="Add tokens"
+            hint="Raises the total limit by this amount."
+          >
             <Input
-              id={topUpInputId} aria-describedby={`${topUpInputId}-hint`}
+              id={topUpInputId}
+              aria-describedby={`${topUpInputId}-hint`}
               data-autofocus
               type="number"
               min={1}
               value={topUpAmount}
               aria-invalid={!topUpValid}
-              onChange={(event) => setTopUpAmount(event.target.value)}
+              onChange={(event) => {
+                setTopUpAmount(event.target.value);
+                if (topUpError) setTopUpError(null);
+              }}
             />
           </Field>
           {topUpValid ? null : (
@@ -892,11 +925,16 @@ export function SharedKeysCard({
               Enter a whole number of tokens greater than 0.
             </div>
           )}
+          {topUpError ? (
+            <div role="alert" className="field-error" style={{ fontSize: "0.85rem" }}>
+              {topUpError}
+            </div>
+          ) : null}
 
           <div className="drawer-actions">
             <Button onClick={() => setTopUpKey(null)}>Cancel</Button>
-            <Button disabled={!topUpValid} onClick={() => void runMutation(handleTopUp)}>
-              Add quota
+            <Button disabled={!topUpValid || topUpSubmitting} onClick={() => void handleTopUp()}>
+              {topUpSubmitting ? "Adding…" : "Add quota"}
             </Button>
           </div>
         </DrawerDialog>
@@ -914,9 +952,15 @@ export function SharedKeysCard({
             </Button>
           </div>
 
-          <Field htmlFor={editNameInputId} hintId={`${editNameInputId}-hint`} label="Key name" hint="Who or what will use this key.">
+          <Field
+            htmlFor={editNameInputId}
+            hintId={`${editNameInputId}-hint`}
+            label="Key name"
+            hint="Who or what will use this key."
+          >
             <Input
-              id={editNameInputId} aria-describedby={`${editNameInputId}-hint`}
+              id={editNameInputId}
+              aria-describedby={`${editNameInputId}-hint`}
               data-autofocus
               value={editName}
               placeholder="Name"
@@ -927,13 +971,16 @@ export function SharedKeysCard({
             />
           </Field>
 
-          <Field htmlFor={editRawKeyInputId} hintId={`${editRawKeyInputId}-hint`}
+          <Field
+            htmlFor={editRawKeyInputId}
+            hintId={`${editRawKeyInputId}-hint`}
             label="API Key value"
             hint="You can view, copy, or replace the key secret (e.g. mq-sh-...). Leave untouched to keep current."
           >
             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <Input
-                id={editRawKeyInputId} aria-describedby={`${editRawKeyInputId}-hint`}
+                id={editRawKeyInputId}
+                aria-describedby={`${editRawKeyInputId}-hint`}
                 type={showEditRawKey ? "text" : "password"}
                 autoComplete="off"
                 value={editRawKey}
@@ -1051,9 +1098,15 @@ export function SharedKeysCard({
                 </button>
               ))}
             </div>
-            <Field htmlFor={editCustomLimitId} hintId={`${editCustomLimitId}-hint`} label="Custom limit" hint="Overrides the preset while filled in.">
+            <Field
+              htmlFor={editCustomLimitId}
+              hintId={`${editCustomLimitId}-hint`}
+              label="Custom limit"
+              hint="Overrides the preset while filled in."
+            >
               <Input
-                id={editCustomLimitId} aria-describedby={`${editCustomLimitId}-hint`}
+                id={editCustomLimitId}
+                aria-describedby={`${editCustomLimitId}-hint`}
                 type="number"
                 min={0}
                 placeholder="Custom token limit"
