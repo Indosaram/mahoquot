@@ -143,9 +143,12 @@ export function DurableLogs({
   providerRef.current = provider;
 
   // The initial load and each liveTick refresh race on the same endpoint, so a
-  // slower earlier response could land last and overwrite newer rows. Only the
-  // most recently issued request is allowed to publish its result.
+  // slower earlier response could land last and overwrite newer rows. Only a
+  // response at least as new as the latest settled request may publish, while
+  // normal FIFO completions still publish instead of being cancelled by a
+  // later in-flight tick.
   const requestSeqRef = useRef(0);
+  const settledSeqRef = useRef(0);
   // Explicit actions own their results and pending state, not live freshness.
   const actionSeqRef = useRef(0);
   const detailSeqRef = useRef(0);
@@ -174,8 +177,9 @@ export function DurableLogs({
           providers: providerRef.current === "all" ? undefined : [providerRef.current],
           limit: PAGE_LIMIT,
         });
-        if (seq !== requestSeqRef.current || actionSeq !== actionSeqRef.current || blockedByAction)
+        if (seq < settledSeqRef.current || actionSeq !== actionSeqRef.current || blockedByAction)
           return;
+        settledSeqRef.current = seq;
         // A successful load supersedes any earlier failure banner.
         setActionError("");
         setHistoryUnavailable(false);
@@ -191,20 +195,25 @@ export function DurableLogs({
           return [...distinct].sort();
         });
       } catch (error) {
-        if (!isBackground && seq === requestSeqRef.current && actionSeq === actionSeqRef.current) {
+        if (!isBackground && seq >= settledSeqRef.current && actionSeq === actionSeqRef.current) {
           setActionError(error instanceof Error ? error.message : "History unavailable");
           setHistoryUnavailable(true);
         }
       } finally {
         if (!isBackground && actionSeq === actionSeqRef.current) setPending(false);
-        if (isBackground && seq === requestSeqRef.current) setRefreshing(false);
+        if (isBackground && seq >= settledSeqRef.current) setRefreshing(false);
       }
     },
     [loadHistory],
   );
 
   useEffect(() => {
-    if (loadHistory && !historyUnavailable) return;
+    if (
+      loadHistory &&
+      !historyUnavailable &&
+      (settledSeqRef.current > 0 || initialEvents.length === 0)
+    )
+      return;
     setEvents(initialEvents);
     setNextCursor(initialEvents.length ? 1 : null);
     setProviderOptions([...new Set(initialEvents.map((event) => event.provider))].sort());
@@ -213,6 +222,7 @@ export function DurableLogs({
   // Initial load
   useEffect(() => {
     if (!loadHistory) return;
+    settledSeqRef.current = 0;
     setPageHistory([]);
     setLoadedBefore(0);
     void fetchLatestPage(false);
@@ -350,9 +360,31 @@ export function DurableLogs({
     <div className="durable-logs">
       <section className="durable-logs-console">
         <header className="durable-logs-head">
-          <div>
-            {fromMemoryTail ? <p>File logging is off — showing the in-memory tail.</p> : null}
+          <div className="durable-logs-tabs" role="tablist" aria-label="Log view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "requests"}
+              className={tab === "requests" ? "active" : ""}
+              onClick={() => setTab("requests")}
+            >
+              Requests
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "proxy"}
+              className={tab === "proxy" ? "active" : ""}
+              onClick={() => setTab("proxy")}
+            >
+              Proxy Logs
+            </button>
           </div>
+          {fromMemoryTail ? (
+            <p className="logs-memory-tail-note">
+              File logging is off — showing the in-memory tail.
+            </p>
+          ) : null}
           <div className="logs-head-controls">
             <output className="logs-live-indicator">
               <span className={`logs-live-dot${refreshing ? " active" : ""}`} aria-hidden="true" />
@@ -392,27 +424,6 @@ export function DurableLogs({
             ) : null}
           </div>
         </header>
-
-        <div className="durable-logs-tabs" role="tablist" aria-label="Log view">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "requests"}
-            className={tab === "requests" ? "active" : ""}
-            onClick={() => setTab("requests")}
-          >
-            Requests
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "proxy"}
-            className={tab === "proxy" ? "active" : ""}
-            onClick={() => setTab("proxy")}
-          >
-            Proxy Logs
-          </button>
-        </div>
 
         {actionError ? (
           <div className="state-panel warning">
@@ -462,8 +473,8 @@ export function DurableLogs({
                     <th>Status</th>
                     <th>Provider / account</th>
                     <th>Model</th>
-                    <th>Tokens</th>
-                    <th>Latency</th>
+                    <th className="num">Tokens</th>
+                    <th className="num">Latency</th>
                     <th>Event</th>
                   </tr>
                 </thead>

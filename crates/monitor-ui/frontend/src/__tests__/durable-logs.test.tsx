@@ -638,4 +638,65 @@ describe("DurableLogs stale response ordering", () => {
     });
     expect(screen.getByText("FRESH-MODEL")).toBeTruthy();
   });
+
+  it("publishes initial history completion when a newer liveTick is still in flight", async () => {
+    const initialEvent = {
+      ...durableEvents[0],
+      "event-id": "initial-row",
+      model: "INITIAL-MODEL",
+    };
+    const tickEvent = {
+      ...durableEvents[0],
+      "event-id": "tick-row",
+      model: "TICK-MODEL",
+    };
+
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseSecond: (() => void) | undefined;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+
+    let call = 0;
+    const loadHistory = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        await firstGate;
+        return { events: [initialEvent] as never, "next-cursor": null, totals };
+      }
+      await secondGate;
+      return { events: [tickEvent] as never, "next-cursor": null, totals };
+    });
+
+    const view = render(
+      <DurableLogs records={[] as never} loadHistory={loadHistory} loadHistoryDetail={vi.fn()} />,
+    );
+
+    // A live stream tick arrives while the initial load is still in flight.
+    view.rerender(
+      <DurableLogs
+        records={[] as never}
+        loadHistory={loadHistory}
+        loadHistoryDetail={vi.fn()}
+        liveTick={1}
+      />,
+    );
+
+    // The initial request completes first (normal FIFO order) and must publish.
+    await act(async () => {
+      releaseFirst?.();
+      await firstGate;
+    });
+    expect(screen.getByText("INITIAL-MODEL")).toBeTruthy();
+
+    // When the later tick request completes, it updates the table to the newer snapshot.
+    await act(async () => {
+      releaseSecond?.();
+      await secondGate;
+    });
+    expect(screen.getByText("TICK-MODEL")).toBeTruthy();
+  });
 });
