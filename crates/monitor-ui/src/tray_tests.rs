@@ -8,6 +8,39 @@ use crate::tray::{
 };
 
 #[test]
+fn tray_panel_is_contained_at_both_edges_and_negative_origin_with_target_dpi() {
+    for (origin, scale) in [(0.0, 1.0), (-1920.0, 1.0), (1920.0, 2.0), (-2880.0, 1.5)] {
+        let work = DisplayBounds {
+            origin_x: origin,
+            origin_y: 24.0 * scale,
+            width: 1920.0 * scale,
+            height: 1056.0 * scale,
+        };
+        let panel = WindowDimensions {
+            width: 340.0,
+            height: 480.0,
+        };
+        for x in [origin, origin + work.width - 20.0 * scale] {
+            for y in [0.0, work.origin_y + work.height - 20.0 * scale] {
+                let icon = DisplayBounds {
+                    origin_x: x,
+                    origin_y: y,
+                    width: 20.0 * scale,
+                    height: 20.0 * scale,
+                };
+                let position = crate::tray::tray_panel_position(&work, &icon, &panel, scale);
+                assert!(position.x >= work.origin_x);
+                assert!(position.x + panel.width * scale <= work.origin_x + work.width);
+                assert!(position.y >= work.origin_y);
+                assert!(position.y + panel.height * scale <= work.origin_y + work.height);
+                let expected_x = (x + icon.width - panel.width * scale).max(origin);
+                assert!((position.x - expected_x).abs() < 0.001);
+            }
+        }
+    }
+}
+
+#[test]
 fn home_resolution_is_shared_and_never_uses_cwd() {
     use crate::tray::resolve_home;
     let root = tempfile::tempdir().unwrap();
@@ -460,9 +493,30 @@ fn gateway_binary_resolves_env_override_then_exe_sibling() {
     );
     assert_eq!(
         resolve_gateway_binary(None, Some(std::path::Path::new("/opt/app/mahoquot"))).as_deref(),
-        Some(std::path::Path::new("/opt/app/mahoquot-gateway"))
+        Some(std::path::Path::new(if cfg!(windows) {
+            "/opt/app/mahoquot-gateway.exe"
+        } else {
+            "/opt/app/mahoquot-gateway"
+        }))
     );
     assert_eq!(resolve_gateway_binary(None, None), None);
+}
+
+#[test]
+fn resolved_gateway_sibling_exists_at_the_exact_platform_path() {
+    let bundle = tempfile::tempdir().unwrap();
+    let filename = if cfg!(windows) {
+        "mahoquot-gateway.exe"
+    } else {
+        "mahoquot-gateway"
+    };
+    let sibling = bundle.path().join(filename);
+    std::fs::write(&sibling, b"fixture, never executed").unwrap();
+    let app = bundle.path().join("mahoquot");
+    let resolved = resolve_gateway_binary(None, Some(&app)).unwrap();
+    assert_eq!(resolved, sibling);
+    assert!(std::fs::metadata(resolved).unwrap().is_file());
+    bundle.close().unwrap();
 }
 
 #[test]
@@ -599,21 +653,87 @@ fn master_key_document_is_produced_when_config_is_absent() {
     // A first run has no config.yaml at all; the generated key still has to
     // land in a document, otherwise the app authenticates with a key the
     // gateway never loads.
-    let rendered = crate::tray::config_with_master_api_key(None, "mq-master-abc");
-    assert!(
-        rendered.contains("mq-master-abc"),
-        "absent config produced no key document: {rendered}"
-    );
-    assert!(
-        rendered.contains("api-keys:") && rendered.contains("- mq-master-abc"),
-        "rendered document is not a valid api-keys document: {rendered}"
-    );
+    let rendered = crate::tray::config_with_master_api_key(None, "mq-master-abc").unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+    assert_eq!(parsed["api-keys"][0].as_str(), Some("mq-master-abc"));
 }
 
 #[test]
 fn master_key_replaces_empty_api_keys_list() {
-    let rendered =
-        crate::tray::config_with_master_api_key(Some("port: 18801\napi-keys: []\n"), "mq-master-x");
-    assert!(rendered.contains("- mq-master-x"), "{rendered}");
-    assert!(!rendered.contains("api-keys: []"), "{rendered}");
+    let rendered = crate::tray::config_with_master_api_key(
+        Some("port: 18840\napi-keys: [] # empty\n"),
+        "mq-master-x",
+    )
+    .unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+    assert_eq!(parsed["api-keys"].as_sequence().unwrap().len(), 1);
+    assert_eq!(parsed["api-keys"][0].as_str(), Some("mq-master-x"));
+    assert_eq!(parsed["port"].as_u64(), Some(18840));
+}
+
+#[test]
+fn master_key_reader_obeys_yaml_values_and_root_scope() {
+    for (yaml, expected) in [
+        ("api-keys: [alpha, beta]", Some("alpha")),
+        ("api-keys:\n- alpha # comment\n- beta", Some("alpha")),
+        ("api-keys: [\"a\\\"b\\\\c\\n\", beta]", Some("a\"b\\c\n")),
+        ("api-keys: [' alpha # quoted ']", Some(" alpha # quoted ")),
+        ("api-keys: [] # comment", None),
+        (
+            "nested:\n  api-keys: [not-root]\n# api-keys: [comment]",
+            None,
+        ),
+        ("", None),
+    ] {
+        assert_eq!(
+            crate::tray::extract_first_api_key(yaml).unwrap().as_deref(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn master_key_writer_preserves_other_values_and_existing_keys() {
+    let original = "# api-keys: []\nport: 18840\nnested:\n  api-keys: [nested]\nmessage: 'api-keys: []'\napi-keys: [alpha, beta]\n";
+    let generated = "quote'\"slash\\newline\n#key";
+    let rendered = crate::tray::config_with_master_api_key(Some(original), generated).unwrap();
+    let mut before: serde_yaml::Mapping = serde_yaml::from_str(original).unwrap();
+    let mut after: serde_yaml::Mapping = serde_yaml::from_str(&rendered).unwrap();
+    let key = serde_yaml::Value::String("api-keys".into());
+    before.remove(&key);
+    let keys = after.remove(&key).unwrap();
+    assert_eq!(before, after);
+    assert_eq!(
+        keys,
+        serde_yaml::to_value([generated, "alpha", "beta"]).unwrap()
+    );
+    assert_eq!(
+        crate::tray::extract_first_api_key(&rendered)
+            .unwrap()
+            .as_deref(),
+        Some(generated)
+    );
+}
+
+#[test]
+fn malformed_master_key_config_is_rejected_without_replacement() {
+    for original in [
+        "api-keys: [unterminated",
+        "api-keys: alpha",
+        "api-keys: null",
+        "api-keys: [alpha, 42]",
+        "api-keys: ['']",
+        "api-keys: ['  ']",
+        "api-keys: [alpha]\napi-keys: [beta]",
+        "- not-a-root-mapping",
+    ] {
+        assert!(crate::tray::extract_first_api_key(original).is_err());
+        let mut persisted = original.to_string();
+        let update = crate::tray::config_with_master_api_key(Some(&persisted), "generated");
+        assert!(update.is_err());
+        if let Ok(updated) = update {
+            persisted = updated;
+        }
+        assert_eq!(persisted, original);
+    }
 }

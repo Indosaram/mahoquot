@@ -24,7 +24,7 @@ export function canonicalJson(value) {
   return value;
 }
 
-function schemaWireMatches(actual, expected) {
+export function schemaWireMatches(actual, expected) {
   return actual?.type === expected.type && actual?.name === expected.name && actual?.strict === expected.strict
     && isDeepStrictEqual(actual?.schema, expected.schema);
 }
@@ -180,7 +180,7 @@ export async function preserveFailureDiagnostic(evidencePath, primary, cleanupEr
     ...(error.cause ? { cause: describe(error.cause) } : {}),
     ...(error instanceof AggregateError ? { errors: error.errors.map(describe) } : {}) });
   const diagnostic = { primary: primary ? describe(primary) : null, cleanup: cleanupErrors.map(describe) };
-  const file = await open(`${evidencePath}.diagnostic.json`, "w");
+  const file = await open(`${evidencePath}.diagnostic.json`, "wx");
   try { await file.writeFile(`${JSON.stringify(diagnostic, null, 2)}\n`); } finally { await file.close(); }
   return diagnostic;
 }

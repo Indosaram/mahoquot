@@ -422,8 +422,8 @@ export function DurableLogs({
         ) : null}
 
         {tab === "requests" ? (
-          <section aria-label="Request history">
-            {!actionError ? (
+          <section aria-label="Request history" aria-busy={pending}>
+            {!actionError && !pending ? (
               <section className="durable-logs-summary" aria-label="Request totals">
                 <div>
                   <span>Total</span>

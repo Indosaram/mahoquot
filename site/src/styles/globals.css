@@ -120,6 +120,30 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .provider-strip {
+    overflow: visible;
+    mask-image: none;
+  }
+
+  .provider-strip [data-marquee-track] {
+    animation: none;
+    transform: none;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem;
+    padding-inline: 1.5rem;
+  }
+
+  .provider-strip [data-marquee-item] {
+    padding-inline: 0;
+  }
+
+  .provider-strip [aria-hidden="true"][data-marquee-item],
+  .provider-motion-control {
+    display: none;
+  }
+
   *,
   *::before,
   *::after {

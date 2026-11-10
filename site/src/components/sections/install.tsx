@@ -1,20 +1,37 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Check, Copy } from "lucide-react";
 import { GithubMark } from "@/components/github-mark";
 import { ButtonLink } from "@/components/ui/button";
 import { CONTRACTS_URL, INSTALL_STEPS, REPO_URL } from "@/content/site";
 
-function CommandRow({ label, cmd }: { label: string; cmd: string }) {
-  const [copied, setCopied] = useState(false);
+export function CommandRow({ label, cmd }: { label: string; cmd: string }) {
+  const [status, setStatus] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const generation = useRef(0);
+
+  useEffect(() => () => {
+    generation.current += 1;
+    clearTimeout(timer.current);
+  }, []);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(cmd);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+    const request = ++generation.current;
+    clearTimeout(timer.current);
+    setStatus("copying");
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(cmd);
+      if (request !== generation.current) return;
+      setStatus("copied");
+      timer.current = setTimeout(() => setStatus("idle"), 1600);
+    } catch {
+      if (request === generation.current) setStatus("error");
+    }
   };
 
   return (
-    <div className="flex flex-col gap-2 border-t border-line py-5 sm:flex-row sm:items-center sm:gap-6">
+    <div className="border-t border-line py-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
       <span className="w-[190px] shrink-0 text-[14px] text-ink-faint">
         {label}
       </span>
@@ -27,12 +44,16 @@ function CommandRow({ label, cmd }: { label: string; cmd: string }) {
         aria-label={`Copy: ${cmd}`}
         className="shrink-0 self-start rounded-md p-1.5 text-ink-ghost transition-colors hover:bg-surface hover:text-ink sm:self-auto"
       >
-        {copied ? (
+        {status === "copied" ? (
           <Check className="h-4 w-4 text-ok" />
         ) : (
           <Copy className="h-4 w-4" />
         )}
       </button>
+      </div>
+      <p role="status" aria-live="polite" aria-atomic="true" data-copy-state={status} className="mt-2 text-[13px] text-ink-muted">
+        {status === "copied" ? "Command copied." : status === "error" ? "Could not copy. Select the command above and copy it manually." : ""}
+      </p>
     </div>
   );
 }

@@ -7,19 +7,18 @@
 //! silently discard the saved connection on every launch.
 
 pub fn console_initialization_script(base_url: &str, api_key: &str) -> String {
-    let base = sanitize(base_url);
-    let key = sanitize(api_key);
-    let mut script = seed_if_absent("mahoquot.base", &base);
-    if !key.is_empty() {
+    let mut script = seed_if_absent("mahoquot.base", base_url);
+    if !api_key.is_empty() {
         script.push(' ');
-        script.push_str(&seed_if_absent("mahoquot.key", &key));
+        script.push_str(&seed_if_absent("mahoquot.key", api_key));
     }
     script
 }
 
 fn seed_if_absent(storage_key: &str, value: &str) -> String {
+    let value = serde_json::Value::String(value.to_string());
     format!(
-        "if(localStorage.getItem('{storage_key}')===null)localStorage.setItem('{storage_key}', '{value}');"
+        "if(localStorage.getItem('{storage_key}')===null)localStorage.setItem('{storage_key}', {value});"
     )
 }
 
@@ -27,13 +26,6 @@ pub fn management_initialization_script(base_url: &str, management_key: &str) ->
     let value =
         serde_json::json!({"endpoint": base_url.trim_end_matches('/'), "key": management_key});
     format!("window.__MAHOQUOT_MANAGEMENT__={value};")
-}
-
-fn sanitize(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| *c != '\'' && *c != '\\' && *c != '\n' && *c != '\r')
-        .collect()
 }
 
 #[cfg(test)]
@@ -57,24 +49,39 @@ mod tests {
     #[test]
     fn seeds_storage_with_the_launched_gateway_coordinates() {
         let script = console_initialization_script("http://127.0.0.1:18885", "");
-        assert!(script.contains("setItem('mahoquot.base', 'http://127.0.0.1:18885')"));
+        assert_eq!(
+            seeded_value(&script, "mahoquot.base"),
+            "http://127.0.0.1:18885"
+        );
         assert!(!script.contains("mahoquot.key"));
         assert!(!script.contains("mahoquot.mgmt"));
         assert!(!script.contains("final-gate-key"));
     }
 
     #[test]
-    fn quote_breaking_characters_never_reach_the_embedded_script() {
-        let script = console_initialization_script("http://127.0.0.1:18885'; evil(", "");
-        assert!(!script.contains("'; evil"));
-        assert!(!script.contains('\\'));
-        assert!(script.contains("'http://127.0.0.1:18885; evil('"));
+    fn bootstrap_values_round_trip_without_deleting_or_executing_characters() {
+        let base = "http://127.0.0.1:18885/\"'\\\r\n";
+        let key = "'); evil(); //\"\\\r\n\t\0\u{2028}\u{2029}秘密";
+        let script = console_initialization_script(base, key);
+        assert_eq!(seeded_value(&script, "mahoquot.base"), base);
+        assert_eq!(seeded_value(&script, "mahoquot.key"), key);
+        assert!(!script.contains('\n'));
+        assert!(!script.contains('\r'));
     }
 
     #[test]
     fn api_key_is_seeded_when_provided() {
         let script = console_initialization_script("http://127.0.0.1:18801", "mq-master-test");
-        assert!(script.contains("setItem('mahoquot.key', 'mq-master-test')"));
+        assert_eq!(seeded_value(&script, "mahoquot.key"), "mq-master-test");
+    }
+
+    fn seeded_value(script: &str, storage_key: &str) -> String {
+        let prefix = format!("localStorage.setItem('{storage_key}', ");
+        let encoded = script.split_once(&prefix).unwrap().1;
+        let mut values = serde_json::Deserializer::from_str(encoded).into_iter::<String>();
+        let value = values.next().unwrap().unwrap();
+        assert!(encoded[values.byte_offset()..].starts_with(");"));
+        value
     }
 
     /// Writing unconditionally is the regression that reverted the Settings

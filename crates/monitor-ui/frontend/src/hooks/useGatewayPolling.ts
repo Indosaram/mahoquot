@@ -67,6 +67,7 @@ export function useGatewayPolling(clients: GatewayClients) {
   const [gatewayLifecycle, setGatewayLifecycle] = useState<GatewayLifecycleStatus>("running");
   const [telemetry, setTelemetry] = useState<readonly TelemetrySample[]>([]);
   const [credentialsError, setCredentialsError] = useState("");
+  const [inventoryState, setInventoryState] = useState<"loading" | "ready" | "error">("loading");
   const [logsError, setLogsError] = useState("");
   const [schemaMismatch, setSchemaMismatch] = useState<string | null>(null);
   const [modelRegistryStatus, setModelRegistryStatus] = useState<ModelRegistryStatus | null>(null);
@@ -76,12 +77,20 @@ export function useGatewayPolling(clients: GatewayClients) {
   const hasSucceeded = useRef(false);
   const usageRefreshAt = useRef(0);
   const pollGeneration = useRef(0);
+  const spinTimerRef = useRef<number | undefined>(undefined);
+  const manualRefreshInFlight = useRef<GatewayClients | null>(null);
   const prevClientsRef = useRef(clients);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   if (prevClientsRef.current !== clients) {
     prevClientsRef.current = clients;
     pollGeneration.current += 1;
     firstLoad.current = true;
     hasSucceeded.current = false;
+    usageRefreshAt.current = 0;
   }
 
   // `clients` is this hook's own parameter, not an outer-scope value: dropping it
@@ -99,8 +108,15 @@ export function useGatewayPolling(clients: GatewayClients) {
     setLogs([]);
     setLogsError("");
     setCredentials([]);
+    setInventoryState("loading");
     setModelRegistryStatus(null);
     setGatewayModels([]);
+    setCredentialsError("");
+    setModelRegistryError("");
+    setSchemaMismatch(null);
+    setRefreshing(false);
+    manualRefreshInFlight.current = null;
+    window.clearTimeout(spinTimerRef.current);
   }, [clients]);
 
   // Mirrors gatewayLifecycle so refresh can read it without becoming a new
@@ -141,6 +157,7 @@ export function useGatewayPolling(clients: GatewayClients) {
 
   const refreshUsage = useCallback(
     async (force = false) => {
+      if (!mounted.current || prevClientsRef.current !== clients) return;
       const now = Date.now();
       if (!force && now - usageRefreshAt.current < 30_000) return;
       usageRefreshAt.current = now;
@@ -162,6 +179,7 @@ export function useGatewayPolling(clients: GatewayClients) {
   );
 
   const runRound = useCallback(async (): Promise<RoundOutcome> => {
+    if (!mounted.current || prevClientsRef.current !== clients) return "superseded";
     const generation = ++pollGeneration.current;
     if (firstLoad.current) setLoadState("loading");
     try {
@@ -181,16 +199,15 @@ export function useGatewayPolling(clients: GatewayClients) {
       firstLoad.current = false;
     } catch (error) {
       if (generation !== pollGeneration.current) return "superseded";
-      const locked = error instanceof GatewayError && error.status === 401;
       setLoadState(
-        locked
+        error instanceof GatewayError && error.status === 401
           ? "relay-locked"
           : gatewayLifecycleRef.current === "stopped"
             ? "stopped"
             : "starting",
       );
       firstLoad.current = false;
-      return locked ? "relay-locked" : "failed";
+      return error instanceof GatewayError && error.status === 401 ? "relay-locked" : "failed";
     }
     if (generation !== pollGeneration.current) return "superseded";
     hasSucceeded.current = true;
@@ -207,7 +224,9 @@ export function useGatewayPolling(clients: GatewayClients) {
     if (credentialResult.status === "fulfilled") {
       setCredentials(credentialResult.value);
       setCredentialsError("");
+      setInventoryState("ready");
     } else {
+      setInventoryState("error");
       setCredentialsError(
         credentialResult.reason instanceof Error
           ? credentialResult.reason.message
@@ -241,8 +260,6 @@ export function useGatewayPolling(clients: GatewayClients) {
     [runRound],
   );
 
-  const spinTimerRef = useRef<number | undefined>(undefined);
-  const manualRefreshInFlight = useRef(false);
   useEffect(() => () => window.clearTimeout(spinTimerRef.current), []);
 
   // Only a refresh the user asked for spins the tray icon; the 10s poll must
@@ -252,8 +269,8 @@ export function useGatewayPolling(clients: GatewayClients) {
   // A click while a round is in flight is dropped instead of stacking another
   // full quota pass.
   const refreshNow = useCallback(async () => {
-    if (manualRefreshInFlight.current) return;
-    manualRefreshInFlight.current = true;
+    if (!mounted.current || prevClientsRef.current !== clients || manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = clients;
     setRefreshing(true);
     window.clearTimeout(spinTimerRef.current);
     const start = Date.now();
@@ -263,16 +280,18 @@ export function useGatewayPolling(clients: GatewayClients) {
       await refreshUsage(true);
       await refresh();
     } finally {
-      manualRefreshInFlight.current = false;
-      const elapsed = Date.now() - start;
-      const minSpinMs = 500;
-      if (elapsed < minSpinMs) {
-        spinTimerRef.current = window.setTimeout(() => setRefreshing(false), minSpinMs - elapsed);
-      } else {
-        setRefreshing(false);
+      if (mounted.current && prevClientsRef.current === clients && manualRefreshInFlight.current === clients) {
+        manualRefreshInFlight.current = null;
+        const elapsed = Date.now() - start;
+        const minSpinMs = 500;
+        if (elapsed < minSpinMs) {
+          spinTimerRef.current = window.setTimeout(() => setRefreshing(false), minSpinMs - elapsed);
+        } else {
+          setRefreshing(false);
+        }
       }
     }
-  }, [refresh, refreshUsage]);
+  }, [clients, refresh, refreshUsage]);
 
   useEffect(() => {
     // Polls every 10s on a healthy gateway; each failed round doubles the
@@ -287,11 +306,10 @@ export function useGatewayPolling(clients: GatewayClients) {
         return;
       }
       const outcome = await runRound();
-      // A 401 means the key is missing or wrong, so every retry is another
-      // failed management auth. Five of those trip the gateway's brute-force
-      // guard and ban this machine for 30 minutes, which a first run without a
-      // key would do within ten seconds. Stop until the key changes: a new key
-      // rebuilds `clients`, which restarts this effect and polls at once.
+      // A 401 means the gateway rejected our credentials. Five failed
+      // management calls trip its brute-force guard and ban this machine for
+      // 30 minutes, so stop polling until the key changes: a new key rebuilds
+      // `clients`, which restarts this effect and polls at once.
       if (outcome === "relay-locked") return;
       if (outcome !== "superseded") {
         delay = nextPollDelayMs(outcome === "ok", hasSucceeded.current, delay);
@@ -361,6 +379,7 @@ export function useGatewayPolling(clients: GatewayClients) {
     logs,
     setLogs,
     credentialsError,
+    inventoryState,
     logsError,
     loadState,
     setLoadState,

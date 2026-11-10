@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createNetServer } from "node:net";
+import { snapshotGuestProfiles, requireAbsentGuestProfiles } from "./desktop-guest-profiles.mjs";
+import { observeGatewayLifecycle } from "./desktop-lifecycle-events.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const gatewayDir = join(root, "mahoquot-proxy");
@@ -29,24 +31,33 @@ async function bounded(promise, label, timeout = 30000) {
   }
 }
 
+export async function collectCommand(child, label) {
+  const observations = [
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ];
+  const settled = Promise.allSettled(observations);
+  try {
+    return await bounded(Promise.all(observations), label);
+  } catch (error) {
+    const errors = [error];
+    try { child.kill("SIGKILL"); } catch (killError) { errors.push(killError); }
+    try {
+      const results = await bounded(settled, `${label} termination and pipe drain`, 15000);
+      for (const result of results) {
+        if (result.status === "rejected" && !errors.includes(result.reason)) errors.push(result.reason);
+      }
+    } catch (cleanupError) { errors.push(cleanupError); }
+    throw new AggregateError(errors, `${label} failed`);
+  }
+}
+
 async function git(directory, ...args) {
   const child = Bun.spawn(["git", "-C", directory, ...args], { stdout: "pipe", stderr: "pipe" });
-  try {
-    const [text, error, code] = await bounded(
-      Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]),
-      "git " + args.join(" ")
-    );
-    assert(code === 0, error);
-    return text.trim();
-  } catch (error) {
-    child.kill("SIGKILL");
-    await child.exited;
-    throw error;
-  }
+  const [text, error, code] = await collectCommand(child, "git " + args.join(" "));
+  assert(code === 0, error);
+  return text.trim();
 }
 
 async function releasedPort(port) {
@@ -64,31 +75,60 @@ async function releasedPort(port) {
   return { port, rebound: true };
 }
 
-let isolatedKeychainPath = null;
-const isolatedKeychainPassword = `desktop-qa-${randomUUID()}`;
+// Caller-authored receipts and alternate HOME do not establish isolation.
+export const DESKTOP_ADMISSION_BLOCKER = "K1: root/orchestrator must verify an actual disposable guest and obtain separate screen authorization";
 
-async function deleteNamespacedKeychainEntries(serviceName) {
-  assert(
-    serviceName && serviceName !== "mahoquot.desktop" && serviceName.startsWith("desktop-qa-"),
-    `Refusing to delete keychain entries for non-namespaced service: ${serviceName}`
-  );
-  // macOS security CLI deletes one matching entry per invocation;
-  // loop until security reports that no matching item was found (exit code 44 / errSecItemNotFound).
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const proc = Bun.spawn(
-      ["security", "delete-generic-password", "-s", serviceName],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) {
-      // Exit code 44 or stderr containing "could not be found" / "SecKeychainSearchCopyNext" indicates no more entries exist
-      break;
-    }
-  }
+async function securityCommand(args) {
+  const proc = Bun.spawn(["/usr/bin/security", ...args], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await collectCommand(proc, `security ${args[0]}`);
+  assert(code === 0, `security ${args[0]} failed (${code}): ${stderr || stdout}`);
+  return stdout;
+}
+
+export function parseKeychainPaths(text) {
+  return text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    assert(/^"\/[^"\r\n]+"$/.test(line), "unrecognized security keychain path output");
+    return line.slice(1, -1);
+  });
+}
+
+// Snapshot the real guest login domain before any mutation, not an alternate HOME.
+export async function keychainTransaction(run) {
+  const originalDefault = parseKeychainPaths(await run(["default-keychain", "-d", "user"]));
+  const originalSearch = parseKeychainPaths(await run(["list-keychains", "-d", "user"]));
+  assert(originalDefault.length === 1, "cannot restore absent/ambiguous default keychain");
+  const owned = new Set();
+  return {
+    async create(path, password) {
+      assert(!owned.has(path) && !originalSearch.includes(path) && !originalDefault.includes(path), "keychain path is not newly owned");
+      await run(["create-keychain", "-p", password, path]);
+      owned.add(path);
+      await run(["unlock-keychain", "-p", password, path]);
+      await run(["set-keychain-settings", path]);
+      await run(["list-keychains", "-d", "user", "-s", path]);
+      await run(["default-keychain", "-d", "user", "-s", path]);
+    },
+    async restore() {
+      const errors = [];
+      const attempt = async (action) => { try { await action(); } catch (error) { errors.push(error); } };
+      await attempt(() => run(["list-keychains", "-d", "user", "-s", ...originalSearch]));
+      await attempt(() => run(["default-keychain", "-d", "user", "-s", ...originalDefault]));
+      await attempt(async () => {
+        const currentDefault = parseKeychainPaths(await run(["default-keychain", "-d", "user"]));
+        const currentSearch = parseKeychainPaths(await run(["list-keychains", "-d", "user"]));
+        assert(JSON.stringify(currentDefault) === JSON.stringify(originalDefault) &&
+          JSON.stringify(currentSearch) === JSON.stringify(originalSearch), "keychain restoration mismatch");
+      });
+      // Never delete a keychain while preference restoration is uncertain.
+      if (errors.length === 0) {
+        for (const path of owned) await attempt(async () => {
+          await run(["delete-keychain", path]);
+          owned.delete(path);
+        });
+      }
+      if (errors.length) throw new AggregateError(errors, "keychain cleanup failed; preserve guest for inspection");
+    },
+  };
 }
 
 function processAlive(pid) {
@@ -97,33 +137,6 @@ function processAlive(pid) {
     return true;
   } catch (error) {
     return error.code === "EPERM";
-  }
-}
-
-async function childPids(parentPid) {
-  const proc = Bun.spawn(["pgrep", "-P", String(parentPid)], { stdout: "pipe", stderr: "pipe" });
-  const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  return stdout.split("\n").map((line) => Number(line.trim())).filter((pid) => pid > 0);
-}
-
-async function processCommand(pid) {
-  const ps = Bun.spawn(["ps", "-p", String(pid), "-o", "command="], { stdout: "pipe", stderr: "pipe" });
-  const [stdout, , code] = await Promise.all([
-    new Response(ps.stdout).text(),
-    new Response(ps.stderr).text(),
-    ps.exited,
-  ]);
-  return code === 0 ? stdout.trim() : "";
-}
-
-/** Bounded wait for an observable condition; resolves with its value or throws. */
-async function waitFor(label, probe, timeout = 30000, interval = 150) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    const value = await probe();
-    if (value) return value;
-    if (Date.now() >= deadline) throw new Error(`${label} not observed within ${timeout}ms`);
-    await new Promise((done) => setTimeout(done, interval));
   }
 }
 
@@ -147,37 +160,21 @@ async function findDesktopBinary() {
   throw new Error(`Real desktop binary not found (${candidates.join(", ")}); build it with --features custom-protocol first`);
 }
 
-async function createIsolatedKeychain(home, events) {
+async function createIsolatedKeychain(home, events, keychains) {
   const keychainDir = join(home, "Library/Keychains");
   await mkdir(keychainDir, { recursive: true });
   await mkdir(join(home, "Library/Preferences"), { recursive: true });
   const path = join(keychainDir, "desktop-qa.keychain-db");
-  const env = { ...process.env, HOME: home };
-  const run = async (args) => {
-    const proc = Bun.spawn(["security", ...args], { env, stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    assert(code === 0, `security ${args[0]} failed (${code}): ${err || out}`);
-    return out;
-  };
-  await run(["create-keychain", "-p", isolatedKeychainPassword, path]);
-  isolatedKeychainPaths.push({ path, home });
-  await run(["unlock-keychain", "-p", isolatedKeychainPassword, path]);
-  await run(["set-keychain-settings", path]);
-  await run(["list-keychains", "-d", "user", "-s", path]);
-  await run(["default-keychain", "-d", "user", "-s", path]);
-  const current = (await run(["default-keychain", "-d", "user"])).trim();
-  assert(current.includes(path), `isolated HOME default keychain is not the QA keychain: ${current}`);
-  events.push({ type: "isolated-keychain-created", path, default_keychain: current });
+  await keychains.create(path, `desktop-qa-${randomUUID()}`);
+  events.push({ type: "guest-keychain-created", path });
 }
 
-const isolatedKeychainPaths = [];
-
 /** One isolated HOME with config, optional credential fixture and keychain. */
-async function prepareHome(work, name, { port, upstreamPort, credential, inferenceKey, mgmtSecret, events }) {
+async function prepareHome(work, name, { port, upstreamPort, credential, inferenceKey, mgmtSecret, events, keychains }) {
   const home = join(work, name);
   const auth = join(home, ".mahoquot/auth");
   await mkdir(auth, { recursive: true });
-  await createIsolatedKeychain(home, events);
+  await createIsolatedKeychain(home, events, keychains);
   await writeFile(join(home, ".mahoquot/connection.json"), JSON.stringify({ base_url: `http://127.0.0.1:${port}` }));
   if (credential) {
     await writeFile(
@@ -220,8 +217,41 @@ async function prepareHome(work, name, { port, upstreamPort, credential, inferen
  * one `MAHOQUOT_NATIVE_QA <json>` report; "quit" makes it use the tray menu's
  * Quit item, so the process exits through the product's own quit path.
  */
+export function observeNativeReport(child, prefix = "MAHOQUOT_NATIVE_QA ", accept = (report) => Array.isArray(report.steps)) {
+  let pending = "";
+  return new Promise((resolveReport, rejectReport) => {
+    const cleanup = () => {
+      child.stdout.off("data", onData);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const onError = (error) => { cleanup(); rejectReport(error); };
+    const onExit = (code, signal) => onError(new Error(`native app exited before report (${code}, ${signal})`));
+    const onData = (data) => {
+      pending += data.toString();
+      let end;
+      while ((end = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, end);
+        pending = pending.slice(end + 1);
+        if (!line.startsWith(prefix)) continue;
+        try {
+          const report = JSON.parse(line.slice(prefix.length));
+          if (prefix !== "MAHOQUOT_NATIVE_QA " && !accept(report)) continue;
+          assert(accept(report), "native report missing steps");
+          cleanup();
+          resolveReport(report);
+        } catch (error) { onError(error); }
+        return;
+      }
+    };
+    child.stdout.on("data", onData);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
 function launchNativeApp(binary, { home, port, gatewayBin, scenario, artifacts, account, model, keychainService, inferenceKey }) {
-  const child = spawn(binary, [], {
+  const child = spawn("/usr/bin/python3", [join(root, "scripts/qa/cases/desktop-process-supervisor.py"), "--supervise", binary], {
     cwd: root,
     env: {
       ...process.env,
@@ -244,22 +274,30 @@ function launchNativeApp(binary, { home, port, gatewayBin, scenario, artifacts, 
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const app = { child, stdout: "", stderr: "", report: null };
-  let resolveReport;
-  app.reportPromise = new Promise((done) => (resolveReport = done));
+  const app = { child, stdout: "", stderr: "", lifecycle: observeGatewayLifecycle(child) };
+  // Subscribe before start/quit can be sent; only newline-complete reports parse.
+  app.reportPromise = observeNativeReport(child);
+  // A launch/early-exit error can arrive before runScenario awaits the promise.
+  app.reportPromise.catch(() => {});
   child.stdout.on("data", (data) => {
-    app.stdout += data.toString();
-    const line = app.stdout.split("\n").find((entry) => entry.startsWith("MAHOQUOT_NATIVE_QA "));
-    if (line && !app.report) {
-      app.report = JSON.parse(line.slice("MAHOQUOT_NATIVE_QA ".length));
-      resolveReport(app.report);
-    }
+    app.stdout = (app.stdout + data.toString()).slice(-20000);
   });
   child.stderr.on("data", (data) => {
     app.stderr = (app.stderr + data.toString()).slice(-20000);
   });
-  app.exited = new Promise((done) => child.once("exit", (code, signal) => done({ code, signal })));
-  app.send = (command) => child.stdin.write(`${command}\n`);
+  app.started = observeNativeReport(child, "MAHOQUOT_QA_SUPERVISOR ", (event) => event.event === "app-spawned");
+  app.started.catch(() => {});
+  app.exited = observeNativeReport(child, "MAHOQUOT_QA_SUPERVISOR ", (event) => event.event === "app-exited");
+  app.exited.catch(() => {});
+  app.stopped = observeNativeReport(child, "MAHOQUOT_QA_SUPERVISOR ", (event) => event.event === "group-terminated");
+  app.stopped.catch(() => {});
+  app.supervisorClosed = new Promise((done) => child.once("close", (code, signal) => done({ code, signal })));
+  app.inputFailure = null;
+  child.stdin.on("error", (error) => { app.inputFailure = error; });
+  app.send = (command) => {
+    if (app.inputFailure) throw app.inputFailure;
+    child.stdin.write(`${command}\n`);
+  };
   return app;
 }
 
@@ -277,18 +315,41 @@ async function runScenario(app, label) {
 /** Quits through the tray menu and returns the observed exit. */
 async function quitThroughTray(app, label) {
   app.send("quit");
-  return await bounded(app.exited, `${label} tray Quit exit`, 20000);
+  const exit = await bounded(app.exited, `${label} tray Quit exit`, 20000);
+  return exit; // Supervisor cleanup is separate: it must not make Quit pass.
 }
 
-async function forceStop(app) {
-  if (!app || app.child.exitCode !== null || app.child.signalCode !== null) return null;
-  app.child.kill("SIGKILL");
-  return await bounded(app.exited, "forced app exit", 5000).catch(() => null);
+export async function forceStop(app) {
+  if (!app) return null;
+  const errors = [];
+  if (!app.stopRequested) {
+    app.stopRequested = true;
+    // Delivery failure must not bypass observation of the EOF cleanup path.
+    try { app.send("supervisor-stop"); }
+    catch (error) { errors.push(error); }
+    try { app.child.stdin.end(); }
+    catch (error) { errors.push(error); }
+  }
+  // Subscribe to both deadlines even if either observation rejects first.
+  const [stopped, closed] = await Promise.allSettled([
+    bounded(app.stopped, "owned process group termination", 15000),
+    bounded(app.supervisorClosed, "supervisor reap and pipe closure", 15000),
+  ]);
+  if (stopped.status === "rejected") errors.push(stopped.reason);
+  if (closed.status === "rejected") errors.push(closed.reason);
+  else if (closed.value.code !== 0) errors.push(new Error(`supervisor failed: ${JSON.stringify(closed.value)}`));
+  if (errors.length) throw new AggregateError(errors, "supervisor delivery or cleanup failed");
+  return closed.value;
 }
 
 const step = (report, name) => report.steps.find((entry) => entry.step === name)?.detail;
 
 export async function runCase(variant, evidencePath, context) {
+  throw new Error(DESKTOP_ADMISSION_BLOCKER);
+}
+
+// Retained for repair in a disposable user/VM; deliberately not exported or dispatched.
+async function runUncertifiedCase(variant, evidencePath, context) {
   assert(["happy", "failure"].includes(variant), "unknown desktop-parity variant");
   assert(process.platform === "darwin", "desktop-parity drives native AppKit surfaces and requires macOS");
   const ports = context.ports;
@@ -334,6 +395,10 @@ export async function runCase(variant, evidencePath, context) {
   const keychainService = `desktop-qa-${randomUUID().replace(/[^a-zA-Z0-9-]/g, "")}`;
   assert(keychainService !== "mahoquot.desktop" && keychainService.startsWith("desktop-qa-"), "Keychain safety invariant violated");
 
+  let processesStopped = false;
+  let profiles = null;
+  let keychains = null;
+  let keychainsRestored = false;
   let mock = null;
   let app = null;
   let failure = null;
@@ -366,18 +431,20 @@ export async function runCase(variant, evidencePath, context) {
     });
   };
 
-  const observeGatewayChild = async (appPid) => {
-    const gatewayPid = await waitFor("gateway child process", async () => {
-      for (const pid of await childPids(appPid)) {
-        if ((await processCommand(pid)).includes(context.binary)) return pid;
-      }
-      return null;
-    });
-    ownedPids.add(gatewayPid);
-    return { gatewayPid, command: await processCommand(gatewayPid) };
+  const observeGatewayChild = async (current) => {
+    const spawned = await bounded(current.lifecycle.wait("spawned"), "owned gateway spawn", 45000);
+    await bounded(current.lifecycle.wait("ready", spawned.generation), "owned listener readiness", 45000);
+    current.gatewayGeneration = spawned.generation;
+    ownedPids.add(spawned.pid);
+    events.push({ type: "native-gateway-ready", ...spawned });
+    return { gatewayPid: spawned.pid, command: context.binary };
   };
 
   try {
+    // Supplied only by the root-verified guest invocation, never HOME-derived.
+    await requireAbsentGuestProfiles(context.guestHome);
+    profiles = await snapshotGuestProfiles(context.guestHome);
+    keychains = await keychainTransaction(securityCommand);
     await releasedPort(ports[0]);
     await releasedPort(ports[1]);
 
@@ -385,12 +452,11 @@ export async function runCase(variant, evidencePath, context) {
       startMock(42);
       const credential = "codex-desktop-primary";
       const account = "desktop-primary";
-      const home = await prepareHome(work, "home-happy", { port: ports[0], upstreamPort: ports[1], credential, inferenceKey, mgmtSecret, events });
+      const home = await prepareHome(work, "home-happy", { port: ports[0], upstreamPort: ports[1], credential, inferenceKey, mgmtSecret, events, keychains });
       app = launchNativeApp(desktop.path, { home, port: ports[0], gatewayBin: context.binary, scenario: "happy", artifacts, account, model, keychainService, inferenceKey });
-      const appPid = app.child.pid;
+      const appPid = (await bounded(app.started, "native app spawn")).pid;
       ownedPids.add(appPid);
-      await waitFor("gateway /healthz via real app", () => healthy(ports[0]), 45000);
-      const { gatewayPid, command } = await observeGatewayChild(appPid);
+      const { gatewayPid, command } = await observeGatewayChild(app);
       const mgmt = await fetch(`http://127.0.0.1:${ports[0]}/v0/management/auth-files`, {
         headers: { authorization: `Bearer ${mgmtSecret}` },
         signal: AbortSignal.timeout(10000),
@@ -448,8 +514,9 @@ export async function runCase(variant, evidencePath, context) {
 
       // Quit through the tray menu: the app exits and takes the gateway child with it.
       exit = await quitThroughTray(app, "happy");
+      const gatewayGone = (await bounded(app.lifecycle.wait("reaped", app.gatewayGeneration), "gateway reap after Quit", 10000)).pid === gatewayPid;
+      await forceStop(app);
       app = null;
-      const gatewayGone = await waitFor("gateway child exit after Quit", async () => !processAlive(gatewayPid), 10000).catch(() => false);
       const portFreed = (await releasedPort(ports[0]).catch(() => ({ rebound: false }))).rebound;
       events.push({ type: "native-tray-quit", input: "tray menu 'Quit Mahoquot' performActionForItemAtIndex:", exit, gateway_exited: gatewayGone, port_released: portFreed });
       record(
@@ -467,14 +534,15 @@ export async function runCase(variant, evidencePath, context) {
     } else {
       // Unreachable gateway: the owned gateway binary cannot start, so the real
       // console must surface the native shell's actionable failure.
-      const unreachableHome = await prepareHome(work, "home-unreachable", { port: ports[0], upstreamPort: ports[1], credential: null, inferenceKey, mgmtSecret, events });
+      const unreachableHome = await prepareHome(work, "home-unreachable", { port: ports[0], upstreamPort: ports[1], credential: null, inferenceKey, mgmtSecret, events, keychains });
       const missingGateway = join(work, "missing-gateway-binary");
       app = launchNativeApp(desktop.path, { home: unreachableHome, port: ports[0], gatewayBin: missingGateway, scenario: "unreachable", artifacts, keychainService, inferenceKey });
-      ownedPids.add(app.child.pid);
+      ownedPids.add((await bounded(app.started, "native app spawn")).pid);
       const unreachable = await runScenario(app, "unreachable");
       const banner = step(unreachable, "gateway-failure-banner")?.text ?? "";
       const healthzWhileUp = await healthy(ports[0]);
       const unreachableExit = await quitThroughTray(app, "unreachable");
+      await forceStop(app);
       app = null;
       events.push({ type: "native-unreachable-gateway", banner, gateway_healthz: healthzWhileUp, screenshot: step(unreachable, "console-screenshot"), exit: unreachableExit });
       record(
@@ -490,17 +558,17 @@ export async function runCase(variant, evidencePath, context) {
       startMock(null);
       const credential = "codex-desktop-unknown";
       const account = "desktop-unknown";
-      const quotaHome = await prepareHome(work, "home-unknown-quota", { port: ports[0], upstreamPort: ports[1], credential, inferenceKey, mgmtSecret, events });
+      const quotaHome = await prepareHome(work, "home-unknown-quota", { port: ports[0], upstreamPort: ports[1], credential, inferenceKey, mgmtSecret, events, keychains });
       app = launchNativeApp(desktop.path, { home: quotaHome, port: ports[0], gatewayBin: context.binary, scenario: "unknown-quota", artifacts, account, keychainService, inferenceKey });
-      const appPid = app.child.pid;
+      const appPid = (await bounded(app.started, "native app spawn")).pid;
       ownedPids.add(appPid);
-      await waitFor("gateway /healthz via real app", () => healthy(ports[0]), 45000);
-      const { gatewayPid } = await observeGatewayChild(appPid);
+      const { gatewayPid } = await observeGatewayChild(app);
       const quotaReport = await runScenario(app, "unknown-quota");
       const quota = step(quotaReport, "accounts-quota");
       exit = await quitThroughTray(app, "unknown-quota");
+      const gatewayGone = (await bounded(app.lifecycle.wait("reaped", app.gatewayGeneration), "gateway reap after Quit", 10000)).pid === gatewayPid;
+      await forceStop(app);
       app = null;
-      const gatewayGone = await waitFor("gateway child exit after Quit", async () => !processAlive(gatewayPid), 10000).catch(() => false);
       events.push({ type: "native-unknown-quota", quota, screenshot: step(quotaReport, "console-screenshot"), exit, gateway_exited: gatewayGone });
       record("unknown-quota-preserved", true, quota?.unmeasured === true && quota?.fabricated_zero === false && exit.code === 0 && gatewayGone === true);
     }
@@ -508,40 +576,55 @@ export async function runCase(variant, evidencePath, context) {
   } catch (error) {
     failure = error;
   } finally {
-    const forced = await forceStop(app);
-    if (forced) {
-      exit = forced;
-      events.push({ type: "forced-app-stop", ...forced });
+    try {
+      const forced = await forceStop(app);
+      if (forced) {
+        exit = forced;
+        events.push({ type: "forced-app-stop", ...forced });
+      }
+      processesStopped = true;
+    } catch (error) {
+      failure = new AggregateError([failure, error].filter(Boolean), "app cleanup failed");
     }
     if (mock) {
-      await Promise.resolve(mock.stop(true)).catch(() => {});
+      try { await Promise.resolve(mock.stop(true)); }
+      catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "mock cleanup failed"); }
       mock = null;
     }
-    for (const { path, home } of isolatedKeychainPaths.splice(0)) {
-      const proc = Bun.spawn(["security", "delete-keychain", path], { env: { ...process.env, HOME: home }, stdout: "pipe", stderr: "pipe" });
-      await proc.exited;
-      events.push({ type: "isolated-keychain-deleted", path, exit_code: proc.exitCode });
-    }
     try {
-      await deleteNamespacedKeychainEntries(keychainService);
-      events.push({ type: "keychain-cleanup-observed", service: keychainService });
+      assert(processesStopped, "retain keychains until supervised process cleanup succeeds");
+      if (keychains) {
+        await keychains.restore();
+        events.push({ type: "keychain-preferences-restored" });
+      }
+      keychainsRestored = true;
     } catch (error) {
-      failure ??= error;
+      failure = new AggregateError([failure, error].filter(Boolean), "desktop cleanup failed");
+      events.push({ type: "keychain-cleanup-failed", error: String(error), retained_work: work });
     }
     const survivors = [...ownedPids].filter(processAlive);
-    for (const pid of survivors) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch (_) {}
-    }
-    if (survivors.length) failure ??= new Error(`owned processes survived teardown: ${survivors.join(",")}`);
+    // Historical PID observations do not confer signal authority: a PID can
+    // have been recycled. A guest supervisor must own/reap the complete tree.
+    if (survivors.length) failure = new AggregateError(
+      [failure, new Error(`unresolved process ownership at teardown: ${survivors.join(",")}`)].filter(Boolean),
+      "guest supervisor cleanup required"
+    );
     try {
       const probes = await Promise.all(ports.map(releasedPort));
       events.push({ type: "port-release-observations", probes, surviving_owned_processes: survivors });
     } catch (error) {
       failure ??= error;
     }
-    await rm(work, { recursive: true, force: true }).catch(() => {});
+    try {
+      assert(processesStopped, "retain profiles until supervised process cleanup succeeds");
+      if (profiles) await profiles.restore();
+    } catch (error) {
+      failure = new AggregateError([failure, error].filter(Boolean), "profile cleanup failed");
+    }
+    if (keychainsRestored && !failure) {
+      try { await rm(work, { recursive: true, force: true }); }
+      catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "scratch cleanup failed"); }
+    }
   }
 
   const required =
@@ -573,9 +656,9 @@ export async function runCase(variant, evidencePath, context) {
     },
     teardown: {
       exit,
-      termination: "controlled",
+      termination: "creation-owned-process-group; detached descendants not covered",
       listeners: failure ? null : 0,
-      ownedProcesses: failure ? null : 0,
+      ownedProcesses: null,
       listener_inventory: [],
       process_inventory: [],
       external_dials: externalDials,

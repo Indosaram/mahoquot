@@ -24,6 +24,7 @@ import {
 import {
   type NormalizedAccount,
   formatResetTime,
+  hasQuotaRefreshError,
   isClaudeSubscriptionAccount,
 } from "../lib/accounts";
 import { hasCreditDetail } from "../lib/credits";
@@ -122,6 +123,15 @@ export const QuotaFreshnessBadge = ({ usage }: { readonly usage?: Usage | null }
     );
   }
   return null;
+};
+
+// Bars kept from before a failed refresh are history, not the account's
+// current allowance; the caption says when they were last true.
+const lastReportedLabel = (usage?: Usage | null): string => {
+  const at = usage?.refreshed_at_unix ?? usage?.observed_at_unix;
+  if (!at) return "Last reported values; current quota unknown";
+  const ago = formatResetTime(Math.max(0, Math.floor(Date.now() / 1000) - at));
+  return `Last reported ${ago} ago; current quota unknown`;
 };
 
 // Throttling, upstream outages and timeouts clear on their own and are already
@@ -342,8 +352,8 @@ export const AccountCard = ({
   // Only work targeting this account disables this card; a mutation on a
   // sibling card, or a settings save, leaves it interactive.
   const isPending = blocks(pending, "account", account.id);
-  // Claude subscriptions display in the gateway's reset order, so a manual
-  // position would be overwritten on the next render.
+  // Claude subscriptions display in the gateway's weekly reset order, so a
+  // manual position would be overwritten on the next render.
   const reorderLocked = isClaudeSubscriptionAccount(account);
   const rows = quotaRows(account, clineQuotaDisplay);
   const [refreshing, setRefreshing] = useState(false);
@@ -723,7 +733,17 @@ export const AccountCard = ({
           </div>
         ) : null}
         {rows.length ? (
-          <div className="quota-list">
+          <div
+            className={
+              hasQuotaRefreshError(account.usage) ? "quota-list quota-list-unverified" : "quota-list"
+            }
+            data-testid="account-quota-list"
+          >
+            {hasQuotaRefreshError(account.usage) ? (
+              <div className="quota-unverified-note" data-testid="quota-unverified-note">
+                {lastReportedLabel(account.usage)}
+              </div>
+            ) : null}
             {rows.map((row, index, list) => {
               const percent = quotaDisplay(row.usedPercent, showRemaining);
               const startsGroup = row.group !== null && row.group !== list[index - 1]?.group;

@@ -36,6 +36,71 @@ async function releasedPort(port) {
   await bounded(new Promise((done) => probe.close(done)), "close port probe " + port);
 }
 
+const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const string = (value) => typeof value === "string" && value.length > 0;
+const count = (value) => Number.isInteger(value) && value >= 0;
+const shape = (fields) => (value) => object(value) && Object.entries(fields).every(([key, check]) => check(value[key]));
+const equal = (expected) => (value) => value === expected;
+const stats = shape({ uptime_secs: count, in_flight: count, served: count, accounts: Array.isArray, history: Array.isArray });
+const usage = shape({ primary: object, secondary: object, reset_credits_available: (v) => v === null || count(v) });
+const refreshed = shape({ ok: equal(true), auth: shape({ name: string, status: equal("refreshed") }) });
+const reset = shape({ status: equal("ok"), auth_index: string, models: usage });
+const oauth = shape({ status: equal("ok"), provider: equal("devin"), url: string, state: string });
+
+// Contracts describe this case's declared fixtures, not every possible response of a handler.
+// Keys include the method: GET and DELETE logs must never share a response predicate.
+const routeContracts = new Map([
+  ["GET /v8/management/config", shape({ "api-keys": Array.isArray, "logging-to-file": (v) => typeof v === "boolean" })],
+  ["GET /v8/management/server/latest-version", shape({ "latest-version": string })],
+  ["POST /v8/management/requests/api-call", shape({ status_code: count, header: object, body: (v) => typeof v === "string" })],
+  ["POST /v8/management/routing/cooldown/reset", reset],
+  ["GET /v8/management/routing/model-definitions/codex", shape({ channel: equal("codex"), models: (v) => Array.isArray(v) && v.length > 0 && v.every(string) })],
+  ["GET /v8/management/observability/logs", shape({ records: Array.isArray, "request-count": count, "proxy-count": count, "retained-count": count, "latest-timestamp": count })],
+  ["DELETE /v8/management/observability/logs", shape({ success: equal(true), removed: count, message: string })],
+  ["GET /v8/management/observability/logs/errors", shape({ files: Array.isArray })],
+  ["GET /v8/management/observability/usage/api-keys", shape({ "api-key-usage": stats })],
+  ["GET /v8/management/observability/usage/queue", Array.isArray],
+  ["GET /v8/management/credentials", shape({ files: Array.isArray })],
+  ["GET /v8/management/credentials/models", shape({ models: Array.isArray })],
+  ["GET /v8/management/credentials/download", shape({ type: equal("codex"), identity_slug: string, access_token: string })],
+  ["GET /v0/management/quota/providers", shape({ providers: (v) => Array.isArray(v) && v.length > 0 && v.every(shape({ provider: string, display_name: string, supports_reset: (v) => typeof v === "boolean" })) })],
+  ["PATCH /v8/management/credentials/status", shape({ status: equal("ok"), name: string, disabled: (v) => typeof v === "boolean" })],
+  ["PATCH /v8/management/credentials/fields", shape({ status: equal("ok") })],
+  ["POST /v8/management/credentials/refresh", refreshed],
+  ["GET /v8/management/oauth/status", shape({ status: equal("ok"), accounts: stats })],
+  ["POST /v0/management/quota/fetch", shape({ auth_index: string, models: usage })],
+  ["POST /v0/management/quota/reset", reset],
+  ["POST /v0/management/auth-files/refresh", refreshed],
+  ["GET /v0/management/meta-auth-url", shape({ provider: equal("meta"), flow: equal("device"), device_code: string, user_code: string, url: string, expires_in: count, interval: count })],
+  ["GET /v0/management/kimi-auth-url", shape({ provider: equal("kimi"), status: equal("ok"), flow: equal("device"), state: string, user_code: string, url: string, expires_in: count })],
+  ["GET /v0/management/devin-auth-url", oauth],
+]);
+
+export function routeObservationValid(result) {
+  if (typeof result.path !== "string" || !result.path.startsWith("/")) return false;
+  const url = new URL(result.path, "http://fixture.invalid");
+  const key = `${result.method} ${url.pathname}`;
+  let status = 200;
+  let check = routeContracts.get(key);
+  if (key === "GET /v8/management/observability/logs/errors/missing.json") {
+    status = 404; check = shape({ error: equal("not found") });
+  } else if (key === "GET /v8/management/observability/logs/requests/missing") {
+    status = 404; check = shape({ error: equal("not found"), id: equal("missing") });
+  } else if (url.searchParams.getAll("provider").length === 1 && url.searchParams.get("provider") === "unsupported") {
+    if (key === "POST /v8/management/oauth/import") {
+      status = 404; check = shape({ error: equal("provider_not_found") });
+    } else if (key === "GET /v8/management/oauth/auth-url") {
+      status = 404; check = shape({ error: equal("provider not found") });
+    }
+  } else if (key === "DELETE /v8/management/oauth/session" && !url.searchParams.has("state")) {
+    status = 400; check = shape({ status: equal("error"), error: equal("missing state") });
+  }
+  if (url.pathname === "/v8/management/credentials/models" && !url.searchParams.get("name")?.trim()) return false;
+  if (url.pathname === "/v8/management/credentials/download" && url.searchParams.get("name") !== "codex-test-acct.json") return false;
+  if (key === "GET /v8/management/oauth/status" && url.searchParams.has("state")) return false;
+  return Boolean(check && result.status === status && (status !== 200 || !Object.hasOwn(result.body ?? {}, "error")) && check(result.body));
+}
+
 export async function runCase(variant, evidencePath, context) {
   assert(["happy", "failure"].includes(variant), "unknown management-ops variant: " + variant);
   const ports = context.ports;
@@ -94,6 +159,7 @@ export async function runCase(variant, evidencePath, context) {
           body_sha256: hash(body),
         });
         if (path === "/latest-release") return Response.json({ tag_name: "v-task28-mock" });
+        if (path === "/device") return Response.json({ device_code: "fixture-device", user_code: "fixture-user", verification_uri: `http://127.0.0.1:${ports[1]}/verify`, expires_in: 900, interval: 5 });
         if (path === "/echo") {
           return Response.json({ status: "echoed", method: request.method, path,
             authorization: request.headers.get("authorization") });
@@ -186,39 +252,22 @@ export async function runCase(variant, evidencePath, context) {
         ["POST", "/v0/management/quota/fetch", { auth_index: "codex-test-acct.json" }],
         ["POST", "/v0/management/quota/reset", { auth_index: "codex-test-acct.json" }],
         ["POST", "/v0/management/auth-files/refresh", { name: "codex-test-acct.json" }],
-        ["GET", "/v0/management/meta-auth-url"], ["GET", "/v0/management/kimi-auth-url"], ["GET", "/v0/management/devin-auth-url"],
+        ["GET", `/v0/management/meta-auth-url?device_url=${encodeURIComponent(`http://127.0.0.1:${ports[1]}/device`)}`],
+        ["GET", `/v0/management/kimi-auth-url?device_url=${encodeURIComponent(`http://127.0.0.1:${ports[1]}/device`)}`],
+        ["GET", `/v0/management/devin-auth-url?redirect_uri=${encodeURIComponent(`http://127.0.0.1:${ports[1]}/callback`)}`],
       ];
       const routeResults = [];
       for (const [method, path, body] of routes) {
         const auth = path.includes("/credentials/download") ? exportHeaders : mgmtHeaders;
         routeResults.push({ method, path, ...(await jsonCall(method, path, body, auth)) });
       }
-      const expectedNotFound = new Set([
-        "/v8/management/observability/logs/errors/missing.json",
-        "/v8/management/observability/logs/requests/missing",
-        "/v8/management/oauth/import?provider=unsupported",
-        "/v8/management/oauth/auth-url?provider=unsupported",
-      ]);
-      const invalidRoutes = routeResults.filter((r) => [405, 501].includes(r.status) || (r.status === 404 && !expectedNotFound.has(r.path)));
-      const badShapes = routeResults.filter((r) => r.body === null || (typeof r.body !== "object"));
-      const usefulCheck = (r) => {
-        if (r.path === "/v8/management/routing/model-definitions/codex") return Array.isArray(r.body?.models) && r.body.models.length > 0;
-        if (r.path === "/v0/management/quota/providers") return Array.isArray(r.body?.providers) && r.body.providers.length > 0;
-        if (r.path === "/v8/management/observability/usage/queue") return Array.isArray(r.body) || Object.keys(r.body ?? {}).length > 0;
-        if (r.path === "/v8/management/server/latest-version") return typeof r.body?.["latest-version"] === "string";
-        if (r.path === "/v8/management/requests/api-call") return Number.isInteger(r.body?.status_code) && typeof r.body?.body === "string";
-        if (r.path === "/v8/management/credentials") return Array.isArray(r.body?.files);
-        if (r.path === "/v8/management/credentials/models") return Array.isArray(r.body?.models);
-        if (r.path.includes("/credentials/download")) return r.status === 200 && r.text.length > 0;
-        return r.body !== null && typeof r.body === "object";
-      };
-      const uselessRoutes = routeResults.filter((r) => !usefulCheck(r));
-      const goodManifest = invalidRoutes.length === 0 && badShapes.length === 0 && uselessRoutes.length === 0;
-      events.push({ type: "manifest-route-summary", total: routeResults.length, invalid: invalidRoutes, badShapes, uselessRoutes });
+      const invalidRoutes = routeResults.filter((r) => !routeObservationValid(r));
+      const goodManifest = invalidRoutes.length === 0;
+      events.push({ type: "manifest-route-summary", total: routeResults.length, invalid: invalidRoutes });
       for (const result of routeResults) events.push({ type: "manifest-route", method: result.method, path: result.path, status: result.status, body: result.body ?? result.text.slice(0, 300) });
       record("manifest-routes-covered", true, goodManifest);
       assertions[assertions.length - 1].details = { route_count: routeResults.length, routes: routeResults };
-      if (!goodManifest) throw new Error(`task28 routes not useful: ${JSON.stringify({ invalidRoutes, badShapes, uselessRoutes })}`);
+      if (!goodManifest) throw new Error(`task28 routes not useful: ${JSON.stringify({ invalidRoutes })}`);
 
       const apiCall = routeResults.find((r) => r.path.startsWith("/v8/management/requests/api-call"));
       const apiMock = wireRequests.find((r) => r.path === "/echo");

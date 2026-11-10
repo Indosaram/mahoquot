@@ -18,6 +18,79 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 const REPORT_PREFIX: &str = "MAHOQUOT_NATIVE_QA";
+
+#[derive(Default)]
+struct Lifecycle {
+    generation: u64,
+    active: std::collections::HashMap<i32, (u64, bool)>,
+}
+
+impl Lifecycle {
+    fn record(&mut self, pid: i32, event: &str) -> Option<Value> {
+        let generation = match event {
+            "spawned" => {
+                self.generation += 1;
+                self.active.insert(pid, (self.generation, false));
+                self.generation
+            }
+            "ready" => {
+                let (generation, ready) = self.active.get_mut(&pid)?;
+                if *ready { return None; }
+                *ready = true;
+                *generation
+            }
+            "reaped" | "wait-error" => self.active.remove(&pid)?.0,
+            _ => return None,
+        };
+        Some(json!({"generation": generation, "pid": pid, "event": event}))
+    }
+}
+
+/// QA stdout only; no config, paths, credentials or production IPC payloads.
+/// The mutex also serializes publication with spawn/readiness/reap ordering.
+static LIFECYCLE: std::sync::OnceLock<std::sync::Mutex<Lifecycle>> = std::sync::OnceLock::new();
+
+pub(crate) fn generation(pid: i32) -> Option<u64> {
+    LIFECYCLE.get()?.lock().unwrap_or_else(|e| e.into_inner()).active.get(&pid).map(|entry| entry.0)
+}
+
+pub(crate) fn lifecycle(pid: i32, event: &str) {
+    lifecycle_for_generation(pid, event, None);
+}
+
+pub(crate) fn lifecycle_for_generation(pid: i32, event: &str, expected: Option<u64>) {
+    if std::env::var_os("MAHOQUOT_NATIVE_QA").is_none()
+        || std::env::var_os("MAHOQUOT_QA_LOOPBACK_ONLY").is_none() { return; }
+    let mut state = LIFECYCLE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    if event == "ready" && (expected.is_none() || state.active.get(&pid).map(|entry| entry.0) != expected) {
+        return;
+    }
+    if let Some(value) = state.record(pid, event) {
+        let mut stdout = std::io::stdout().lock();
+        if let Err(error) = writeln!(stdout, "MAHOQUOT_NATIVE_LIFECYCLE {value}").and_then(|_| stdout.flush()) {
+            tracing::error!(%error, "native QA lifecycle output failed");
+        }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_contract {
+    use super::*;
+    #[test]
+    fn generations_readiness_and_wait_outcomes_are_exact() {
+        let mut state = Lifecycle::default();
+        assert_eq!(state.record(42, "ready"), None);
+        assert_eq!(state.record(42, "spawned"), Some(json!({"generation":1,"pid":42,"event":"spawned"})));
+        assert_eq!(state.record(42, "ready"), Some(json!({"generation":1,"pid":42,"event":"ready"})));
+        assert_eq!(state.record(42, "ready"), None);
+        assert_eq!(state.record(42, "wait-error"), Some(json!({"generation":1,"pid":42,"event":"wait-error"})));
+        assert_eq!(state.record(42, "reaped"), None);
+        assert_eq!(state.record(42, "spawned"), Some(json!({"generation":2,"pid":42,"event":"spawned"})));
+        assert_eq!(state.record(42, "reaped"), Some(json!({"generation":2,"pid":42,"event":"reaped"})));
+        assert_eq!(state.record(42, "ready"), None);
+    }
+}
+
 const NS_LEFT_MOUSE_DOWN: u64 = 1;
 const NS_LEFT_MOUSE_UP: u64 = 2;
 const NS_MOUSE_MOVED: u64 = 5;

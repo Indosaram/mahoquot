@@ -45,12 +45,16 @@ export const interpretCreditBalance = (usage: Usage | null | undefined): CreditB
   return { state: "unknown", amount: null };
 };
 
-/** Whether the gateway reported any credit detail at all (drives row visibility). */
+/**
+ * Whether the gateway reported any credit detail at all (drives row visibility).
+ * `null` counts as not reported: providers without a credit concept (Claude)
+ * serialize every credit field as `null`.
+ */
 export const hasCreditDetail = (usage: Usage | null | undefined): boolean =>
-  usage?.credits_balance !== undefined ||
-  usage?.credits_unlimited !== undefined ||
-  usage?.has_credits !== undefined ||
-  usage?.overage_limit_reached !== undefined;
+  usage?.credits_balance != null ||
+  usage?.credits_unlimited != null ||
+  usage?.has_credits != null ||
+  usage?.overage_limit_reached != null;
 
 const CREDITS_FORMAT = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 

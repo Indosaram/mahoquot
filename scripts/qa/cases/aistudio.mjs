@@ -60,6 +60,50 @@ function openWorker(url, workerId, apiKey = "fixture-caller") {
   };
 }
 
+export function correlatedAnswers(frames, textA, textB) {
+  const byPrompt = new Map();
+  for (const frame of frames) {
+    const body = JSON.parse(frame.payload.body);
+    const contents = body.contents ?? body.request?.contents;
+    const prompts = (contents ?? []).flatMap((turn) => (turn.parts ?? []).map((part) => part.text));
+    const prompt = prompts.find((text) => text === "prompt-A" || text === "prompt-B");
+    assert(prompt && !byPrompt.has(prompt), "each worker frame must identify one distinct originating prompt");
+    byPrompt.set(prompt, frame.id);
+  }
+  return byPrompt.size === 2 && byPrompt.get("prompt-A") !== byPrompt.get("prompt-B")
+    && textA === `answer-to-${byPrompt.get("prompt-A")}` && textB === `answer-to-${byPrompt.get("prompt-B")}`;
+}
+
+export async function publishCatalog(worker, id, models) {
+  const acknowledgement = worker.next();
+  worker.socket.send(JSON.stringify({ id, type: "catalog", payload: { models, ack: true } }));
+  const frame = JSON.parse(await bounded(acknowledgement, "catalog acknowledgement"));
+  assert.equal(frame.type, "catalog_ack");
+  assert.equal(frame.id, id);
+}
+
+// disconnect() removes the generation's registry entry before resolving its
+// pending requests with Disconnected. That response is a server-side barrier,
+// unlike the client's WebSocket close event.
+export async function disconnectCatalog(worker, request, observe) {
+  const incoming = worker.next();
+  const response = request();
+  response.catch(() => {}); // Observed below; avoid an unhandled rejection while awaiting dispatch.
+  const frame = JSON.parse(await bounded(incoming, "disconnect barrier dispatch"));
+  assert.equal(frame.type, "http_request");
+  const payload = JSON.parse(frame.payload.body);
+  const contents = payload.contents ?? payload.request?.contents;
+  assert(contents?.some((turn) => turn.parts?.some((part) => part.text === "disconnect-barrier")),
+    "disconnect barrier must belong to the held request");
+  worker.socket.close(1000);
+  const result = await bounded(response, "registry disconnect response");
+  const body = await bounded(result.json(), "registry disconnect body");
+  assert.equal(result.status, 503);
+  assert.equal(body.error?.message, "AI Studio worker error: AI Studio worker disconnected before responding");
+  observe({ type: "registry-disconnect-barrier", request_id: frame.id, status: result.status, body });
+  await bounded(worker.closed, "worker close");
+}
+
 export async function runCase(variant, evidencePath, context) {
   assert(["happy", "failure"].includes(variant));
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -193,9 +237,13 @@ api-keys:
       const getModels = async () => {
         const res = await fetch(`http://127.0.0.1:${gatewayPort}/v1/models`, {
           headers: { authorization: "Bearer fixture-caller" },
+          signal: AbortSignal.timeout(15000),
         });
+        assert.equal(res.status, 200);
         const body = await res.json();
-        return (body.data || []).map((m) => m.id);
+        assert(Array.isArray(body.data));
+        events.push({ type: "catalog-observed", status: res.status, body });
+        return body.data.map((m) => m.id);
       };
 
       const modelsBefore = await getModels();
@@ -208,14 +256,8 @@ api-keys:
       events.push({ type: "worker-connected", workerId: workerId1 });
 
       const catalogModels = ["aistudio-remote-pro", "aistudio-remote-flash"];
-      worker1.socket.send(JSON.stringify({
-        id: "cat-1",
-        type: "catalog",
-        payload: { models: catalogModels },
-      }));
+      await publishCatalog(worker1, "cat-1", catalogModels);
       events.push({ type: "worker-catalog-sent", workerId: workerId1, models: catalogModels });
-
-      await new Promise((r) => setTimeout(r, 60));
 
       const modelsWhile = await getModels();
       const hasWhile = modelsWhile.includes("aistudio-remote-pro");
@@ -291,13 +333,16 @@ api-keys:
       const textA = jsonA.choices?.[0]?.message?.content || "";
       const textB = jsonB.choices?.[0]?.message?.content || "";
 
-      const distinctResponses = textA !== textB && (textA.includes(frame1.id) || textA.includes(frame2.id));
+      const distinctResponses = correlatedAnswers([frame1, frame2], textA, textB);
       record("worker-correlation", true, distinctResponses);
 
-      worker1.socket.close(1000);
-      await bounded(worker1.closed, "worker1 close");
-
-      await new Promise((r) => setTimeout(r, 60));
+      await disconnectCatalog(worker1, () => fetch(`http://127.0.0.1:${gatewayPort}/v1/chat/completions`, {
+        method: "POST",
+        headers: { authorization: "Bearer fixture-caller", "content-type": "application/json" },
+        body: JSON.stringify({ model: "aistudio-remote-pro",
+          messages: [{ role: "user", content: "disconnect-barrier" }] }),
+        signal: AbortSignal.timeout(15000),
+      }), (event) => events.push(event));
 
       const modelsAfter = await getModels();
       const hasAfter = modelsAfter.includes("aistudio-remote-pro");
@@ -333,12 +378,7 @@ api-keys:
       workers.push(worker);
       await bounded(worker.opened, "worker open");
 
-      worker.socket.send(JSON.stringify({
-        id: "cat-fail",
-        type: "catalog",
-        payload: { models: ["aistudio-remote-pro"] },
-      }));
-      await new Promise((r) => setTimeout(r, 60));
+      await publishCatalog(worker, "cat-fail", ["aistudio-remote-pro"]);
 
       worker.socket.send(JSON.stringify({
         id: "unmatched-frame-id-12345",

@@ -55,11 +55,16 @@ export const windowLabel = (raw: string): string =>
     .replace(/\s*remaining$/i, "")
     .trim() || raw;
 
-export const resetSeconds = (resetAtUnix?: number | null, after?: number | null): number | null => {
+export const resetSeconds = (
+  resetAtUnix?: number | null,
+  after?: number | null,
+  nowSecs = Math.floor(Date.now() / 1000),
+): number | null => {
   if (typeof resetAtUnix === "number") {
-    return Math.max(0, resetAtUnix - Math.floor(Date.now() / 1000));
+    if (resetAtUnix <= nowSecs) return null;
+    return resetAtUnix - nowSecs;
   }
-  return typeof after === "number" ? Math.max(0, after) : null;
+  return typeof after === "number" && after > 0 ? after : null;
 };
 
 /**
@@ -286,10 +291,14 @@ export const quotaRows = (
   }
 
   // Documented aggregate projection suppression:
-  // Antigravity synthesizes primary/secondary flat windows from the worst bucket
-  // across groups for legacy rotation logic. If groups are present on Antigravity,
-  // suppress the synthetic flat projections so only the true model groups appear.
-  if (account.provider === "antigravity" && groupRows.length > 0) {
+  // Antigravity, Relay limits (claude-ccapi), and Grok (xAI) synthesize
+  // primary/secondary flat windows from their grouped buckets for rotation
+  // logic. When those groups are present, suppress the synthetic flat
+  // projections so the same window is not rendered twice on one card.
+  const hasSyntheticFlatMirror = (usage.groups ?? []).some(
+    (g) => g.display_name === "Relay limits" || g.display_name === "Grok",
+  );
+  if ((account.provider === "antigravity" || hasSyntheticFlatMirror) && groupRows.length > 0) {
     return groupRows;
   }
 
@@ -439,6 +448,8 @@ export interface AccountsSurfaceProps {
   readonly credits?: CreditSpendProps | undefined;
   readonly warmup?: WarmupControlsState | undefined;
   readonly accounts: readonly NormalizedAccount[];
+  /** Initial inventory readiness; retain existing rows during refresh. */
+  readonly inventoryState?: "loading" | "ready" | "error";
   readonly providers: readonly string[];
   readonly selectedProvider?: string | undefined;
   readonly visibleAccounts: readonly NormalizedAccount[];
@@ -483,6 +494,7 @@ export const AccountsSurface = ({
   credits,
   warmup,
   accounts,
+  inventoryState = "ready",
   providers,
   selectedProvider,
   visibleAccounts,
@@ -574,6 +586,11 @@ export const AccountsSurface = ({
                 checked={selectedProvider === item}
                 onChange={(event) => onSelectProvider(event.currentTarget.value)}
                 onKeyDown={(event) => {
+                  if (onProviderContextMenu && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                    event.preventDefault();
+                    event.currentTarget.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+                    return;
+                  }
                   if (!onMoveProvider || !event.altKey) return;
                   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
                   event.preventDefault();
@@ -805,8 +822,8 @@ export const AccountsSurface = ({
         })}
       </div>
       {!visibleAccounts.length ? (
-        <div className="state-panel">
-          {accounts.length ? "No accounts match this filter." : "No accounts or credentials found."}
+        <div className="state-panel" role="status" data-inventory-state={inventoryState} aria-busy={inventoryState === "loading"}>
+          {accounts.length ? "No accounts match this filter." : inventoryState === "loading" ? "Loading accounts…" : inventoryState === "error" || credentialsError ? "Account inventory unavailable." : "No accounts or credentials found."}
         </div>
       ) : null}
     </Stack>

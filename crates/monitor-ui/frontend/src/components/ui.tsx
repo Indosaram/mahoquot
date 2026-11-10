@@ -56,11 +56,13 @@ export const Badge = ({
 export const Field = ({
   label,
   hint,
+  htmlFor,
+  hintId,
   children,
-}: { label: string; hint?: string; children: ReactNode }) => (
+}: { label: string; hint?: string; htmlFor?: string; hintId?: string; children: ReactNode }) => (
   <div className="field">
-    <span>{label}</span>
+    <span>{htmlFor ? <label htmlFor={htmlFor}>{label}</label> : label}</span>
     {children}
-    {hint ? <small>{hint}</small> : null}
+    {hint ? <small id={hintId}>{hint}</small> : null}
   </div>
 );

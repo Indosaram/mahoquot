@@ -151,13 +151,6 @@ export function BarCanvas() {
       raf = 0;
       const s = state.current;
       if (!s.ready) return;
-      if (bloomCtx) {
-        const on = s.bloom !== "off" && (!s.bloomOnHover || s.isMouseInChart || s.hovered);
-        if (on) {
-          bloomCtx.clearRect(0, 0, cols, rows);
-          bloomCtx.drawImage(canvas, 0, 0);
-        }
-      }
       if (s.revision !== lastRevision) {
         lastRevision = s.revision;
         animStart = 0; // re-play the wave on data change / replay
@@ -201,9 +194,13 @@ export function BarCanvas() {
       }
 
       const keepAlive =
-        prog < 1 || Math.abs(intensity - itTarget) > 0.001 || s.isMouseInChart || s.hovered;
+        prog < 1 || Math.abs(intensity - itTarget) > 0.001;
       if (needsFill) {
         paint(prog);
+        if (bloomCtx) {
+          bloomCtx.clearRect(0, 0, cols, rows);
+          bloomCtx.drawImage(canvas, 0, 0);
+        }
         needsFill = false;
       }
       if (keepAlive) requestDraw();

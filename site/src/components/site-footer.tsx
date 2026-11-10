@@ -8,7 +8,7 @@ export function SiteFooter() {
         <div className="flex items-center gap-2.5">
           <img src="brand/mahoquot-icon.png" alt="" width={24} height={24} className="h-6 w-6 rounded-md" />
           <span className="text-[15px] font-medium text-ink">{PRODUCT.name}</span>
-          <span className="text-[13px] text-ink-ghost">{PRODUCT.version}</span>
+          <span className="text-[13px] text-ink-ghost">Site {PRODUCT.siteVersion}</span>
         </div>
 
         <nav className="flex flex-wrap items-center gap-x-7 gap-y-3 text-[14px] text-ink-faint">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 export type ContextMenuItem = {
@@ -25,7 +25,8 @@ export const useContextMenu = () => {
     }
     event.preventDefault();
     event.stopPropagation();
-    setMenu({ x: event.clientX, y: event.clientY, items });
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMenu({ x: event.clientX || rect.left, y: event.clientY || rect.bottom, items });
   }, []);
 
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -34,14 +35,27 @@ export const useContextMenu = () => {
 };
 
 export const ContextMenu = ({ menu, onClose }: { menu: MenuState | null; onClose: () => void }) => {
-  useEffect(() => {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useLayoutEffect(() => {
     if (!menu) {
       return;
     }
-    const dismiss = () => onClose();
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+    items[0]?.focus();
+    const dismiss = () => closeRef.current();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
+      if (event.key === "Escape" || event.key === "Tab") {
+        event.preventDefault();
+        dismiss();
+      } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const index = items.findIndex((item) => item === document.activeElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 :
+          (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
       }
     };
     window.addEventListener("pointerdown", dismiss);
@@ -53,8 +67,9 @@ export const ContextMenu = ({ menu, onClose }: { menu: MenuState | null; onClose
       window.removeEventListener("blur", dismiss);
       window.removeEventListener("resize", dismiss);
       window.removeEventListener("keydown", onKeyDown);
+      if (opener?.isConnected) opener.focus();
     };
-  }, [menu, onClose]);
+  }, [menu]);
 
   if (!menu) {
     return null;
@@ -67,6 +82,7 @@ export const ContextMenu = ({ menu, onClose }: { menu: MenuState | null; onClose
   return (
     <div
       className="context-menu"
+      ref={ref}
       role="menu"
       style={{ left, top, width: MENU_WIDTH }}
       onPointerDown={(event) => event.stopPropagation()}
@@ -76,6 +92,7 @@ export const ContextMenu = ({ menu, onClose }: { menu: MenuState | null; onClose
           key={item.label}
           type="button"
           role="menuitem"
+          tabIndex={-1}
           className="context-menu-item"
           onClick={() => {
             void item.run();

@@ -84,12 +84,9 @@ interface BuiltFrom {
 // label/provider from the match, so only those fields can change a rebuild's
 // output. Everything else (quota, health, counters) is presentation-only.
 const accountIdentityKey = (accounts: readonly NormalizedAccount[]): string =>
-  accounts
-    .map(
-      (account) =>
-        `${account.id}\n${account.email}\n${account.label}\n${account.provider}\n${account.credentialName ?? ""}`,
-    )
-    .join("\u0000");
+  JSON.stringify(accounts.map((account) => [
+    account.id, account.email, account.label, account.provider, account.credentialName,
+  ]));
 
 const buildsMatch = (last: BuiltFrom | null, built: BuiltFrom): boolean =>
   last !== null &&
@@ -165,117 +162,38 @@ export function useOverviewAnalytics({
   const [isLoading, setIsLoading] = useState<boolean>(enabled);
   const [error, setError] = useState<string>("");
 
-  // Track previous props to adjust state during render
-  const [prevCacheKey, setPrevCacheKey] = useState(cacheKey);
-  const [prevMetric, setPrevMetric] = useState(metric);
-  const [prevAccounts, setPrevAccounts] = useState(accounts);
-  const [prevSamples, setPrevSamples] = useState(samples);
-
-  // Adjust during render on cacheKey change
-  if (cacheKey !== prevCacheKey) {
-    setPrevCacheKey(cacheKey);
-    const cached = cacheRef.current.get(cacheKey);
-    if (cached) {
-      setIsLoading(false);
-      const { analytics: next, built } = buildCachedAnalytics(
-        cached,
-        dimension,
-        metric,
-        range,
-        accounts,
-      );
-      if (!buildsMatch(lastBuildRef.current, built)) {
-        lastBuildRef.current = built;
-        setAnalytics(next);
-      }
-    } else {
-      if (enabled) {
-        setIsLoading(true);
-      }
-    }
-  }
-
-  // Adjust during render on metric change (changing ONLY metric must NOT fetch)
-  if (metric !== prevMetric) {
-    setPrevMetric(metric);
-    if (cacheKey === prevCacheKey) {
+  const [previousInputs, setPreviousInputs] = useState({
+    cacheKey, metric, accounts, samples, enabled, nowMs, clients,
+  });
+  if (
+    previousInputs.cacheKey !== cacheKey || previousInputs.metric !== metric ||
+    previousInputs.accounts !== accounts || previousInputs.samples !== samples ||
+    previousInputs.enabled !== enabled || previousInputs.nowMs !== nowMs ||
+    previousInputs.clients !== clients
+  ) {
+    setPreviousInputs({ cacheKey, metric, accounts, samples, enabled, nowMs, clients });
+    if (enabled) {
       const cached = cacheRef.current.get(cacheKey);
       if (cached) {
-        const { analytics: next, built } = buildCachedAnalytics(
-          cached,
-          dimension,
-          metric,
-          range,
-          accounts,
-        );
+        const built: BuiltFrom = {
+          cacheKey, metric, ranking: cached.ranking, series: cached.series,
+          totalSeries: cached.totalSeries, nowMs: cached.nowMs,
+          accountsKey: accountIdentityKey(accounts),
+        };
         if (!buildsMatch(lastBuildRef.current, built)) {
-          lastBuildRef.current = built;
-          setAnalytics(next);
+          const next = buildCachedAnalytics(cached, dimension, metric, range, accounts);
+          lastBuildRef.current = next.built;
+          setAnalytics(next.analytics);
         }
-      } else if (analytics.source === "telemetry") {
+        setIsLoading(false);
+      } else if (analytics.source === "telemetry" && previousInputs.clients === clients) {
         lastBuildRef.current = null;
-        setAnalytics(
-          telemetryAnalytics({
-            samples,
-            dimension,
-            metric,
-            range,
-            nowMs: nowMs ?? Date.now(),
-            accounts,
-          }),
-        );
+        setAnalytics(telemetryAnalytics({
+          samples, dimension, metric, range, nowMs: nowMs ?? Date.now(), accounts,
+        }));
+      } else {
+        setIsLoading(true);
       }
-    }
-  }
-
-  // Adjust during render if accounts or samples update in degraded mode
-  if (accounts !== prevAccounts) {
-    setPrevAccounts(accounts);
-    const cached = cacheRef.current.get(cacheKey);
-    if (cached) {
-      // Stats polls replace the accounts identity every cycle; rebuilding over
-      // the same cached responses would churn analytics identity and replay
-      // the chart entrance although nothing changed.
-      const { analytics: next, built } = buildCachedAnalytics(
-        cached,
-        dimension,
-        metric,
-        range,
-        accounts,
-      );
-      if (!buildsMatch(lastBuildRef.current, built)) {
-        lastBuildRef.current = built;
-        setAnalytics(next);
-      }
-    } else if (analytics.source === "telemetry") {
-      lastBuildRef.current = null;
-      setAnalytics(
-        telemetryAnalytics({
-          samples,
-          dimension,
-          metric,
-          range,
-          nowMs: nowMs ?? Date.now(),
-          accounts,
-        }),
-      );
-    }
-  }
-
-  if (samples !== prevSamples) {
-    setPrevSamples(samples);
-    if (analytics.source === "telemetry") {
-      lastBuildRef.current = null;
-      setAnalytics(
-        telemetryAnalytics({
-          samples,
-          dimension,
-          metric,
-          range,
-          nowMs: nowMs ?? Date.now(),
-          accounts,
-        }),
-      );
     }
   }
 
@@ -404,6 +322,9 @@ export function useOverviewAnalytics({
   useEffect(() => {
     if (!enabled) return;
     void executeRound();
+    return () => {
+      generationRef.current += 1;
+    };
   }, [enabled, executeRound]);
 
   // Schedule a repeat round every 60000 ms while enabled, skipping when document.hidden is true

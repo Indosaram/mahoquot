@@ -5,6 +5,149 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+export async function retainLocalityReport({ readReport, exitCode, output, evidence, finishPhases }) {
+  let report = null;
+  let reportError = null;
+  try {
+    report = JSON.parse(await readReport());
+    if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('locality report must be an object');
+    // Keep the native pre-augmentation value: the returned report later points
+    // at evidence.raw, and sharing this object would create a JSON cycle.
+    evidence.raw.native_report = structuredClone(report);
+  } catch (error) {
+    report = null;
+    reportError = String(error?.message ?? error);
+    evidence.raw.native_report_error = reportError;
+  }
+  let phaseError = null;
+  try { finishPhases(); } catch (error) { phaseError = String(error?.message ?? error); }
+  evidence.raw.native_exit_code = exitCode;
+  if (exitCode !== 0 || reportError || phaseError) {
+    const failures = [exitCode !== 0 ? `bench locality failed (${exitCode}): ${output}` : null,
+      reportError ? `native report unavailable: ${reportError}` : null, phaseError].filter(Boolean);
+    const error = new Error(failures.join('; '));
+    error.native_report = report;
+    error.raw_observations = evidence.raw;
+    evidence.raw.failure = error.message;
+    throw error;
+  }
+  return report;
+}
+
+export function localityFailoverFault() {
+  let bound = null;
+  let injected = false;
+  return ({ model, messages, credential }) => {
+    if (model !== 'gpt-5.6-sol' || !credential) return false;
+    const text = messages?.filter(message => message.role === 'user').map(message => message.content).join(' ') ?? '';
+    const probe = text.includes('request_id=B4:2 ') && text.includes(' fault=bound-a');
+    if (text.includes('request_id=B4:0 ') && bound === null) bound = credential;
+    if (probe && credential === bound && !injected) { injected = true; return true; }
+    return false;
+  };
+}
+
+export function countAccountHops(turns) {
+  return turns.reduce((count, turn, index) => count + (index > 0 && turn.account !== turns[index - 1].account ? 1 : 0), 0);
+}
+
+export async function bounded(promise, label, timeoutMs = 15000) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} deadline`)), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+// Own allocations from their first successful acquisition, including failures
+// before readiness. Drain pipes immediately, not after waiting for child exit.
+export function benchmarkOwner() {
+  const children = [], servers = [], drains = [], releases = [];
+  return {
+    spawn(argv, options, onLine) {
+      const child = Bun.spawn(argv, options);
+      children.push(child);
+      let output = '';
+      let ready;
+      const listening = new Promise(resolve => { ready = resolve; });
+      const childDrains = [];
+      for (const [index, stream] of [child.stdout, child.stderr].entries()) if (stream?.getReader) {
+        const task = (async () => {
+          const decoder = new TextDecoder();
+          let pending = '';
+          for await (const bytes of stream) {
+            const text = decoder.decode(bytes, { stream: true });
+            output = (output + text).slice(-65536);
+            if (/listening|server started/i.test(output)) ready();
+            if (onLine) {
+              pending += text;
+              const lines = pending.split('\n');
+              pending = lines.pop();
+              for (const line of lines) await onLine(line, index === 0 ? 'stdout' : 'stderr', child);
+              if (pending.length > 65536) throw new Error('benchmark output line exceeds limit');
+            }
+          }
+          if (onLine && pending) throw new Error('unterminated benchmark output line');
+        })();
+        childDrains.push(task);
+        drains.push(task);
+        task.catch(() => {}); // cleanup awaits and reports the original failure
+      }
+      const drained = Promise.all(childDrains);
+      drained.catch(() => {});
+      return { child, listening, drained, output: () => output };
+    },
+    serve(options) { const server = Bun.serve(options); servers.push(server); return server; },
+    release(fn) { releases.push(fn); },
+    async close() {
+      const errors = [];
+      for (const release of releases) try { release(); } catch (error) { errors.push(error); }
+      for (const child of children) try { if (child.exitCode === null) child.kill('SIGKILL'); } catch (error) { errors.push(error); }
+      for (const server of servers) try { await server.stop(true); } catch (error) { errors.push(error); }
+      const results = await Promise.allSettled([...children.map(child => bounded(child.exited, 'child reap')), ...drains.map(task => bounded(task, 'pipe drain'))]);
+      errors.push(...results.filter(result => result.status === 'rejected').map(result => result.reason));
+      if (errors.length) throw new AggregateError(errors, 'benchmark cleanup failed');
+    },
+  };
+}
+
+export function localityPhaseCollector({ pid, evidence, measure, acknowledge, wall = () => Date.now() }) {
+  const phases = ['B3', 'B4', 'B5', 'B8', 'B9'];
+  let index = 0;
+  return {
+    async line(line, stream, child) {
+      if (stream !== 'stderr' || !line.startsWith('MAHOQUOT_BENCH_PHASE ')) return;
+      try {
+        const marker = JSON.parse(line.slice('MAHOQUOT_BENCH_PHASE '.length));
+        if (marker.event !== 'entered' || marker.pid !== pid || marker.phase !== phases[index]) throw new Error('invalid locality phase entry identity/order');
+        const received = wall();
+        evidence.event(marker.phase, 'phase-entry', { pid, marker_received_at: received });
+        const stats = await measure(pid);
+        const errors = [];
+        if (stats.rssBytes === null) errors.push('gateway RSS measurement unavailable');
+        if (stats.fds === null) errors.push('gateway descriptor measurement unavailable');
+        evidence.raw.resources.push({ phase: marker.phase, pid, marker_received_at: received, observed_at: wall(),
+          sample_kind: 'held-phase-entry', rss_bytes: stats.rssBytes, fd_count: stats.fds, errors });
+        await acknowledge(`MAHOQUOT_BENCH_PHASE_ACK ${JSON.stringify({ phase: marker.phase, pid })}\n`, child);
+        index++;
+      } catch (error) {
+        evidence.event(null, 'phase-protocol-error', { line, error: String(error?.message ?? error) });
+        throw error;
+      }
+    },
+    finish() {
+      const missing = phases.slice(index);
+      evidence.raw.phase_resource_support = { complete: missing.length === 0, missing_phases: missing };
+      if (missing.length) throw new Error(`locality phase resource observations unavailable: ${missing.join(',')}`);
+    },
+  };
+}
+
+export function benchmarkFetch(input, init = {}) {
+  const deadline = AbortSignal.timeout(15000);
+  return globalThis.fetch(input, { ...init, proxy: '', signal: init.signal ? AbortSignal.any([init.signal, deadline]) : deadline });
+}
 function findFreePort(start = 18870, end = 18895) {
   for (let port = start; port <= end; port++) {
     try {
@@ -25,21 +168,89 @@ function managementAuth(env) {
     : { authorization: 'Bearer mgmt-secret' };
 }
 
+export function phaseObservations({ clock = () => performance.now(), wall = () => Date.now() } = {}) {
+  const raw = { schema: 'mahoquot/phase-observations-v1', requests: [], resources: [], events: [] };
+  let sequence = 0;
+  const event = (phase, name, fields = {}) => raw.events.push({ ...fields, event: name, phase, observed_at: wall() });
+  const begin = (phase, logicalId = null) => {
+    const start = clock();
+    const row = { request_id: `${phase}-${++sequence}`, logical_id: logicalId, phase, started_at: wall(), headers_ms: null, content_ms: null, end_ms: null, error: null, status: null, response_body: '' };
+    raw.requests.push(row);
+    let pending = '';
+    const decoder = new TextDecoder();
+    return {
+      row,
+      headers(status) { row.status = status; row.headers_ms = clock() - start; },
+      chunk(bytes) {
+        const text = decoder.decode(bytes, { stream: true });
+        row.response_body += text;
+        pending += text;
+        const lines = pending.split('\n');
+        pending = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          let data;
+          try { data = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          const content = data.choices?.[0]?.delta?.content ?? (data.type === 'response.output_text.delta' ? data.delta : null);
+          if (typeof content === 'string' && content.length > 0 && row.content_ms === null) row.content_ms = clock() - start;
+        }
+      },
+      end() { row.response_body += decoder.decode(); row.end_ms = clock() - start; },
+      fail(error) { row.error = String(error?.message ?? error); row.end_ms = clock() - start; },
+    };
+  };
+  const observeFetch = (transport, identify) => async (input, init = {}) => {
+    const identity = identify(input, init);
+    if (!identity) return transport(input, init);
+    const attempt = begin(identity.phase, identity.id);
+    const aborted = () => attempt.fail(init.signal.reason ?? 'request aborted');
+    init.signal?.addEventListener('abort', aborted, { once: true });
+    const unsubscribe = () => init.signal?.removeEventListener('abort', aborted);
+    event(identity.phase, 'client-request', { request_id: attempt.row.request_id, logical_id: identity.id ?? null, url: String(input), body: init.body ?? null });
+    try {
+      const response = await transport(input, init);
+      attempt.headers(response.status);
+      if (!response.body) { attempt.end(); unsubscribe(); return response; }
+      const reader = response.body.getReader();
+      return new Response(new ReadableStream({
+        async pull(controller) {
+          try {
+            const { value, done } = await reader.read();
+            if (done) { attempt.end(); unsubscribe(); controller.close(); }
+            else { attempt.chunk(value); controller.enqueue(value); }
+          } catch (error) { attempt.fail(error); unsubscribe(); controller.error(error); }
+        },
+        async cancel(reason) { attempt.fail(reason ?? 'client cancelled'); unsubscribe(); await reader.cancel(reason); },
+      }), { status: response.status, statusText: response.statusText, headers: response.headers });
+    } catch (error) { attempt.fail(error); unsubscribe(); throw error; }
+  };
+  return { raw, event, begin, observeFetch };
+}
+
 export async function runLocalityBenchmark(env = process.env) {
+  const owner = benchmarkOwner();
+  const evidence = phaseObservations();
+  let rawPath;
+  const fetch = evidence.observeFetch(benchmarkFetch, (input, init) => {
+    if (!String(input).includes('/v1/chat/completions') || typeof init.body !== 'string') return null;
+    const body = JSON.parse(init.body);
+    const id = body.x_bench_req;
+    return id?.startsWith('b8-') ? { phase: 'B8', id } : null;
+  });
+  try {
   const targetDir = env.CARGO_TARGET_DIR ?? join(root, '.omo/shared-target');
   const bench = env.BENCH ?? join(targetDir, 'debug/bench');
   // Always rebuild (incremental): an existing binary may predate the bench
   // sources under test, and a stale tool must not stand in for the current one.
   if (!env.BENCH) {
-    const build = Bun.spawn(['cargo', 'build', '-p', 'bench'], {
+    const buildRun = owner.spawn(['cargo', 'build', '-p', 'bench'], {
       cwd: join(root, 'mahoquot-proxy'),
       env: { ...process.env, ...env, CARGO_TARGET_DIR: targetDir },
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    const [stdout, stderr] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text()]);
-    const status = await build.exited;
-    if (status !== 0) throw new Error(`failed to build bench binary (${status}): ${stderr}\n${stdout}`);
+    const status = await bounded(buildRun.child.exited, 'bench build', 120000);
+    if (status !== 0) throw new Error(`failed to build bench binary (${status}): ${buildRun.output()}`);
     if (!await Bun.file(bench).exists()) throw new Error(`bench build did not create ${bench}`);
   }
 
@@ -61,6 +272,7 @@ export async function runLocalityBenchmark(env = process.env) {
 
   const destination = resolve(env.BENCH_EVIDENCE ?? join(root, '.omo/evidence', `bench-locality-${randomUUID()}`));
   await mkdir(destination, { recursive: true });
+  rawPath = join(destination, 'locality-raw.json');
 
   const authDir = join(destination, 'auth');
   await mkdir(authDir, { recursive: true });
@@ -83,6 +295,9 @@ export async function runLocalityBenchmark(env = process.env) {
   let signatureRecallCount = 0;
   let observedTenantCollisions = 0;
   const observedTurns = [];
+  const workloadExecutions = [];
+  evidence.raw.workload_executions = workloadExecutions;
+  const failoverFault = localityFailoverFault();
 
   const b8Hops = []; // records each gateway request: { hop: 'proxy' | 'direct', expected, path }
   const b8HopLog = []; // Per-request hop log: { request_id, timestamp, passed_loopback_proxy, reached_mock_directly, config_generation }
@@ -91,9 +306,12 @@ export async function runLocalityBenchmark(env = process.env) {
   let currentConfigGeneration = 1;
   let inflightIntactObserved = false;
   let nextRequestCorrectEgressObserved = false;
+  let releaseInflight;
+  const inflightRelease = new Promise(resolve => { releaseInflight = resolve; });
+  owner.release(() => releaseInflight());
 
   // 1. Mock server on mockPort
-  const mockServer = Bun.serve({
+  owner.serve({
     hostname: '127.0.0.1',
     port: mockPort,
     async fetch(request, server) {
@@ -142,9 +360,10 @@ export async function runLocalityBenchmark(env = process.env) {
           signature_recall_success: observedTurns.filter(turn => turn.phase === 'b3').slice(1).every(turn => turn.signature_present),
           cross_tenant_collisions: observedTurns.filter(turn => turn.phase === 'b5' && turn.tenant !== turn.requested_tenant).length,
           observed_turns: observedTurns,
-          rebind_count: observedTurns.filter(turn => turn.phase === 'b3').slice(1).filter((turn, index, turns) => turn.account !== turns[index].account).length,
+          workload_executions: workloadExecutions,
+          rebind_count: countAccountHops(observedTurns.filter(turn => turn.phase === 'b3')),
           hops: observedTurns.filter(turn => turn.phase === 'b3').length,
-          account_hops: observedTurns.filter(turn => turn.phase === 'b4').slice(1).filter((turn, index, turns) => turn.account !== turns[index].account).length,
+          account_hops: countAccountHops(observedTurns.filter(turn => turn.phase === 'b4')),
           independent_binding_retained: new Set(observedTurns.filter(turn => turn.phase === 'b4').map(turn => turn.account)).size <= 2,
           initial_binding_account: observedTurns.find(turn => turn.phase === 'b3')?.account ?? '',
           route_a_account: observedTurns.find(turn => turn.phase === 'b4')?.account ?? '',
@@ -218,7 +437,7 @@ export async function runLocalityBenchmark(env = process.env) {
       const isTenant2Collision = messageText.includes('tenant2 collision probe intent');
       const phase = request.headers.get('x-bench-phase') ?? (isTenant2Collision ? 'b5'
         : messageText.includes('history context and signatures') ? 'b3'
-          : messageText.includes('alternating route test') ? 'b4'
+          : bodyJson.model?.startsWith('b4-route-') || messageText.includes('alternating route test') ? 'b4'
             : messageText.includes('parent root intent') || messageText.includes('child subagent execution') ? 'b5'
               : undefined);
       const turnNumber = Number(request.headers.get('x-bench-turn')) || (phase === 'b3'
@@ -230,10 +449,31 @@ export async function runLocalityBenchmark(env = process.env) {
             : 0);
         const requestedTenant = request.headers.get('x-bench-tenant') ?? (isTenant2Collision ? 'tenant2' : 'tenant1');
 
+      // Retain the actual wire body and socket before any rejection path.
+      const workloadId = messageText.match(/request_id=(B(?:4|5|9):\d+)/)?.[1] ?? null;
+      const rawPhase = phase?.toUpperCase() ?? (messageText.includes('b9 antigravity') ? 'B9' : reqId ? 'B8' : null);
+      const recordExecution = status => {
+        if (request.headers.get('x-bench-phase') === 'pooling-calibration' || !['B4', 'B5', 'B9'].includes(rawPhase)) return;
+        workloadExecutions.push({ phase: rawPhase, request_id: workloadId ?? (rawPhase === 'B5' ? `B5:${turnNumber - 1}` : null),
+          account: accountForObservation || null, connection_id: relayedByBenchProxy ? null : connectionId ?? null, status });
+      };
+      evidence.event(rawPhase, 'upstream-request', {
+        request_id: reqId ?? null, turn: turnNumber || null,
+        phase_header: request.headers.get('x-bench-phase'), turn_header: request.headers.get('x-bench-turn'), tenant_header: request.headers.get('x-bench-tenant'),
+        body: bodyJson, body_text: bodyText, path: url.pathname,
+        credential: accountForObservation || null, connection_id: connectionId ?? null,
+        proxy_listener: isViaProxy ? `127.0.0.1:${proxyPort}` : null,
+        via: request.headers.get('via'), config_generation: currentConfigGeneration,
+        routing_headers: { session: request.headers.get('x-session-id'), client_request: request.headers.get('x-client-request-id') },
+        requested_tenant: requestedTenant,
+        calibration: request.headers.get('x-bench-phase') === 'pooling-calibration',
+      });
+
       // Track routing headers leaked upstream
       const routingHeadersLeaked = request.headers.has('x-session-id') || request.headers.has('x-client-request-id');
       if (routingHeadersLeaked) {
         leakedRoutingHeadersCount++;
+        recordExecution(400);
         return new Response('routing header leaked upstream', { status: 400 });
       }
 
@@ -289,6 +529,14 @@ export async function runLocalityBenchmark(env = process.env) {
         });
       }
 
+      if (failoverFault({ model: bodyJson.model, messages: bodyJson.messages, credential: accountForObservation })) {
+        recordExecution(503);
+        evidence.event('B4', 'upstream-fault', { request_id: reqId ?? null, credential: accountForObservation, model: bodyJson.model, body: bodyJson, status: 503 });
+        return Response.json({ error: { message: 'b4 correlated failover fault', type: 'server_error' } }, { status: 503 });
+      }
+      recordExecution(200);
+      evidence.event(rawPhase, 'upstream-response', { request_id: reqId ?? null, credential: accountForObservation, model: bodyJson.model, status: 200 });
+
       const expectedInput = bodyJson.bench_expect?.input_tokens ?? 16;
       const expectedOutput = bodyJson.bench_expect?.output_tokens ?? 2;
 
@@ -299,6 +547,7 @@ export async function runLocalityBenchmark(env = process.env) {
         'data: [DONE]\n\n'
       ];
 
+      evidence.event(rawPhase, 'fixture-response', { request_id: reqId ?? null, turn: turnNumber || null, body: frames.join('') });
       // For in-flight streaming requests, use ReadableStream with small chunk delay to ensure in-flight status during management call
       const isInflightStreamProbe = reqId && reqId.includes('inflight');
       if (isInflightStreamProbe) {
@@ -307,7 +556,7 @@ export async function runLocalityBenchmark(env = process.env) {
             const encoder = new TextEncoder();
             controller.enqueue(encoder.encode(frames[0]));
             // Pause while client receives first chunk and fires management update
-            await Bun.sleep(150);
+            await bounded(inflightRelease, 'in-flight management release');
             for (let i = 1; i < frames.length; i++) {
               controller.enqueue(encoder.encode(frames[i]));
             }
@@ -335,7 +584,7 @@ export async function runLocalityBenchmark(env = process.env) {
   });
 
   // 2. Loopback proxy listener on proxyPort
-  const proxyListener = Bun.serve({
+  owner.serve({
     hostname: '127.0.0.1',
     port: proxyPort,
     error(err) {
@@ -346,6 +595,7 @@ export async function runLocalityBenchmark(env = process.env) {
         return new Response(null, { status: 200 });
       }
       proxyListenerHits++;
+      evidence.event(null, 'proxy-request', { url: req.url, method: req.method, request_id: req.headers.get('x-bench-req') });
       const targetUrl = new URL(req.url);
       targetUrl.host = `127.0.0.1:${mockPort}`;
       targetUrl.protocol = 'http:';
@@ -398,13 +648,20 @@ export async function runLocalityBenchmark(env = process.env) {
     provider: 'openai',
     adapter: 'openai-chat',
     api_key: 'key-tenant-2-direct',
-    models: ['egress-direct-model'],
+    models: ['gpt-5.6-sol', 'egress-direct-model'],
     base_url: `http://127.0.0.1:${mockPort}/v1`,
     upstream_override: `http://127.0.0.1:${mockPort}`,
     proxy_url: 'direct',
   };
   await writeFile(join(authDir, 'generic-direct.json'), JSON.stringify(directAccount, null, 2));
 
+  const failoverAccounts = [
+    ['b4-a-primary', 'gpt-5.6-sol'], ['b4-a-alternate', 'gpt-5.6-sol'], ['b4-b', 'claude-sonnet-4'],
+  ].map(([identity, model]) => ({ ...directAccount, provider: 'b4-fixture', identity_slug: identity, api_key: `key-${identity}`, models: [model] }));
+  for (const [index, account] of failoverAccounts.entries()) {
+    await writeFile(join(authDir, `generic-b4-${index}.json`), JSON.stringify(account, null, 2));
+  }
+  const b4KeyHash = createHash('sha256').update('b4key').digest('hex');
   const tenant1KeyHash = createHash('sha256').update('benchkey').digest('hex');
   const tenant2KeyHash = createHash('sha256').update('tenant2key').digest('hex');
 
@@ -415,8 +672,8 @@ export async function runLocalityBenchmark(env = process.env) {
 routing:
   strategy: fill-first
   session-affinity: true
-request-retry: 0
-max-retry-credentials: 1
+request-retry: 2
+max-retry-credentials: 2
 usage-statistics-enabled: false
 model-catalog:
   refresh-enabled: false
@@ -425,7 +682,10 @@ remote-management:
 api-keys:
   - benchkey
   - tenant2key
+  - b4key
 api-key-bindings:
+  - key_identifier: "${b4KeyHash}"
+    provider: "b4-fixture"
   - key_identifier: "${tenant1KeyHash}"
     account: "proxy-account"
   - key_identifier: "${tenant2KeyHash}"
@@ -433,9 +693,10 @@ api-key-bindings:
 proxy-url: "${initialProxyUrl}"
 `;
   await writeFile(join(authDir, 'config.yaml'), gwConfig);
+  evidence.event(null, 'routing-config', { yaml: gwConfig, accounts: [proxyAccount, directAccount, ...failoverAccounts] });
 
   // 4. Launch gateway process
-  const gwProc = Bun.spawn([
+  const gatewayRun = owner.spawn([
     gateway,
     'serve',
     '--bind', '127.0.0.1',
@@ -446,31 +707,22 @@ proxy-url: "${initialProxyUrl}"
   ], {
     env: {
       ...process.env,
-      API_KEYS: 'benchkey',
+      MAHOQUOT_QA_LOOPBACK_ONLY: '1',
+      HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '',
+      API_KEYS: 'benchkey,tenant2key,b4key',
       MANAGEMENT_PASSWORD: 'mgmt-secret',
       USAGE_POLL_SECS: '3600',
-      MAX_FAILOVER: '1',
+      MAX_FAILOVER: '2',
     },
     stdout: 'ignore',
     stderr: 'pipe',
   });
 
-  // Wait for gateway readiness
-  let ready = false;
-  for (let i = 0; i < 40; i++) {
-    await Bun.sleep(100);
-    try {
-      const res = await fetch(`http://127.0.0.1:${gwPort}/healthz`, { proxy: '' });
-      if (res.ok) { ready = true; break; }
-    } catch {}
-  }
-  if (!ready) {
-    const gwErr = await new Response(gwProc.stderr).text();
-    gwProc.kill('SIGKILL');
-    mockServer.stop(true);
-    proxyListener.stop(true);
-    throw new Error(`gateway failed to reach healthz readiness (exit=${gwProc.exitCode}): ${gwErr}`);
-  }
+  const gwProc = gatewayRun.child;
+  await bounded(Promise.race([gatewayRun.listening, gwProc.exited.then(code => { throw new Error(`gateway exited before readiness: ${code}`); })]), 'gateway readiness');
+  const health = await fetch(`http://127.0.0.1:${gwPort}/healthz`);
+  if (!health.ok) throw new Error(`gateway health status ${health.status}`);
+  await health.text();
 
   // Helper: changes proxy-url via gateway management API using dedicated management secret
   async function updateProxySettingViaManagement(newProxy) {
@@ -498,7 +750,9 @@ proxy-url: "${initialProxyUrl}"
     if (!putRes.ok) {
       throw new Error(`failed to update proxy setting via management API (${putRes.status}): ${await putRes.text()}`);
     }
-    return await putRes.json();
+    const result = await putRes.json();
+    evidence.event('B8', 'config-update', { yaml: updatedYaml, status: putRes.status, response: result });
+    return result;
   }
 
   // Verification step for B8:
@@ -530,6 +784,7 @@ proxy-url: "${initialProxyUrl}"
   const firstChunk = await inflightReader.read();
   const chunkTextDecoder = new TextDecoder();
   let inflightBodyText = chunkTextDecoder.decode(firstChunk.value ?? new Uint8Array());
+  if (!firstChunk.done && firstChunk.value) evidence.event('B8', 'inflight-consumed', { logical_id: inflightReqId, body: inflightBodyText });
 
   // (2) WHILE the streaming request is in flight, change proxy setting via management API
   // In happy path: switch proxy-url to "direct" (new hop for generation 2)
@@ -537,6 +792,7 @@ proxy-url: "${initialProxyUrl}"
   const nextTargetProxy = injectWrongEgress ? `http://127.0.0.1:${proxyPort}` : 'direct';
   await updateProxySettingViaManagement(nextTargetProxy);
   currentConfigGeneration = 2;
+  releaseInflight();
   const managementCallReturnedAt = Date.now();
 
   // (3) Issue Request 2: the first request STARTED AFTER the management call returned
@@ -627,11 +883,25 @@ proxy-url: "${initialProxyUrl}"
     ...env,
     BENCH_MOCK_STATS_URL: `http://127.0.0.1:${mockPort}/_mock/stats`,
     BENCH_GATEWAY_PID: String(gwProc.pid),
+    MAHOQUOT_BENCH_PHASE_ACK: '1',
   };
+  // Import only after module initialization: resilience imports our ownership
+  // helpers. This reuses its owned process sampler without a top-level cycle.
+  const { getProcessStats } = await import('./bench-resilience.mjs');
+  const phaseCollector = localityPhaseCollector({
+    pid: gwProc.pid, evidence,
+    measure: pid => getProcessStats(pid, {
+      wait: (promise, label) => bounded(promise, label, 4000),
+      listFds: async path => bounded((await import('node:fs/promises')).readdir(path), 'locality descriptor table', 4000),
+    }),
+    acknowledge: async (line, child) => {
+      child.stdin.write(line);
+      await bounded(child.stdin.flush(), 'locality phase acknowledgement', 4000);
+    },
+  });
 
-  try {
     const sessionName = injectTenantCollision ? 'shared-cross-tenant-session' : 'bench-locality-session';
-    const benchProc = Bun.spawn([
+    const benchRun = owner.spawn([
       bench,
       'locality',
       '--url', `http://127.0.0.1:${env.BENCH_URL_PORT ?? gwPort}/v1/chat/completions`,
@@ -641,22 +911,17 @@ proxy-url: "${initialProxyUrl}"
     ], {
       cwd: root,
       env: benchEnv,
+      stdin: 'pipe',
       stdout: 'pipe',
       stderr: 'pipe',
+    }, phaseCollector.line);
+
+    const [benchExit] = await bounded(Promise.all([benchRun.child.exited, benchRun.drained]), 'locality bench', 120000);
+    evidence.event(null, 'locality-driver-exit', { code: benchExit });
+    const report = await retainLocalityReport({
+      readReport: () => readFile(outFile, 'utf8'), exitCode: benchExit,
+      output: benchRun.output(), evidence, finishPhases: () => phaseCollector.finish(),
     });
-
-    const [benchStdout, benchStderr] = await Promise.all([
-      new Response(benchProc.stdout).text(),
-      new Response(benchProc.stderr).text(),
-    ]);
-    const benchExit = await benchProc.exited;
-
-    if (benchExit !== 0) {
-      throw new Error(`bench locality failed (${benchExit}): ${benchStderr}\n${benchStdout}`);
-    }
-
-    const reportContent = await readFile(outFile, 'utf8');
-    const report = JSON.parse(reportContent);
 
     // Ensure b8_egress carries hop_log in the final report
     if (b8HopLog.length > 0 && (!report.b8_egress.hop_log || report.b8_egress.hop_log.length === 0)) {
@@ -670,12 +935,15 @@ proxy-url: "${initialProxyUrl}"
       reuse_delta: reuseDuringOn - reuseDuringOff,
     };
 
+    report.raw_observations = evidence.raw;
+    await writeFile(outFile, JSON.stringify(report, null, 2));
     return report;
+  } catch (error) {
+    evidence.raw.failure = String(error?.message ?? error);
+    throw error;
   } finally {
-    gwProc.kill('SIGKILL');
-    await gwProc.exited;
-    mockServer.stop(true);
-    proxyListener.stop(true);
+    try { await owner.close(); }
+    finally { if (rawPath) await writeFile(rawPath, JSON.stringify(evidence.raw, null, 2)); }
   }
 }
 

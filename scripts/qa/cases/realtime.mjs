@@ -3,13 +3,22 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fixture, bounded, sha } from "./media-fixture.mjs";
 
+export async function awaitExpiryDeadline(deadline, clock = () => performance.now(), timer = setTimeout) {
+  const remaining = deadline - clock();
+  if (remaining <= 0) return;
+  await new Promise((resolve) => timer(resolve, Math.ceil(remaining)));
+  assert(clock() >= deadline, "expiry timer fired before the credential deadline");
+}
+
 export async function runCase(variant, evidencePath, context) {
+  assert(["happy", "failure"].includes(variant));
   const require = createRequire(resolve(import.meta.dirname, "../../../crates/monitor-ui/frontend/package.json"));
   const { chromium } = require("@playwright/test");
   const browser = await chromium.launch({ args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required",
     // Loopback-only QA: Chromium must expose literal host candidates instead
     // of mDNS names the loopback-confined gateway cannot resolve.
     "--disable-features=WebRtcHideLocalIpsWithMdns", "--allow-loopback-in-peer-connection"] });
+  try {
   const client = await browser.newPage();
   const upstreamPeer = await browser.newPage();
   await Promise.all([client.goto("about:blank"), upstreamPeer.goto("about:blank")]);
@@ -18,8 +27,7 @@ export async function runCase(variant, evidencePath, context) {
   context.requiredAssertionIds = variant === "happy"
     ? ["secret-sdp-media", "sideband", "hangup-cleanup"]
     : ["cross-issuer-denied", "expired-secret-denied"];
-  try {
-    return await fixture("realtime", variant, evidencePath, context, credentials, async (request, server, capture) => {
+  return await fixture("realtime", variant, evidencePath, context, credentials, async (request, server, capture) => {
       if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
         if (server.upgrade(request)) return;
       }
@@ -36,22 +44,23 @@ export async function runCase(variant, evidencePath, context) {
             globalThis.channel = channel;
             channel.addEventListener("message", (event) => { channel.send(event.data); resolve(event.data); }, { once: true });
           }, { once: true }));
-          globalThis.audio = new Promise((resolve) => {
+          globalThis.audio = new Promise((resolve, reject) => {
             const handleTrack = async ({ track }) => {
               if (track.kind !== "audio") return;
               try {
                 const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
                 const { value } = await reader.read();
+                if (!value) throw new Error("audio stream ended without a decoded frame");
                 const info = { frames: value.numberOfFrames, channels: value.numberOfChannels, sampleRate: value.sampleRate };
                 value.close(); await reader.cancel(); resolve(info);
               } catch (e) {
-                resolve({ frames: 100, channels: 1, sampleRate: 48000 });
+                reject(e);
               }
             };
             pc.addEventListener("track", handleTrack);
-            // Fallback timeout in case track event or track processor hangs
-            setTimeout(() => resolve({ frames: 100, channels: 1, sampleRate: 48000 }), 3000);
           });
+          // Preserve rejection until the outer bounded decoded-frame observation awaits it.
+          globalThis.audio.catch(() => {});
           await pc.setRemoteDescription({ type: "offer", sdp: offer });
           const gathered = new Promise((resolve) => pc.addEventListener("icegatheringstatechange", () => {
             if (pc.iceGatheringState === "complete") resolve();
@@ -69,15 +78,6 @@ export async function runCase(variant, evidencePath, context) {
       check("mint-status", 200, minted.status);
       const secret = await minted.json();
       check("secret-prefix", true, secret.value.startsWith("ek_"));
-      if (variant === "failure") {
-        // Mint a secret with fixture-caller
-        // cross-issuer-denied: access the call using other-caller or hangup with other-caller
-        const crossRes = await request("/v1/realtime/calls/call_fixture/hangup", "{}", "other-caller");
-        check("cross-issuer-denied", true, crossRes.status === 401 || crossRes.status === 403 || crossRes.status === 404);
-        const expRes = await request("/v1/realtime/calls", "v=0", "ek_expired_mock", "application/sdp");
-        check("expired-secret-denied", true, expRes.status === 401 || expRes.status === 403);
-        return;
-      }
       const offer = await bounded(client.evaluate(async () => {
         globalThis.pc = new RTCPeerConnection({ iceServers: [] });
         const context = new AudioContext();
@@ -106,8 +106,22 @@ export async function runCase(variant, evidencePath, context) {
       check("upstream-data-digest", sha(payload), sha(await bounded(upstreamPeer.evaluate(() => data), "upstream data")));
       const audio = await bounded(upstreamPeer.evaluate(() => audio), "SRTP audio decode");
       check("secret-sdp-media", true, response.status === 201 && audio.frames > 0 && audio.sampleRate > 0);
-      check("crossissuer-denied", 403, (await request("/v1/realtime/calls/call_fixture/hangup", "{}", "other-caller")).status);
-      const socket = new WebSocket(`${base.replace("http:", "ws:")}/v1/realtime/calls/call_fixture`, { headers: { authorization: `Bearer ${secret.value}` } });
+      check(variant === "failure" ? "cross-issuer-denied" : "crossissuer-denied", 403, (await request("/v1/realtime/calls/call_fixture/hangup", "{}", "other-caller")).status);
+      // Mint only after media negotiation: setup latency must not consume the
+      // short credential's lifetime before its authorized sideband is tested.
+      let accessSecret = secret;
+      let expiryDeadline;
+      if (variant === "failure") {
+        const response = await request("/v1/realtime/client_secrets", JSON.stringify({ session: { model: "gpt-realtime" }, expires_after: 10 }));
+        check("short-mint-status", 200, response.status);
+        accessSecret = await response.json();
+        check("distinct-minted-secret", true, accessSecret.value.startsWith("ek_") && accessSecret.value !== secret.value);
+        // Stock gateway uses monotonic TTL; response receipt is later than mint.
+        // Waiting ten seconds from receipt is a conservative real expiry bound,
+        // not a readiness delay or a production clock bypass.
+        expiryDeadline = performance.now() + 10_000;
+      }
+      const socket = new WebSocket(`${base.replace("http:", "ws:")}/v1/realtime/calls/call_fixture`, { headers: { authorization: `Bearer ${accessSecret.value}` } });
       const closed = new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
       await bounded(new Promise((resolve, reject) => {
         socket.addEventListener("open", resolve, { once: true });
@@ -117,6 +131,13 @@ export async function runCase(variant, evidencePath, context) {
       socket.send(JSON.stringify({ type: "session.update", session: {} }));
       const sidebandType = JSON.parse(await bounded(echo, "sideband echo")).type;
       check("sideband", true, sidebandType === "session.update");
+      if (variant === "failure") {
+        await awaitExpiryDeadline(expiryDeadline);
+        const before = wire.length;
+        const expired = await request("/v1/realtime/calls/call_fixture/hangup", "{}", accessSecret.value);
+        check("expired-secret-denied", 401, expired.status);
+        check("expired-secret-no-upstream", before, wire.length);
+      }
       const hangupStatus = (await request("/v1/realtime/calls/call_fixture/hangup", "{}", secret.value)).status;
       await bounded(closed, "owned sideband close");
       const hangupCall404 = (await request("/v1/realtime/calls/call_fixture/hangup", "{}", secret.value)).status;

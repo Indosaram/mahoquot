@@ -46,8 +46,43 @@ async function git(path, ...args) {
   return result[0].trim();
 }
 
+export function validateCancellationObservations(observations, requestId, followupId) {
+  assert.equal(typeof requestId, "string");
+  assert.equal(typeof followupId, "string");
+  assert.notEqual(requestId, followupId);
+  const one = (id, event) => {
+    const matches = observations.filter((v) => v.request_id === id && v.event === event);
+    assert.equal(matches.length, 1, `${id}: ${event} exactly once`);
+    return matches[0];
+  };
+  const snapshot = (v) => {
+    assert.equal(typeof v.account, "string");
+    assert.equal(typeof v.health, "string");
+    assert.equal(v.model, "gpt-5.6-sol");
+    assert.equal(v.eligible, true, "account remains eligible");
+    assert.equal(v.group_cooldown_ms, null, "no model/group cooldown");
+    return { account: v.account, model: v.model, health: v.health,
+      eligible: v.eligible, group_cooldown_ms: v.group_cooldown_ms };
+  };
+  for (const id of [requestId, followupId]) {
+    const lifecycle = ["guard-acquire", "stream-open", "guard-release", "finalized", "recorded"];
+    const indices = lifecycle.map((event) => observations.indexOf(one(id, event)));
+    assert(indices.every((index, i) => i === 0 || index > indices[i - 1]), "ordered lifecycle");
+  }
+  const before = snapshot(one(requestId, "stream-open"));
+  const final = one(requestId, "finalized");
+  assert.equal(final.status, 499, "client cancellation outcome");
+  const after = snapshot(final);
+  assert.deepEqual(after, before, "cancellation must not mutate cooldown/eligibility");
+  assert.deepEqual(snapshot(one(followupId, "stream-open")), before, "exact-account followup");
+  assert.equal(one(followupId, "finalized").status, 200);
+  assert.deepEqual(snapshot(one(followupId, "finalized")), before);
+  return { before, after, releaseCount: observations.filter((v) => v.request_id === requestId && v.event === "guard-release").length };
+}
+
 export async function runCase(variant, evidencePath, context) {
   assert(["happy", "failure"].includes(variant));
+
   const ports = context.ports;
   assert(
     ports.length === 2 &&
@@ -89,6 +124,20 @@ export async function runCase(variant, evidencePath, context) {
   let mock, child, exitPromise, outputPromise, exit, failure;
   const ready = deferred();
   const upstreamCancelled = deferred();
+  const observations = [];
+  const subscriptions = new Set();
+  const nextObservation = (predicate) => {
+    const signal = deferred();
+    const subscription = (value) => {
+      if (predicate(value)) {
+        subscriptions.delete(subscription);
+        signal.resolve(value);
+      }
+    };
+    subscriptions.add(subscription);
+    return signal.promise;
+  };
+  let cancelledRequestId, followupRequestId;
   let upstreamDialCount = 0;
 
   try {
@@ -118,6 +167,11 @@ export async function runCase(variant, evidencePath, context) {
         if (url.pathname === "/backend-api/codex/responses") {
           upstreamDialCount += 1;
           if (variant === "happy") {
+            if (upstreamDialCount === 2) {
+              return new Response('event: response.completed\ndata: {"type":"response.completed","response":{"id":"fixture-followup","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":0}}}\n\n', {
+                headers: { "content-type": "text/event-stream" },
+              });
+            }
             events.push({ type: "mock-stream-opened", dial: upstreamDialCount });
             const stream = new ReadableStream({
               start(controller) {
@@ -160,7 +214,7 @@ export async function runCase(variant, evidencePath, context) {
 
     const auth = join(work, "auth");
     await mkdir(auth);
-    for (const index of [0, 1]) {
+    for (const index of variant === "happy" ? [0] : [0, 1]) {
       await writeFile(
         join(auth, `codex-${index}.json`),
         JSON.stringify({
@@ -227,7 +281,6 @@ export async function runCase(variant, evidencePath, context) {
       child.once("exit", (code, signal) => done({ code, signal }));
     });
 
-    let guardReleaseNotified = false;
     const lines = async (source, type) => {
       let buffer = "";
       for await (const chunk of source) {
@@ -236,11 +289,15 @@ export async function runCase(variant, evidencePath, context) {
         buffer = parts.pop();
         for (const line of parts) {
           events.push({ type, line });
+          const clean = line.replace(/\x1b\[[0-9;]*m/g, "");
+          const marker = clean.indexOf("cancel_observation=");
+          if (marker !== -1) {
+            const value = JSON.parse(clean.slice(marker + "cancel_observation=".length));
+            observations.push(value);
+            for (const subscription of subscriptions) subscription(value);
+          }
           if (line.includes("listening") && line.includes(String(ports[0]))) {
             ready.resolve();
-          }
-          if (line.includes("guard_release") || line.includes("released in-flight")) {
-            guardReleaseNotified = true;
           }
         }
       }
@@ -258,6 +315,7 @@ export async function runCase(variant, evidencePath, context) {
     );
 
     if (variant === "happy") {
+      const opened = nextObservation((v) => v.event === "stream-open");
       const response = await fetch(`http://127.0.0.1:${ports[0]}/v1/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -266,16 +324,21 @@ export async function runCase(variant, evidencePath, context) {
           messages: [{ role: "user", content: "test cancellation" }],
           stream: true,
         }),
+        signal: AbortSignal.timeout(15000),
       });
       assert.equal(response.status, 200);
+      cancelledRequestId = (await bounded(opened, "stream identity")).request_id;
+      const recorded = nextObservation((v) => v.event === "recorded" && v.request_id === cancelledRequestId);
       const reader = response.body.getReader();
-      const firstChunk = await reader.read();
-      assert(!firstChunk.done);
-      const text = new TextDecoder().decode(firstChunk.value);
-      assert(text.includes("first-content"));
+      let text = "";
+      while (!text.includes("first-content")) {
+        const chunk = await bounded(reader.read(), "first content");
+        assert(!chunk.done, "stream ended before first content");
+        text += new TextDecoder().decode(chunk.value);
+      }
       events.push({ type: "first-content-received" });
 
-      await reader.cancel();
+      await bounded(reader.cancel(), "client cancellation");
       events.push({ type: "client-cancelled" });
 
       const cancelledObserved = await bounded(
@@ -283,9 +346,24 @@ export async function runCase(variant, evidencePath, context) {
         "upstream cancellation observation"
       );
       proof(assertions, "upstream-cancelled", true, cancelledObserved);
-      proof(assertions, "guard-released-once", true, true);
-      proof(assertions, "client-abort-no-cooldown", true, true);
       proof(extras, "first-chunk-sentinel", true, text.includes("first-content"));
+      await bounded(recorded, "cancel finalizer recorded");
+      const followupOpened = nextObservation((v) => v.event === "stream-open");
+      const followupRecorded = nextObservation((v) => v.event === "recorded" && v.request_id !== cancelledRequestId);
+      const followup = await fetch(`http://127.0.0.1:${ports[0]}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-5.6-sol", messages: [{ role: "user", content: "exact-account followup" }], stream: true }),
+        signal: AbortSignal.timeout(15000),
+      });
+      assert.equal(followup.status, 200);
+      assert((await followup.text()).includes("[DONE]"), "followup must finish normally");
+      followupRequestId = (await bounded(followupOpened, "followup identity")).request_id;
+      await bounded(followupRecorded, "followup recorded");
+      const inference = requests.filter((r) => r.method === "POST" && r.path === "/backend-api/codex/responses");
+      assert.equal(inference.length, 2, "no replay or failover");
+      assert.equal(inference[0].headers.authorization, "Bearer fixture-token-0");
+      assert.equal(inference[1].headers.authorization, inference[0].headers.authorization);
     }
 
     if (variant === "failure") {
@@ -376,6 +454,12 @@ export async function runCase(variant, evidencePath, context) {
     throw failure;
   }
 
+  if (variant === "happy") {
+    const observed = validateCancellationObservations(observations, cancelledRequestId, followupRequestId);
+    proof(assertions, "guard-released-once", 1, observed.releaseCount);
+    proof(assertions, "client-abort-no-cooldown", observed.before, observed.after);
+    events.push({ type: "correlated-cancellation", observations, cancelledRequestId, followupRequestId });
+  }
   assert.equal((await context.getSourceClosure()).sourceHash, closure.sourceHash);
   const ids =
     variant === "happy"

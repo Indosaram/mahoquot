@@ -234,22 +234,24 @@ describe("App review 2026-10-12 regressions", () => {
         return undefined;
       },
     });
-    render(<App />);
-    await openAccounts();
-    await screen.findByText("a@example.com");
-    fireEvent.contextMenu(document.querySelector(".provider-tab") as HTMLElement);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Models…" }));
+    await act(async () => { render(<App />); });
+    await act(async () => { await openAccounts(); });
+    await act(async () => {
+      fireEvent.contextMenu(document.querySelector(".provider-tab") as HTMLElement);
+    });
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Models…" })); });
 
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Disable m-a" }));
-    await waitFor(() => expect(saves).toHaveLength(1));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-b" }));
-    await waitFor(() => expect(saves).toHaveLength(2));
+    await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-a" })); });
+    expect(saves).toHaveLength(1);
+    await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-b" })); });
+    expect(saves).toHaveLength(1);
 
     await act(async () => {
       saves[0]?.resolve(json({ error: "boom" }, 500));
     });
 
-    expect(await screen.findByRole("checkbox", { name: "Disable m-a" })).toBeEnabled();
+    expect(saves).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: "Disable m-a" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "Enable m-b" })).toBeDisabled();
     await act(async () => {
       saves[1]?.resolve(json({ status: "ok" }));
@@ -336,12 +338,13 @@ describe("App review 2026-10-12 regressions", () => {
     expect(invoke).not.toHaveBeenCalledWith("write_secret", expect.anything());
   });
 
-  it("item 10: the tray shows the default gateway URL when none is committed", async () => {
+  it("item 10: the native tray shows the default gateway URL when none is committed", async () => {
     localStorage.removeItem("mahoquot.base");
+    Object.assign(window, { __TAURI__: {}, __TAURI_INTERNALS__: { invoke: nativeInvoke() } });
     window.history.pushState({}, "", "/management.html?surface=tray");
     stubGateway();
-    render(<App />);
-    expect(await screen.findByText("http://127.0.0.1:18801")).toBeInTheDocument();
+    await act(async () => { render(<App />); });
+    expect(screen.getByText("http://127.0.0.1:18801")).toBeInTheDocument();
     expect(screen.queryByText("Same-origin gateway")).not.toBeInTheDocument();
   });
 
@@ -422,6 +425,41 @@ describe("App review 2026-10-12 regressions", () => {
       manual.resolve(json({ status: "ok", provider: "codex" }));
     });
     expect(screen.getAllByText(/authorization completed/i)).toHaveLength(1);
+  });
+
+  it("xAI's on-screen authorization code is submitted to the gateway callback", async () => {
+    const callbacks: string[] = [];
+    stubGateway({
+      route: (url) => {
+        if (url.includes("xai-auth-url")) return json({ url: "https://e.test/a", state: "st-x" });
+        if (url.includes("/v0/management/oauth-callback")) {
+          callbacks.push(url);
+          return new Response("<html>ok</html>", { status: 200 });
+        }
+        if (url.includes("get-auth-status")) {
+          return json(
+            callbacks.length ? { status: "ok", provider: "xai" } : { status: "pending" },
+          );
+        }
+        return undefined;
+      },
+    });
+    vi.spyOn(window, "open").mockReturnValue(null);
+    render(<App />);
+    await openAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coding plan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "xAI" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with xAI" }));
+    fireEvent.change(await screen.findByLabelText("xAI authorization code"), {
+      target: { value: "  pasted-code " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Check authorization status/ }));
+    await screen.findByText(/authorization completed/i);
+    expect(callbacks).toHaveLength(1);
+    const query = new URL(callbacks[0] ?? "").searchParams;
+    expect(query.get("state")).toBe("st-x");
+    expect(query.get("code")).toBe("pasted-code");
   });
 
   it("item 14: Devin re-auth does not force the default server URL over the stored one", async () => {

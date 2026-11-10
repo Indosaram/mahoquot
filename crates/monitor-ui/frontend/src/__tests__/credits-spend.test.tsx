@@ -103,10 +103,19 @@ describe("credit balance display", () => {
   });
 
   it("renders an unreported balance as unknown, never zero", () => {
-    render(<CreditBalanceRow usage={{ credits_balance: null }} />);
+    render(<CreditBalanceRow usage={{ credits_balance: null, has_credits: true }} />);
     expect(screen.getByTestId("account-credit-value")).toHaveTextContent("Unknown");
     expect(screen.getByTestId("account-credit-balance")).toHaveAttribute("data-state", "unknown");
     expect(screen.queryByText(/0 credits/)).not.toBeInTheDocument();
+  });
+
+  it("renders no row when every credit field is null", () => {
+    render(
+      <CreditBalanceRow
+        usage={{ credits_balance: null, credits_unlimited: null, has_credits: null }}
+      />,
+    );
+    expect(screen.queryByTestId("account-credit-balance")).not.toBeInTheDocument();
   });
 
   it("renders unlimited without an amount", () => {

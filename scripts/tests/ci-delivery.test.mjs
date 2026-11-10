@@ -29,10 +29,14 @@ test('R35 delivery CI builds artifacts before independent browser gates on every
     assert.equal(job.if, undefined);
     assert.equal(job.needs, undefined);
     const commands = job.steps.filter(step => step.run).map(step => {
-      assert.equal(step['working-directory'], cwd);
       assert.equal(step.if, undefined);
       assert.notEqual(step['continue-on-error'], true);
-      return step.run;
+      if (step['working-directory'] !== cwd) {
+        assert.equal(cwd, 'site');
+        assert.equal(step['working-directory'], frontend);
+        assert.equal(step.run, 'bun install --frozen-lockfile');
+      }
+      return step['working-directory'] === cwd ? step.run : null;
     });
     const index = command => { const i = commands.indexOf(command); assert.ok(i >= 0, `missing ${command}`); return i; };
     assert.ok(index('bun install --frozen-lockfile') < index('bun run build'));
@@ -41,7 +45,26 @@ test('R35 delivery CI builds artifacts before independent browser gates on every
     if (artifact) assert.ok(index('bun run build') < index(artifact) && index(artifact) < index(browser));
     return job;
   };
-  assert.notEqual(gate(frontend, 'bun run test:e2e', 'bun run test:artifact'), gate('site', 'bunx playwright test'));
+  assert.notEqual(gate(frontend, 'bun run test:e2e', 'bun run test:artifact'), gate('site', 'bunx --no-install playwright test e2e/spatial.spec.ts --project=chromium --workers=1'));
+});
+
+test('DS02 CI provisions signature tooling and invokes script contracts exactly once', () => {
+  const workflow = bunJson(`console.log(JSON.stringify(Bun.YAML.parse(await Bun.file('.github/workflows/ci.yml').text())));`);
+  const jobs = Object.values(workflow.jobs);
+  const entries = jobs.flatMap(job => job.steps.filter(step => step.run === 'bash scripts/verify.sh --scripts').map(step => ({ job, step })));
+  assert.equal(entries.length, 1);
+  const { job, step } = entries[0];
+  assert.equal(job.if, undefined);
+  assert.equal(step.if, undefined);
+  assert.notEqual(step['continue-on-error'], true);
+  const gateIndex = job.steps.indexOf(step);
+  assert.ok(job.steps.findIndex(step => step.run === 'brew install minisign') < gateIndex);
+  assert.ok(job.steps.some(step => step.run === 'brew install minisign'));
+  for (const cwd of [frontend, 'site']) {
+    const index = job.steps.findIndex(step => step['working-directory'] === cwd && step.run === 'bun install --frozen-lockfile');
+    assert.ok(index >= 0 && index < gateIndex);
+  }
+  assert.equal(jobs.flatMap(job => job.steps).filter(step => step.run?.includes('vitest.mjs run --config e2e/site-unit.config.ts')).length, 1);
 });
 
 test('R35 browser configurations isolate ports and preserve the site base path', () => {

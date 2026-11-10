@@ -431,27 +431,6 @@ const credentialProvider = (credential: AuthFileItem): string =>
       : credential.type || credential.provider,
   );
 
-// Both sides are already canonical Quotio ids, so equality is the whole test.
-// Substring matching here used to pair a "claude" runtime account with a
-// "claude-code" credential (and vice versa) purely because one id is a prefix
-// of the other.
-const sharesProvider = (accountProvider: string, credential: AuthFileItem): boolean => {
-  const credProvider = credentialProvider(credential);
-  if (!credProvider || !accountProvider) return true;
-  return credProvider === accountProvider;
-};
-
-const matchesCredentialName = (credName: string, accountId: string): boolean => {
-  if (credName === accountId) return true;
-  const stem = credName.replace(/\.json$/i, "");
-  if (stem === accountId) return true;
-  const withoutPlan = stem.replace(/-(?:plus|prolite|pro|team|free|enterprise)$/i, "");
-  if (withoutPlan === accountId) return true;
-  const withoutPrefix = withoutPlan.replace(/^[a-zA-Z0-9]+-/, "");
-  if (withoutPrefix === accountId) return true;
-  return false;
-};
-
 /**
  * Bind each runtime pool member to the credential file it was loaded from.
  *
@@ -468,50 +447,85 @@ const pairAccountsWithCredentials = (
   matched: Set<string>,
 ): Map<string, AuthFileItem> => {
   const pairing = new Map<string, AuthFileItem>();
-
-  for (const account of runtimeAccounts) {
-    const accountEmail = extractEmail(account.id);
-    const accountProvider = providerOf(account.provider || "unknown");
-    const isDevin = accountProvider === "devin";
-    const credential = credentialFiles.find((c) => {
-      if (matched.has(c.name)) return false;
-      if (!sharesProvider(accountProvider, c)) return false;
-      if (isDevin) {
-        const credSlug =
-          c.identity_slug || ((c as Record<string, unknown>).identity as string | undefined);
-        if (credSlug) {
-          return credSlug === account.id;
-        }
-        if (c.name === devinCredentialFileName(account.id)) {
-          return true;
-        }
-        return matchesCredentialName(c.name, account.id);
-      }
-      const credEmail = extractEmail(c.email || c.account || c.name);
-      return credEmail === accountEmail || matchesCredentialName(c.name, account.id);
-    });
+  type Queue = { indices: number[]; cursor: number };
+  const index = new Map<string, Queue>();
+  const providers = credentialFiles.map(credentialProvider);
+  const keyOf = (provider: string | null, kind: string, value: string) =>
+    JSON.stringify([provider, kind, value]);
+  const add = (provider: string | null, kind: string, value: string, position: number) => {
+    const key = keyOf(provider, kind, value);
+    const queue = index.get(key) ?? { indices: [], cursor: 0 };
+    queue.indices.push(position);
+    index.set(key, queue);
+    if (provider !== null) add(null, kind, value, position);
+  };
+  credentialFiles.forEach((credential, position) => {
+    const provider = providers[position];
+    const stem = credential.name.replace(/\.json$/i, "");
+    const withoutPlan = stem.replace(/-(?:plus|prolite|pro|team|free|enterprise)$/i, "");
+    const names = new Set([credential.name, stem, withoutPlan, withoutPlan.replace(/^[a-zA-Z0-9]+-/, "")]);
+    add(provider, "email", extractEmail(credential.email || credential.account || credential.name), position);
+    for (const name of names) add(provider, "name", name, position);
+    const slug = credential.identity_slug || ((credential as Record<string, unknown>).identity as string | undefined);
+    if (slug) add(provider, "devin", slug, position);
+    else {
+      for (const name of names) add(provider, "devin", name, position);
+      add(provider, "devin-file", credential.name, position);
+    }
+  });
+  const first = (provider: string | null, kind: string, value: string): number => {
+    const queue = index.get(keyOf(provider, kind, value));
+    if (!queue) return Infinity;
+    while (queue.cursor < queue.indices.length) {
+      const position = queue.indices[queue.cursor];
+      if (!matched.has(credentialFiles[position].name)) return position;
+      queue.cursor += 1;
+    }
+    return Infinity;
+  };
+  const runtimeProviders = runtimeAccounts.map((account) => providerOf(account.provider || "unknown"));
+  runtimeAccounts.forEach((account, position) => {
+    const provider = runtimeProviders[position];
+    const identities = provider === "devin"
+      ? [["devin", account.id], ["devin-file", devinCredentialFileName(account.id)]]
+      : [["email", extractEmail(account.id)], ["name", account.id]];
+    let candidate = Infinity;
+    for (const [kind, value] of identities) {
+      candidate = Math.min(candidate, first(provider || null, kind, value), first("", kind, value));
+    }
+    const credential = credentialFiles[candidate];
     if (credential) {
       matched.add(credential.name);
       pairing.set(account.id, credential);
     }
-  }
-
-  const unpaired = runtimeAccounts.filter((account) => !pairing.has(account.id));
-  for (const account of unpaired) {
-    const accountProvider = providerOf(account.provider || "unknown");
-    const rivals = unpaired.filter(
-      (other) => providerOf(other.provider || "unknown") === accountProvider,
-    );
-    const candidates = credentialFiles.filter(
-      (c) => !matched.has(c.name) && credentialProvider(c) === accountProvider,
-    );
-    const credential = candidates[0];
-    if (rivals.length === 1 && candidates.length === 1 && credential) {
-      matched.add(credential.name);
-      pairing.set(account.id, credential);
+  });
+  const unpairedCounts = new Map<string, number>();
+  runtimeAccounts.forEach((account, position) => {
+    if (!pairing.has(account.id)) {
+      const provider = runtimeProviders[position];
+      unpairedCounts.set(provider, (unpairedCounts.get(provider) ?? 0) + 1);
     }
-  }
-
+  });
+  const remaining = new Map<string, AuthFileItem[]>();
+  credentialFiles.forEach((credential, position) => {
+    if (matched.has(credential.name)) return;
+    const provider = providers[position];
+    const group = remaining.get(provider) ?? [];
+    group.push(credential);
+    remaining.set(provider, group);
+  });
+  runtimeAccounts.forEach((account, position) => {
+    if (pairing.has(account.id)) return;
+    const provider = runtimeProviders[position];
+    const candidates = remaining.get(provider);
+    if (unpairedCounts.get(provider) === 1 && candidates?.length === 1) {
+      const credential = candidates[0];
+      if (!matched.has(credential.name)) {
+        matched.add(credential.name);
+        pairing.set(account.id, credential);
+      }
+    }
+  });
   return pairing;
 };
 
@@ -860,12 +874,12 @@ const isClaudeNearlySpent = (account: NormalizedAccount, nowUnix: number): boole
     );
   });
 
-const activeClaudeResetUnix = (account: NormalizedAccount, nowUnix: number): number => {
-  const reset = account.usage?.primary?.reset_at_unix;
+const activeClaudeWeeklyResetUnix = (account: NormalizedAccount, nowUnix: number): number => {
+  const reset = account.usage?.secondary?.reset_at_unix;
   return typeof reset === "number" && reset > nowUnix ? reset : Number.MAX_SAFE_INTEGER;
 };
 
-/** Displays Claude subscriptions in gateway routing order while every other card keeps its slot. */
+/** Displays Claude subscriptions in gateway weekly-reset order while every other card keeps its slot. */
 export const orderClaudeSubscriptionsForDisplay = (
   accounts: readonly NormalizedAccount[],
   nowUnix = Math.floor(Date.now() / 1000),
@@ -880,7 +894,8 @@ export const orderClaudeSubscriptionsForDisplay = (
       (a, b) =>
         Number(isClaudeNearlySpent(a.account, nowUnix)) -
           Number(isClaudeNearlySpent(b.account, nowUnix)) ||
-        activeClaudeResetUnix(a.account, nowUnix) - activeClaudeResetUnix(b.account, nowUnix) ||
+        activeClaudeWeeklyResetUnix(a.account, nowUnix) -
+          activeClaudeWeeklyResetUnix(b.account, nowUnix) ||
         a.slot - b.slot,
     );
   slots.forEach((slot, index) => {

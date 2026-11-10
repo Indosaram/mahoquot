@@ -1539,6 +1539,40 @@ describe("Cline pool quota summary", () => {
       expect(rows[1]?.usedPercent).toBe(25);
     });
 
+    
+    it("suppresses synthetic flat windows when Relay limits or Grok groups are present and omits lapsed reset countdowns", () => {
+      const relayAccount: NormalizedAccount = {
+        ...mockAccount,
+        id: "claude-ccapi",
+        provider: "claude",
+        plan: "opus-standard",
+        usage: {
+          plan_type: "relay",
+          primary: { limit_name: "3h", window_minutes: 180, used_percent: 0, reset_at_unix: 1900000000 },
+          secondary: { limit_name: "Weekly", window_minutes: 10080, used_percent: 100, reset_at_unix: 1900000000 },
+          groups: [
+            {
+              display_name: "Relay limits",
+              buckets: [
+                { bucket_id: "cost_usd-3h", display_name: "3h", window: "3h", used_percent: 0, reset_at_unix: 1900000000 },
+                { bucket_id: "cost_usd-daily", display_name: "Daily", window: "daily", used_percent: 0, reset_at_unix: 1900000000 },
+                { bucket_id: "cost_usd-weekly", display_name: "Weekly", window: "weekly", used_percent: 100, reset_at_unix: 1000 },
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = quotaRows(relayAccount);
+      expect(rows.map((r) => [r.group, r.name])).toEqual([
+        ["Relay limits", "3h"],
+        ["Relay limits", "Daily"],
+        ["Relay limits", "Weekly"],
+      ]);
+      // Bucket with past reset_at_unix (1000) omits misleading "now" countdown (resetSeconds = null)
+      expect(rows[2]?.resetSeconds).toBeNull();
+    });
+
     it("suppresses synthetic flat aggregate projections for Antigravity when groups exist", () => {
       const agAccount: NormalizedAccount = {
         ...mockAccount,
@@ -1643,6 +1677,7 @@ describe("Cline pool quota summary", () => {
       // Last known quota data is still rendered
       expect(screen.getByText("5h")).toBeInTheDocument();
       expect(screen.getByText("55%")).toBeInTheDocument();
+      expect(screen.getByTestId("account-quota-list")).not.toHaveClass("quota-list-unverified");
     });
 
     it("renders refresh failure badge, error message, and preserves last known data", () => {
@@ -1685,6 +1720,11 @@ describe("Cline pool quota summary", () => {
       // Last known quota data is still rendered
       expect(screen.getByText("5h")).toBeInTheDocument();
       expect(screen.getByText("75%")).toBeInTheDocument();
+      // ...but marked as history rather than the current allowance
+      expect(screen.getByTestId("account-quota-list")).toHaveClass("quota-list-unverified");
+      expect(screen.getByTestId("quota-unverified-note")).toHaveTextContent(
+        "current quota unknown",
+      );
     });
   });
 });

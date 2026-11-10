@@ -172,7 +172,7 @@ describe("cliproxy parity CLI boundaries", () => {
     expect(lines[36]).toBe("bench-resilience");
     expect(lines[37]).toBe("desktop-parity");
 
-    const planPath = process.env.MAHOQUOT_CLIPROXY_PLAN ?? "/Volumes/T9-Mac/project/mahoquot/.omo/plans/cliproxy-remediation-plan.md";
+    const planPath = process.env.MAHOQUOT_CLIPROXY_PLAN ?? join(root, ".omo/plans/cliproxy-remediation-plan.md");
     const planText = await Bun.file(planPath).text();
     const planCases = auditInternals.taskCasesFromPlan(planText).map((c) => c.case);
     expect(lines).toEqual(planCases);
@@ -197,9 +197,15 @@ describe("cliproxy parity CLI boundaries", () => {
   });
 
   test("unknown registered cases cannot claim success", async () => {
-    const result = await invoke(["--case", "retry", "--variant", "happy", "--evidence", "task-3-happy.json"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("case module not implemented: cases/retry.mjs");
+    const casesDir = await mkdtemp(join(tmpdir(), "parity-missing-case-"));
+    let buildReads = 0;
+    try {
+      await expect(dispatchCase("retry", "happy", join(casesDir, "receipt.json"), {
+        casesDir,
+        get build() { buildReads++; throw new Error("build dispatched before module validation"); },
+      })).rejects.toThrow("case module not implemented: cases/retry.mjs");
+      expect(buildReads).toBe(0);
+    } finally { await rm(casesDir, { recursive: true, force: true }); }
   });
 
   test("dispatchCase rejects invalid receipt via awaited validateReceipt", async () => {

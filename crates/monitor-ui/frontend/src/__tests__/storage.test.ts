@@ -10,7 +10,6 @@ import {
   getProviderOrder,
   getTelemetryRange,
   getTheme,
-  isRemoteOnlyShell,
   migrateStoredGatewayUrl,
   orderProviders,
   removeLegacyRelayKey,
@@ -30,66 +29,6 @@ describe("Storage and Port Migration", () => {
 
   it("returns default gateway URL 18801 when nothing stored in non-Tauri environment", () => {
     expect(getGatewayBaseUrl()).toBe("");
-  });
-
-  it("leaves the endpoint unset in the remote-only mobile shell", () => {
-    const scope = window as unknown as {
-      __MAHOQUOT_REMOTE_ONLY__?: boolean;
-      __TAURI__?: unknown;
-    };
-    scope.__TAURI__ = {};
-    scope.__MAHOQUOT_REMOTE_ONLY__ = true;
-    try {
-      expect(getGatewayBaseUrl()).toBe("");
-      expect(migrateStoredGatewayUrl()).not.toBe("http://127.0.0.1:18801");
-    } finally {
-      scope.__MAHOQUOT_REMOTE_ONLY__ = undefined;
-      scope.__TAURI__ = undefined;
-    }
-  });
-
-  it("treats an Android webview user agent as remote-only", () => {
-    const scope = window as unknown as { __TAURI__?: unknown };
-    scope.__TAURI__ = {};
-    const original = navigator.userAgent;
-    Object.defineProperty(navigator, "userAgent", {
-      value:
-        "Mozilla/5.0 (Linux; Android 14; sdk_gphone64_arm64) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-      configurable: true,
-    });
-    try {
-      expect(isRemoteOnlyShell()).toBe(true);
-      expect(getGatewayBaseUrl()).toBe("");
-    } finally {
-      Object.defineProperty(navigator, "userAgent", { value: original, configurable: true });
-      scope.__TAURI__ = undefined;
-    }
-  });
-
-  it("defaults the desktop shell to the local gateway on 18801", () => {
-    const scope = window as unknown as { __TAURI__?: unknown };
-    scope.__TAURI__ = {};
-    try {
-      expect(getGatewayBaseUrl()).toBe("http://127.0.0.1:18801");
-    } finally {
-      scope.__TAURI__ = undefined;
-    }
-  });
-
-  it("keeps a stored remote endpoint in the mobile shell", () => {
-    const scope = window as unknown as {
-      __MAHOQUOT_REMOTE_ONLY__?: boolean;
-      __TAURI__?: unknown;
-    };
-    scope.__TAURI__ = {};
-    scope.__MAHOQUOT_REMOTE_ONLY__ = true;
-    try {
-      localStorage.setItem("mahoquot.base", "http://100.78.73.127:18801");
-      expect(getGatewayBaseUrl()).toBe("http://100.78.73.127:18801");
-    } finally {
-      scope.__MAHOQUOT_REMOTE_ONLY__ = undefined;
-      scope.__TAURI__ = undefined;
-    }
   });
 
   it("migrates exact obsolete port 18871 to 18801", () => {

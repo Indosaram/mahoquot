@@ -114,6 +114,7 @@ function startCartesianLoop({
   let needsFill = true;
   let lastPaintSig = "";
   let lastSelected: string | null | undefined = Symbol() as never;
+  let lastMarker: number | null | undefined = Symbol() as never;
 
   const requestDraw = () => {
     if (raf || document.visibilityState === "hidden") return;
@@ -127,14 +128,6 @@ function startCartesianLoop({
     raf = 0;
     const s = state.current;
     if (!s.ready) return;
-    // Keep the bloom layer in sync with the crisp canvas while it's active.
-    if (bloomCtx) {
-      const on = s.bloom !== "off" && (!s.bloomOnHover || s.isMouseInChart || s.hovered);
-      if (on) {
-        bloomCtx.clearRect(0, 0, cols, rows);
-        bloomCtx.drawImage(canvas, 0, 0);
-      }
-    }
     const tgt = targets.current;
     if (s.revision !== lastRevision) {
       lastRevision = s.revision;
@@ -190,7 +183,7 @@ function startCartesianLoop({
     const itTarget = s.isMouseInChart || s.hovered ? 1 : 0;
     let settling = false;
     if (Math.abs(intensity - itTarget) > 0.001) {
-      intensity += (itTarget - intensity) * 0.16;
+      intensity += (itTarget - intensity) * (reduce ? 1 : 0.16);
       settling = true;
       needsFill = true;
     } else intensity = itTarget;
@@ -198,6 +191,8 @@ function startCartesianLoop({
     // Live hover wins; the controlled markerIndex (e.g. a committed point)
     // is the fallback shown when nothing is hovered.
     const marker = s.hoverIndex != null ? s.hoverIndex : s.markerIndex;
+    const markerChanged = marker !== lastMarker;
+    lastMarker = marker;
     const hoverActive = s.isMouseInChart || s.hovered;
     const winkDue = hoverActive && !reduce && now - last >= 100;
     // Repaint when a tweak-driven paint input changes (variant, stacking) so
@@ -210,8 +205,8 @@ function startCartesianLoop({
       lastPaintSig = paintSig;
       needsFill = true;
     }
-    if (!(moving || settling || winkDue || marker != null || progChanged || sigChanged)) {
-      if (hoverActive) requestDraw();
+    if (!(needsFill || moving || settling || winkDue || markerChanged || progChanged || sigChanged)) {
+      if (hoverActive && !reduce) requestDraw();
       return;
     }
     if (progChanged) {
@@ -281,7 +276,11 @@ function startCartesianLoop({
       }
     }
 
-    if (moving || settling || prog < 1 || hoverActive) requestDraw();
+    if (bloomCtx) {
+      bloomCtx.clearRect(0, 0, cols, rows);
+      bloomCtx.drawImage(canvas, 0, 0);
+    }
+    if (moving || settling || prog < 1 || (hoverActive && !reduce)) requestDraw();
   };
 
   installWake(requestDraw);

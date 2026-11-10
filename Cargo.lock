@@ -2463,6 +2463,7 @@ dependencies = [
  "gtk-layer-shell",
  "ico",
  "keyring",
+ "libc",
  "objc",
  "open",
  "png 0.18.1",

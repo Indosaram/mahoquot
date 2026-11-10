@@ -630,15 +630,16 @@ test("tray dropdown panel surfaces proxy, provider chips, and quota cards", asyn
   await installMocks(page);
   await page.goto("/management.html?surface=tray");
 
-  // No committed URL: the tray names the default gateway the console actually polls.
-  await expect(page.getByText("http://127.0.0.1:18801")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Codex" })).toBeVisible();
+  // A blank browser connection resolves to the document origin.
+  await expect(page.getByText(new URL(page.url()).origin, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Codex", exact: true })).toBeVisible();
   await expect(page.getByText("56% left")).toBeVisible();
   await expect(page.getByText("Gemini Pro")).toBeVisible();
   await expect(page.getByText("Open mahoquot")).toBeVisible();
   await expect(page.getByText("Quit mahoquot")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Codex" }).click();
+  await page.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Codex", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/runtime-identifier-for-layout@example.com/)).toBeVisible();
   await expect(page.getByText("cooling@example.com")).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/tray-panel.png`, fullPage: true });

@@ -968,7 +968,7 @@ describe("negative receipt testing suite with real SSD files", () => {
 });
 
 describe("runGate process-group lifecycle and signal teardown", () => {
-  const root = "/Volumes/T9-Mac/project/mahoquot-wt/cliproxy-remediation-w1";
+  const root = ROOT;
 
   const awaitProcessDead = async (pid, timeoutMs = 2000) => {
     if (!pid) return true;

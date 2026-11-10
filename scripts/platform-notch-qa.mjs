@@ -77,8 +77,15 @@ if (scenario === "unsupported-session") {
   throw new Error(`unknown scenario: ${scenario}`);
 }
 
+// These are scenario examples, not observations from a native runner.
+result = {
+  ...result,
+  status: unsupported ? "parity_unsupported" : "unverified",
+  evidence_kind: "synthetic_fixture",
+  native_observed: false,
+};
 await mkdir(dirname(evidence), { recursive: true });
-await writeFile(evidence, `${JSON.stringify(result, null, 2)}\n`);
+await writeFile(evidence, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx" });
 console.log(JSON.stringify(result));
 
 if (result.status !== "pass") process.exitCode = 2;

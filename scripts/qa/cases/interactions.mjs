@@ -14,6 +14,17 @@ async function bounded(promise, label) {
   } finally { clearTimeout(timer); }
 }
 
+export function assertRejectedInteraction(response, upstreamDelta) {
+  assert.equal(response.status, 400);
+  assert.equal(response.value?.error?.type, "invalid_request_error");
+  assert.equal(upstreamDelta, 0);
+}
+
+export function assertTruncatedInteraction(response) {
+  assert(!response.raw.includes("event: interaction.completed"));
+  assert(response.raw.includes("event: error") || response.status === 502);
+}
+
 export async function runCase(variant, evidencePath, context) {
   assert(["happy", "failure"].includes(variant));
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -101,6 +112,8 @@ export async function runCase(variant, evidencePath, context) {
     const agModel = catalog.data.find((entry) => entry.owned_by === "antigravity" || (entry.owned_by === "google" && entry.id.startsWith("gemini-")))?.id;
     assert(nativeModel && agModel, "fixture catalogs must publish both native and Antigravity models");
     const tool = await call({ model: nativeModel, input: "hi" });
+    record("native-tool-status", 200, tool.status);
+    record("native-tool-id", "native-id", tool.value?.id);
     if (variant === "failure") {
       let wrongCallerDenied = false;
       let ambiguousIdRejected = false;
@@ -113,6 +126,10 @@ export async function runCase(variant, evidencePath, context) {
       ]) {
         const before = wireRequests.length;
         const response = await call(body, caller, session);
+        assertRejectedInteraction(response, wireRequests.length - before);
+        record(`${id}-status`, 400, response.status);
+        record(`${id}-error`, "invalid_request_error", response.value?.error?.type);
+        record(`${id}-upstream-delta`, 0, wireRequests.length - before);
         if (id === "wrong-caller" && response.status === 400 && before === wireRequests.length) {
           wrongCallerDenied = true;
         }
@@ -124,6 +141,9 @@ export async function runCase(variant, evidencePath, context) {
       record("ambiguous-id-rejected", true, ambiguousIdRejected);
       mode = "truncated";
       const truncated = await call({ model: agModel, input: "hi", stream: true });
+      assertTruncatedInteraction(truncated);
+      record("truncated-no-completed", false, truncated.raw.includes("event: interaction.completed"));
+      record("truncated-error", true, truncated.raw.includes("event: error") || truncated.status === 502);
     } else {
       mode = "done";
       const continued = await call({ model: nativeModel, stream: true, input: [{ type: "function_result", call_id: "native-call", result: 1 }] });
@@ -138,10 +158,17 @@ export async function runCase(variant, evidencePath, context) {
 
       mode = "done";
       const agResult = await call({ model: agModel, input: [{ type: "function_result", call_id: "ag-call", result: 42 }] });
+      record("ag-result-status", 200, agResult.status);
+      record("ag-result-terminal", "completed", agResult.value?.status);
       const agWire = JSON.parse(wireRequests.at(-1).body);
       const signed = agWire.request.contents.flatMap((turn) => turn.parts).find((part) => part.functionCall?.id === "ag-call");
       const result = agWire.request.contents.flatMap((turn) => turn.parts).find((part) => part.functionResponse?.id === "ag-call");
+      record("signed-continuation", "ag-opaque", signed?.thoughtSignature);
+      record("function-result-name", "lookup", result?.functionResponse?.name);
+      record("function-result-value", { result: 42 }, result?.functionResponse?.response);
       const agent = await call({ agent: "fixture-agent", input: "hi" });
+      record("agent-status", 200, agent.status);
+      record("agent-terminal", "completed", agent.value?.status);
     }
     child.kill("SIGINT");
     const exit = await bounded(closed, "gateway exit");
@@ -161,6 +188,8 @@ export async function runCase(variant, evidencePath, context) {
         gateway_source_sha256: closure.sourceHash, source_root: join(root, "mahoquot-proxy"), source_manifest: { files: closure.files }, build_command: context.buildCommand,
         build_receipt: { path: buildReceipt, sha256: createHash("sha256").update(await readFile(buildReceipt)).digest("hex") }, binary_source_revision: gatewayRevision, dirty: true },
       teardown: { exit, listeners: 0, ownedProcesses: 0, listener_inventory: [], process_inventory: [], termination: "controlled-signal" } });
+    receipt.extra_assertions = assertions.filter((item) => !requiredIds.includes(item.id));
+    delete receipt.wire_capture.external_dials;
     await mkdir(dirname(evidencePath), { recursive: true });
     await writeFile(evidencePath, `${JSON.stringify(receipt, null, 2)}\n`);
     return receipt;

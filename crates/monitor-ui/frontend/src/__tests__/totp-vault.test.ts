@@ -240,12 +240,8 @@ describe("TotpVaultSurface load-failure gating", () => {
   });
 });
 
-describe("cross-surface TOTP parity", () => {
-  // Upstream removed the notch and tray quick-access branches: the host has
-  // disabled useTotpVault on both surfaces since the client review, so those
-  // wrappers could never be populated. The real contract is that quick access
-  // exists in the console and nowhere else.
-  it("exposes quick access in the console and no longer accepts it on notch or tray", () => {
+describe("TOTP surface scope", () => {
+  it("exposes quick access in the console and nowhere else", () => {
     const entries = [entry()];
     const codes = { "rfc-entry": "94287082" };
     const onCopyTotpCode = vi.fn();
@@ -270,6 +266,8 @@ describe("cross-surface TOTP parity", () => {
     expect(consoleQuick).toHaveTextContent("94287082");
     consoleView.unmount();
 
+    // App runs `useTotpVault` only in the console, so the compact surfaces must
+    // not advertise a region they can never populate.
     const notchView = render(
       createElement(NotchSurface, {
         accounts: [],

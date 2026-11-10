@@ -46,8 +46,8 @@ export const UiSection: React.FC = () => {
         <Card className="p-4 border border-[var(--line)] rounded-lg bg-[var(--panel)] md:col-span-2">
           <h3 className="text-sm font-semibold mb-2">Field Component</h3>
           <div data-testid="primitive-field">
-            <Field label="Cluster Name" hint="Used for internal gateway telemetry">
-              <Input placeholder="us-east-cluster" />
+            <Field htmlFor="qa-cluster-name" hintId="qa-cluster-hint" label="Cluster Name" hint="Used for internal gateway telemetry">
+              <Input id="qa-cluster-name" aria-describedby="qa-cluster-hint" placeholder="us-east-cluster" />
             </Field>
           </div>
         </Card>

@@ -22,7 +22,6 @@ import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel } from "./components/ProviderGlyph";
 import {
   ProviderModelsPanel,
-  isModelDisabled,
   withModelDisabled,
 } from "./components/ProviderModelsPanel";
 import { SettingsSurface } from "./components/SettingsSurface";
@@ -30,8 +29,8 @@ import { ToastStack, useToasts } from "./components/Toasts";
 import { TotpVaultSurface } from "./components/TotpVaultSurface";
 import { TrayPanel } from "./components/TrayPanel";
 import { defaultWarmupPolicy } from "./components/WarmupControls";
-import { AppShell, OverlayLayer } from "./components/layout";
-import { Button, Field, Input } from "./components/ui";
+import { AppShell, ModalLayer } from "./components/layout";
+import { Button } from "./components/ui";
 import { useGatewayPolling } from "./hooks/useGatewayPolling";
 import { useOverviewAnalytics } from "./hooks/useOverviewAnalytics";
 import { useTotpVault } from "./hooks/useTotpVault";
@@ -43,7 +42,7 @@ import {
 } from "./lib/accounts";
 import { actionFailed } from "./lib/action-failure";
 import { createGatewayClients, discoverProviderModels, fetchClineModelLists } from "./lib/api";
-import type { HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
+import type { GatewayClients, HistoryStatsQuery, ProviderAuthStatus } from "./lib/api";
 import { wantsNativeMenu } from "./lib/context-menu";
 import {
   type CliAgentId,
@@ -118,7 +117,7 @@ import {
   normalizeDevinManualCredential,
 } from "./lib/schemas";
 import {
-  DEFAULT_GATEWAY_URL,
+  resolveGatewayEndpoint,
   clineQuotaSlug,
   getClineQuotaDisplay,
   getGatewayBaseUrl,
@@ -129,7 +128,6 @@ import {
   getQuotaShowRemaining,
   getTelemetryRange,
   getTheme,
-  isRemoteOnlyShell,
   orderProviders,
   setClineQuotaDisplay as persistClineQuotaDisplay,
   setTheme as persistTheme,
@@ -190,6 +188,7 @@ export default function App() {
   // The Gateway URL input edits `baseUrl` per keystroke; secret work must key
   // off the value the operator actually committed with Save & reconnect.
   const [committedBaseUrl, setCommittedBaseUrl] = useState(getGatewayBaseUrl);
+  const endpoint = resolveGatewayEndpoint(committedBaseUrl);
   const [relayKey, setRelayKeyState] = useState(() => getLegacyRelayKey() ?? "");
   const [secretResolved, setSecretResolved] = useState(() => Boolean(getLegacyRelayKey()));
   const [secretStoreError, setSecretStoreError] = useState<SecretStoreError | null>(null);
@@ -247,8 +246,23 @@ export default function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [confirmRemove, setConfirmRemove] = useState("");
-  const [step, setStep] = useState<OnboardingStep>(ACCOUNT_KIND_STEP);
+  const [step, setStepState] = useState<OnboardingStep>(ACCOUNT_KIND_STEP);
+  const stepRef = useRef(step);
+  const discoveryRequest = useRef(0);
+  const discoveryCache = useRef<{ form: OnboardingStep; models: readonly string[] } | null>(null);
+  const setStep = useCallback((next: OnboardingStep) => {
+    discoveryRequest.current += 1;
+    discoveryCache.current = null;
+    setDiscoveredModels([]);
+    stepRef.current = next;
+    setDiscoveringModels(false);
+    setStepState(next);
+  }, []);
   const [discoveringModels, setDiscoveringModels] = useState(false);
+  // Rendered list for the current Discover run. Kept beside the form instead of
+  // inside it so a discovery never changes the form's identity: B06 pins that
+  // reusing the same form must reuse the same cached discovery.
+  const [discoveredModels, setDiscoveredModels] = useState<readonly string[]>([]);
   const [onboardingScope, setOnboardingScope] = useState<OnboardingScope>("api");
   const [dragging, setDragging] = useState("");
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
@@ -267,6 +281,35 @@ export default function App() {
   const [pendingModel, setPendingModel] = useState<string | null>(null);
   const [scopedKeys, setScopedKeys] = useState<readonly ScopedApiKey[]>([]);
   const [authorization, setAuthorization] = useState<AuthorizationSession | null>(null);
+  const [authCode, setAuthCode] = useState("");
+  const authGeneration = useRef(0);
+  const authorizationRef = useRef(authorization);
+  authorizationRef.current = authorization;
+  const onboardingOpenRef = useRef(onboardingOpen);
+  onboardingOpenRef.current = onboardingOpen;
+  useEffect(() => {
+    if (onboardingOpen) return;
+    authGeneration.current += 1;
+    discoveryRequest.current += 1;
+    discoveryCache.current = null;
+    setDiscoveredModels([]);
+    setAuthorization(null);
+    setAuthCode("");
+    setPending((current) => current.startsWith("auth") ? "" : current);
+    setDiscoveringModels(false);
+  }, [onboardingOpen]);
+  useEffect(() => {
+    if (!onboardingOpen && !configOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (onboardingOpen) setOnboardingOpen(false);
+      if (configOpen) setConfigOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onboardingOpen, configOpen]);
   const [cliAgents, setCliAgents] = useState<CliAgentStatus[]>([]);
   const [busyAgent, setBusyAgent] = useState<CliAgentId | null>(null);
   const [agentPreview, setAgentPreview] = useState<CliConfigPreview | null>(null);
@@ -296,7 +339,7 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const totp = useTotpVault(
-    committedBaseUrl || DEFAULT_GATEWAY_URL,
+    endpoint,
     surface !== "notch" && surface !== "tray",
   );
 
@@ -366,18 +409,6 @@ export default function App() {
     [reloadCliAgents, setNotice],
   );
 
-  useEffect(() => {
-    if (!onboardingOpen && !configOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (onboardingOpen) setOnboardingOpen(false);
-      if (configOpen) setConfigOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [onboardingOpen, configOpen]);
 
   const [warmupSettings, setWarmupSettings] = useState<WarmupSettings | null>(null);
   const [warmupProviderDrafts, setWarmupProviderDrafts] = useState<
@@ -397,21 +428,47 @@ export default function App() {
   /** Codex accounts explicitly opted into post-limit credit spend (absent = off). */
   const [creditFlags, setCreditFlags] = useState<Record<string, boolean>>({});
   const [creditsReady, setCreditsReady] = useState(false);
-  const clients = useMemo(
-    () => createGatewayClients(committedBaseUrl || DEFAULT_GATEWAY_URL, relayKey),
-    [committedBaseUrl, relayKey],
-  );
+
+  const mounted = useRef(false);
+  const latestClients = useRef<GatewayClients | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const clients = useMemo(() => {
+    const next = createGatewayClients(endpoint, relayKey);
+
+    let statusRequest: ReturnType<typeof next.management.warmupStatus> | null = null;
+    const wrapped: GatewayClients = {
+      ...next,
+      management: {
+        ...next.management,
+
+        warmupStatus: () => {
+          if (!statusRequest) {
+            statusRequest = next.management.warmupStatus().finally(() => { statusRequest = null; });
+          }
+          return statusRequest;
+        },
+      },
+    };
+    return wrapped;
+  }, [endpoint, relayKey]);
   const warmupClient = useRef(clients);
   warmupClient.current = clients;
   // Identity of the gateway the console currently talks to; async loads check
   // it before committing so an old gateway's late answer is dropped.
-  const latestClients = useRef(clients);
   latestClients.current = clients;
   // `clients` is this component's own memo, not an outer-scope value: switching
   // the committed gateway must drop the previous gateway's warmup drafts and
   // popup, which the gateway-switch tests pin.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the dep is a memo and is load-bearing
   useEffect(() => {
+
+    setPending("");
+    setAuthorization(null);
+    setAuthCode("");
+    setModelsProvider(null);
     setWarmupSettings(null);
     setWarmupStatus(null);
     setWarmupProviderDrafts({});
@@ -426,6 +483,9 @@ export default function App() {
     setSchedulerSettings(null);
     setSchedulerStatus(null);
     setSchedulerError("");
+    setSchedulerPending(false);
+    setPendingModel(null);
+    setDevinStatusBySlug({});
     setModelPrices([]);
     setScopedKeys([]);
   }, [clients]);
@@ -486,7 +546,10 @@ export default function App() {
   useEffect(() => {
     if (surface !== "accounts") return;
     let active = true;
-    const timer = window.setInterval(() => {
+    let inFlight = false;
+    const poll = () => {
+      if (!active || document.hidden || inFlight) return;
+      inFlight = true;
       void clients.management
         .warmupStatus()
         .then((status) => {
@@ -500,10 +563,14 @@ export default function App() {
             setWarmupStatus(null);
             setWarmupError(error instanceof Error ? error.message : "Status unavailable");
           }
-        });
-    }, 15000);
+        })
+        .finally(() => { inFlight = false; });
+    };
+    const timer = window.setInterval(poll, 15000);
+    document.addEventListener("visibilitychange", poll);
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", poll);
       window.clearInterval(timer);
     };
   }, [clients, surface]);
@@ -654,12 +721,15 @@ export default function App() {
     setSchedulerPending(true);
     try {
       const status = await clients.management.saveSchedulerSettings(patch);
+      if (!mounted.current || latestClients.current !== clients) return;
       setSchedulerSettings((current) => (current ? { ...current, ...patch } : current));
       setSchedulerStatus(status);
       setNotice("Scheduler settings saved.");
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       setSchedulerPending(false);
     }
   };
@@ -668,11 +738,14 @@ export default function App() {
     setSchedulerPending(true);
     try {
       const saved = await clients.management.saveSchedulerOrder(order);
+      if (!mounted.current || latestClients.current !== clients) return;
       setSchedulerStatus((current) => (current ? { ...current, order: [...saved] } : current));
       setNotice("Scheduler order saved.");
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       setSchedulerPending(false);
     }
   };
@@ -688,11 +761,13 @@ export default function App() {
     }
     try {
       const saved = await clients.management.saveModelPrice(price);
+      if (!mounted.current || latestClients.current !== clients) return;
       setModelPrices((current) =>
         current.map((item) => (item.model === saved.model ? saved : item)),
       );
       setNotice("Model price saved.");
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     }
   };
@@ -701,6 +776,7 @@ export default function App() {
     stats,
     credentials,
     logs,
+    logsError,
     loadState,
     fetchedAt,
     refreshing,
@@ -709,6 +785,7 @@ export default function App() {
     telemetry,
     schemaMismatch,
     credentialsError,
+    inventoryState,
     modelRegistryStatus,
     modelRegistryError,
     gatewayModels,
@@ -722,10 +799,10 @@ export default function App() {
   const agentRequest = useCallback(
     (agentId: CliAgentId) => ({
       agent_id: agentId,
-      gateway_url: committedBaseUrl || DEFAULT_GATEWAY_URL,
+      gateway_url: endpoint,
       models: gatewayModels.map((model) => model.id),
     }),
-    [committedBaseUrl, gatewayModels],
+    [endpoint, gatewayModels],
   );
 
   const previewAgent = useCallback(
@@ -771,25 +848,30 @@ export default function App() {
     setPending(pendingKey.registryRefresh);
     try {
       await clients.management.refreshModelRegistry();
+      if (!mounted.current || latestClients.current !== clients) return;
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice("Model registry catalog refreshed.");
     } catch (error) {
-      setNotice(actionFailed(error));
+      if (mounted.current && latestClients.current === clients) setNotice(actionFailed(error));
     } finally {
-      releasePending(pendingKey.registryRefresh);
+      if (mounted.current && latestClients.current === clients) releasePending(pendingKey.registryRefresh);
     }
   }, [clients, refresh, releasePending, setNotice]);
 
   // Bumped by every open and close so a slow load from an earlier open, a
   // closed panel, or a previous gateway cannot overwrite the current panel.
   const modelsRequest = useRef(0);
-  // Rapid toggles must build on each other, not on a render-stale capture.
-  const excludedModelsRef = useRef<ExcludedModels>({});
   const applyExcludedModels = useCallback((next: ExcludedModels) => {
-    excludedModelsRef.current = next;
     setExcludedModels(next);
   }, []);
 
+  const modelWrites = useMemo(() => ({
+    client: clients,
+    acknowledged: {} as ExcludedModels,
+    intents: [] as { provider: string; modelId: string; disabled: boolean }[],
+    tail: Promise.resolve(),
+  }), [clients]);
   const openProviderModels = useCallback(
     async (provider: string) => {
       const request = ++modelsRequest.current;
@@ -798,12 +880,15 @@ export default function App() {
       setModelsError(null);
       const current = () => request === modelsRequest.current && latestClients.current === clients;
       try {
+        await modelWrites.tail;
+        if (!current()) return;
         const [models, excluded] = await Promise.all([
           clients.management.registryModels(),
           clients.management.excludedModels(),
         ]);
         if (!current()) return;
         setRegistryModels(models);
+        modelWrites.acknowledged = excluded;
         applyExcludedModels(excluded);
       } catch (error) {
         if (current()) setModelsError(actionFailed(error));
@@ -811,7 +896,7 @@ export default function App() {
         if (current()) setModelsLoading(false);
       }
     },
-    [applyExcludedModels, clients],
+    [applyExcludedModels, clients, modelWrites],
   );
 
   const closeProviderModels = useCallback(() => {
@@ -820,26 +905,38 @@ export default function App() {
   }, []);
 
   const toggleModelDisabled = useCallback(
-    async (modelId: string, disabled: boolean) => {
+    (modelId: string, disabled: boolean) => {
       if (!modelsProvider) return;
-      const wasDisabled = isModelDisabled(excludedModelsRef.current, modelsProvider, modelId);
-      const next = withModelDisabled(excludedModelsRef.current, modelsProvider, modelId, disabled);
-      applyExcludedModels(next);
-      setPendingModel(modelId);
-      try {
-        await clients.management.saveExcludedModels(next);
-        await refresh();
-      } catch (error) {
-        // Roll back only this model; a toggle made meanwhile stays applied.
-        applyExcludedModels(
-          withModelDisabled(excludedModelsRef.current, modelsProvider, modelId, wasDisabled),
+      const intent = { provider: modelsProvider, modelId, disabled };
+      modelWrites.intents.push(intent);
+      const current = () => mounted.current && latestClients.current === clients;
+      const publish = () => {
+        if (!current()) return;
+        const optimistic = modelWrites.intents.reduce(
+          (map, item) => withModelDisabled(map, item.provider, item.modelId, item.disabled),
+          modelWrites.acknowledged,
         );
-        setNotice(actionFailed(error));
-      } finally {
-        setPendingModel((current) => (current === modelId ? null : current));
-      }
+        applyExcludedModels(optimistic);
+        setPendingModel(modelWrites.intents.at(-1)?.modelId ?? null);
+      };
+      publish();
+      modelWrites.tail = modelWrites.tail.then(async () => {
+        if (!current()) return;
+        try {
+          const next = withModelDisabled(modelWrites.acknowledged, intent.provider, modelId, disabled);
+          await clients.management.saveExcludedModels(next);
+          if (!current()) return;
+          modelWrites.acknowledged = next;
+        } catch (error) {
+          if (current()) setNotice(actionFailed(error));
+        } finally {
+          modelWrites.intents = modelWrites.intents.filter((item) => item !== intent);
+          publish();
+        }
+      });
+      return modelWrites.tail;
     },
-    [applyExcludedModels, clients, modelsProvider, refresh, setNotice],
+    [applyExcludedModels, clients, modelWrites, modelsProvider, setNotice],
   );
 
   const {
@@ -867,6 +964,7 @@ export default function App() {
   const fetchDevinStatus = useCallback(async () => {
     try {
       const res = await clients.management.getDevinModelsStatus();
+      if (!mounted.current || latestClients.current !== clients) return;
       if (res.accounts && res.accounts.length > 0) {
         const map: Record<string, DevinAccountStatus> = {};
         for (const a of res.accounts) {
@@ -888,8 +986,10 @@ export default function App() {
   const resetOnboarding = useCallback(() => {
     setProviderSearch("");
     setStep(ACCOUNT_KIND_STEP);
+    authGeneration.current += 1;
     setAuthorization(null);
-  }, []);
+    setAuthCode("");
+  }, [setStep]);
 
   const openOnboarding = useCallback(() => {
     resetOnboarding();
@@ -951,7 +1051,7 @@ export default function App() {
     // notch renders its empty ring even though accounts exist.
     if (surface !== "notch" && surface !== "tray") return;
     let active = true;
-    void readDesktopSecret(committedBaseUrl || DEFAULT_GATEWAY_URL, "default", "management_key")
+    void readDesktopSecret(endpoint, "default", "management_key")
       .then((value) => {
         if (active) {
           setRelayKeyState(value ?? "");
@@ -966,7 +1066,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [committedBaseUrl, surface]);
+  }, [endpoint, surface]);
 
   // Console navigation must not re-run the one-time migration: only a change
   // of window kind, committed gateway, or an explicit retry may.
@@ -977,7 +1077,7 @@ export default function App() {
     let active = true;
     const legacyValue = getLegacyRelayKey();
     void migrateLegacyDesktopSecret(
-      committedBaseUrl || DEFAULT_GATEWAY_URL,
+      endpoint,
       "default",
       "management_key",
       legacyValue,
@@ -1002,7 +1102,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [committedBaseUrl, secretRetry, secondaryWindow, setNotice]);
+  }, [endpoint, secretRetry, secondaryWindow, setNotice]);
 
   useEffect(() => {
     // the quota display mode is flipped in the console settings; the tray and
@@ -1203,14 +1303,19 @@ export default function App() {
         if (warmupClient.current !== clients) return;
       } else {
         await clients.admin.reset(account.runtimeId);
+        if (!mounted.current || latestClients.current !== clients) return;
         setNotice(`Window reset for ${account.label} — refreshed quota active.`);
       }
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
       await refreshUsage();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       if (action === "warm" && warmupClient.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       if (action !== "warm" || warmupClient.current === clients) releasePending(key);
     }
   };
@@ -1238,8 +1343,10 @@ export default function App() {
           : `Credits after limit off for ${account.label}.`,
       );
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       if (creditsClient.current === clients) releasePending(pendingKey.credits(account.id));
     }
   };
@@ -1253,15 +1360,19 @@ export default function App() {
     setNotice("");
     try {
       await clients.management.removeCredential(credName);
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(
         account.provider === "devin"
           ? `Devin account ${account.label} removed from the runtime pool.`
           : "Credential removed from the runtime pool.",
       );
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.remove(account.id));
       setConfirmRemove("");
     }
@@ -1275,6 +1386,7 @@ export default function App() {
     setPending(pendingKey.status(account.id));
     try {
       await clients.management.setCredentialDisabled(credName, disabled);
+      if (!mounted.current || latestClients.current !== clients) return;
       setCredentials((current) =>
         current.map((credential) =>
           credential.name === credName ? { ...credential, disabled } : credential,
@@ -1284,11 +1396,12 @@ export default function App() {
         await refreshUsage(true);
       }
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(`${account.label} ${disabled ? "disabled" : "enabled"}.`);
     } catch (reason) {
-      setNotice(actionFailed(reason));
+      if (mounted.current && latestClients.current === clients) setNotice(actionFailed(reason));
     } finally {
-      releasePending(pendingKey.status(account.id));
+      if (mounted.current && latestClients.current === clients) releasePending(pendingKey.status(account.id));
     }
   };
 
@@ -1368,6 +1481,7 @@ export default function App() {
     setNotice("");
     try {
       const saved = await clients.management.saveCredentialOrder(names);
+      if (!mounted.current || latestClients.current !== clients) return;
       // Re-sync from the server's saved order: a render-stale capture or an
       // interleaved poll must not be able to resurrect a reverted order.
       const order = saved.length ? saved : names;
@@ -1376,13 +1490,19 @@ export default function App() {
       );
       setNotice("Account priority saved. Top accounts are used first in Fill-first routing.");
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.order(accountId));
     }
   };
 
   const beginOnboarding = async (methodId: string, credentialName?: string) => {
+    const generation = ++authGeneration.current;
+    const current = () => mounted.current && latestClients.current === clients && generation === authGeneration.current && onboardingOpenRef.current;
+    setAuthorization(null);
+    setAuthCode("");
     setPending(pendingKey.auth(methodId));
     setNotice("");
     try {
@@ -1393,6 +1513,7 @@ export default function App() {
         } else {
           await clients.management.importLocalTrae();
         }
+        if (!current()) return;
         setNotice(localImport.notice);
         finishOnboarding(localImport.provider);
         await refreshUsage(true);
@@ -1437,18 +1558,20 @@ export default function App() {
         return;
       }
       const auth = await clients.management.beginProviderAuth(methodId, credentialName);
+      if (!current()) return;
       const refreshOnFocus = () => {
         window.removeEventListener("focus", refreshOnFocus);
         void refresh();
       };
       window.addEventListener("focus", refreshOnFocus, { once: true });
       await openExternalUrl(auth.url);
+      if (!current()) return;
       setAuthorization({ provider: methodId, state: auth.state, status: "pending" });
       setNotice("Authorization pending. Approve in the provider window; this updates itself.");
     } catch (error) {
-      setNotice(actionFailed(error));
+      if (current()) setNotice(actionFailed(error));
     } finally {
-      releasePending(pendingKey.auth(methodId));
+      if (current()) releasePending(pendingKey.auth(methodId));
     }
   };
 
@@ -1459,6 +1582,7 @@ export default function App() {
     try {
       if (form.provider === "vertex") {
         await clients.management.importVertexServiceAccount(form.document);
+        if (!mounted.current || latestClients.current !== clients) return;
       } else {
         const parsed = RawCredentialDocumentSchema.safeParse(JSON.parse(form.document) as unknown);
         if (!parsed.success) {
@@ -1468,14 +1592,19 @@ export default function App() {
           ...parsed.data,
           type: "kiro",
         });
+        if (!mounted.current || latestClients.current !== clients) return;
       }
       finishOnboarding(form.provider);
       setNotice("Credential imported and live in the runtime pool.");
       await refreshUsage(true);
+      if (!mounted.current || latestClients.current !== clients) return;
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.auth(form.provider));
     }
   };
@@ -1503,6 +1632,7 @@ export default function App() {
     try {
       if (form.provider === "command-code") {
         await clients.management.importCommandCode(form.apiKey.trim(), form.label.trim());
+        if (!mounted.current || latestClients.current !== clients) return;
       } else if (form.provider === "cline-pass") {
         // ClinePass shares the Cline API-key surface: the same pasted key
         // opens both pay-as-you-go and the subscription quota windows,
@@ -1513,6 +1643,7 @@ export default function App() {
         // model or ships a new one (mimo-v2.6, deepseek-v4.1 arrived after
         // the literal list was written).
         const clineModels = await fetchClineModelLists();
+        if (!mounted.current || latestClients.current !== clients) return;
         if (clineModels.clinePass.length === 0) {
           throw new Error("Cline's model list returned no ClinePass models");
         }
@@ -1524,9 +1655,11 @@ export default function App() {
           apiKey: form.apiKey.trim(),
           models: clineModels.clinePass,
         });
+        if (!mounted.current || latestClients.current !== clients) return;
       } else {
         const baseUrl = "https://api.iflow.cn/v1";
         const models = await discoverModelsForCreation(baseUrl, form.apiKey.trim());
+        if (!mounted.current || latestClients.current !== clients) return;
         await clients.management.createGenericCredential({
           provider: "iflow",
           label: form.label.trim(),
@@ -1535,6 +1668,7 @@ export default function App() {
           apiKey: form.apiKey.trim(),
           models: models ?? [],
         });
+        if (!mounted.current || latestClients.current !== clients) return;
         discoveryFailed = models === null;
       }
       finishOnboarding(form.provider);
@@ -1544,45 +1678,43 @@ export default function App() {
           : `${form.label} account saved and live in the runtime pool.`,
       );
       await refreshUsage(true);
+      if (!mounted.current || latestClients.current !== clients) return;
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.auth(form.provider));
     }
   };
 
   const handleDiscoverModels = async () => {
     if (step.kind !== "generic") return;
+    const form = step;
+    const request = ++discoveryRequest.current;
+    const current = () => mounted.current && latestClients.current === clients && onboardingOpenRef.current && stepRef.current === form && discoveryRequest.current === request;
     setDiscoveringModels(true);
     try {
       const discovered = await discoverProviderModels(
-        step.baseUrl.trim(),
-        step.apiKey.trim() || undefined,
-        step.provider.staticHeaders,
+        form.baseUrl.trim(), form.apiKey.trim() || undefined, form.provider.staticHeaders,
       );
-      setStep((current) => {
-        if (current.kind !== "generic") return current;
-        return {
-          ...current,
-          provider: {
-            ...current.provider,
-            models: discovered,
-          },
-          discoveredModels: discovered,
-        };
-      });
+      if (!current()) return;
+      discoveryCache.current = { form, models: discovered };
+      setDiscoveredModels(discovered);
       setNotice(`Discovered ${discovered.length} models from provider endpoint.`);
     } catch (error) {
-      setNotice(actionFailed(error));
+      if (current()) setNotice(actionFailed(error));
     } finally {
-      setDiscoveringModels(false);
+      if (current()) setDiscoveringModels(false);
     }
   };
 
   const submitGenericCredential = async () => {
     if (step.kind !== "generic") return;
     const form = step;
+    const current = () => mounted.current && latestClients.current === clients && onboardingOpenRef.current && stepRef.current === form;
     setPending(pendingKey.auth(`generic:${form.provider.id}`));
     setNotice("");
     try {
@@ -1598,17 +1730,19 @@ export default function App() {
           plan: form.plan,
         });
         await clients.management.importCredential(doc.name, doc.content);
+        if (!current()) return;
         setNotice(`${label} relay account saved and live in the runtime pool.`);
       } else {
         // The catalog's model literals go stale; the provider's own list is
         // the authority. Reuse a Discover run from this form, else ask now.
         const models =
-          form.discoveredModels ??
+          (discoveryCache.current?.form === form ? discoveryCache.current.models : undefined) ??
           (await discoverModelsForCreation(
             baseUrl,
             form.apiKey.trim(),
             form.provider.staticHeaders,
           ));
+        if (!current()) return;
         await clients.management.createGenericCredential({
           provider: form.provider.id,
           label,
@@ -1618,19 +1752,21 @@ export default function App() {
           models: models ?? [],
           ...(form.provider.staticHeaders ? { staticHeaders: form.provider.staticHeaders } : {}),
         });
+        if (!current()) return;
         setNotice(
           models
             ? `${form.provider.label} account saved and live in the runtime pool.`
             : discoveryFailedNotice(form.provider.label),
         );
       }
+      if (!current()) return;
       finishOnboarding(form.provider.id);
       await refreshUsage(true);
       await refresh();
     } catch (error) {
-      setNotice(actionFailed(error));
+      if (current()) setNotice(actionFailed(error));
     } finally {
-      setPending("");
+      if (mounted.current && latestClients.current === clients) releasePending(pendingKey.auth(`generic:${form.provider.id}`));
     }
   };
 
@@ -1641,13 +1777,18 @@ export default function App() {
     setNotice("");
     try {
       await clients.management.createZcodeCredential(form.email.trim(), form.key.trim());
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice("Z.ai key saved and live in the runtime pool.");
       finishOnboarding("zcode");
       await refreshUsage(true);
+      if (!mounted.current || latestClients.current !== clients) return;
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.auth("zcode-key"));
     }
   };
@@ -1673,6 +1814,7 @@ export default function App() {
         fileName,
         form.credentialName && !form.serverUrl.trim() ? withoutServer : normalized,
       );
+      if (!mounted.current || latestClients.current !== clients) return;
       finishOnboarding("devin");
       setNotice(
         form.credentialName
@@ -1680,10 +1822,14 @@ export default function App() {
           : "Devin account saved and live in the runtime pool.",
       );
       await refreshUsage(true);
+      if (!mounted.current || latestClients.current !== clients) return;
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.auth("devin-token"));
     }
   };
@@ -1697,17 +1843,22 @@ export default function App() {
       const identity = form.identity.trim() || "devin-cli";
       const label = form.label.trim() || "Devin CLI";
       const res = await clients.management.importDevinCli({ identity, label });
+      if (!mounted.current || latestClients.current !== clients) return;
       if (res.error) {
         setNotice(`Failed to import Devin CLI credentials: ${res.error}`);
       } else {
         finishOnboarding("devin");
         setNotice("Devin CLI credentials imported from proxy host.");
         await refreshUsage(true);
+      if (!mounted.current || latestClients.current !== clients) return;
         await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
       }
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.auth("devin-cli-import"));
     }
   };
@@ -1721,16 +1872,21 @@ export default function App() {
         identity: slug,
         label: account.label,
       });
+      if (!mounted.current || latestClients.current !== clients) return;
       if (res.error) {
         setNotice(`Failed to re-import Devin CLI credentials for ${account.label}: ${res.error}`);
       } else {
         setNotice(`Devin CLI credentials re-imported for ${account.label}.`);
         await refreshUsage(true);
+      if (!mounted.current || latestClients.current !== clients) return;
         await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
       }
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.reimport(account.id));
     }
   };
@@ -1741,6 +1897,7 @@ export default function App() {
     setNotice("");
     try {
       const resp = await clients.management.refreshDevinModels(slug);
+      if (!mounted.current || latestClients.current !== clients) return;
       for (const a of resp.accounts) {
         setDevinStatusBySlug((prev) => ({
           ...prev,
@@ -1777,9 +1934,12 @@ export default function App() {
         );
       }
       await refresh();
+      if (!mounted.current || latestClients.current !== clients) return;
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.discovery(account.id));
     }
   };
@@ -1832,6 +1992,7 @@ export default function App() {
   const settledAuthStates = useRef(new Set<string>());
   const settleAuthorization = useCallback(
     async (session: AuthorizationSession, result: ProviderAuthStatus): Promise<void> => {
+      if (!mounted.current || latestClients.current !== clients || !onboardingOpenRef.current || authorizationRef.current?.state !== session.state || authorizationRef.current?.provider !== session.provider) return;
       if (settledAuthStates.current.has(session.state)) return;
       if (result.status !== "pending") settledAuthStates.current.add(session.state);
       setAuthorization({
@@ -1849,7 +2010,7 @@ export default function App() {
         setNotice(`Action failed: ${result.error ?? "authorization failed"}`);
       }
     },
-    [finishOnboarding, refresh, refreshUsage, setNotice],
+    [clients, finishOnboarding, refresh, refreshUsage, setNotice],
   );
 
   const readAuthorization = useCallback(
@@ -1888,18 +2049,27 @@ export default function App() {
   const checkAuthorization = async () => {
     if (!authorization) return;
     const session = authorization;
+    const generation = authGeneration.current;
+    const current = () => mounted.current && latestClients.current === clients && onboardingOpenRef.current && generation === authGeneration.current && authorizationRef.current?.state === session.state;
     if (settledAuthStates.current.has(session.state)) return;
     setPending(pendingKey.authStatus(session.provider));
     try {
+      const code = authCode.trim();
+      if (session.provider === "xai" && code) {
+        await clients.management.submitProviderAuthCode(session.state, code);
+        if (!current()) return;
+        setAuthCode("");
+      }
       const result = await readAuthorization(session);
+      if (!current()) return;
       await settleAuthorization(session, result);
       if (result.status === "pending") {
         setNotice("Authorization still pending. Approve in the provider window.");
       }
     } catch (error) {
-      setNotice(actionFailed(error));
+      if (current()) setNotice(actionFailed(error));
     } finally {
-      releasePending(pendingKey.authStatus(session.provider));
+      if (current()) releasePending(pendingKey.authStatus(session.provider));
     }
   };
 
@@ -1997,13 +2167,17 @@ export default function App() {
     setNotice("");
     setPending(pendingKey.configLoad);
     try {
-      setConfigYaml(await clients.management.configYaml());
+      const yaml = await clients.management.configYaml();
+      if (!mounted.current || latestClients.current !== clients) return;
+      setConfigYaml(yaml);
       setConfigSource("gateway");
       setConfigPath("");
       setConfigOpen(true);
     } catch (error) {
+      if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
+      if (!mounted.current || latestClients.current !== clients) return;
       releasePending(pendingKey.configLoad);
     }
   };
@@ -2046,6 +2220,8 @@ export default function App() {
   };
 
   const saveConfig = async () => {
+    // Local repair belongs to the native gateway, not the selected remote client.
+    const current = () => mounted.current && (configSource === "local" || latestClients.current === clients);
     setPending(pendingKey.configSave);
     setNotice("");
     try {
@@ -2061,17 +2237,24 @@ export default function App() {
         if (next === "running") await refresh();
       } else {
         await clients.management.saveConfigYaml(configYaml);
+        if (!current()) return;
         setNotice("Configuration saved and applied.");
         setConfigOpen(false);
       }
       // config.yaml changed, so the gateway's live scalars may no longer
       // match the form; drop the latch so the surface re-reads them.
+      if (!current()) return;
       setSettingsLoaded(false);
     } catch (error) {
-      setNotice(actionFailed(error));
+      if (current()) setNotice(actionFailed(error));
     } finally {
-      setGatewayFailure(await getGatewayFailure().catch(() => null));
-      releasePending(pendingKey.configSave);
+      if (current()) {
+        const failure = await getGatewayFailure().catch(() => null);
+        if (current()) {
+          setGatewayFailure(failure);
+          releasePending(pendingKey.configSave);
+        }
+      }
     }
   };
 
@@ -2098,7 +2281,7 @@ export default function App() {
     return (
       <TrayPanel
         accounts={accounts}
-        proxyUrl={committedBaseUrl || DEFAULT_GATEWAY_URL}
+        proxyUrl={endpoint}
         online={loadState === "online"}
         gatewayLifecycle={gatewayLifecycle}
         refreshing={refreshing}
@@ -2111,40 +2294,6 @@ export default function App() {
         onStartGateway={() => void api?.core?.invoke("start_gateway")}
         onStopGateway={() => void api?.core?.invoke("stop_gateway")}
       />
-    );
-  }
-
-  if (isRemoteOnlyShell() && !committedBaseUrl) {
-    return (
-      <AppShell className="app mobile-connect" data-mahoquot-app="mobile-connect">
-        <div className="mobile-connect-body">
-          <h1>Connect to your gateway</h1>
-          <p>
-            This app reads usage from a gateway you already run elsewhere. Enter its address to
-            start.
-          </p>
-          <Field label="Gateway URL" hint="For example http://100.78.73.127:18801">
-            <Input
-              aria-label="Gateway URL"
-              value={baseUrl}
-              placeholder="http://100.78.73.127:18801"
-              onChange={(event) => setBaseUrlState(event.target.value)}
-            />
-          </Field>
-          {gatewayUrlError ? <small className="field-error">{gatewayUrlError}</small> : null}
-          <Button
-            disabled={baseUrl.trim() === "" || gatewayUrlError !== null}
-            onClick={() => {
-              const normalized = baseUrl.trim().replace(/\/+$/, "");
-              setGatewayBaseUrl(normalized);
-              setBaseUrlState(normalized);
-              setCommittedBaseUrl(normalized);
-            }}
-          >
-            Connect
-          </Button>
-        </div>
-      </AppShell>
     );
   }
 
@@ -2200,6 +2349,7 @@ export default function App() {
             <button
               type="button"
               key={id}
+              aria-current={surface === id ? "page" : undefined}
               className={surface === id ? "nav-item active" : "nav-item"}
               onClick={() => setSurface(id)}
             >
@@ -2235,6 +2385,7 @@ export default function App() {
             <button
               type="button"
               key={item}
+              aria-current={surface === item ? "page" : undefined}
               className={surface === item ? "active" : ""}
               onClick={() => setSurface(item)}
             >
@@ -2307,6 +2458,7 @@ export default function App() {
             showRemaining={showRemaining}
             clineQuotaDisplay={clineQuotaDisplay}
             pending={pending}
+            inventoryState={inventoryState === "loading" && loadState !== "loading" && loadState !== "online" ? "error" : inventoryState}
             credentialsError={credentialsError}
             dragging={dragging}
             confirmRemove={confirmRemove}
@@ -2359,6 +2511,7 @@ export default function App() {
           <div className="content logs-surface">
             <DurableLogs
               records={logs}
+              logsError={logsError}
               fromMemoryTail={!loggingToFile}
               loadHistory={clients.management.historyEvents}
               loadHistoryDetail={clients.management.historyEvent}
@@ -2473,7 +2626,7 @@ export default function App() {
               }}
               onRelayKeyBlur={() => {
                 void writeDesktopSecret(
-                  committedBaseUrl || DEFAULT_GATEWAY_URL,
+                  endpoint,
                   "default",
                   "management_key",
                   relayKey.trim(),
@@ -2514,7 +2667,7 @@ export default function App() {
                     // settings surface to reload them from the new connection.
                     setSettingsLoaded(false);
                     return writeDesktopSecret(
-                      normalizedBase,
+                      resolveGatewayEndpoint(normalizedBase),
                       "default",
                       "management_key",
                       relayKey.trim(),
@@ -2585,11 +2738,11 @@ export default function App() {
       </main>
 
       {onboardingOpen ? (
-        <OverlayLayer className="drawer-backdrop">
+        <ModalLayer className="layout-overlay-layer drawer-backdrop" aria-labelledby="onboarding-title" onClose={() => setOnboardingOpen(false)}>
           <aside className="drawer onboarding-drawer" aria-label="Provider onboarding">
             <div className="section-head">
               <div>
-                <h2>Add Account</h2>
+                <h2 id="onboarding-title">Add Account</h2>
                 <span className="kicker">Click any provider to add multiple accounts</span>
               </div>
               <Button aria-label="Close onboarding" onClick={() => setOnboardingOpen(false)}>
@@ -2694,18 +2847,20 @@ export default function App() {
                     onChange={(event) => setStep({ ...step, baseUrl: event.target.value })}
                   />
                 </label>
-                {step.provider.models.length > 0 || step.provider.defaultModel ? (
+                {discoveredModels.length > 0 || step.provider.models.length > 0 || step.provider.defaultModel ? (
                   <div className="provider-preset-models" aria-label="Suggested models">
                     <span>Suggested models</span>
                     <small>
-                      {step.provider.defaultModel
-                        ? `${step.provider.defaultModel}${
-                            step.provider.models.length > 0 &&
-                            !step.provider.models.includes(step.provider.defaultModel)
-                              ? ` (${step.provider.models.join(", ")})`
-                              : ""
-                          }`
-                        : step.provider.models.join(", ")}
+                      {discoveredModels.length > 0
+                        ? discoveredModels.join(", ")
+                        : step.provider.defaultModel
+                          ? `${step.provider.defaultModel}${
+                              step.provider.models.length > 0 &&
+                              !step.provider.models.includes(step.provider.defaultModel)
+                                ? ` (${step.provider.models.join(", ")})`
+                                : ""
+                            }`
+                          : step.provider.models.join(", ")}
                     </small>
                   </div>
                 ) : null}
@@ -2979,6 +3134,21 @@ export default function App() {
                   </div>
                 ) : null}
                 {authorization &&
+                authorization.provider === "xai" &&
+                authorization.status === "pending" ? (
+                  <label className="zcode-field">
+                    <span>
+                      xAI shows the authorization code on its page after you approve. Paste it here,
+                      then check the status.
+                    </span>
+                    <input
+                      aria-label="xAI authorization code"
+                      value={authCode}
+                      onChange={(event) => setAuthCode(event.target.value)}
+                    />
+                  </label>
+                ) : null}
+                {authorization &&
                 authorization.provider === "zcode" &&
                 authorization.status === "pending" ? (
                   <div className="zcode-field">
@@ -3093,17 +3263,17 @@ export default function App() {
               </div>
             )}
           </aside>
-        </OverlayLayer>
+        </ModalLayer>
       ) : null}
       {configOpen ? (
-        <OverlayLayer className="drawer-backdrop">
+        <ModalLayer className="layout-overlay-layer drawer-backdrop" aria-labelledby="config-title" onClose={() => setConfigOpen(false)}>
           <aside className="drawer config-drawer" aria-label="Advanced configuration editor">
             <div className="section-head">
               <div>
                 <span className="kicker">
                   {configSource === "local" ? "LOCAL FILE" : "RAW YAML"}
                 </span>
-                <h2>Gateway configuration</h2>
+                <h2 id="config-title">Gateway configuration</h2>
                 {configSource === "local" && configPath ? (
                   <small className="config-drawer-path">{configPath}</small>
                 ) : null}
@@ -3136,7 +3306,7 @@ export default function App() {
               </Button>
             </div>
           </aside>
-        </OverlayLayer>
+        </ModalLayer>
       ) : null}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       {modelsProvider ? (

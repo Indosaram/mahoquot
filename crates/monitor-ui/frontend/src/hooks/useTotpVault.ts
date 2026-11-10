@@ -37,6 +37,14 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
   const [poisoned, setPoisoned] = useState(false);
   const [now, setNow] = useState(Date.now);
   const loadGeneration = useRef(0);
+  const currentVault = useRef(vault);
+  currentVault.current = vault;
+  const active = useRef(false);
+  useEffect(() => {
+    active.current = enabled;
+    return () => { active.current = false; };
+  }, [enabled]);
+  const isCurrent = useCallback(() => active.current && currentVault.current === vault, [vault]);
 
   // A new endpoint is a different vault: never keep showing (or generating
   // codes for) the previous endpoint's entries while the new one loads.
@@ -45,14 +53,17 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
     setPrevVault(vault);
     setEntries([]);
     setCodes({});
+    setError(null);
+    setPoisoned(false);
   }
   const reload = useCallback(async () => {
+    if (!isCurrent()) return;
     const generation = ++loadGeneration.current;
     let loaded: readonly TotpEntry[];
     try {
       loaded = await vault.load();
     } catch (reason) {
-      if (generation === loadGeneration.current) {
+      if (isCurrent() && generation === loadGeneration.current) {
         setEntries([]);
         setCodes({});
         setError(errorMessage(reason));
@@ -60,20 +71,20 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
       }
       return;
     }
-    if (generation !== loadGeneration.current) return;
+    if (!isCurrent() || generation !== loadGeneration.current) return;
     setPoisoned(false);
     try {
       const generated = await Promise.all(
         loaded.map(async (entry) => [entry.id, await generateTotp(entry)] as const),
       );
-      if (generation !== loadGeneration.current) return;
+      if (!isCurrent() || generation !== loadGeneration.current) return;
       setEntries(loaded);
       setCodes(Object.fromEntries(generated));
       setError(null);
     } catch (reason) {
-      if (generation === loadGeneration.current) setError(errorMessage(reason));
+      if (isCurrent() && generation === loadGeneration.current) setError(errorMessage(reason));
     }
-  }, [vault]);
+  }, [isCurrent, vault]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -126,25 +137,27 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
   }, [enabled, entries, now]);
 
   const changed = useCallback(async () => {
-    setEntries(vault.entries);
-    setError(null);
+    if (isCurrent()) {
+      setEntries(vault.entries);
+      setError(null);
+    }
     await publishTotpVaultChanged();
-  }, [vault]);
+  }, [isCurrent, vault]);
 
   const run = useCallback(
     async (operation: () => Promise<unknown>) => {
       // A failed load leaves the vault poisoned; refuse writes until a reload succeeds
       // so a stale/empty in-memory state can never clobber the stored vault.
-      if (poisoned) throw new Error(TOTP_VAULT_NOT_LOADED_MESSAGE);
+      if (!isCurrent() || poisoned) throw new Error(TOTP_VAULT_NOT_LOADED_MESSAGE);
       try {
         await operation();
         await changed();
       } catch (reason) {
-        setError(errorMessage(reason));
+        if (isCurrent()) setError(errorMessage(reason));
         throw reason;
       }
     },
-    [changed, poisoned],
+    [changed, isCurrent, poisoned],
   );
 
   const add = useCallback(
