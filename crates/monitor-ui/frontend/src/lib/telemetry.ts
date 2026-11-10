@@ -66,6 +66,19 @@ const rangeDurationMs: Readonly<Record<TelemetryRange, number>> = {
   "30d": 30 * 24 * 60 * 60_000,
 };
 
+/** Minutes of telemetry history a chart range needs to backfill.
+ *
+ * The gateway retains a month of per-minute buckets and will happily serialise
+ * all of them, which is what made `/admin/stats` tens of megabytes. A chart can
+ * only draw its selected range, so the first load asks for exactly that span
+ * (rounded up to a whole minute) instead of the whole retention window. */
+export const rangeHistoryMinutes = (range: TelemetryRange): number =>
+  Math.ceil(rangeDurationMs[range] / 60_000);
+
+/** History window used when a caller does not name one. Mirrors the chart's
+ * default range so the two never drift apart. */
+export const DEFAULT_HISTORY_MINUTES = rangeHistoryMinutes("1d");
+
 export const providerTotals = (stats: AdminStats): readonly ProviderTotal[] => {
   const totals = new Map<string, { successes: number; failures: number }>();
   for (const account of stats.accounts) {

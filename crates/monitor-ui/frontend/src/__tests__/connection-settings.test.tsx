@@ -101,7 +101,9 @@ describe("connection settings robustness", () => {
     );
     const clients = createGatewayClients("http://127.0.0.1:18801", "k");
     let failure: unknown = null;
-    const pending = clients.admin.stats().catch((error: unknown) => {
+    // A management scalar, not the stats snapshot: `/admin/stats` carries the
+    // whole telemetry store and gets its own longer deadline on purpose.
+    const pending = clients.management.scalar("proxy-url").catch((error: unknown) => {
       failure = error;
     });
     await vi.advanceTimersByTimeAsync(60_000);

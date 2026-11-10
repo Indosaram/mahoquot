@@ -144,7 +144,7 @@ it.each(["codex", "xai"])("B09 drops old xAI code and completion before new %s s
 
 it("B08 uses document origin for blank browser connections", async () => {
   localStorage.setItem("mahoquot.base", ""); const fetch = setup(); await mount();
-  const stats = fetch.mock.calls.map(([input]) => String(input)).filter(url => url.endsWith("/admin/stats"));
+  const stats = fetch.mock.calls.map(([input]) => String(input)).filter(url => new URL(url).pathname === "/admin/stats");
   expect(stats.length).toBeGreaterThan(0);
   expect(stats.every(url => new URL(url).origin === window.location.origin)).toBe(true);
   expect(localStorage.getItem("mahoquot.base")).toBe("");
@@ -204,23 +204,31 @@ it.each(["/logs", "/model-registry"])("UX08 waits for accepted credential-only i
   await act(async () => { gate.resolve(siblingResponse()); await gate.promise; });
 });
 
-it("UX08 rejects readiness from a same-client round superseded before new stats settle", async () => {
+it("UX08 keeps accounts readable when a refresh's stats snapshot is superseded or fails", async () => {
   vi.useFakeTimers();
   const inventory = deferred<Response>();
   const stats = deferred<Response>();
   let rounds = 0;
+  let inventoryReads = 0;
   setup(url => {
     if (url.pathname === "/admin/stats" && ++rounds > 1) return stats.promise;
-    if (url.pathname.endsWith("/auth-files")) return inventory.promise;
+    // Each read needs its own Response: a body can only be consumed once.
+    if (url.pathname.endsWith("/auth-files")) return ++inventoryReads > 1 ? inventory.promise : json({ files: [] });
   });
   await mount();
   await click("Refresh snapshot");
   expect(rounds).toBe(2);
+  // The inventory read no longer waits behind the snapshot: the gateway serves
+  // auth-files in under a second while /admin/stats carries the whole telemetry
+  // store and can take a minute. Accounts must render as soon as the inventory
+  // settles, not when the snapshot does.
   await act(async () => { inventory.resolve(json({ files: [file] })); await inventory.promise; });
-  expect(document.querySelector('[data-inventory-state="loading"]')).not.toBeNull();
-  expect(screen.queryByRole("button", { name: "More actions for a@example.test" })).toBeNull();
+  expect(screen.getByRole("button", { name: "More actions for a@example.test" })).toBeInTheDocument();
+  expect(document.querySelector('[data-inventory-state="loading"]')).toBeNull();
+  // A snapshot that then fails reports the gateway state but leaves the
+  // already-settled inventory on screen instead of blanking it.
   await act(async () => { stats.resolve(json({ error: "new-round-failed" }, 503)); await stats.promise; });
-  expect(document.querySelector('[data-inventory-state="error"]')).not.toBeNull();
+  expect(screen.getByRole("button", { name: "More actions for a@example.test" })).toBeInTheDocument();
 });
 
 it.each(["success", "error", "failure-read"])("B01 isolates remote config save across replacement at %s", async (stage) => {

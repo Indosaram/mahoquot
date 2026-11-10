@@ -9,6 +9,7 @@ import {
   type ModelRegistryStatus,
 } from "@/lib/schemas";
 import {
+  DEFAULT_HISTORY_MINUTES,
   type TelemetrySample,
   appendTelemetrySample,
   persistedTelemetrySamples,
@@ -56,8 +57,15 @@ const emptyStats: AdminStats = {
 /**
  * Owns the gateway poll. Contract: user-triggered refreshes spin the tray
  * icon; background polls never do, and failed rounds back off exponentially.
+ *
+ * `historyMinutes` is the span of per-minute buckets the first round backfills
+ * for the charts. It follows the chart's selected range so the opening request
+ * never drags the gateway's whole month-long retention across the wire.
  */
-export function useGatewayPolling(clients: GatewayClients) {
+export function useGatewayPolling(
+  clients: GatewayClients,
+  historyMinutes: number = DEFAULT_HISTORY_MINUTES,
+) {
   const [stats, setStats] = useState<AdminStats>(emptyStats);
   const [credentials, setCredentials] = useState<readonly AuthFileItem[]>([]);
   const [logs, setLogs] = useState<readonly LogRecord[]>([]);
@@ -75,6 +83,12 @@ export function useGatewayPolling(clients: GatewayClients) {
   const [gatewayModels, setGatewayModels] = useState<readonly GatewayModelEntry[]>([]);
   const firstLoad = useRef(true);
   const hasSucceeded = useRef(false);
+  // Read through a ref so a chart range change does not invalidate `runRound`, which
+  // would restart the poll loop and abort the round already in flight.
+  const historyMinutesRef = useRef(historyMinutes);
+  useEffect(() => {
+    historyMinutesRef.current = historyMinutes;
+  }, [historyMinutes]);
   const usageRefreshAt = useRef(0);
   const pollGeneration = useRef(0);
   const spinTimerRef = useRef<number | undefined>(undefined);
@@ -182,34 +196,27 @@ export function useGatewayPolling(clients: GatewayClients) {
     if (!mounted.current || prevClientsRef.current !== clients) return "superseded";
     const generation = ++pollGeneration.current;
     if (firstLoad.current) setLoadState("loading");
-    try {
-      const nextStats = await clients.admin.stats();
-      if (generation !== pollGeneration.current) return "superseded";
-      setStats(nextStats);
-      const now = Date.now();
-      setTelemetry((samples) => {
-        if (Array.isArray(nextStats.history)) {
-          return persistedTelemetrySamples(nextStats.history);
-        }
-        return appendTelemetrySample(samples, nextStats, now);
-      });
-      setLoadState("online");
-      setFetchedAt(now);
-      setGatewayLifecycle("running");
-      firstLoad.current = false;
-    } catch (error) {
-      if (generation !== pollGeneration.current) return "superseded";
-      setLoadState(
-        error instanceof GatewayError && error.status === 401
-          ? "relay-locked"
-          : gatewayLifecycleRef.current === "stopped"
-            ? "stopped"
-            : "starting",
+    // One round is a stats snapshot plus four independent reads. They used to
+    // run in sequence, so a slow snapshot also held back credentials and logs:
+    // the gateway answered both in under a second, yet the Accounts and Logs
+    // surfaces stayed empty until the whole snapshot finished. Start the
+    // snapshot now, but never let it gate the reads.
+    //
+    // Only the first round carries the month-long bucket history that feeds the
+    // charts. Every later round asks for the live counters alone: the charts
+    // keep accumulating samples locally, while the response drops from tens of
+    // megabytes to a few kilobytes.
+    // Only the first round carries the bucket history that feeds the charts,
+    // and only for the selected range. Every later round asks for the live
+    // counters alone: the charts keep accumulating samples locally, while the
+    // response drops from tens of megabytes to a few kilobytes.
+    const wantsHistory = firstLoad.current;
+    const statsAttempt = clients.admin
+      .stats(wantsHistory ? { historyMinutes: historyMinutesRef.current } : { historyMinutes: 0 })
+      .then(
+        (stats) => ({ stats }) as const,
+        (error: unknown) => ({ error }) as const,
       );
-      firstLoad.current = false;
-      return error instanceof GatewayError && error.status === 401 ? "relay-locked" : "failed";
-    }
-    if (generation !== pollGeneration.current) return "superseded";
     hasSucceeded.current = true;
     // These are independent so failures in optional services do not strip credentials.
     const [credentialResult, logResult, registryResult, modelsResult] = await Promise.allSettled([
@@ -252,7 +259,41 @@ export function useGatewayPolling(clients: GatewayClients) {
     if (modelsResult.status === "fulfilled") {
       setGatewayModels(modelsResult.value);
     }
-    return "ok";
+    // The snapshot finishes last because it is by far the slowest read; the
+    // gateway serializes its whole telemetry store with it.
+    const attempt = await statsAttempt;
+    if (generation !== pollGeneration.current) return "superseded";
+    if ("stats" in attempt) {
+      const nextStats = attempt.stats;
+      setStats(nextStats);
+      const now = Date.now();
+      setTelemetry((samples) => {
+        // A round that asked for history owns the chart state, including an
+        // empty one: that is how a gateway switch clears the previous samples.
+        // A live-only round carries no buckets, so append it to keep the
+        // charts moving between full reads.
+        if (wantsHistory && Array.isArray(nextStats.history)) {
+          return persistedTelemetrySamples(nextStats.history);
+        }
+        return appendTelemetrySample(samples, nextStats, now);
+      });
+      setLoadState("online");
+      setFetchedAt(now);
+      setGatewayLifecycle("running");
+      firstLoad.current = false;
+      return "ok";
+    }
+    const error = attempt.error;
+    const locked = error instanceof GatewayError && error.status === 401;
+    setLoadState(
+      locked
+        ? "relay-locked"
+        : gatewayLifecycleRef.current === "stopped"
+          ? "stopped"
+          : "starting",
+    );
+    firstLoad.current = false;
+    return locked ? "relay-locked" : "failed";
   }, [clients]);
 
   const refresh = useCallback(

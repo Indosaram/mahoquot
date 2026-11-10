@@ -129,7 +129,7 @@ describe("request body handling (items 4, 5)", () => {
           }),
         ),
     );
-    const pending = createGatewayClients(base, "k").admin.stats();
+    const pending = createGatewayClients(base, "k").management.scalar("proxy-url");
     const outcome = expect(pending).rejects.toThrow(/timed out/);
     await vi.advanceTimersByTimeAsync(20_000);
     await outcome;

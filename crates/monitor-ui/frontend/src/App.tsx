@@ -140,7 +140,7 @@ import {
   setTelemetryRange,
   validateGatewayBaseUrl,
 } from "./lib/storage";
-import type { TelemetryRange } from "./lib/telemetry";
+import { type TelemetryRange, rangeHistoryMinutes } from "./lib/telemetry";
 
 type Surface = "overview" | "accounts" | "logs" | "settings" | "notch" | "tray";
 const getInitialSurface = (): Surface => {
@@ -772,6 +772,10 @@ export default function App() {
     }
   };
 
+  // Declared above the poll because the first stats round backfills exactly the
+  // span this range needs instead of the gateway's whole retention window.
+  const [overviewRange, setOverviewRangeState] = useState<TelemetryRange>(getTelemetryRange);
+
   const {
     stats,
     credentials,
@@ -794,7 +798,7 @@ export default function App() {
     refreshNow,
     setCredentials,
     setLoadState,
-  } = useGatewayPolling(clients);
+  } = useGatewayPolling(clients, rangeHistoryMinutes(overviewRange));
 
   const agentRequest = useCallback(
     (agentId: CliAgentId) => ({
@@ -1215,7 +1219,6 @@ export default function App() {
     [stats, credentials],
   );
 
-  const [overviewRange, setOverviewRangeState] = useState<TelemetryRange>(getTelemetryRange);
   const handleOverviewRangeChange = useCallback((nextRange: TelemetryRange) => {
     setOverviewRangeState(nextRange);
     setTelemetryRange(nextRange);

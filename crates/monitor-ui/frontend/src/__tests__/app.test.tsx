@@ -1646,7 +1646,9 @@ describe("operations console", () => {
           index > importIndex && call === "POST http://127.0.0.1:18801/admin/usage/refresh",
       );
       const refreshIndex = calls.findIndex(
-        (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+        (call, index) =>
+          index > usageIndex &&
+          call.startsWith("GET http://127.0.0.1:18801/admin/stats"),
       );
       expect(importIndex).toBeGreaterThanOrEqual(0);
       expect(usageIndex).toBeGreaterThan(importIndex);
@@ -1852,7 +1854,9 @@ describe("operations console", () => {
             index > importIndex && call === "POST http://127.0.0.1:18801/admin/usage/refresh",
         );
         const refreshIndex = calls.findIndex(
-          (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+          (call, index) =>
+          index > usageIndex &&
+          call.startsWith("GET http://127.0.0.1:18801/admin/stats"),
         );
         expect(importIndex).toBeGreaterThanOrEqual(0);
         expect(usageIndex).toBeGreaterThan(importIndex);
@@ -1917,7 +1921,9 @@ describe("operations console", () => {
             index > importIndex && call === "POST http://127.0.0.1:18801/admin/usage/refresh",
         );
         const refreshIndex = calls.findIndex(
-          (call, index) => index > usageIndex && call === "GET http://127.0.0.1:18801/admin/stats",
+          (call, index) =>
+          index > usageIndex &&
+          call.startsWith("GET http://127.0.0.1:18801/admin/stats"),
         );
         expect(importIndex).toBeGreaterThanOrEqual(0);
         expect(usageIndex).toBeGreaterThan(importIndex);
