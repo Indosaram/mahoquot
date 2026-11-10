@@ -27,3 +27,10 @@ crates/monitor-ui/gateways/
 
 # root workspace install cache (pinned tauri cli shim)
 /node_modules/
+
+# local gateway runtime state and scratch output
+/accounts/
+/logs/
+/tmp/
+/{
+/.b13-route2-run.sh

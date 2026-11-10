@@ -936,9 +936,11 @@ describe("Claude subscription display order", () => {
   const account = (
     id: string,
     provider: string,
-    reset: number | null,
-    used: number,
+    weeklyReset: number | null,
+    weeklyUsed: number,
     plan: string | null = null,
+    sessionReset: number | null = null,
+    sessionUsed = 0,
   ): NormalizedAccount => ({
     id,
     runtimeId: id,
@@ -961,7 +963,18 @@ describe("Claude subscription display order", () => {
     failureRate: 0,
     p50Ms: null,
     lastError: null,
-    usage: { primary: { used_percent: used, window_minutes: 300, reset_at_unix: reset } },
+    usage: {
+      primary: {
+        used_percent: sessionUsed,
+        window_minutes: 300,
+        reset_at_unix: sessionReset,
+      },
+      secondary: {
+        used_percent: weeklyUsed,
+        window_minutes: 10_080,
+        reset_at_unix: weeklyReset,
+      },
+    },
     quotaCapability: "supported",
     isCredentialOnly: false,
     canReset: false,
@@ -970,15 +983,17 @@ describe("Claude subscription display order", () => {
     resetCredits: [],
   });
 
-  it("mirrors gateway routing while relay and other providers keep their slots", () => {
+  it("orders Claude subscriptions by the weekly reset, not the 5-hour window", () => {
     const ordered = orderClaudeSubscriptionsForDisplay(
       [
-        account("late", "claude", now + 3_000, 20),
+        // The 5-hour window resets first here, but the weekly window is later.
+        account("late", "claude", now + 3_000, 20, null, now + 100),
         account("codex", "codex", now + 100, 0),
-        account("spent", "claude", now + 100, 95),
+        account("spent", "claude", now + 100, 95, null, now + 100),
         account("relay", "claude", now + 50, 0, "opus-standard"),
         account("inactive", "claude", now - 1, 0),
-        account("soon", "claude", now + 500, 30),
+        // The weekly window resets first here even though the 5-hour one is late.
+        account("soon", "claude", now + 500, 30, null, now + 9_000),
       ],
       now,
     );
@@ -991,5 +1006,18 @@ describe("Claude subscription display order", () => {
       "inactive",
       "spent",
     ]);
+  });
+
+  it("keeps pool order for accounts without an active weekly window", () => {
+    const ordered = orderClaudeSubscriptionsForDisplay(
+      [
+        account("no-weekly", "claude", null, 0, null, now + 60),
+        account("expired-weekly", "claude", now - 1, 0, null, now + 30),
+        account("weekly", "claude", now + 3_600, 10, null, now + 9_000),
+      ],
+      now,
+    );
+
+    expect(ordered.map(({ id }) => id)).toEqual(["weekly", "no-weekly", "expired-weekly"]);
   });
 });

@@ -45,22 +45,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: test -n "$TAURI_SIGNING_PRIVATE_KEY" && test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-      - name: Test and build gateway sidecar
+      - name: Test gateway
         working-directory: mahoquot-proxy
-        run: cargo test --workspace && cargo build --release --bin mahoquot-gateway --target ${{ matrix.target }}
-      - name: Stage gateway sidecar
+        run: cargo test --workspace
+      - name: Build and stage both sidecars
         shell: bash
-        run: |
-          mkdir -p gateways
-          source="mahoquot-proxy/target/${{ matrix.target }}/release/mahoquot-gateway"
-          destination="gateways/mahoquot-gateway-${{ matrix.target }}"
-          if [[ "${{ runner.os }}" == "Windows" ]]; then source="${source}.exe"; destination="${destination}.exe"; fi
-          cp "$source" "$destination"
+        env:
+          MAHOQUOT_BUILD_TARGET: ${{ matrix.target }}
+        run: bash scripts/setup-gateway.sh
       - name: Build authored frontend
         working-directory: crates/monitor-ui/frontend
         run: bun install --frozen-lockfile && bun run test && bun run typecheck && bun run build
       - name: Build signed updater bundle
         env:
+          MAHOQUOT_SKIP_GATEWAY_BUILD: '1'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun install --frozen-lockfile && bun run tauri build --target ${{ matrix.target }}

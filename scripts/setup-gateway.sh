@@ -42,15 +42,41 @@ if git -C "$PROXY_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 HOST_TARGET="$(rustc -vV | awk '/^host:/{print $2}')"
-echo "==> Building mahoquot-gateway for target: $HOST_TARGET (release)..."
-cargo build --manifest-path "$PROXY_DIR/Cargo.toml" --release --bin mahoquot-gateway
+BUILD_TARGET="${MAHOQUOT_BUILD_TARGET:-$HOST_TARGET}"
+BUILD_PROFILE="${MAHOQUOT_BUILD_PROFILE:-release}"
+SUFFIX=""
+[[ "$BUILD_TARGET" != *windows* ]] || SUFFIX=".exe"
+case "$BUILD_PROFILE" in
+  debug) PROFILE_ARGS=() ;;
+  release) PROFILE_ARGS=(--release) ;;
+  *) echo "Unsupported sidecar profile: $BUILD_PROFILE" >&2; exit 1 ;;
+esac
+# bash 3.2 (macOS default) treats an empty array as unbound under `set -u`.
+set +u
+PROFILE_EXPANDED="${PROFILE_ARGS[@]}"
+set -u
+case "$BUILD_TARGET" in
+  aarch64-apple-darwin) BUN_TARGET=bun-darwin-arm64 ;;
+  x86_64-apple-darwin) BUN_TARGET=bun-darwin-x64 ;;
+  x86_64-pc-windows-msvc) BUN_TARGET=bun-windows-x64 ;;
+  x86_64-unknown-linux-gnu) BUN_TARGET=bun-linux-x64 ;;
+  *) echo "Unsupported sidecar target: $BUILD_TARGET" >&2; exit 1 ;;
+esac
+# Cargo metadata honors both CARGO_TARGET_DIR and .cargo/config.toml. Use the
+# same absolute directory explicitly for the build and copy; never fall back
+# to a stale default-target executable.
+TARGET_DIR="$(cd "$PROXY_DIR" && cargo metadata --no-deps --format-version 1 |
+  bun -e 'console.log(JSON.parse(await Bun.stdin.text()).target_directory)')"
+echo "==> Building mahoquot-gateway for target: $BUILD_TARGET ($BUILD_PROFILE)..."
+(cd "$PROXY_DIR" && cargo build --manifest-path "$PROXY_DIR/Cargo.toml" \
+  $PROFILE_EXPANDED --bin mahoquot-gateway --target "$BUILD_TARGET" --target-dir "$TARGET_DIR")
 
 echo "==> Staging sidecar binary for Tauri bundling..."
 mkdir -p crates/monitor-ui/gateways
-SOURCE="$PROXY_DIR/target/release/mahoquot-gateway"
-DEST="crates/monitor-ui/gateways/mahoquot-gateway-$HOST_TARGET"
+SOURCE="$TARGET_DIR/$BUILD_TARGET/$BUILD_PROFILE/mahoquot-gateway"
+DEST="crates/monitor-ui/gateways/mahoquot-gateway-$BUILD_TARGET"
 
-case "$HOST_TARGET" in
+case "$BUILD_TARGET" in
   *windows*)
     SOURCE="${SOURCE}.exe"
     DEST="${DEST}.exe"
@@ -59,7 +85,7 @@ esac
 
 cp "$SOURCE" "$DEST"
 
-if [[ "$HOST_TARGET" == *apple* ]] && command -v codesign >/dev/null 2>&1; then
+if [[ "$BUILD_TARGET" == *apple* ]]; then
   echo "==> Ad-hoc signing sidecar binary..."
   codesign --force --sign - "$DEST"
 fi
@@ -72,19 +98,18 @@ if [[ ! -f "$SOLVER_DIR/package.json" ]]; then
 fi
 (
   cd "$SOLVER_DIR"
-  bun install --frozen-lockfile >/dev/null 2>&1 || bun install
-  bun build --compile index.ts --outfile mahoquot-captcha-solver
+  if [[ "${MAHOQUOT_SKIP_SOLVER_INSTALL:-0}" != 1 ]]; then
+    bun install --frozen-lockfile
+  fi
+  BUN_INSTALL_AUTO=disable bun build --compile --target="$BUN_TARGET" index.ts --outfile "$REPO_ROOT/crates/monitor-ui/gateways/mahoquot-captcha-solver-$BUILD_TARGET$SUFFIX"
 )
-SOLVER_DEST="crates/monitor-ui/gateways/mahoquot-captcha-solver-$HOST_TARGET"
-SOLVER_SOURCE="$SOLVER_DIR/mahoquot-captcha-solver"
-case "$HOST_TARGET" in
+SOLVER_DEST="crates/monitor-ui/gateways/mahoquot-captcha-solver-$BUILD_TARGET"
+case "$BUILD_TARGET" in
   *windows*)
-    SOLVER_SOURCE="${SOLVER_SOURCE}.exe"
     SOLVER_DEST="${SOLVER_DEST}.exe"
     ;;
 esac
-cp "$SOLVER_SOURCE" "$SOLVER_DEST"
-if [[ "$HOST_TARGET" == *apple* ]] && command -v codesign >/dev/null 2>&1; then
+if [[ "$BUILD_TARGET" == *apple* ]]; then
   codesign --force --sign - "$SOLVER_DEST"
 fi
 

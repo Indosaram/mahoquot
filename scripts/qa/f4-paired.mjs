@@ -1,26 +1,26 @@
 #!/usr/bin/env bun
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, readdir, lstat, realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostname } from 'node:os';
 import http from 'node:http';
 import { balancedOrder } from '../../mahoquot-proxy/tools/bench/scripts/fair-translation.mjs';
-import { runLocalityBenchmark } from '../bench-locality.mjs';
+import { runLocalityBenchmark, bounded } from '../bench-locality.mjs';
 import { runResilienceBenchmark } from '../bench-resilience.mjs';
+import { PAIRED_SCHEMA, recomputePairedRound, aggregatePairedRounds, validatePairedContract, validatePairedBuildReceipt } from './paired-contract.mjs';
+import { extractPairedPhase, verifyPairedPhase } from './paired-phase-contract.mjs';
+import { auditInternals } from './cliproxy-audit.mjs';
 import { validateResilienceReport } from './cases/bench-resilience.mjs';
 
 const W = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const E = join(W, '.omo/evidence/cliproxy-remediation/6417c774-c554-4c53-880b-d8355082043e');
-const binary = {
-  baseline: '/Volumes/T9-Mac/tmp/f4-baseline-target/debug/mahoquot-gateway',
-  candidate: join(E, 'target/debug/mahoquot-gateway'),
-};
-const BENCH = join(E, 'target/debug/bench');
-// Candidate = the binary the current 76 task receipts are bound to.
-const EXPECTED = 'd1b4dc168bc0be1fbdd5f1456299c07dae1b53b9c55e68d938f97ae70567116c';
+const E = process.env.F4_EVIDENCE_ROOT ? resolve(process.env.F4_EVIDENCE_ROOT) : null;
+const binary = { baseline: process.env.F4_BASELINE_BINARY, candidate: process.env.F4_CANDIDATE_BINARY };
+const BENCH = process.env.F4_BENCH_BINARY;
 const ROUNDS = 4, SEED = 35;
-const LOCK = '/Volumes/T9-Mac/tmp/cliproxy-qa.lock.d';
+const LOCK_ROOT = resolve(process.env.MAHOQUOT_QA_LOCK_ROOT ?? join(W, '.omo'));
+const LOCK = join(LOCK_ROOT, 'cliproxy-qa.lock.d');
+let lockIdentity;
 const suites = { core: ['B0', 'B1', 'B2'], locality: ['B3', 'B4', 'B5', 'B8', 'B9'], resilience: ['B6', 'B7', 'B10', 'B11', 'B12', 'B13'] };
 const hash = x => createHash('sha256').update(x).digest('hex');
 const mean = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
@@ -28,14 +28,38 @@ const finite = xs => xs.filter(x => typeof x === 'number' && Number.isFinite(x))
 const json = async (p, x) => writeFile(p, JSON.stringify(x, null, 2) + '\n');
 const nativeSpawn = Bun.spawn.bind(Bun), nativeServe = Bun.serve.bind(Bun);
 const nativeFetch = globalThis.fetch, nativeRequest = http.request;
-const runtimeEnv = { ...process.env, HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*', MAHOQUOT_QA_LOOPBACK_ONLY: '1' };
+export function pairedRuntimeEnvironment(source, root) {
+  if (!root) throw new Error('run-owned environment root required');
+  const env = { PATH: source.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C',
+    HOME: join(root, 'home'), TMPDIR: join(root, 'tmp'), TMP: join(root, 'tmp'), TEMP: join(root, 'tmp'),
+    XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_DATA_HOME: join(root, 'data'),
+    HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*', MAHOQUOT_QA_LOOPBACK_ONLY: '1' };
+  // Collector consumes prebuilt binaries: no compiler/package cache or credential variables are needed.
+  for (const key of ['F4_EVIDENCE_ROOT', 'F4_BASELINE_BINARY', 'F4_CANDIDATE_BINARY', 'F4_BENCH_BINARY', 'F4_PROVENANCE', 'MAHOQUOT_QA_LOCK_ROOT']) if (source[key]) env[key] = source[key];
+  env.F4_RUNTIME_ROOT = root;
+  return env;
+}
+let runtimeEnv;
+async function prepareRuntime(root) {
+  runtimeEnv = pairedRuntimeEnvironment(process.env, root);
+  for (const key of ['HOME', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME']) await mkdir(runtimeEnv[key], { recursive: true, mode: 0o700 });
+}
 
 async function command(argv, options = {}) {
-  const p = nativeSpawn(argv, { cwd: W, env: runtimeEnv, stdout: 'pipe', stderr: 'pipe', ...options });
-  const timer = setTimeout(() => p.kill('SIGKILL'), 120000);
-  const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  clearTimeout(timer);
-  return { code, stdout, stderr };
+  const p = nativeSpawn(argv, { cwd: W, stdout: 'pipe', stderr: 'pipe', ...options, env: runtimeEnv });
+  const drains = [new Response(p.stdout).text(), new Response(p.stderr).text()];
+  const outcome = Promise.all([...drains, p.exited]);
+  outcome.catch(() => {});
+  try {
+    const [stdout, stderr, code] = await bounded(outcome, `${argv[0]} exit/drains`, 120000);
+    return { code, stdout, stderr };
+  } catch (error) {
+    let killError;
+    try { if (p.exitCode === null) p.kill('SIGKILL'); } catch (failure) { killError = failure; }
+    let cleanupError;
+    try { await bounded(Promise.allSettled([p.exited, ...drains]), `${argv[0]} cleanup`, 15000); } catch (failure) { cleanupError = failure; }
+    throw new AggregateError([error, killError, cleanupError].filter(Boolean), `paired command failed: ${argv[0]}`);
+  }
 }
 
 function checkPorts() {
@@ -166,7 +190,7 @@ async function core(side, dir, phaseHook) {
     const id = `B${i}`; phaseHook(id);
     const body = { model: 'gpt-5.6-sol', stream: true, bench_expect: { text: 'xx', input_tokens: 16, output_tokens: 2 }, ...(i === 2 ? { input: 'F4 responses fixture' } : { messages: [{ role: 'user', content: `F4 ${id} fixture` }], ...(i === 1 ? { max_tokens: 32 } : { stream_options: { include_usage: true } }) }) };
     const out = join(dir, `${id}-bench.json`);
-    const argv = [BENCH, 'run', '--url', `http://127.0.0.1:18841${path}`, '--total', '10', '--concurrency', '2', '--out', out, '--body-json', JSON.stringify(body), '--header', 'authorization: Bearer benchkey', ...(i === 1 ? ['--header', 'anthropic-version: 2023-06-01'] : [])];
+    const argv = [BENCH, 'run', '--phase', id, '--url', `http://127.0.0.1:18841${path}`, '--total', '10', '--concurrency', '2', '--out', out, '--body-json', JSON.stringify(body), '--header', 'authorization: Bearer benchkey', ...(i === 1 ? ['--header', 'anthropic-version: 2023-06-01'] : [])];
     const client = Bun.spawn(argv, { env: runtimeEnv, stdout: 'pipe', stderr: 'pipe' });
     const [stdout, stderr, code] = await Promise.all([new Response(client.stdout).text(), new Response(client.stderr).text(), client.exited]);
     reports[id] = { ...JSON.parse(await readFile(out, 'utf8')), client: { argv, stdout, stderr, code } };
@@ -176,6 +200,7 @@ async function core(side, dir, phaseHook) {
 }
 
 async function worker(suite, side, dir) {
+  await prepareRuntime(join(dir, 'runtime'));
   checkPorts(); await mkdir(dir, { recursive: true });
   let phase = suite === 'resilience' ? 'setup' : null, gatewayPid;
   const requests = [], children = [], servers = [], pendingStats = [], stats = {}, logs = [];
@@ -184,7 +209,7 @@ async function worker(suite, side, dir) {
     const pid = gatewayPid;
     pendingStats.push((async () => {
       const [rss, fd] = await Promise.all([command(['ps', '-o', 'rss=', '-p', String(pid)]), command(['lsof', '-nP', '-p', String(pid)])]);
-      if (rss.code === 0 && fd.code === 0) {
+      if (rss.code === 0 && fd.code === 0 && /^\d+$/.test(rss.stdout.trim()) && fd.stdout.split('\n').some(line => /^COMMAND\s+PID\s/.test(line))) {
         const value = { pid, phase: id, rss_bytes: Number(rss.stdout.trim()) * 1024, fd_count: fd.stdout.split('\n').filter(line => /^\S+\s+\d+\s+\S+\s+\d+[rwu-]?\s/.test(line)).length };
         (stats[id] ??= []).push(value);
       }
@@ -192,7 +217,10 @@ async function worker(suite, side, dir) {
   };
   const phaseHook = name => { if (phase) sample(phase); phase = name; sample(name); };
   Bun.spawn = function (argv, options) {
-    const p = nativeSpawn(argv, options); children.push(p);
+    // The locality producer owns the phase-entry measurement/ACK protocol.
+    const env = { ...runtimeEnv };
+    for (const key of ['API_KEYS', 'MANAGEMENT_PASSWORD', 'USAGE_POLL_SECS', 'MAX_FAILOVER', 'BENCH_MOCK_STATS_URL', 'BENCH_GATEWAY_PID', 'MAHOQUOT_BENCH_PHASE_ACK']) if (options?.env?.[key] !== undefined) env[key] = options.env[key];
+    const p = nativeSpawn(argv, { ...options, env }); children.push(p);
     if (argv[0] === binary[side]) {
       gatewayPid = p.pid; sample('startup');
       // Tee, rather than steal, pipes consumed by the existing scenario helper.
@@ -206,7 +234,7 @@ async function worker(suite, side, dir) {
   };
   Bun.serve = function (options) { const s = nativeServe(options); servers.push(s); return s; };
   instrument(requests, () => phase);
-  let proxy, report = null, failure = null;
+  let proxy, report = null, failure = null, rawObservations = null;
   const cleanup = async () => {
     for (const p of children) if (p.exitCode === null) p.kill('SIGKILL');
     await Promise.all(children.map(p => p.exited));
@@ -228,13 +256,17 @@ async function worker(suite, side, dir) {
     globalThis.fetch = nativeFetch; http.request = nativeRequest; Bun.spawn = nativeSpawn; Bun.serve = nativeServe;
     clearTimeout(watchdog);
   }
+  if (suite !== 'core') {
+    try { rawObservations = JSON.parse(await readFile(join(dir, `${suite}-raw.json`), 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
   const configFiles = [];
   try { for (const name of (await readdir(join(dir, 'auth'))).sort()) if (/\.json$|\.yaml$/.test(name)) configFiles.push({ name, sha256: hash(await readFile(join(dir, 'auth', name))) }); } catch {}
-  await json(join(dir, 'raw.json'), { suite, side, report, failure, requests, stats, logs, config_files: configFiles });
+  await json(join(dir, 'raw.json'), { suite, side, gateway_pid: gatewayPid ?? null, raw_observations: rawObservations, report, failure, requests, stats, logs, config_files: configFiles });
   console.log(`F4_WORKER ${suite} ${side} requests=${requests.length} failure=${failure ?? 'none'}`);
 }
 
-function localityVerdicts(r) {
+export function localityVerdicts(r) {
   if (!r) return {};
   const a = r.b3_history, b = r.b4_alternating, c = r.b5_hierarchy, d = r.b8_egress, e = r.b9_antigravity;
   return {
@@ -246,13 +278,16 @@ function localityVerdicts(r) {
   };
 }
 
-function summarize(raw, id) {
+export function summarize(raw, id) {
   const requests = raw.requests.filter(r => r.phase === id);
   const stats = raw.stats[id] ?? raw.stats.startup ?? [];
   let passed = false, coreReport;
   if (raw.suite === 'core') { coreReport = raw.report?.[id]; passed = coreReport?.correctness_passed && coreReport.failed === 0; }
   else if (raw.suite === 'locality') passed = Boolean(localityVerdicts(raw.report)[id]);
-  else if (raw.report) passed = validateResilienceReport(raw.report)[`${id.toLowerCase()}Passed`];
+  else if (raw.report) {
+    try { passed = validateResilienceReport(raw.report)[`${id.toLowerCase()}Passed`]; }
+    catch { passed = false; }
+  }
   const resourceKey = { B10: 'b10_slow_client', B11: 'b11_concurrency_ceiling', B13: 'b13_sqlite_telemetry', B9: 'b9_antigravity' }[id];
   const resources = raw.report?.[resourceKey];
   const unavailable = !coreReport && requests.length === 0;
@@ -270,28 +305,52 @@ function summarize(raw, id) {
 }
 
 async function acquireLock() {
-  try { await mkdir(LOCK); }
-  catch (e) {
-    if (e.code !== 'EEXIST') throw e;
-    const pid = Number((await readFile(join(LOCK, 'pid'), 'utf8')).trim());
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error('QA lock pid invalid');
-    try { process.kill(pid, 0); } catch (e) {
-      if (e.code !== 'ESRCH') throw e;
-      await rm(LOCK, { recursive: true }); await mkdir(LOCK); await writeFile(join(LOCK, 'pid'), String(process.pid)); return;
-    }
-    throw new Error(`QA lock held by live pid ${pid}`);
+  const parent = await lstat(LOCK_ROOT);
+  if (!parent.isDirectory() || await realpath(LOCK_ROOT) !== LOCK_ROOT || parent.uid !== process.getuid() || (parent.mode & 0o022)) throw new Error('QA lock root must be owned, real, existing and private');
+  await mkdir(LOCK, { mode: 0o700 }); // contention fails; never steal another run's lock
+  lockIdentity = await lstat(LOCK);
+}
+async function releaseLock() {
+  const current = await lstat(LOCK);
+  if (!lockIdentity || current.dev !== lockIdentity.dev || current.ino !== lockIdentity.ino) throw new Error('QA lock identity changed');
+  await rm(LOCK, { recursive: true });
+  lockIdentity = null;
+}
+
+export async function loadPairedProvenance(path, { validateProvenance = auditInternals.validateProvenance } = {}) {
+  if (!path) throw new Error('F4_PROVENANCE manifest is required');
+  const provenance = JSON.parse(await readFile(path, 'utf8'));
+  if (!provenance.run_id || typeof provenance.run_id !== 'string') throw new Error('paired run_id missing');
+  for (const side of ['baseline', 'candidate']) {
+    const source = provenance[side];
+    if (source?.run_id !== provenance.run_id) throw new Error(`${side} current-run provenance missing`);
+    await validateProvenance(source, `F4 ${side}`);
+    await validatePairedBuildReceipt(source);
   }
-  await writeFile(join(LOCK, 'pid'), String(process.pid));
+  return provenance;
+}
+
+export function pairedEnvelope({ id, side, round, provenance, phase, resources, failure, gatewayPid }) {
+  if (!phase || !Array.isArray(phase.requests) || !Object.hasOwn(phase, 'observations')) throw new Error(`${id} raw producer phase missing`);
+  return {
+    schema: PAIRED_SCHEMA, id, side, round, run_id: provenance.run_id, seed: provenance.seed,
+    order: balancedOrder(round, provenance.seed).map(tier => tier === 'B' ? 'baseline' : 'candidate'),
+    config_sha256: provenance.config_sha256, provenance_sha256: hash(JSON.stringify(provenance[side])),
+    requests: phase.requests, phase_observations: phase.observations, resources, failure, gateway_pid: gatewayPid,
+  };
 }
 
 async function main() {
-  const candidateHash = hash(await readFile(binary.candidate));
-  if (candidateHash !== EXPECTED) throw new Error('candidate hash mismatch');
-  const baselineHash = hash(await readFile(binary.baseline));
-  const revision = (await command(['git', '-C', join(W, 'mahoquot-proxy'), 'rev-parse', 'HEAD'])).stdout.trim();
-  const provenance = { baseline_sha256: baselineHash, candidate_sha256: candidateHash, baseline_revision: 'e45abe155cf435f68e6521917828693d66381c5e', candidate_revision: revision, host: hostname(), platform: process.platform, architecture: process.arch, rustc: (await command(['rustc', '-V'])).stdout.trim(), seed: SEED, rounds: ROUNDS, bench_sha256: hash(await readFile(BENCH)) };
+  if (!E || !BENCH || !binary.baseline || !binary.candidate) throw new Error('F4_EVIDENCE_ROOT, F4_BENCH_BINARY and both F4_*_BINARY paths are required');
+  const provenance = await loadPairedProvenance(process.env.F4_PROVENANCE);
+  for (const side of ['baseline', 'candidate']) if (resolve(binary[side]) !== resolve(provenance[side].gateway_binary)) throw new Error(`${side} launch binary/provenance mismatch`);
+  Object.assign(provenance, { host: hostname(), platform: process.platform, architecture: process.arch, seed: SEED, rounds: ROUNDS, bench_sha256: hash(await readFile(BENCH)) });
+  provenance.config = { seed: SEED, rounds: ROUNDS, ports: [18840, 18841, 18842, 18843], bench_sha256: provenance.bench_sha256, scripts: [] };
+  for (const path of [fileURLToPath(import.meta.url), join(W, 'scripts/qa/paired-contract.mjs'), join(W, 'scripts/qa/paired-phase-contract.mjs'), join(W, 'scripts/bench-locality.mjs'), join(W, 'scripts/bench-resilience.mjs')]) provenance.config.scripts.push({ path: relative(W, path), sha256: hash(await readFile(path)) });
+  provenance.config_sha256 = hash(JSON.stringify(provenance.config));
   const runRoot = join(E, 'f4-runs', randomUUID());
   await mkdir(runRoot, { recursive: true });
+  await prepareRuntime(join(runRoot, 'runtime'));
   provenance.run_root = relative(E, runRoot);
   const all = {};
   await acquireLock();
@@ -306,7 +365,11 @@ async function main() {
         if (result.code !== 0) throw new Error(`worker ${suite}/${side}/${round} exited ${result.code}: ${result.stderr}`);
         const raw = JSON.parse(await readFile(join(dir, 'raw.json'), 'utf8'));
         for (const id of suites[suite]) {
-          const entry = { round, side, id, discarded: round === 0, raw: relative(E, join(dir, 'raw.json')), ...summarize(raw, id) };
+          const phase = extractPairedPhase(raw, id);
+          const envelope = pairedEnvelope({ id, side, round, provenance, phase, resources: [...(raw.stats[id] ?? []), ...((raw.report?.raw_observations ?? raw.raw_observations)?.resources ?? []).filter(resource => resource.phase === id)], failure: raw.failure, gatewayPid: raw.gateway_pid });
+          const rawPath = join(dir, `${id}-raw.json`);
+          await json(rawPath, envelope);
+          const entry = { round, side, id, discarded: round === 0, raw: relative(E, rawPath), raw_sha256: hash(await readFile(rawPath)), ...recomputePairedRound(envelope, verifyPairedPhase) };
           await json(join(dir, `${id}.json`), entry);
           if (round) ((all[id] ??= {})[side] ??= []).push(entry);
         }
@@ -316,19 +379,18 @@ async function main() {
     }
     const benchmarks = {};
     for (let i = 0; i < 14; i++) {
-      const id = `B${i}`, pair = { seed: SEED, config_sha256: hash(JSON.stringify({ id, seed: SEED, rounds: ROUNDS, ports: [18840, 18841, 18842, 18843], scripts: [hash(await readFile(fileURLToPath(import.meta.url))), hash(await readFile(join(W, 'scripts/bench-locality.mjs'))), hash(await readFile(join(W, 'scripts/bench-resilience.mjs')))] })) };
+      const id = `B${i}`, pair = { seed: SEED, config_sha256: provenance.config_sha256 };
       for (const side of ['baseline', 'candidate']) {
         const rows = all[id][side]; if (rows.length !== ROUNDS) throw new Error(`missing rounds ${id}/${side}`);
-        pair[side] = { samples: ROUNDS, errors: rows.reduce((n, x) => n + x.errors, 0), request_count: rows.reduce((n, x) => n + x.request_count, 0), unavailable_rounds: rows.filter(r => r.unavailable).length };
-        for (const field of ['ttfb_ms', 'content_ttft_ms', 'completion_ms']) pair[side][field] = mean(rows.map(r => r[field]));
-        for (const field of ['rss_bytes', 'fd_count']) pair[side][field] = Math.max(...rows.map(r => r[field]));
+        pair[side] = { ...aggregatePairedRounds(rows), rounds: rows };
+        if (side === 'candidate' && rows.some(row => !candidateTrialObserved(row))) throw new Error(`candidate trial not observed/correct: ${id}`);
       }
       benchmarks[id] = pair;
     }
     const table = ['| B | Samples B/C | Requests B/C | TTFB ms B/C | First chunk / TTFT ms B/C | Completion ms B/C | Errors B/C | RSS bytes B/C | FDs B/C |', '|---|---:|---:|---:|---:|---:|---:|---:|---:|'];
-    for (const [id, p] of Object.entries(benchmarks)) table.push(`| ${id} | ${['samples', 'request_count', 'ttfb_ms', 'content_ttft_ms', 'completion_ms', 'errors', 'rss_bytes', 'fd_count'].map(k => `${p.baseline[k].toFixed(3)} / ${p.candidate[k].toFixed(3)}`).join(' | ')} |`);
+    for (const [id, p] of Object.entries(benchmarks)) table.push(`| ${id} | ${['samples', 'request_count', 'ttfb_ms', 'content_ttft_ms', 'completion_ms', 'errors', 'rss_bytes', 'fd_count'].map(k => `${p.baseline[k] === null ? 'unavailable' : p.baseline[k].toFixed(3)} / ${p.candidate[k] === null ? 'unavailable' : p.candidate[k].toFixed(3)}`).join(' | ')} |`);
     const caveats = [...new Set(Object.values(all).flatMap(p => Object.entries(p).flatMap(([side, rows]) => rows.filter(r => r.failure || r.unavailable).map(r => `${r.id} ${side}: ${r.failure ?? 'no gateway request observed'}`))))];
-    const md = `# F4 paired scenario measurements\n\n## Provenance\n\n\`\`\`json\n${JSON.stringify(provenance, null, 2)}\n\`\`\`\n\n## Method\n\nFour paired scenario trials, seed 35; order from balancedOrder(round, seed). One full discarded suite warm-up per side precedes all measured trials. Samples count scenario trials (4 each); request_count records actual gateway requests separately. B0-B2 each run bench --total 10 --concurrency 2 with semantic bench_expect. Their timings come from the bench report: mean TTFB, p50 content TTFT, mean completion. Other timings are the mean per-trial gateway headers/first-body-chunk/end observations; first chunk is not claimed to parse semantic content. Fetch and node:http instrumentation captures resilience traffic; a byte-preserving timing reverse proxy tags locality client traffic by body/session markers. Locality setup gateway traffic is captured separately through fetch. All suite calls use the original scenarios, loopback ports, dummy credentials, and upstream_override.\n\nRSS/FD values are scenario snapshots or the scenario's own peak fields, not continuously sampled process peaks. Errors for resilience are failed-verdict trials plus transport errors, including intentional aborts when surfaced as transport errors. Locality errors are failed per-B verdict trials plus transport errors.\n\n${table.join('\n')}\n\n## Caveats\n\nUnsupported setup is a failed trial, never success. If a suite cannot reach later phases, those phases are marked unavailable and retain zero observations; zero timing/resource fields with no observations are schema sentinels, not measured zero performance. They cannot support performance comparisons. No failed correctness requests are dropped. A suite abort prevents its later phases from running; the raw file records the exact failure and gateway logs.\n\n${caveats.map(c => '- ' + c).join('\n')}\n\nRaw run: ${provenance.run_root}. Older f4-runs files are rejected development output and are not referenced by this run.\n`;
+    const md = `# F4 paired scenario measurements\n\n## Provenance\n\n\`\`\`json\n${JSON.stringify(provenance, null, 2)}\n\`\`\`\n\n## Method\n\nFour paired scenario trials, seed 35; order from balancedOrder(round, seed). One full discarded suite warm-up per side precedes all measured trials. Samples count scenario trials (4 each); request_count records actual gateway requests separately. B0-B2 each run bench --total 10 --concurrency 2 with semantic bench_expect. Their timings are recomputed as means from per-request observations, including failed requests when timings were observed. Missing timings remain null. Resource maxima use phase-specific snapshots bound to the launched gateway PID. Raw phase evidence, rather than producer report verdict flags, determines correctness. Other timings are the mean per-trial gateway headers/first-body-chunk/end observations; first chunk is not claimed to parse semantic content. Fetch and node:http instrumentation captures resilience traffic; a byte-preserving timing reverse proxy tags locality client traffic by body/session markers. Locality setup gateway traffic is captured separately through fetch. All suite calls use the original scenarios, loopback ports, dummy credentials, and upstream_override.\n\nRSS/FD values are scenario snapshots or the scenario's own peak fields, not continuously sampled process peaks. Errors for resilience are failed-verdict trials plus transport errors, including intentional aborts when surfaced as transport errors. Locality errors are failed per-B verdict trials plus transport errors.\n\n${table.join('\n')}\n\n## Caveats\n\nUnsupported setup is a failed trial, never success. If a suite cannot reach later phases, those phases are marked unavailable and retain zero observations; Missing timing/resource values are null, never invented zero measurements. Actual observed zero timings and counts remain valid. They cannot support performance comparisons. No failed correctness requests are dropped. A suite abort prevents its later phases from running; the raw file records the exact failure and gateway logs.\n\n${caveats.map(c => '- ' + c).join('\n')}\n\nRaw run: ${provenance.run_root}. Older f4-runs files are rejected development output and are not referenced by this run.\n`;
     await writeFile(join(E, 'F4.md'), md);
     const tasks = { 'IS-1': [2, 3, 7], 'IS-2': [4, 5, 6, 9, 11], 'IS-3': [8, 10, 13, 14], 'IS-4': [12, ...Array.from({ length: 11 }, (_, i) => i + 15)], 'IS-5': Array.from({ length: 9 }, (_, i) => i + 26), 'IS-6': [35, 36, 37], 'IS-7': [26, 37, 38] };
     const is_rows = {};
@@ -341,12 +403,19 @@ async function main() {
       }
       is_rows[id] = { pass: true, evidence };
     }
-    await json(join(E, 'F4-fidelity.json'), { schema: 'cliproxy-audit/f4-fidelity-v1', provenance, is_rows, benchmarks });
+    const receipt = { schema: 'cliproxy-audit/f4-fidelity-v1', provenance, is_rows, benchmarks };
+    await validatePairedContract(E, receipt, { validateProvenance: auditInternals.validateProvenance, verifyPhase: verifyPairedPhase });
+    await json(join(E, 'F4-fidelity.json'), receipt);
     console.log(`F4_COMPLETE ${runRoot}`);
-  } finally { await rm(LOCK, { recursive: true }); }
+  } finally { await releaseLock(); }
 }
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
   (args[0] === '--worker' ? worker(args[1], args[2], args[3]) : main()).catch(e => { console.error(e); process.exitCode = 1; });
+}
+
+export function candidateTrialObserved(row) {
+  return row.passed === true && row.unavailable === false && row.failure == null && row.unexpected_errors === 0 && row.request_count > 0 &&
+    ['ttfb_ms', 'content_ttft_ms', 'completion_ms', 'rss_bytes', 'fd_count'].every(key => Number.isFinite(row[key]) && row[key] >= 0);
 }

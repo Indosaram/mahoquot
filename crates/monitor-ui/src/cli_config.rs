@@ -279,7 +279,6 @@ impl CliConfigManager {
         };
         let token_override = std::env::var("MAHOQUOT_API_KEY")
             .ok()
-            .map(|key| key.trim().to_string())
             .filter(|key| !key.is_empty());
         Self {
             token_override,
@@ -298,14 +297,20 @@ impl CliConfigManager {
         }
         let config_path = self.home.join(".mahoquot").join("auth").join("config.yaml");
         let content = read_optional(&config_path)?
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map(String::from_utf8)
+            .transpose()
+            .map_err(|error| {
+                CliConfigError::state(format!("invalid gateway configuration UTF-8: {error}"))
+            })?
             .unwrap_or_default();
-        crate::tray::extract_first_api_key(&content).ok_or_else(|| {
-            CliConfigError::state(format!(
-                "no gateway API key in {}; start Mahoquot once so it can mint the master key",
-                config_path.display()
-            ))
-        })
+        crate::tray::extract_first_api_key(&content)
+            .map_err(CliConfigError::state)?
+            .ok_or_else(|| {
+                CliConfigError::state(format!(
+                    "no gateway API key in {}; start Mahoquot once so it can mint the master key",
+                    config_path.display()
+                ))
+            })
     }
 
     pub fn target_path(&self, agent_id: CliAgentId) -> PathBuf {
@@ -624,9 +629,20 @@ fn generate_config(
     token: &str,
     gateway_models: &[String],
 ) -> Result<Vec<u8>, CliConfigError> {
+    // URL parsers may silently strip tabs/newlines. Reject them before parsing
+    // so IPC input cannot add assignments to a generated dotenv file.
+    if gateway_url.chars().any(char::is_control) {
+        return Err(CliConfigError::state(
+            "gateway URL must not contain control characters",
+        ));
+    }
     let gateway = gateway_url.trim().trim_end_matches('/');
-    if gateway.is_empty() {
-        return Err(CliConfigError::state("gateway URL must not be empty"));
+    let url = url::Url::parse(gateway)
+        .map_err(|_| CliConfigError::state("gateway URL must be an absolute HTTP(S) URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(CliConfigError::state(
+            "gateway URL must be an absolute HTTP(S) URL",
+        ));
     }
     match agent_id {
         CliAgentId::ClaudeCode => generate_claude(existing, gateway, token),
@@ -903,6 +919,20 @@ fn valid_env_key(key: &str) -> bool {
 }
 
 fn generate_gemini(existing: &[u8], gateway: &str, token: &str) -> Result<Vec<u8>, CliConfigError> {
+    // Use a literal, unquoted dotenv subset. Reject quoting, comments and
+    // expansion syntax rather than silently changing a credential. This also
+    // works with consumers that perform dotenv variable expansion.
+    for (name, value) in [("gateway URL", gateway), ("API key", token)] {
+        if value.is_empty()
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-._~:/?&=%+@,;!()*[]".contains(&byte))
+        {
+            return Err(CliConfigError::state(format!(
+                "Gemini {name} contains characters unsupported in a literal dotenv value"
+            )));
+        }
+    }
     let managed = ["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"];
     let mut output = Vec::new();
     for line in parse_env(existing)? {
@@ -1136,6 +1166,123 @@ mod tests {
     }
 
     const TEST_TOKEN: &str = "mq-master-testkey";
+
+    #[test]
+    fn invalid_ipc_values_preserve_config_backup_and_record() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = CliConfigManager::new(
+            root.path().join("home"),
+            root.path().join("data"),
+            CliPlatform::current(),
+        );
+        manager.token_override = Some(TEST_TOKEN.into());
+        let agent = CliAgentId::GeminiCli;
+        let target = manager.target_path(agent);
+        write_fixture(&target, fixture(agent));
+        for stage in 0..3 {
+            if stage == 1 {
+                manager.configure(request(agent)).unwrap();
+            } else if stage == 2 {
+                let mut edited = fs::read(&target).unwrap();
+                edited.extend_from_slice(b"USER_EDIT=preserved\n");
+                fs::write(&target, edited).unwrap();
+            }
+            let paths = [
+                target.clone(),
+                manager.backup_path(agent),
+                manager.record_path(agent),
+            ];
+            let before: Vec<_> = paths
+                .iter()
+                .map(|path| read_optional(path).unwrap())
+                .collect();
+            for gateway in [
+                "http://127.0.0.1:18840\nKEEP=changed",
+                "http://127.0.0.1:18840\r",
+                "http://127.0.0.1:18840\t",
+                "http://127.0.0.1:18840\0",
+                "file:///tmp/config",
+                "not-a-url",
+                "https://example.test/#comment",
+            ] {
+                let mut invalid = request(agent);
+                invalid.gateway_url = gateway.into();
+                invalid.adopt_current = true;
+                assert!(manager.preview(invalid.clone()).is_err());
+                assert!(manager.configure(invalid).is_err());
+            }
+            for token in [
+                "key\nKEEP=changed",
+                "key\r",
+                "key\0",
+                "key#comment",
+                "${HOME}",
+                "a b",
+                "a\\b",
+                "'quoted'",
+                "\"quoted\"",
+            ] {
+                manager.token_override = Some(token.into());
+                let mut invalid = request(agent);
+                invalid.adopt_current = true;
+                assert!(manager.preview(invalid.clone()).is_err());
+                assert!(manager.configure(invalid).is_err());
+            }
+            manager.token_override = Some(TEST_TOKEN.into());
+            let after: Vec<_> = paths
+                .iter()
+                .map(|path| read_optional(path).unwrap())
+                .collect();
+            assert_eq!(after, before);
+        }
+        root.close().unwrap();
+    }
+
+    #[test]
+    fn gemini_literal_special_characters_preserve_exact_assignments() {
+        let gateway = "https://example.test:18840/path%20name?key=a&value=b+c";
+        let token = "abc-._~:/?&=%+@,;!()*[]09";
+        let output =
+            generate_config(CliAgentId::GeminiCli, b"KEEP=value\n", gateway, token, &[]).unwrap();
+        assert_eq!(
+            env_assignments(&output),
+            vec![
+                ("KEEP".into(), "value".into()),
+                ("GOOGLE_GEMINI_BASE_URL".into(), gateway.into()),
+                ("GEMINI_API_KEY".into(), token.into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_master_yaml_never_changes_cli_files() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CliConfigManager::new(
+            root.path().join("home"),
+            root.path().join("data"),
+            CliPlatform::current(),
+        );
+        let config = manager.home.join(".mahoquot/auth/config.yaml");
+        for yaml in [
+            "api-keys: [broken",
+            "api-keys: [valid, 123]",
+            "api-keys: wrong",
+            "- wrong-root",
+        ] {
+            write_fixture(&config, yaml.as_bytes());
+            for agent in CliAgentId::ALL {
+                let target = manager.target_path(agent);
+                write_fixture(&target, fixture(agent));
+                assert!(manager.preview(request(agent)).is_err());
+                assert!(manager.configure(request(agent)).is_err());
+                assert_eq!(fs::read(&target).unwrap(), fixture(agent));
+                assert!(!manager.record_path(agent).exists());
+                assert!(!manager.backup_path(agent).exists());
+            }
+            assert_eq!(fs::read(&config).unwrap(), yaml.as_bytes());
+        }
+        root.close().unwrap();
+    }
 
     fn manager(name: &str, platform: CliPlatform) -> (CliConfigManager, PathBuf, PathBuf) {
         let root = root(name);

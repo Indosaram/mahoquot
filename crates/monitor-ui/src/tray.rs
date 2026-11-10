@@ -41,6 +41,26 @@ pub struct WindowPosition {
     pub y: f64,
 }
 
+pub fn tray_panel_position(
+    work: &DisplayBounds,
+    icon: &DisplayBounds,
+    panel_logical: &WindowDimensions,
+    scale: f64,
+) -> WindowPosition {
+    let width = panel_logical.width * scale;
+    let height = panel_logical.height * scale;
+    WindowPosition {
+        x: (icon.origin_x + icon.width - width).clamp(
+            work.origin_x,
+            (work.origin_x + work.width - width).max(work.origin_x),
+        ),
+        y: (icon.origin_y + icon.height + 6.0 * scale).clamp(
+            work.origin_y,
+            (work.origin_y + work.height - height).max(work.origin_y),
+        ),
+    }
+}
+
 /// A window rectangle in AppKit screen space (origin bottom-left), the same
 /// space `NSEvent.mouseLocation` reports, so no coordinate flipping is needed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -224,55 +244,60 @@ pub fn gateway_startup_action(port_listening: bool) -> GatewayStartup {
 /// The first key the gateway will accept from its `config.yaml`. This is the
 /// one reader for that document: the app and every CLI it configures must hand
 /// out the same key, so a second hand-rolled parser would let them drift.
-pub fn extract_first_api_key(yaml: &str) -> Option<String> {
-    let mut in_keys = false;
-    for line in yaml.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("api-keys:") {
-            in_keys = true;
-            if let Some(rest) = trimmed.strip_prefix("api-keys:").map(str::trim) {
-                if rest.starts_with('[') && rest.ends_with(']') {
-                    let inner = rest[1..rest.len() - 1].trim();
-                    let key = inner.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
-                    if !key.is_empty() {
-                        return Some(key.to_string());
-                    }
-                }
-            }
-            continue;
-        }
-        if in_keys {
-            if trimmed.starts_with('-') {
-                let key = trimmed
-                    .trim_start_matches('-')
-                    .trim()
-                    .trim_matches(|c| c == '\'' || c == '"');
-                if !key.is_empty() {
-                    return Some(key.to_string());
-                }
-            } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                break;
-            }
+pub fn extract_first_api_key(yaml: &str) -> Result<Option<String>, String> {
+    let config = parse_master_key_config(yaml)?;
+    Ok(config
+        .get("api-keys")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|keys| keys.first())
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_owned))
+}
+
+fn parse_master_key_config(yaml: &str) -> Result<serde_yaml::Mapping, String> {
+    let config = if yaml.trim().is_empty() {
+        serde_yaml::Mapping::new()
+    } else {
+        serde_yaml::from_str::<serde_yaml::Mapping>(yaml)
+            .map_err(|error| format!("invalid gateway config YAML: {error}"))?
+    };
+    if let Some(value) = config.get("api-keys") {
+        let keys = value
+            .as_sequence()
+            .ok_or_else(|| "gateway api-keys must be a sequence of strings".to_string())?;
+        if keys
+            .iter()
+            .any(|key| !matches!(key.as_str(), Some(key) if !key.trim().is_empty()))
+        {
+            return Err("gateway api-keys must contain only nonempty strings".to_string());
         }
     }
-    None
+    Ok(config)
 }
 
 /// The config.yaml body that must be on disk for `generated` to be the
 /// gateway's master key. `existing` is the current file content, or `None` when
 /// the file does not exist yet: that case still has to produce a document,
 /// otherwise the app would hand out a key the gateway never loads.
-pub fn config_with_master_api_key(existing: Option<&str>, generated: &str) -> String {
-    let Some(content) = existing else {
-        return format!("api-keys:\n- {generated}\n");
-    };
-    if content.contains("api-keys: []") {
-        content.replace("api-keys: []", &format!("api-keys:\n- {generated}"))
-    } else if content.contains("api-keys:") {
-        content.replace("api-keys:", &format!("api-keys:\n- {generated}"))
-    } else {
-        format!("{content}\napi-keys:\n- {generated}\n")
+/// Serialization preserves unrelated YAML values, but not comments or formatting.
+/// Invalid documents return an error and must never be replaced on disk.
+pub fn config_with_master_api_key(
+    existing: Option<&str>,
+    generated: &str,
+) -> Result<String, String> {
+    if generated.trim().is_empty() {
+        return Err("generated gateway API key must not be empty".to_string());
     }
+    let mut config = parse_master_key_config(existing.unwrap_or_default())?;
+    let key = serde_yaml::Value::String("api-keys".to_string());
+    let mut keys = match config.remove(&key) {
+        Some(serde_yaml::Value::Sequence(keys)) => keys,
+        _ => Vec::new(), // The parser has already validated the optional sequence.
+    };
+    keys.insert(0, serde_yaml::Value::String(generated.to_string()));
+    config.insert(key, serde_yaml::Value::Sequence(keys));
+    serde_yaml::to_string(&config)
+        .map_err(|error| format!("failed to serialize gateway config YAML: {error}"))
 }
 
 /// The app owns its credential store at `~/.mahoquot/auth`.
@@ -323,8 +348,13 @@ pub fn resolve_gateway_binary(env_override: Option<String>, exe: Option<&Path>) 
     if let Some(path) = env_override {
         return Some(PathBuf::from(path));
     }
-    exe.and_then(Path::parent)
-        .map(|dir| dir.join("mahoquot-gateway"))
+    exe.and_then(Path::parent).map(|dir| {
+        dir.join(if cfg!(windows) {
+            "mahoquot-gateway.exe"
+        } else {
+            "mahoquot-gateway"
+        })
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

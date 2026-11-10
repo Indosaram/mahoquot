@@ -1,5 +1,38 @@
 use std::time::Duration;
 
+/// One lifecycle's spawn gate. Cancellation and spawning share the same lock;
+/// a cancelled generation is never re-enabled by a subsequent Start.
+#[derive(Default)]
+pub struct SpawnGate {
+    cancelled: std::sync::Mutex<bool>,
+    changed: std::sync::Condvar,
+}
+
+impl SpawnGate {
+    pub fn cancel(&self) {
+        *self.cancelled.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.changed.notify_all();
+    }
+
+    pub fn run<T>(&self, launch: impl FnOnce() -> T) -> Option<T> {
+        let cancelled = self.cancelled.lock().unwrap_or_else(|e| e.into_inner());
+        if *cancelled {
+            None
+        } else {
+            Some(launch())
+        }
+    }
+
+    pub fn wait(&self, delay: Duration) -> bool {
+        let cancelled = self.cancelled.lock().unwrap_or_else(|e| e.into_inner());
+        let (cancelled, _) = self
+            .changed
+            .wait_timeout_while(cancelled, delay, |value| !*value)
+            .unwrap_or_else(|e| e.into_inner());
+        !*cancelled
+    }
+}
+
 #[allow(dead_code)]
 pub fn provision_management_key<B: crate::secrets::SecretBackend>(
     store: &crate::secrets::SecretStore<B>,

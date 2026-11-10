@@ -966,11 +966,13 @@ describe("globals.css theme token integrity (p9 F2-F5)", () => {
     expect(css).not.toContain("rgba(35, 35, 44");
   });
 
-  it("tray TOTP overrides are gone along with the tray quick-access branch (F3)", async () => {
-    // The tray surface no longer accepts totpEntries, so any .tray-totp-access
-    // rule would be styling markup that cannot render. The contract is absence.
+  it("tray and notch carry no TOTP surface, so no dark-only TOTP overrides remain (F3)", async () => {
     const css = await readGlobalsCss();
+    // TOTP is console-only: `useTotpVault` is disabled for both compact
+    // surfaces, so their wrappers and their forced-light overrides are gone.
     expect(css).not.toContain(".tray-totp-access");
+    expect(css).not.toContain(".notch-totp-access");
+    expect(css).not.toContain(".totp-quick-access.compact");
   });
 
   it("notch tooltip count uses a defined token instead of undefined --muted (F4)", async () => {

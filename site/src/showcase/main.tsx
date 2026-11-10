@@ -12,6 +12,7 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { GithubMark } from "@/components/github-mark";
+import { PRODUCT } from "@/content/site";
 
 const buttonVariants = [
   { id: "primary", label: "Primary", desc: "bg-ink text-page (High-priority action)" },
@@ -39,7 +40,7 @@ function ShowcaseApp() {
             UI Primitives Showcase &amp; Visual QA
           </h1>
           <p className="mt-2 text-sm text-ink-muted max-w-2xl">
-            Live component verification surface for token fidelity, primitive variants, interactive states, and contrast ratios on dark canvas.
+            Design fixture with illustrative sample copy and inactive example controls, not operational or performance claims. Site {PRODUCT.siteVersion}.
           </p>
         </header>
 
@@ -194,7 +195,7 @@ function ShowcaseApp() {
               <SectionHeader
                 eyebrow="ARCHITECTURE &amp; INTERNALS"
                 title="Single binary. Zero garbage collection. Direct HTTP pipelining."
-                lead="Mahoquot runs as a lightweight daemon on localhost:8080. It presents a standard OpenAI-compatible API to local clients while managing downstream tokens and OAuth flows."
+                lead={`Example endpoint: localhost:${PRODUCT.port}. This fixture illustrates the section-header layout, not a running gateway.`}
               />
             </div>
 
@@ -261,7 +262,7 @@ function ShowcaseApp() {
               </CardHeader>
               <CardContent className="py-5 text-sm text-ink-soft">
                 <p>
-                  Persists and refreshes Claude Code, Codex, and Gemini OAuth credentials in the OS keyring with automatic jittered renewal.
+                  Illustrative credential card. See the product documentation for account storage and refresh behavior.
                 </p>
               </CardContent>
               <CardFooter className="flex items-center justify-between">

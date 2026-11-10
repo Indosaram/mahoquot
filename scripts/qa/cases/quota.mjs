@@ -6,6 +6,19 @@ import { fileURLToPath } from "node:url";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 
+export function quotaScopeObserved(rejectedStatus, affectedStatus, affectedDials, unaffectedStatus) {
+  return rejectedStatus === 429 && affectedStatus === 429 && affectedDials === 0 && unaffectedStatus === 200;
+}
+
+export function unknownScopeObserved(account, unaffectedStatus) {
+  const group = account?.usage?.groups?.find((item) => item.models === "future-unknown-scope");
+  return account?.usage?.refresh_status === "ok" && account?.health?.status === "available"
+    && group?.display_name === "Future unknown quota" && group.buckets?.length === 1
+    && group.buckets[0].bucket_id === "future-unknown-scope-primary"
+    && group.buckets[0].used_percent === 100 && group.buckets[0].window === "60m"
+    && unaffectedStatus === 200;
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -104,6 +117,14 @@ export async function runCase(variant, evidencePath, context) {
           body_sha256: hash(raw),
         });
         events.push({ type: "mock-request", path: url.pathname, auth: headers.authorization });
+
+        if (url.pathname === "/backend-api/wham/usage") {
+          return Response.json({ plan_type: "plus", rate_limit: { primary_window: { used_percent: 12, limit_window_seconds: 18000 } },
+            additional_rate_limits: [{ limit_name: "Future unknown quota", metered_feature: "future-unknown-scope", rate_limit: {
+              primary_window: { used_percent: 100, limit_window_seconds: 3600 }
+            } }] });
+        }
+        if (url.pathname === "/backend-api/wham/rate-limit-reset-credits") return Response.json({ credits: [] });
 
         // Generic / OpenAI models endpoint
         if (url.pathname.endsWith("/models")) {
@@ -253,7 +274,15 @@ export async function runCase(variant, evidencePath, context) {
       await writeFile(join(authDir, "config.yaml"), configYaml);
     } else {
       // Failure variant configuration:
-      // Single Claude account and single generic account
+      // A real Codex usage endpoint carries an unfamiliar metered feature.
+      // Its metadata must survive without becoming a global quota ban.
+      await writeFile(join(authDir, "codex-unknown.json"), JSON.stringify({
+        type: "plus", identity_slug: "codex-unknown", account_id: "fixture-unknown",
+        access_token: "fixture-unknown-token", email: "unknown@example.invalid",
+        expired: "2099-01-01T00:00:00Z", id_token: "fixture-id", refresh_token: "fixture-refresh",
+        last_refresh: "2098-01-01T00:00:00Z", upstream_override: mockBase,
+      }));
+      // Single Claude inference account, independent of the unfamiliar Codex group
       await writeFile(
         join(authDir, "claude-fail.json"),
         JSON.stringify({
@@ -410,6 +439,13 @@ export async function runCase(variant, evidencePath, context) {
         max_tokens: 10,
         messages: [{ role: "user", content: "trigger-overage-rejection" }],
       });
+      if (rejectedRes.status !== 429) throw new Error(`quota rejection was not observed: ${rejectedRes.status}`);
+      const beforeAffected = wireRequests.length;
+      const affectedRes = await call("/v1/messages", {
+        model: "claude-sonnet-4-6", max_tokens: 10,
+        messages: [{ role: "user", content: "affected-model-after-rejection" }],
+      });
+      const affectedDials = wireRequests.length - beforeAffected;
       // Gateway handles failover or returns error if both exhausted
       // Now verify claude-haiku-4-5 is still routable (200 status)
       const haikuRes = await call("/v1/messages", {
@@ -417,7 +453,7 @@ export async function runCase(variant, evidencePath, context) {
         max_tokens: 10,
         messages: [{ role: "user", content: "hello haiku" }],
       });
-      const scopeObserved = haikuRes.status === 200;
+      const scopeObserved = quotaScopeObserved(rejectedRes.status, affectedRes.status, affectedDials, haikuRes.status);
 
       assertions.push({
         id: "quota-scope-observed",
@@ -427,16 +463,20 @@ export async function runCase(variant, evidencePath, context) {
       });
     } else {
       // Failure variant:
-      // 1. unknown-scope-preserved:
-      // Calling a model whose quota group is unknown (e.g. generic-model without group split)
-      // preserves the conservative account-level behavior without crashing or mis-scoping.
-      // Also verify credential metadata on disk preserves unknown scopes.
+      const metadataResponse = await fetch(`http://127.0.0.1:${gatewayPort}/admin/usage/refresh`, {
+        method: "POST", headers: { authorization: "Bearer quota-secret" }, signal: AbortSignal.timeout(15000),
+      });
+      if (metadataResponse.status !== 200) throw new Error(`usage metadata: ${metadataResponse.status}`);
+      const metadata = await metadataResponse.json();
+      events.push({ type: "quota-management-metadata", metadata });
+      const unknown = metadata.accounts.find((account) => account.provider === "codex");
       const normalRes = await call("/v1/messages", {
         model: "claude-sonnet-4-6",
         max_tokens: 10,
         messages: [{ role: "user", content: "normal" }],
       });
-      const unknownScopePreserved = normalRes.status === 200;
+      const unknownScopePreserved = unknownScopeObserved(unknown, normalRes.status)
+        && wireRequests.some((item) => item.path === "/backend-api/wham/usage");
 
       assertions.push({
         id: "unknown-scope-preserved",
@@ -448,14 +488,23 @@ export async function runCase(variant, evidencePath, context) {
       // 2. operational-failure-not-disabled:
       // Send request that causes 500 error from upstream.
       // Verify that after 500 error, the account on disk is NEVER written as disabled: true.
-      await call("/v1/messages", {
+      const operational = await call("/v1/messages", {
         model: "claude-sonnet-4-6",
         max_tokens: 10,
         messages: [{ role: "user", content: "trigger-operational-500" }],
       });
+      if (operational.status !== 500) throw new Error(`operational failure not observed: ${operational.status}`);
 
       const credOnDisk = JSON.parse(await readFile(join(authDir, "claude-fail.json"), "utf8"));
-      const notDisabled = credOnDisk.disabled !== true;
+      const statsResponse = await fetch(`http://127.0.0.1:${gatewayPort}/admin/stats`, {
+        headers: { authorization: "Bearer quota-secret" }, signal: AbortSignal.timeout(15000),
+      });
+      if (statsResponse.status !== 200) throw new Error(`post-failure stats: ${statsResponse.status}`);
+      const stats = await statsResponse.json();
+      events.push({ type: "post-operational-failure-metadata", metadata: stats });
+      const account = stats.accounts.find((item) => item.id === "claude-fail");
+      const notDisabled = credOnDisk.disabled !== true && account != null
+        && !["disabled", "auth_failed"].includes(account.health.status);
 
       assertions.push({
         id: "operational-failure-not-disabled",
@@ -467,6 +516,7 @@ export async function runCase(variant, evidencePath, context) {
   } catch (err) {
     failure = err;
   } finally {
+    const cleanupErrors = [];
     if (child) {
       try {
         if (child.exitCode === null && child.signalCode === null) {
@@ -475,21 +525,27 @@ export async function runCase(variant, evidencePath, context) {
         exit = await bounded(exitPromise, "gateway exit", 5000);
         await bounded(pipePromise, "gateway pipe close", 5000);
       } catch (e) {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        cleanupErrors.push(e);
+        try {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          exit = await bounded(exitPromise, "forced gateway exit", 5000);
+          await bounded(pipePromise, "forced gateway pipe close", 5000);
+        } catch (error) { cleanupErrors.push(error); }
       }
     }
     if (mock) {
-      try { mock.stop(true); } catch {}
+      try { await mock.stop(true); } catch (error) { cleanupErrors.push(error); }
     }
     for (const port of context.ports) {
       try {
         const probe = Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } });
         probe.stop(true);
-      } catch {}
+      } catch (error) { cleanupErrors.push(error); }
     }
     try {
       await rm(work, { recursive: true, force: true });
-    } catch {}
+    } catch (error) { cleanupErrors.push(error); }
+    if (cleanupErrors.length) failure = new AggregateError([...(failure ? [failure] : []), ...cleanupErrors], "quota cleanup failed");
   }
 
   if (failure) {
@@ -499,6 +555,7 @@ export async function runCase(variant, evidencePath, context) {
     );
     throw failure;
   }
+  if (!assertions.every(({ pass }) => pass === true)) throw new Error("quota assertions failed");
 
   const requiredIds = variant === "happy"
     ? ["weighted-sequence", "quota-scope-observed"]

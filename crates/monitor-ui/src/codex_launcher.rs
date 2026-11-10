@@ -193,18 +193,16 @@ impl CodexLauncher {
         )
         .map_err(io_error)?;
         let mut command = Command::new(binary);
-        if binary
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n == "codex" || n == "codex.exe")
-        {
-            command.arg("app-server");
-        }
+        command.arg("app-server");
         let child = command
             .env("CODEX_HOME", &codex_home)
             .env("MAHOQUOT_CODEX_ACCOUNT", &request.account_id)
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(if cfg!(test) {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| CodexLauncherError(format!("failed to start Codex: {error}")))?;
@@ -338,13 +336,13 @@ fn write_fake_codex(root: &Path, crash: bool) -> PathBuf {
     let script = if crash {
         "#!/bin/sh\nexit 42\n"
     } else {
-        "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n"
+        "#!/bin/sh\nread -r command\n"
     };
     #[cfg(windows)]
     let script = if crash {
         "@exit /b 42\r\n"
     } else {
-        "@echo off\r\n:loop\r\nping 127.0.0.1 -n 2 >nul\r\ngoto loop\r\n"
+        "@echo off\r\nset /p command=\r\n"
     };
 
     fs::create_dir_all(root).unwrap();
@@ -462,30 +460,21 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn codex_named_binary_receives_app_server_argument() {
-        let root = temp();
+    fn acknowledged_launch(binary_name: &str, expected_argument: &str) -> (String, String) {
+        use std::io::{BufRead, BufReader};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let root = tempfile::tempdir().unwrap();
         #[cfg(not(windows))]
-        let binary = root.join("codex");
+        let binary = root.path().join(binary_name);
         #[cfg(windows)]
-        let binary = root.join("codex.cmd");
+        let binary = root.path().join(format!("{binary_name}.cmd"));
 
         #[cfg(not(windows))]
-        let script = r#"#!/bin/sh
-if [ "$1" != "app-server" ]; then
-    echo "missing app-server arg" >&2
-    exit 99
-fi
-trap 'exit 0' TERM INT
-while :; do sleep 1; done
-"#;
+        let script = format!("#!/bin/sh\nif [ \"$#\" = 1 ] && [ \"$1\" = '{expected_argument}' ]; then\n  printf 'accepted\\n'\nelse\n  printf 'rejected\\n'\nfi\nprintf '%s\\n' \"$CODEX_HOME\"\nread -r command\n");
         #[cfg(windows)]
-        let script = r#"@echo off
-if "%~1" neq "app-server" exit /b 99
-:loop
-ping 127.0.0.1 -n 2 >nul
-goto loop
-"#;
+        let script = format!("@echo off\r\nif \"%~1\"==\"{expected_argument}\" (echo accepted) else (echo rejected)\r\necho %CODEX_HOME%\r\nset /p command=\r\n");
 
         fs::write(&binary, script).unwrap();
         #[cfg(unix)]
@@ -494,37 +483,61 @@ goto loop
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         }
 
-        let launcher = CodexLauncher::new(binary, root.join("instances"));
+        let (sender, receiver) = mpsc::channel();
+        let launcher = CodexLauncher::new(binary, root.path().join("instances"));
         let launched = launcher
             .launch(request("app-server-test", "account-test"))
             .unwrap();
-        assert_eq!(launched.state, InstanceState::Running);
+        let stdout = launcher
+            .instances
+            .lock()
+            .unwrap()
+            .get_mut("app-server-test")
+            .unwrap()
+            .child
+            .stdout
+            .take()
+            .unwrap();
+        let reader = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut acknowledgment = String::new();
+            let mut home = String::new();
+            let result = reader
+                .read_line(&mut acknowledgment)
+                .and_then(|_| reader.read_line(&mut home))
+                .map(|_| (acknowledgment.trim().to_string(), home.trim().to_string()));
+            sender.send(result).unwrap();
+        });
+        let received = receiver.recv_timeout(Duration::from_secs(5));
         launcher.reap().unwrap();
-        assert_eq!(
-            launcher.state("app-server-test"),
-            Some(InstanceState::Running)
-        );
+        let state = launcher.state("app-server-test");
         launcher.stop_all().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        reader.join().unwrap();
+        let (acknowledgment, home) = received
+            .expect("fake child acknowledgment deadline")
+            .unwrap();
+        assert_eq!(state, Some(InstanceState::Running));
+        assert_eq!(Path::new(&home), launched.codex_home);
+        assert!(!launched.codex_home.exists());
+        root.close().unwrap();
+        (acknowledgment, home)
     }
 
     #[test]
-    fn real_codex_binary_launches_without_crashing_if_installed() {
-        let real_binary = default_codex_binary();
-        if !real_binary.is_file() {
-            return;
-        }
-        let root = temp();
-        let launcher = CodexLauncher::new(real_binary, root.join("instances"));
-        let launched = launcher
-            .launch(request("real-test", "account-real"))
-            .unwrap();
-        assert_eq!(launched.state, InstanceState::Running);
-        // Let it run briefly and ensure it didn't exit immediately with "stdin is not a terminal"
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        launcher.reap().unwrap();
-        assert_eq!(launcher.state("real-test"), Some(InstanceState::Running));
-        launcher.stop_all().unwrap();
-        fs::remove_dir_all(root).unwrap();
+    fn codex_named_binary_receives_app_server_argument() {
+        assert_eq!(acknowledged_launch("codex", "app-server").0, "accepted");
+    }
+
+    #[test]
+    fn fake_child_rejects_an_incorrect_argument_contract() {
+        assert_eq!(acknowledged_launch("codex", "wrong-argument").0, "rejected");
+    }
+
+    #[test]
+    fn overridden_codex_binary_receives_app_server_and_isolated_home() {
+        assert_eq!(
+            acknowledged_launch("custom-codex", "app-server").0,
+            "accepted"
+        );
     }
 }

@@ -1,6 +1,6 @@
 export const PRODUCT = {
   name: "Mahoquot",
-  version: "v0.1.0",
+  siteVersion: "v0.1.0",
   port: "18801",
 } as const;
 

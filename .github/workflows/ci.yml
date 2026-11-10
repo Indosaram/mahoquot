@@ -74,9 +74,35 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - working-directory: site
         run: bun install --frozen-lockfile
+      - working-directory: crates/monitor-ui/frontend
+        run: bun install --frozen-lockfile
+      - name: Site component regressions
+        working-directory: site
+        run: node ../crates/monitor-ui/frontend/node_modules/vitest/vitest.mjs run --config e2e/site-unit.config.ts
       - working-directory: site
         run: bunx playwright install --with-deps chromium
       - working-directory: site
         run: bun run build
       - working-directory: site
-        run: bunx playwright test
+        run: bunx --no-install playwright test e2e/spatial.spec.ts --project=chromium --workers=1
+
+  script-contracts:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Provision signature verifier
+        run: brew install minisign
+      - working-directory: crates/monitor-ui/frontend
+        run: bun install --frozen-lockfile
+      - working-directory: site
+        run: bun install --frozen-lockfile
+      - name: Script contracts (not runtime certification)
+        run: bash scripts/verify.sh --scripts

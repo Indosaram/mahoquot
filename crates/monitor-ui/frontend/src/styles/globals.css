@@ -1284,29 +1284,6 @@ h2 {
 .minimal-kpis small {
   margin-top: 6px;
 }
-/* Overview: the three outcome KPIs outrank in-flight and latency, so they get
-   the raised panel and a larger figure. The rest keep the base 22px scale. */
-.minimal-kpis > .overview-kpi-primary {
-  background: var(--panel-2);
-}
-.minimal-kpis > .overview-kpi-primary strong {
-  font-size: 28px;
-}
-.minimal-kpis > .overview-kpi-primary[data-tone="bad"] strong {
-  color: var(--bad);
-}
-.minimal-kpis > div:not(.overview-kpi-primary) strong {
-  font-size: 18px;
-}
-.minimal-kpis[data-state="loading"] {
-  opacity: 0.55;
-}
-.overview-summary > header {
-  margin-bottom: 2px;
-}
-.overview-activity-group {
-  margin-top: 4px;
-}
 .minimal-chart-section,
 .minimal-provider-mix {
   min-width: 0;
@@ -1362,12 +1339,6 @@ h2 {
 }
 .minimal-provider-mix {
   padding-top: 3px;
-}
-/* The mix bar sits directly under the chart legend, so it needs a separator to
-   read as its own section rather than a third legend row. */
-.overview-activity-group > .minimal-provider-mix {
-  padding-top: 14px;
-  border-top: 1px solid var(--line-soft);
 }
 .provider-mix-track {
   display: flex;
@@ -1670,9 +1641,7 @@ h2 {
 }
 .durable-logs-summary {
   display: grid;
-  /* Six totals, so the track count has to match or the last one orphans onto
-     its own row and leaves a dead gap under the others. */
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   border-block: 1px solid var(--line-soft);
   background: var(--panel-2);
 }
@@ -1954,44 +1923,17 @@ h2 {
   .durable-logs-summary {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .durable-logs-summary > div:nth-child(3n) {
-    border-right: 0;
-  }
-  .durable-logs-summary > div:nth-child(-n + 3) {
-    border-bottom: 1px solid var(--line-soft);
-  }
 }
 @media (max-width: 760px) {
   .durable-logs-head {
     display: grid;
   }
-  /* Once the controls wrap, the trailing flex-end alignment would leave the
-     second row inset from the left gutter. Start each row at the gutter and let
-     the search field take the remaining width. */
-  .logs-head-controls {
-    justify-content: flex-start;
-    width: 100%;
-  }
-  .logs-search-field {
-    flex: 1 1 100%;
-  }
-  .logs-search-field input {
-    width: 100%;
-  }
-  /* Stacking all six tall totals pushed the table several screens down, which
-     on a phone is the whole first view. Two columns keeps the summary a band. */
   .durable-logs-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
   .durable-logs-summary > div {
-    border-right: 1px solid var(--line-soft);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .durable-logs-summary > div:nth-child(2n) {
     border-right: 0;
-  }
-  .durable-logs-summary > div:nth-child(n + 5) {
-    border-bottom: 0;
+    border-bottom: 1px solid var(--line-soft);
   }
   .durable-proxy-tail article {
     grid-template-columns: 1fr;
@@ -2046,28 +1988,6 @@ h2 {
   align-items: center;
   gap: 8px;
   margin-left: auto;
-}
-.logs-head-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-/* The text query is the last control in the row; unlike the provider select it
-   must not claim the auto margin, and it needs a bounded width because the
-   shared .input class is width:100%. */
-.logs-search-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.logs-search-field input {
-  width: 180px;
-  max-width: 100%;
-  font-size: 11px;
-  padding: 4px 8px;
 }
 .logs-provider-filter span {
   color: var(--fg-faint);
@@ -2544,6 +2464,13 @@ h2 {
   grid-template-columns: 1fr;
   gap: 6px;
 }
+.quota-list-unverified .quota-track i {
+  opacity: .45;
+}
+.quota-unverified-note {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
 .quota-group {
   margin-top: 4px;
   color: var(--fg-faint);
@@ -2592,6 +2519,10 @@ h2 {
 .quota-meta small {
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
+}
+.quota-list-unverified .quota-group,
+.quota-list-unverified .quota-meta small {
+  color: var(--fg-dim);
 }
 .quota-track {
   height: 5px;
@@ -3654,7 +3585,6 @@ h2 {
   border: 0;
   color: inherit;
   font: inherit;
-  outline: none;
 }
 .models-empty {
   color: var(--fg-dim);
@@ -4798,38 +4728,20 @@ h2 {
   .minimal-dashboard {
     gap: 20px;
   }
-  /* Keep three tracks: the three outcome KPIs own the raised band, and a
-     two-track grid put the third one alone on a second row, so the raised
-     panel painted an L instead of a band. */
   .minimal-kpis {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr 1fr;
   }
   .minimal-kpis > div {
-    padding: 14px 10px;
+    padding: 14px 12px;
   }
-  .minimal-kpis > div:nth-child(3n + 1) {
+  .minimal-kpis > div:nth-child(odd) {
     padding-left: 0;
-  }
-  .minimal-kpis > div:nth-child(3n) {
-    border-right: 0;
-    padding-right: 0;
   }
   .minimal-kpis strong {
     font-size: 21px;
   }
   .provider-mix-labels {
     gap: 7px 13px;
-  }
-  /* A phone cannot show the provider strip and the account list at once if the
-     strip scrolls: the last tab is sliced mid-label with nothing to say more
-     are hidden. Wrapping keeps every provider visible and reachable. */
-  .provider-tabs {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-  .provider-tab-content {
-    height: 38px;
-    padding: 0 11px 0 7px;
   }
   .range-selector,
   .overview-dimension-selector,
@@ -5402,33 +5314,4 @@ h2 {
 
 :root[data-theme="light"] .gateway-failure-body pre {
   background: rgb(127 29 29 / 8%);
-}
-
-/* First-run connection screen for the remote-only mobile shell. It renders
-   outside the main column, so it carries its own padding and status-bar inset. */
-.mobile-connect {
-  display: block;
-  overflow-y: auto;
-  padding: calc(env(safe-area-inset-top, 0px) + 32px) 20px
-    calc(env(safe-area-inset-bottom, 0px) + 24px);
-}
-.mobile-connect-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 420px;
-  margin: 0 auto;
-}
-.mobile-connect-body h1 {
-  margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-}
-.mobile-connect-body p {
-  margin: 0;
-  color: var(--fg-dim);
-  line-height: 1.5;
-}
-.mobile-connect-body button {
-  align-self: flex-start;
 }

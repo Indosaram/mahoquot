@@ -4,7 +4,7 @@
   "scripts": {
     "setup": "bash scripts/setup-gateway.sh",
     "dev": "bun run tauri dev",
-    "build": "bun run build:frontend && bun run tauri build",
+    "build": "bun run build:frontend && bun run build:app",
     "build:app": "bun run tauri build",
     "build:frontend": "(cd crates/monitor-ui/frontend && bun install && bun run build)",
     "tauri": "cd crates/monitor-ui && bunx @tauri-apps/cli@2.11.4",

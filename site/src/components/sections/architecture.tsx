@@ -10,10 +10,15 @@ import {
 import { SectionHeader } from "@/components/ui/section-header";
 
 function Mark({ on }: { on: boolean }) {
-  return on ? (
-    <Check className="mx-auto h-4 w-4 text-accent" strokeWidth={2.5} />
-  ) : (
-    <Minus className="mx-auto h-4 w-4 text-ink-ghost" />
+  return (
+    <>
+      <span className="sr-only">{on ? "Supported" : "Not supported"}</span>
+      {on ? (
+        <Check aria-hidden="true" className="mx-auto h-4 w-4 text-accent" strokeWidth={2.5} />
+      ) : (
+        <Minus aria-hidden="true" className="mx-auto h-4 w-4 text-ink-ghost" />
+      )}
+    </>
   );
 }
 

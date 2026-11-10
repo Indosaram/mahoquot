@@ -23,8 +23,16 @@ export const isRemoteOnlyShell = (): boolean => {
   return /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
 };
 
-export const migrateStoredGatewayUrl = (): string => {
-  const current = localStorage.getItem("mahoquot.base");
+/** Resolve once for both HTTP clients and endpoint-scoped secret identities.
+ * Keep the saved/form value blank so browser same-origin remains explicit. */
+export const resolveGatewayEndpoint = (value: string): string => {
+  const normalized = value.trim().replace(/\/+$/, "");
+  if (normalized) return normalized;
+  if (isTauriEnvironment()) return DEFAULT_GATEWAY_URL;
+  return window.location.origin;
+};
+
+export const migrateStoredGatewayUrl = (): string => {  const current = localStorage.getItem("mahoquot.base");
   if (current === OBSOLETE_GATEWAY_URL) {
     localStorage.setItem("mahoquot.base", DEFAULT_GATEWAY_URL);
     return DEFAULT_GATEWAY_URL;

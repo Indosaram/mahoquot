@@ -9,14 +9,25 @@ export const RELAY_TARGET_MARKERS = ["nekos", "ccapi"] as const;
 // on the base URL the user entered.
 export const RELAY_USAGE_BASE_URL = "https://claude.nekos.me";
 
-export const isRelayTarget = (baseUrl: string): boolean =>
-  RELAY_TARGET_MARKERS.some((marker) => baseUrl.toLowerCase().includes(marker));
+const relayHostLabels = (baseUrl: string): readonly string[] => {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.hostname.toLowerCase().split(".")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+export const isRelayTarget = (baseUrl: string): boolean => {
+  const labels = relayHostLabels(baseUrl);
+  return RELAY_TARGET_MARKERS.some((marker) => labels.includes(marker));
+};
 
 export const relayUsageOverride = (baseUrl: string): string | null => {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (!isRelayTarget(trimmed)) return null;
-  if (trimmed.toLowerCase().includes("nekos")) return null;
-  return RELAY_USAGE_BASE_URL;
+  const labels = relayHostLabels(baseUrl);
+  return labels.includes("ccapi") && !labels.includes("nekos") ? RELAY_USAGE_BASE_URL : null;
 };
 
 export interface RelayPlan {

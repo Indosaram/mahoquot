@@ -140,13 +140,6 @@ export function PieCanvas() {
       raf = 0;
       const s = state.current;
       if (!s.ready || !s.pie) return;
-      if (bloomCtx) {
-        const on = s.bloom !== "off" && (!s.bloomOnHover || s.isMouseInChart);
-        if (on) {
-          bloomCtx.clearRect(0, 0, cols, rows);
-          bloomCtx.drawImage(canvas, 0, 0);
-        }
-      }
       if (s.revision !== lastRevision) {
         lastRevision = s.revision;
         animStart = 0;
@@ -191,10 +184,13 @@ export function PieCanvas() {
       const keepAlive =
         prog < 1 ||
         Math.abs(intensity - itTarget) > 0.001 ||
-        Math.abs(popEase - popTarget) > 0.001 ||
-        s.isMouseInChart;
+        Math.abs(popEase - popTarget) > 0.001;
       if (needsFill) {
         paint(prog);
+        if (bloomCtx) {
+          bloomCtx.clearRect(0, 0, cols, rows);
+          bloomCtx.drawImage(canvas, 0, 0);
+        }
         needsFill = false;
       }
       if (keepAlive) requestDraw();

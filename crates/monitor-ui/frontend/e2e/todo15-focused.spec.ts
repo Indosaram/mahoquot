@@ -312,7 +312,8 @@ test("Todo 15 focused durable history contract", async ({ page }) => {
   });
   await detail.getByRole("button", { name: "Close request detail" }).click();
 
-  await page.getByRole("tab", { name: "Proxy Logs" }).click();
+  await page.getByRole("button", { name: "Proxy Logs", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Proxy Logs", exact: true })).toHaveAttribute("aria-pressed", "true");
   const memoryTail = page.getByRole("log", { name: "Proxy memory tail" });
   await expect(memoryTail).toBeVisible();
   await expect(memoryTail).toContainText("memory_tail_event");

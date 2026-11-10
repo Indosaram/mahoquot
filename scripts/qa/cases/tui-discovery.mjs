@@ -32,7 +32,45 @@ async function git(path, ...args) {
   return text.trim();
 }
 
+export { parseDiscovery } from "./discovery-pty-contract.mjs";
+import { parseDiscovery, collectDiscoveryContract } from "./discovery-pty-contract.mjs";
+import { DiscoveryOwner } from "./discovery-pty-owner.mjs";
+import { randomUUID } from "node:crypto";
+
+// Source-bound isolated transport observations, not an inference receipt and not
+// LAN certification. Public case dispatch remains gated until owned containment
+// and central transport-only receipt acceptance are reviewed together.
+export async function collectIsolatedDiscovery(evidencePath, context) {
+  const gateway = join(root, "mahoquot-proxy");
+  const owner = new DiscoveryOwner(context.binary, dirname(evidencePath), gateway);
+  let failure, observation;
+  try {
+    const closure = await context.getSourceClosure();
+    await owner.prepare();
+    const revisionResult = await owner.command("git", ["-C", gateway, "rev-parse", "HEAD"]);
+    assert(revisionResult.code === 0, revisionResult.stderr);
+    const revision = revisionResult.stdout.trim();
+    const binaryHash = hash(await readFile(context.binary));
+    const binding = join(dirname(dirname(context.binary)), "source-revision.txt");
+    const bindingBytes = await readFile(binding);
+    assert(bindingBytes.toString().trim() === [revision, binaryHash, closure.sourceHash, context.buildCommand].join("\n"), "binary source binding mismatch");
+    const run_id = randomUUID();
+    const launch = { run_id, instance_name: `qa-${run_id}-AB12`, instance_id: "AB12", address: "127.0.0.1", port: context.ports[0], service_type: "_ai-gateway._tcp", domain: "local." };
+    observation = await collectDiscoveryContract(owner, launch);
+    observation.provenance = { run_id, transport: "isolated-file-only", lan_mdns: false, gateway_binary: context.binary, gateway_sha256: binaryHash, gateway_revision: revision, gateway_source_sha256: closure.sourceHash, source_manifest: { files: closure.files }, build_command: context.buildCommand, build_receipt: { path: binding, sha256: hash(bindingBytes) } };
+  } catch (error) { failure = error; }
+  try { await owner.cleanup(); } catch (error) { failure = failure ? new AggregateError([failure, error], "collection cleanup failed") : error; }
+  if (failure) throw failure;
+  await writeFile(evidencePath, JSON.stringify(observation, null, 2), { flag: "wx" });
+  return observation;
+}
+
 export async function runCase(variant, evidencePath, context) {
+  throw new Error("QAC09: tui-discovery disabled pending an isolated-network runner, acknowledged deregistration, event-driven PTY navigation and complete child-tree ownership");
+}
+
+// Historical integration implementation is not safe to dispatch on the host.
+async function runUncertifiedCase(variant, evidencePath, context) {
   assert(["happy", "failure"].includes(variant), "invalid tui-discovery variant");
   assert(context.ports.length === 2 && context.ports.every((p) => p >= 18840 && p <= 18899), "leased test ports required");
   const gateway = join(root, "mahoquot-proxy");
@@ -252,11 +290,7 @@ else:
         stderr: "pipe",
       });
       const discoverStdout = await new Response(discoverProc.stdout).text();
-      await discoverProc.exited;
-      let parsedServices = null;
-      try {
-        parsedServices = JSON.parse(discoverStdout.trim());
-      } catch {}
+      const parsedServices = parseDiscovery(await discoverProc.exited, discoverStdout);
       const isArrayOfServices = Array.isArray(parsedServices) && parsedServices.length > 0;
       record("discovery-json", true, isArrayOfServices, {
         services_count: parsedServices?.length ?? 0,
@@ -281,11 +315,7 @@ else:
         stderr: "pipe",
       });
       const postShutdownOut = await new Response(postShutdownDiscover.stdout).text();
-      await postShutdownDiscover.exited;
-      let postShutdownServices = [];
-      try {
-        postShutdownServices = JSON.parse(postShutdownOut.trim());
-      } catch {}
+      const postShutdownServices = parseDiscovery(await postShutdownDiscover.exited, postShutdownOut);
       const advertisedNames = new Set((parsedServices ?? []).map((s) => s.instance_name));
       const advertisementRemoved = !postShutdownServices.some((s) => advertisedNames.has(s.instance_name));
 
@@ -318,8 +348,7 @@ else:
         stderr: "pipe",
       });
       const discoverRaw = (await new Response(discoverProc.stdout).text()).toLowerCase();
-      await discoverProc.exited;
-      const parsedAdvertised = JSON.parse(discoverRaw);
+      const parsedAdvertised = parseDiscovery(await discoverProc.exited, discoverRaw);
       const txtValues = parsedAdvertised.flatMap((service) => Object.values(service.raw_txt ?? {}));
       const containsLeakedSecret = txtValues.some((value) => {
         const v = value.toLowerCase();

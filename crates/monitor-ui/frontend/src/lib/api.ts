@@ -268,6 +268,8 @@ export interface GatewayClients {
       credentialName?: string,
     ): Promise<{ readonly url: string; readonly state: string }>;
     providerAuthStatus(state: string): Promise<ProviderAuthStatus>;
+    /** Completes a session whose provider shows the authorization code on screen. */
+    submitProviderAuthCode(state: string, code: string): Promise<void>;
     scalar(path: string): Promise<Record<string, unknown>>;
     saveScalar(path: string, value: ScalarValue): Promise<void>;
     models(): Promise<readonly GatewayModelEntry[]>;
@@ -336,6 +338,26 @@ const storedGatewayEndpoint = (): string => {
   }
 };
 
+/** Flattens any `HeadersInit` into a record without normalizing key casing.
+ * `Headers` lowercases every name, which would break callers that read or
+ * forward `Authorization` exactly as they wrote it. */
+const toHeaderRecord = (init?: HeadersInit): Record<string, string> => {
+  const out: Record<string, string> = {};
+  if (!init) return out;
+  if (init instanceof Headers) {
+    init.forEach((value, name) => {
+      out[name] = value;
+    });
+    return out;
+  }
+  if (Array.isArray(init)) {
+    for (const [name, value] of init) out[name] = value;
+    return out;
+  }
+  for (const [name, value] of Object.entries(init)) out[name] = value;
+  return out;
+};
+
 const managementHeaders = async (url: string, headers: HeadersInit): Promise<HeadersInit> => {
   let target: URL;
   try {
@@ -351,9 +373,22 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
   )
     return headers;
   const native = window.__MAHOQUOT_MANAGEMENT__;
+  // The mobile shell injects no bridge, so fall back to the committed endpoint.
   const endpoint = native?.endpoint ?? storedGatewayEndpoint();
   if (!endpoint || target.origin !== new URL(endpoint).origin) return headers;
-  if (native?.key) return { ...headers, Authorization: `Bearer ${native.key}` };
+  const stripAuth = (): Record<string, string> => {
+    const resolved = toHeaderRecord(headers);
+    delete resolved.Authorization;
+    delete resolved.authorization;
+    return resolved;
+  };
+  // A management bridge owns this boundary: its key replaces whatever the
+  // caller supplied. Without one, the caller's own header must survive.
+  if (native?.key) {
+    const resolved = stripAuth();
+    resolved.Authorization = `Bearer ${native.key}`;
+    return resolved;
+  }
   const bridge = z
     .object({
       invoke: z.custom<(command: string, args: Record<string, unknown>) => Promise<unknown>>(
@@ -370,7 +405,10 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
         request: { endpoint, profile: "default", kind: "management_key" },
       }),
     );
-  return result ? { ...headers, Authorization: `Bearer ${result}` } : headers;
+  if (!result) return native ? stripAuth() : headers;
+  const resolved = stripAuth();
+  resolved.Authorization = `Bearer ${result}`;
+  return resolved;
 };
 
 /** Runs `fetch` and `read` (the body read) under one deadline, so a gateway
@@ -393,10 +431,14 @@ const requestBody = async <T>(
     else callerSignal.addEventListener("abort", forwardAbort, { once: true });
   }
   try {
+    const mergedHeaders = {
+      ...toHeaderRecord(headers),
+      ...toHeaderRecord(init?.headers),
+    };
     const response = await fetch(url, {
       ...init,
       signal: controller.signal,
-      headers: { ...(await managementHeaders(url, headers)), ...init?.headers },
+      headers: await managementHeaders(url, mergedHeaders),
     });
     if (!response.ok) {
       throw new GatewayError(await describeFailure(response), response.status);
@@ -496,9 +538,15 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       subscribeLogs: (onRecord, onError) => {
         const controller = new AbortController();
         const url = `${base}/v0/management/logs/stream`;
-        void managementHeaders(url, authHeaders)
-          .then((headers) => fetch(url, { headers, signal: controller.signal }))
-          .then(async (response) => {
+        let retryTimer: ReturnType<typeof setTimeout> | undefined;
+        let retryDelay = 1000;
+        const connect = async () => {
+          let terminal = false;
+          try {
+            const headers = await managementHeaders(url, authHeaders);
+            if (controller.signal.aborted) return;
+            const response = await fetch(url, { headers, signal: controller.signal });
+            if (controller.signal.aborted) return;
             if (!response.ok)
               throw new GatewayError(await describeFailure(response), response.status);
             const reader = response.body?.getReader();
@@ -508,7 +556,7 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             try {
               for (;;) {
                 const chunk = await reader.read();
-                if (chunk.done) break;
+                if (controller.signal.aborted || chunk.done) break;
                 buffer += decoder.decode(chunk.value, { stream: true });
                 const frames = buffer.split(/\r?\n\r?\n/);
                 buffer = frames.pop() ?? "";
@@ -519,19 +567,33 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
                     .map((line) => line.slice(5).trimStart())
                     .join("\n");
                   const record = parseLogRecordLine(data);
-                  if (record) onRecord(record);
+                  if (record && !controller.signal.aborted) {
+                    retryDelay = 1000;
+                    onRecord(record);
+                  }
                 }
               }
             } finally {
               reader.releaseLock();
             }
-          })
-          .catch((error: unknown) => {
-            if (controller.signal.aborted) return;
-            console.error("Gateway log stream failed", error);
-            onError?.(true);
-          });
-        return () => controller.abort();
+          } catch (error: unknown) {
+            if (!controller.signal.aborted) console.error("Gateway log stream failed", error);
+            terminal = error instanceof GatewayError && (error.status === 401 || error.status === 403);
+          } finally {
+            if (!controller.signal.aborted) {
+              if (!terminal) {
+                retryTimer = setTimeout(() => void connect(), retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 30_000);
+              }
+              onError?.(true);
+            }
+          }
+        };
+        void connect();
+        return () => {
+          controller.abort();
+          clearTimeout(retryTimer);
+        };
       },
       schedulerSettings: async () =>
         SchedulerSettingsSchema.parse(
@@ -842,6 +904,14 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             authHeaders,
           ),
         ),
+      submitProviderAuthCode: async (state, code) => {
+        await requestBody(
+          `${base}/v0/management/oauth-callback?${new URLSearchParams({ state, code })}`,
+          authHeaders,
+          undefined,
+          async () => undefined,
+        );
+      },
       scalar: async (path) =>
         z
           .record(z.unknown())

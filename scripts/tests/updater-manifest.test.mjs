@@ -22,6 +22,7 @@ test('R30 updater manifest resolves every exact target and rejects mismatched si
   try {
     command('minisign', ['-G', '-W', '-p', join(dir, 'key.pub'), '-s', join(dir, 'key')]);
     const config = JSON.parse(readFileSync(join(root, 'crates/monitor-ui/tauri.conf.json')));
+    config.version = '0.1.0';
     config.plugins.updater.pubkey = Buffer.from(readFileSync(join(dir, 'key.pub'))).toString('base64');
     writeFileSync(join(dir, 'config.json'), JSON.stringify(config));
     for (const [triple, name] of Object.values(targets)) {

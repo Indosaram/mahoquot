@@ -4,6 +4,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
+import { validatePairedContract } from './paired-contract.mjs';
+import { verifyPairedPhase } from './paired-phase-contract.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const APPROVED_PLAN_SHA256 = "1646c34e737781170951ed2b65b7be8516d46f6db9e6a3dd0e89dce78d85cf36";
@@ -11,6 +14,7 @@ const SCHEMA = "cliproxy-parity/task1-v1";
 const VARIANTS = ["happy", "failure"];
 const IS_ROWS = ["IS-1", "IS-2", "IS-3", "IS-4", "IS-5", "IS-6", "IS-7"];
 const BENCHMARKS = Array.from({ length: 14 }, (_, index) => `B${index}`);
+const F4_METRICS = ["ttfb_ms", "content_ttft_ms", "completion_ms", "errors", "rss_bytes", "fd_count"];
 const GATE_TIMEOUT_MS = 30 * 60 * 1000;
 const HASH = /^[a-f0-9]{64}$/i;
 const REQUIRED_F3_CHANNELS = ["app-interaction", "pty-interaction", "media-peer", "wire-peer"];
@@ -64,6 +68,33 @@ const RECEIPT_ASSERTIONS = Object.fromEntries([
   ["bench-resilience", { happy: ["b6-b7-recorded", "b10-b13-recorded"], failure: ["leaked-guard-detected", "incomplete-log-fails"] }],
   ["desktop-parity", { happy: ["real-app-bootstrap", "settings-and-history", "child-exit"], failure: ["unreachable-gateway-actionable", "unknown-quota-preserved"] }],
 ]);
+
+const INTERACTION_EXTRA_ASSERTIONS = {
+  happy: {
+    "native-tool-status": 200,
+    "native-tool-id": "native-id",
+    "ag-result-status": 200,
+    "ag-result-terminal": "completed",
+    "signed-continuation": "ag-opaque",
+    "function-result-name": "lookup",
+    "function-result-value": { result: 42 },
+    "agent-status": 200,
+    "agent-terminal": "completed",
+  },
+  failure: {
+    "native-tool-status": 200,
+    "native-tool-id": "native-id",
+    ...Object.fromEntries([
+      "wrong-caller", "wrong-conversation", "duplicate-ids", "model-agent-xor", "invalid-stream",
+    ].flatMap((id) => [
+      [`${id}-status`, 400],
+      [`${id}-error`, "invalid_request_error"],
+      [`${id}-upstream-delta`, 0],
+    ])),
+    "truncated-no-completed": false,
+    "truncated-error": true,
+  },
+};
 
 function requireValue(value, label) {
   if (value === undefined || value === null || value === "") throw new Error(`missing or invalid receipt: ${label}`);
@@ -432,6 +463,23 @@ function validateAssertionSet(receipt, label) {
   }
 
   assert(JSON.stringify([...ids].sort()) === JSON.stringify([...required].sort()), `wrong exact required assertion IDs: ${label}`);
+  if (receipt.case === "interactions") {
+    const contract = INTERACTION_EXTRA_ASSERTIONS[receipt.variant];
+    assert(Array.isArray(receipt.extra_assertions), `missing interaction extra assertion records: ${label}`);
+    const extraIds = new Set();
+    for (const assertion of receipt.extra_assertions) {
+      assert(plainObject(assertion) && typeof assertion.id === "string" && assertion.id.length > 0, `invalid interaction extra assertion record: ${label}`);
+      assert(!extraIds.has(assertion.id) && !ids.has(assertion.id), `duplicate interaction extra assertion id ${assertion.id}: ${label}`);
+      extraIds.add(assertion.id);
+      assert(Object.hasOwn(contract, assertion.id), `unknown interaction extra assertion id ${assertion.id}: ${label}`);
+      assert(assertion.pass === true, `failed interaction extra assertion ${assertion.id}: ${label}`);
+      assert(isDeepStrictEqual(assertion.expected, contract[assertion.id]), `interaction extra expected value differs from contract for ${assertion.id}: ${label}`);
+      assert(isDeepStrictEqual(assertion.actual, assertion.expected), `interaction extra expected/actual mismatch for ${assertion.id}: ${label}`);
+    }
+    for (const id of Object.keys(contract)) {
+      assert(extraIds.has(id), `missing interaction extra assertion ${id}: ${label}`);
+    }
+  }
   return ids;
 }
 
@@ -579,6 +627,13 @@ async function validateReceipt(receipt, caseName, variant, label) {
 }
 
 async function validateInventory(root, kind) {
+  assert(kind === 'route' || kind === 'setting', 'unknown inventory kind');
+  const { validateJointInventoryIdentity } = await import('./inventory-contract.mjs');
+  const [routeInventory, settingInventory] = await Promise.all([
+    readJson(join(root, 'route-inventory.json')),
+    readJson(join(root, 'setting-inventory.json')),
+  ]);
+  validateJointInventoryIdentity(routeInventory, settingInventory);
   const path = join(root, `${kind}-inventory.json`);
   const inventory = await readJson(path);
   assert(plainObject(inventory) && inventory.kind === kind && Array.isArray(inventory.entries) && inventory.entries.length > 0, `missing or empty ${kind} inventory`);
@@ -605,6 +660,25 @@ async function validateInventory(root, kind) {
       assert(ids.has(reqId) || [...ids].some((id) => id.includes(reqId)), `missing declared ${kind} inventory entry: ${reqId}`);
     }
   }
+
+  assert(inventory.synthetic !== true, `${kind} synthetic inventory cannot certify runtime`);
+  for (const entry of inventory.entries) {
+    const observation = entry.observed;
+    assert(plainObject(observation), `${kind} observation must be captured data`);
+    assert(observation.transport_error == null, `${kind} transport failure is not an observation`);
+    if (kind === 'route') {
+      assert(Number.isInteger(observation.status) && observation.status >= 200 && observation.status < 300 && HASH.test(observation.body_sha256 ?? ''), `route observation failed: ${entry.id}`);
+    } else {
+      assert(Object.hasOwn(observation, 'current_value') && typeof observation.endpoint === 'string' && HASH.test(observation.body_sha256 ?? ''), `setting readback missing: ${entry.id}`);
+    }
+  }
+  // A self-selected required_ids list is not a complete source-derived contract.
+  assert(plainObject(inventory.provenance), `${kind} source-bound provenance required`);
+  await validateProvenance(inventory.provenance, `${kind} inventory`);
+  assert(inventory.source_sha256 === inventory.provenance.gateway_source_sha256 && inventory.source_revision === inventory.provenance.gateway_revision, `${kind} inventory source binding mismatch`);
+  // Until a source-derived complete route/setting manifest is implemented this
+  // historical inventory is collection only, never a fidelity certificate.
+  assert(false, `${kind} complete source-derived inventory contract unavailable`);
 
   return inventory;
 }
@@ -682,27 +756,19 @@ async function validateF4(root) {
     }
   }
 
-  assert(plainObject(receipt.benchmarks), "F4 benchmark statistics are required");
+  assert(plainObject(receipt.benchmarks) && BENCHMARKS.every(id => Object.hasOwn(receipt.benchmarks, id)), 'F4 benchmark matrix missing');
   for (const id of BENCHMARKS) {
-    const pair = requireValue(receipt.benchmarks[id], `F4 ${id}`);
-    assert(plainObject(pair.baseline) && plainObject(pair.candidate), `F4 ${id} requires paired baseline/candidate statistics`);
-
-    requireValue(pair.baseline.samples, `F4 ${id} baseline samples`);
-    requireValue(pair.candidate.samples, `F4 ${id} candidate samples`);
-    assert(Number.isInteger(pair.baseline.samples) && pair.baseline.samples > 0, `F4 ${id} baseline has no samples`);
-    assert(Number.isInteger(pair.candidate.samples) && pair.candidate.samples > 0, `F4 ${id} candidate has no samples`);
-    assert(pair.baseline.samples === pair.candidate.samples, `F4 ${id} sample count mismatch between baseline (${pair.baseline.samples}) and candidate (${pair.candidate.samples})`);
-
+    const pair = receipt.benchmarks[id];
+    assert(plainObject(pair?.baseline) && plainObject(pair?.candidate), `F4 ${id} requires paired baseline/candidate statistics`);
     for (const side of [pair.baseline, pair.candidate]) {
-      for (const metric of ["ttfb_ms", "content_ttft_ms", "completion_ms", "errors", "rss_bytes", "fd_count"]) {
-        requireValue(side[metric], `F4 ${id} ${metric}`);
+      assert(Number.isInteger(side.samples) && side.samples > 0, `F4 ${id} has no samples`);
+      for (const metric of F4_METRICS) {
         assert(typeof side[metric] === "number" && Number.isFinite(side[metric]) && side[metric] >= 0, `F4 ${id} invalid metric ${metric}`);
       }
     }
-    requireValue(pair.seed, `F4 ${id} seed`);
-    requireValue(pair.config_sha256, `F4 ${id} config hash`);
-    assert(HASH.test(pair.config_sha256), `F4 ${id} invalid config hash`);
+    assert(pair.baseline.samples === pair.candidate.samples, `F4 ${id} sample count mismatch between baseline (${pair.baseline.samples}) and candidate (${pair.candidate.samples})`);
   }
+  await validatePairedContract(root, receipt, { validateProvenance, verifyPhase: verifyPairedPhase });
   return receipt;
 }
 

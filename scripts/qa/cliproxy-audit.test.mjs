@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +11,10 @@ import { auditInternals } from "./cliproxy-audit.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const approvedPlan = process.env.MAHOQUOT_APPROVED_PLAN || resolve(ROOT, ".omo/plans/cliproxy-remediation-plan.approved.md");
 const livePlan = process.env.MAHOQUOT_CLIPROXY_PLAN || resolve(ROOT, ".omo/plans/cliproxy-remediation-plan.md");
+// The approved plan is a local, gitignored working document pinned by exact
+// digest and byte length. A clean checkout cannot have it, so those assertions
+// are skipped rather than failed when the fixture is absent.
+const planEvidencePresent = existsSync(approvedPlan) && existsSync(livePlan);
 
 async function syntheticGit(sourceRoot, ...args) {
   const proc = Bun.spawn(["git", ...args], { cwd: sourceRoot, stdout: "pipe", stderr: "pipe" });
@@ -91,7 +96,7 @@ async function createSyntheticSSDEnvironment(dir) {
   return { sourceRoot, binPath, buildReceiptPath, provenance, files, binSha, treeHash, sourceRev };
 }
 
-describe("approved task audit plan", () => {
+describe.skipIf(!planEvidencePresent)("approved task audit plan", () => {
   test("parses the pinned 38-case inventory and exact task evidence paths", async () => {
     const bytes = await readFile(approvedPlan);
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(auditInternals.approvedPlanSha256);
@@ -744,16 +749,37 @@ describe("inventory verification", () => {
   test("regression vuln_inventory_required_ids_bypass: required_ids: [] cannot bypass mandatory coverage", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "inv-bypass-"));
     try {
-      const inv = {
-        kind: "route",
+      // validateInventory rejects a kind-specific document on its own: the joint
+      // identity check runs first, so both inventories must be present and
+      // share one source/build/native run for the mandatory-coverage rule to
+      // be the assertion under test.
+      const common = {
         source_revision: "rev1",
         source_sha256: "a".repeat(64),
+        provenance: { gateway_revision: "rev1", gateway_source_sha256: "a".repeat(64) },
+        native_run: {
+          source_revision: "rev1",
+          source_sha256: "a".repeat(64),
+          run_id: "fixture-run",
+          binary_sha256: "b".repeat(64),
+          stdout_sha256: "c".repeat(64),
+        },
+      };
+      const inv = {
+        ...common,
+        kind: "route",
         required_ids: [], // tries to bypass mandatory coverage
         entries: [
           { id: "custom-route", source_path: "src/routes.rs", observed: true, pass: true },
         ],
       };
+      const setting = {
+        ...common,
+        kind: "setting",
+        entries: ["proxy", "retry", "quota"].map(id => ({ id, source_path: "settings.rs", observed: { current_value: "x", endpoint: "/v0/management/config", body_sha256: "d".repeat(64) }, pass: true })),
+      };
       await writeFile(join(tmp, "route-inventory.json"), JSON.stringify(inv));
+      await writeFile(join(tmp, "setting-inventory.json"), JSON.stringify(setting));
       await expect(auditInternals.validateInventory(tmp, "route")).rejects.toThrow("missing mandatory route inventory entry");
     } finally {
       await rm(tmp, { recursive: true, force: true });
@@ -763,15 +789,32 @@ describe("inventory verification", () => {
   test("rejects inventory missing required entry even when nonempty", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "inv-test-"));
     try {
-      const inv = {
-        kind: "route",
+      const common = {
         source_revision: "rev1",
         source_sha256: "a".repeat(64),
+        provenance: { gateway_revision: "rev1", gateway_source_sha256: "a".repeat(64) },
+        native_run: {
+          source_revision: "rev1",
+          source_sha256: "a".repeat(64),
+          run_id: "fixture-run",
+          binary_sha256: "b".repeat(64),
+          stdout_sha256: "c".repeat(64),
+        },
+      };
+      const inv = {
+        ...common,
+        kind: "route",
         entries: [
           { id: "custom-route", source_path: "src/routes.rs", observed: true, pass: true },
         ],
       };
+      const setting = {
+        ...common,
+        kind: "setting",
+        entries: ["proxy", "retry", "quota"].map(id => ({ id, source_path: "settings.rs", observed: { current_value: "x", endpoint: "/v0/management/config", body_sha256: "d".repeat(64) }, pass: true })),
+      };
       await writeFile(join(tmp, "route-inventory.json"), JSON.stringify(inv));
+      await writeFile(join(tmp, "setting-inventory.json"), JSON.stringify(setting));
       await expect(auditInternals.validateInventory(tmp, "route")).rejects.toThrow("missing mandatory route inventory entry");
     } finally {
       await rm(tmp, { recursive: true, force: true });
@@ -968,7 +1011,7 @@ describe("negative receipt testing suite with real SSD files", () => {
 });
 
 describe("runGate process-group lifecycle and signal teardown", () => {
-  const root = "/Volumes/T9-Mac/project/mahoquot-wt/cliproxy-remediation-w1";
+  const root = ROOT;
 
   const awaitProcessDead = async (pid, timeoutMs = 2000) => {
     if (!pid) return true;

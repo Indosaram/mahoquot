@@ -1,9 +1,11 @@
 import { ArrowUpRight } from "lucide-react";
+import { useState } from "react";
 import { GithubMark } from "@/components/github-mark";
 import { ButtonLink } from "@/components/ui/button";
 import { PRODUCT, PROVIDERS, REPO_URL, DOCS_URL } from "@/content/site";
 
 export function Hero() {
+  const [paused, setPaused] = useState(false);
   return (
     <section id="top" className="relative border-b border-line pt-16">
       <div className="mx-auto grid max-w-[1400px] grid-cols-1 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
@@ -68,15 +70,21 @@ export function Hero() {
       </div>
 
       <div className="border-t border-line py-7">
-        <div className="mask-fade-edges flex overflow-hidden">
+        <div className="provider-strip mask-fade-edges flex overflow-hidden">
           <div
+            id="provider-track"
             data-marquee-track
+            role="list"
+            aria-label="Supported providers"
+            style={{ animationPlayState: paused ? "paused" : "running" }}
             className="animate-marquee flex w-max items-center"
           >
             {[...PROVIDERS, ...PROVIDERS].map((p, i) => (
               <span
                 key={`${p.name}-${i}`}
                 data-marquee-item
+                role="listitem"
+                aria-hidden={i >= PROVIDERS.length ? true : undefined}
                 className="flex shrink-0 items-center gap-2.5 px-9 text-[15px] font-medium text-ink-faint"
               >
                 <span
@@ -97,6 +105,17 @@ export function Hero() {
               </span>
             ))}
           </div>
+        </div>
+        <div className="provider-motion-control mx-auto mt-4 max-w-[1400px] px-6 text-right">
+          <button
+            type="button"
+            aria-controls="provider-track"
+            aria-pressed={paused}
+            onClick={() => setPaused((value) => !value)}
+            className="rounded-md px-3 py-2 text-[13px] text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            {paused ? "Resume provider animation" : "Pause provider animation"}
+          </button>
         </div>
       </div>
     </section>

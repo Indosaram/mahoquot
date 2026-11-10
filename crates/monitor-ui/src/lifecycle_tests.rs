@@ -44,28 +44,29 @@ fn target_gateway_port_resolution_and_qa_loopback_policy() {
     assert_eq!(target_gateway_port("http://127.0.0.1:18845"), 18845);
     assert_eq!(target_gateway_port("not-a-valid-url"), 18801);
 
-    // Without MAHOQUOT_QA_LOOPBACK_ONLY, non-18801 loopback is UseConfigured
     assert_eq!(
-        gateway_target_policy("http://127.0.0.1:18845"),
+        crate::gateway_target_policy_with_qa("http://127.0.0.1:18845", false),
         GatewayTargetPolicy::UseConfigured
     );
 
-    // With MAHOQUOT_QA_LOOPBACK_ONLY set, loopback URLs become ManageLocal
-    std::env::set_var("MAHOQUOT_QA_LOOPBACK_ONLY", "1");
     assert_eq!(
-        gateway_target_policy("http://127.0.0.1:18845"),
+        crate::gateway_target_policy_with_qa("http://127.0.0.1:18845", true),
         GatewayTargetPolicy::ManageLocal
     );
     assert_eq!(
-        gateway_target_policy("http://localhost:18845"),
+        crate::gateway_target_policy_with_qa("http://localhost:18845", true),
         GatewayTargetPolicy::ManageLocal
     );
-    // Remote URLs remain UseConfigured even with QA flag
     assert_eq!(
-        gateway_target_policy("http://remote.host.test:18845"),
+        crate::gateway_target_policy_with_qa("http://remote.host.test:18845", true),
         GatewayTargetPolicy::UseConfigured
     );
-    std::env::remove_var("MAHOQUOT_QA_LOOPBACK_ONLY");
+}
+
+fn qa_listener() -> TcpListener {
+    (18840..=18899)
+        .find_map(|port| TcpListener::bind(("127.0.0.1", port)).ok())
+        .expect("an available QA port")
 }
 
 #[test]
@@ -97,7 +98,7 @@ fn accept_request(listener: &TcpListener) -> String {
 #[test]
 fn a_local_gateway_is_asked_to_shut_itself_down_with_the_management_key() {
     // given a listener standing in for the local gateway
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let listener = qa_listener();
     let port = listener.local_addr().expect("addr").port();
 
     // when the desktop asks it to stop
@@ -127,7 +128,7 @@ fn a_local_gateway_is_asked_to_shut_itself_down_with_the_management_key() {
 #[test]
 fn an_unauthenticated_local_gateway_is_not_sent_an_empty_bearer() {
     // given a listener and a profile with no management key
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let listener = qa_listener();
     let port = listener.local_addr().expect("addr").port();
 
     // when the desktop asks it to stop
@@ -148,7 +149,7 @@ fn an_unauthenticated_local_gateway_is_not_sent_an_empty_bearer() {
 #[test]
 fn a_remote_or_unparsable_target_is_never_contacted() {
     // given a listener that must stay untouched
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let listener = qa_listener();
     let port = listener.local_addr().expect("addr").port();
     listener.set_nonblocking(true).expect("nonblocking");
 
@@ -172,7 +173,7 @@ fn a_remote_or_unparsable_target_is_never_contacted() {
 fn stopping_a_gateway_the_desktop_does_not_own_is_a_no_op() {
     // given no owned child process
     let process = GatewayProcess::default();
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let listener = qa_listener();
     let port = listener.local_addr().expect("addr").port();
     listener.set_nonblocking(true).expect("nonblocking");
     let config = config_for(&format!("http://127.0.0.1:{port}"), "console-key");
@@ -319,6 +320,219 @@ fn migrate_legacy_secret_falls_back_and_persists_only_for_matching_endpoint() {
 
 #[cfg(unix)]
 static EXIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(unix)]
+#[test]
+fn stop_during_backoff_finishes_old_watchdog_before_replacement() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::Ordering;
+    let _lock = EXIT_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("fake-gateway");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\nprintf 'spawned\\n' >> \"$AUTH_DIR/spawns\"\nexit 17\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let process = GatewayProcess::default();
+    let (backoff_tx, backoff_rx) = std::sync::mpsc::channel();
+    *process.backoff_observer.lock().unwrap() = Some(backoff_tx);
+    for expected in 1..=2 {
+        crate::spawn_gateway_child(&process, &binary, dir.path(), 18849).unwrap();
+        backoff_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(process.pid(), 0);
+        let gate = process
+            .lifecycle
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .gate
+            .clone();
+        assert!(!stop_owned_gateway(&process, None).unwrap());
+        assert!(process.lifecycle.lock().unwrap().is_none());
+        assert!(gate
+            .run(|| panic!("old generation authorized a launch"))
+            .is_none());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("spawns"))
+                .unwrap()
+                .lines()
+                .count(),
+            expected
+        );
+        assert_eq!(crate::GATEWAY_CHILD_PID.load(Ordering::SeqCst), 0);
+    }
+    dir.close().unwrap();
+}
+
+#[test]
+fn cancellation_serializes_with_spawn_authorization() {
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+    let gate = Arc::new(crate::gateway_process::SpawnGate::default());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (cancelled_tx, cancelled_rx) = mpsc::channel();
+    let launching = gate.clone();
+    let launch = std::thread::spawn(move || {
+        launching.run(|| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            1
+        })
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let cancelling = gate.clone();
+    let cancel = std::thread::spawn(move || {
+        cancelling.cancel();
+        cancelled_tx.send(()).unwrap();
+    });
+    assert!(matches!(
+        cancelled_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    release_tx.send(()).unwrap();
+    cancelled_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(launch.join().unwrap(), Some(1));
+    cancel.join().unwrap();
+    assert!(gate
+        .run(|| panic!("cancelled generation launched"))
+        .is_none());
+    assert!(!gate.wait(Duration::from_secs(60)));
+}
+
+#[test]
+fn windows_listener_ownership_requires_exact_port_state_and_pid() {
+    let output = "Active Connections\n\
+      Proto Local Address Foreign Address State PID\n\
+      TCP 127.0.0.1:18849 0.0.0.0:0 LISTENING 42\n\
+      TCP [::1]:18849 [::]:0 LISTENING 43\n\
+      TCP 0.0.0.0:18849 0.0.0.0:0 LISTENING 44\n\
+      TCP [::]:18849 [::]:0 LISTENING 45\n\
+      TCP 127.0.0.1:18848 0.0.0.0:0 LISTENING 46\n\
+      TCP 127.0.0.1:18849 127.0.0.1:50000 ESTABLISHED 47\n\
+      TCP 192.0.2.1:18849 0.0.0.0:0 LISTENING 48\n\
+      UDP 127.0.0.1:18849 *:* LISTENING 49\n\
+      TCP 127.0.0.1:18849 0.0.0.0:0 LISTENING invalid\n";
+    assert_eq!(crate::windows_listener_pids(output, 18849), vec![42, 43, 44, 45]);
+    assert!(crate::windows_listener_pids(output, 18850).is_empty());
+}
+
+#[test]
+fn listener_discovery_identifies_the_actual_owner() {
+    let listener = qa_listener();
+    let port = listener.local_addr().unwrap().port();
+    assert!(crate::listener_pids_for(port).contains(&(std::process::id() as i32)));
+}
+
+#[test]
+fn manual_start_rejects_foreign_listener_without_signalling_it() {
+    let listener = qa_listener();
+    let port = listener.local_addr().unwrap().port();
+    let process = GatewayProcess::default();
+    let result = crate::start_local_gateway(&process, port, || {
+        crate::require_gateway_port(port, Path::new("/nonexistent/owned-fake-gateway"))?;
+        panic!("foreign listener must prevent launch")
+    });
+    assert!(result.is_err());
+    assert!(!crate::owned_gateway_ready(&process, port));
+    let stream = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    drop(stream);
+    assert_eq!(process.pid(), 0);
+}
+
+#[tokio::test]
+async fn configured_status_uses_configured_http_endpoint_not_local_port() {
+    use std::io::{BufRead, Write};
+    let listener = qa_listener();
+    let port = listener.local_addr().unwrap().port();
+    let (request_tx, request_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+        let mut request = String::new();
+        loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+            request.push_str(&line);
+        }
+        stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        request_tx.send(request).unwrap();
+    });
+    assert!(
+        !crate::configured_gateway_available(&config_for(
+            &format!("http://127.0.0.1:{port}/remote"),
+            "fixture-key"
+        ))
+        .await
+    );
+    let request = request_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(request.starts_with("GET /remote/admin/stats HTTP/1.1\r\n"));
+    assert!(request
+        .to_ascii_lowercase()
+        .contains("authorization: bearer fixture-key\r\n"));
+    server.join().unwrap();
+}
+
+#[test]
+fn master_key_bootstrap_propagates_errors_and_preserves_original_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    for malformed in [
+        "api-keys: [unterminated",
+        "api-keys: [123]\n",
+        "- not-a-mapping\n",
+    ] {
+        std::fs::write(&path, malformed).unwrap();
+        assert!(crate::ensure_master_api_key_at(&path, |_, _| panic!(
+            "invalid document reached writer"
+        ))
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), malformed);
+    }
+    let original = "api-keys: [] # empty\nrouting: {strategy: fill-first}\n";
+    std::fs::write(&path, original).unwrap();
+    let result =
+        crate::ensure_master_api_key_at(&path, |_, _| Err("injected write failure".into()));
+    assert_eq!(result.unwrap_err(), "injected write failure");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    assert!(crate::ensure_master_api_key_at(dir.path(), |_, _| panic!(
+        "read failure reached writer"
+    ))
+    .is_err());
+    let key = crate::ensure_master_api_key_at(&path, crate::persist_master_config).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        crate::tray::extract_first_api_key(&saved).unwrap(),
+        Some(key.clone())
+    );
+    let document: serde_yaml::Value = serde_yaml::from_str(&saved).unwrap();
+    assert_eq!(document["routing"]["strategy"].as_str(), Some("fill-first"));
+    assert_eq!(
+        crate::ensure_master_api_key_at(&path, |_, _| panic!("existing key rewritten")).unwrap(),
+        key
+    );
+    assert!(crate::persist_master_config(dir.path(), "cannot replace a directory").is_err());
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        1,
+        "failed atomic write left staging file"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    dir.close().unwrap();
+}
 
 #[test]
 fn stop_owned_gateway_terminates_running_child_and_clears_pid() {

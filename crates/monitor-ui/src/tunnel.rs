@@ -2,7 +2,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
@@ -11,11 +11,22 @@ use flate2::read::GzDecoder;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+#[cfg(not(windows))]
+use std::process::Child;
+
 const CLOUDFLARED_VERSION: &str = "2026.8.3";
 const RELEASE_BASE: &str = "https://github.com/cloudflare/cloudflared/releases/download";
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 static TUNNEL_CHILD_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+#[cfg(windows)]
+#[path = "tunnel_windows.rs"]
+mod windows_tree;
+#[cfg(windows)]
+use windows_tree::OwnedChild as TunnelChild;
+#[cfg(not(windows))]
+type TunnelChild = Child;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArchiveFormat {
@@ -40,20 +51,34 @@ pub struct TunnelStatus {
 
 #[derive(Default)]
 struct TunnelRuntime {
-    child: Option<Child>,
+    child: Option<TunnelChild>,
     public_url: Option<String>,
+    readers: Vec<UrlReader>,
 }
 
 pub struct TunnelManager {
     runtime: Mutex<TunnelRuntime>,
     binary_path: PathBuf,
+    trusted_external: bool,
 }
 
 impl TunnelManager {
     pub fn new(binary_path: PathBuf) -> Self {
+        let managed = crate::tray::current_home()
+            .map(|home| home.join(".mahoquot/bin").join(cloudflared_filename()));
+        // An override of the managed destination must not bypass its marker.
+        let trusted_external = managed
+            .as_ref()
+            .is_ok_and(|path| !same_binary_path(path, &binary_path))
+            && (std::env::var_os("MAHOQUOT_CLOUDFLARED_BIN")
+                .is_some_and(|path| PathBuf::from(path) == binary_path)
+                || SYSTEM_CLOUDFLARED_PATHS
+                    .iter()
+                    .any(|path| Path::new(path) == binary_path));
         Self {
             runtime: Mutex::new(TunnelRuntime::default()),
             binary_path,
+            trusted_external,
         }
     }
 
@@ -63,9 +88,12 @@ impl TunnelManager {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         reap_crashed(&mut runtime);
+        let running = runtime.child.as_mut().is_some_and(|child| {
+            matches!(child.try_wait(), Ok(None))
+        });
         TunnelStatus {
-            enabled: runtime.child.is_some(),
-            running: runtime.child.is_some(),
+            enabled: running,
+            running,
             public_url: runtime.public_url.clone(),
             // Display presence only; launch independently verifies the current bytes.
             has_binary: self.binary_path.is_file(),
@@ -82,7 +110,7 @@ impl TunnelManager {
         timeout: Duration,
     ) -> Result<TunnelStatus, String> {
         ensure_local_gateway(gateway_url)?;
-        if !installed_binary_is_verified(&self.binary_path) {
+        if !binary_is_approved(&self.binary_path, self.trusted_external) {
             return Err("cloudflared is not installed and verified".to_string());
         }
 
@@ -94,17 +122,21 @@ impl TunnelManager {
         if runtime.child.is_some() {
             return Err("cloudflared tunnel is already running".to_string());
         }
+        finish_readers(&mut runtime.readers)?;
 
         let mut command = Command::new(&self.binary_path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         command
             .args(["tunnel", "--url", gateway_url, "--no-autoupdate"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
+        #[cfg(windows)]
+        let mut child = TunnelChild::spawn(&mut command)?;
+        #[cfg(not(windows))]
         let mut child = command
             .spawn()
             .map_err(|error| format!("failed to start cloudflared: {error}"))?;
@@ -114,15 +146,18 @@ impl TunnelManager {
         let stderr = child.stderr.take();
         runtime.child = Some(child);
         runtime.public_url = None;
-        drop(runtime);
-
         let found = Arc::new((Mutex::new(None::<String>), Condvar::new()));
         if let Some(stdout) = stdout {
-            spawn_url_reader(stdout, Arc::clone(&found));
+            runtime
+                .readers
+                .push(spawn_url_reader(stdout, Arc::clone(&found)));
         }
         if let Some(stderr) = stderr {
-            spawn_url_reader(stderr, Arc::clone(&found));
+            runtime
+                .readers
+                .push(spawn_url_reader(stderr, Arc::clone(&found)));
         }
+        drop(runtime);
 
         let deadline = Instant::now() + timeout;
         let (url_lock, ready) = &*found;
@@ -131,12 +166,14 @@ impl TunnelManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         while url.is_none() {
             if !self.child_is_running(pid) {
-                let _ = self.stop();
+                drop(url);
+                self.stop_owned(Some(pid))?;
                 return Err("cloudflared exited before publishing a tunnel URL".to_string());
             }
             let now = Instant::now();
             if now >= deadline {
-                let _ = self.stop();
+                drop(url);
+                self.stop_owned(Some(pid))?;
                 return Err(
                     "cloudflared did not publish a valid tunnel URL before timeout".to_string(),
                 );
@@ -154,6 +191,13 @@ impl TunnelManager {
             .runtime
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !runtime
+            .child
+            .as_ref()
+            .is_some_and(|child| child.id() == pid)
+        {
+            return Err("cloudflared startup was superseded".to_string());
+        }
         runtime.public_url = public_url;
         Ok(TunnelStatus {
             enabled: true,
@@ -164,18 +208,24 @@ impl TunnelManager {
     }
 
     pub fn stop(&self) -> Result<TunnelStatus, String> {
-        let mut child = {
-            let mut runtime = self
-                .runtime
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            runtime.public_url = None;
-            runtime.child.take()
-        };
-        if let Some(ref mut child) = child {
-            stop_child(child, STOP_TIMEOUT)?;
-            clear_tunnel_pid(child.id());
+        self.stop_owned(None)
+    }
+
+    fn stop_owned(&self, expected_pid: Option<u32>) -> Result<TunnelStatus, String> {
+        let mut runtime = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if expected_pid.is_some_and(|expected| {
+            runtime
+                .child
+                .as_ref()
+                .is_some_and(|child| child.id() != expected)
+        }) {
+            return Err("cloudflared startup was superseded".to_string());
         }
+        cleanup_runtime(&mut runtime)?;
+        drop(runtime);
         Ok(self.status())
     }
 
@@ -192,9 +242,12 @@ impl TunnelManager {
         }
         match child.try_wait() {
             Ok(None) => true,
-            Ok(Some(_)) | Err(_) => {
-                runtime.child = None;
+            Ok(Some(_)) => {
                 runtime.public_url = None;
+                false
+            }
+            Err(error) => {
+                eprintln!("failed to inspect cloudflared process: {error}");
                 false
             }
         }
@@ -207,12 +260,32 @@ impl Drop for TunnelManager {
             .runtime
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(mut child) = runtime.child.take() {
-            let _ = stop_child(&mut child, STOP_TIMEOUT);
-            clear_tunnel_pid(child.id());
+        if let Err(error) = cleanup_runtime(runtime) {
+            eprintln!("{error}");
         }
-        runtime.public_url = None;
     }
+}
+
+const SYSTEM_CLOUDFLARED_PATHS: [&str; 3] = [
+    "/opt/homebrew/bin/cloudflared",
+    "/usr/local/bin/cloudflared",
+    "/usr/bin/cloudflared",
+];
+
+fn cloudflared_filename() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "cloudflared.exe"
+    } else {
+        "cloudflared"
+    }
+}
+
+fn same_binary_path(left: &Path, right: &Path) -> bool {
+    left == right
+        || match (left.canonicalize(), right.canonicalize()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => false,
+        }
 }
 
 pub fn default_cloudflared_path() -> Result<PathBuf, String> {
@@ -220,23 +293,17 @@ pub fn default_cloudflared_path() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(path));
     }
     // Check if system cloudflared exists in standard PATH / Homebrew locations
-    for candidate in [
-        "/opt/homebrew/bin/cloudflared",
-        "/usr/local/bin/cloudflared",
-        "/usr/bin/cloudflared",
-    ] {
+    for candidate in SYSTEM_CLOUDFLARED_PATHS {
         let p = PathBuf::from(candidate);
         if p.is_file() {
             return Ok(p);
         }
     }
     let home = crate::tray::current_home()?;
-    let name = if cfg!(target_os = "windows") {
-        "cloudflared.exe"
-    } else {
-        "cloudflared"
-    };
-    Ok(home.join(".mahoquot").join("bin").join(name))
+    Ok(home
+        .join(".mahoquot")
+        .join("bin")
+        .join(cloudflared_filename()))
 }
 
 pub async fn download_cloudflared(dest: &Path) -> Result<(), String> {
@@ -419,15 +486,17 @@ fn installed_binary_is_verified(binary: &Path) -> bool {
             && expected.chars().all(|c| c.is_ascii_hexdigit())
             && format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(expected);
     }
-    // If it is a system-installed binary (e.g. /opt/homebrew/bin/cloudflared or env override),
-    // test execution via `cloudflared --version`
-    Command::new(binary)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    false
+}
+
+fn binary_is_approved(binary: &Path, trusted_external: bool) -> bool {
+    // External provenance is explicit, not inferred from a missing marker or
+    // a successful execution of unverified bytes. No version probe is needed.
+    if trusted_external && !verified_marker_path(binary).exists() {
+        binary.is_file()
+    } else {
+        installed_binary_is_verified(binary)
+    }
 }
 
 #[cfg(unix)]
@@ -490,11 +559,42 @@ pub fn extract_tunnel_url(text: &str) -> Option<String> {
     None
 }
 
+struct UrlReader {
+    thread: std::thread::JoinHandle<()>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+fn finish_readers(readers: &mut Vec<UrlReader>) -> Result<(), String> {
+    finish_readers_by(readers, Instant::now() + STOP_TIMEOUT)
+}
+
+fn finish_readers_by(readers: &mut Vec<UrlReader>, deadline: Instant) -> Result<(), String> {
+    while let Some(reader) = readers.pop() {
+        if let Err(error) = reader
+            .done
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
+            if matches!(error, std::sync::mpsc::RecvTimeoutError::Timeout) {
+                readers.push(reader);
+                return Err(format!("cloudflared log reader did not finish: {error}"));
+            }
+            // A disconnected completion channel means the thread exited;
+            // join below still reports its panic rather than detaching it.
+        }
+        reader
+            .thread
+            .join()
+            .map_err(|_| "cloudflared log reader panicked".to_string())?;
+    }
+    Ok(())
+}
+
 fn spawn_url_reader<R: Read + Send + 'static>(
     reader: R,
     found: Arc<(Mutex<Option<String>>, Condvar)>,
-) {
-    std::thread::spawn(move || {
+) -> UrlReader {
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
         for line in BufReader::new(reader).lines() {
             let Ok(line) = line else { break };
             let Some(url) = extract_tunnel_url(&line) else {
@@ -508,21 +608,37 @@ fn spawn_url_reader<R: Read + Send + 'static>(
                 *value = Some(url);
                 ready.notify_all();
             }
-            break;
+        }
+        if let Err(error) = done_tx.send(()) {
+            eprintln!("cloudflared log reader completion receiver closed: {error}");
         }
     });
+    UrlReader { thread, done }
+}
+
+fn cleanup_runtime(runtime: &mut TunnelRuntime) -> Result<(), String> {
+    runtime.public_url = None;
+    if let Some(child) = runtime.child.as_mut() {
+        stop_child(child, STOP_TIMEOUT)?;
+    }
+    // Keep the child identity and signal fallback until every reader is joined.
+    finish_readers(&mut runtime.readers)?;
+    if let Some(child) = runtime.child.take() {
+        clear_tunnel_pid(child.id());
+    }
+    Ok(())
 }
 
 fn reap_crashed(runtime: &mut TunnelRuntime) {
-    let exited_pid = runtime.child.as_mut().and_then(|child| {
-        child
-            .try_wait()
-            .map_or(Some(child.id()), |status| status.map(|_| child.id()))
-    });
-    if let Some(pid) = exited_pid {
-        runtime.child = None;
-        runtime.public_url = None;
-        clear_tunnel_pid(pid);
+    let Some(child) = runtime.child.as_mut() else { return };
+    match child.try_wait() {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            if let Err(error) = cleanup_runtime(runtime) {
+                eprintln!("{error}");
+            }
+        }
+        Err(error) => eprintln!("failed to inspect cloudflared process: {error}"),
     }
 }
 
@@ -540,7 +656,7 @@ pub fn terminate_tunnel_on_signal() {
     let pid = TUNNEL_CHILD_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
     if pid > 1 {
         unsafe {
-            libc_kill(pid, 15);
+            libc_kill(-pid, 15);
         }
     }
 }
@@ -554,7 +670,12 @@ extern "C" {
     fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
-fn stop_child(child: &mut Child, timeout: Duration) -> Result<(), String> {
+fn stop_child(child: &mut TunnelChild, timeout: Duration) -> Result<(), String> {
+    // Tree ownership outlives the leader: terminate before observing its exit.
+    #[cfg(windows)]
+    child.terminate_tree()?;
+    #[cfg(unix)]
+    stop_process_tree(child.id())?;
     if child
         .try_wait()
         .map_err(|error| format!("failed to inspect cloudflared process: {error}"))?
@@ -562,9 +683,6 @@ fn stop_child(child: &mut Child, timeout: Duration) -> Result<(), String> {
     {
         return Ok(());
     }
-    child
-        .kill()
-        .map_err(|error| format!("failed to stop cloudflared: {error}"))?;
     let deadline = Instant::now() + timeout;
     loop {
         if child
@@ -581,6 +699,27 @@ fn stop_child(child: &mut Child, timeout: Duration) -> Result<(), String> {
     }
 }
 
+#[cfg(unix)]
+fn stop_process_tree(pid: u32) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc_kill(-(pid as i32), 9) };
+        if result == 0 {
+            return Ok(());
+        }
+        // Nothing left to signal is success: ESRCH means the group is gone, and
+        // macOS reports EPERM for a group of already-exited (zombie) members,
+        // which the caller reaps right after. Both mean the tree is dead.
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(code) if code == 3 || code == 1 => Ok(()),
+            _ => Err(format!(
+                "failed to terminate cloudflared process group: {}",
+                std::io::Error::last_os_error()
+            )),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,6 +729,174 @@ mod tests {
     };
 
     static TEST_ID: AtomicU64 = AtomicU64::new(0);
+
+    // waitid observes exit without reaping: the zombie pins the group ID until
+    // the parent signals the group. libc supplies the target's ABI definitions.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    struct GroupWaiter {
+        pid: u32,
+        armed: bool,
+        handed_out: bool,
+        observation_failed_child: Option<Child>,
+        exited: std::sync::mpsc::Receiver<(Child, Result<(), String>)>,
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    impl GroupWaiter {
+        fn new(child: Child) -> Self {
+            let pid = child.id();
+            let (tx, exited) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+                let result = loop {
+                    // SAFETY: libc provides the target ABI and correctly sized,
+                    // aligned output storage. waitid writes it; we never read it.
+                    // P_PID selects our owned child; WNOWAIT preserves its zombie.
+                    let rc = unsafe {
+                        libc::waitid(libc::P_PID, pid, info.as_mut_ptr(), libc::WEXITED | libc::WNOWAIT)
+                    };
+                    if rc == 0 { break Ok(()); }
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() != std::io::ErrorKind::Interrupted {
+                        break Err(error.to_string());
+                    }
+                };
+                if let Err(error) = tx.send((child, result)) {
+                    eprintln!("fixture exit receiver closed: {error}");
+                }
+            });
+            Self { pid, armed: true, handed_out: false, observation_failed_child: None, exited }
+        }
+
+        fn wait(&mut self) -> Child {
+            let (child, result) = self.exited.recv_timeout(START_TIMEOUT).unwrap();
+            if let Err(error) = result {
+                self.observation_failed_child = Some(child);
+                panic!("fixture exit observation failed: {error}");
+            }
+            self.handed_out = true;
+            child
+        }
+
+        fn finish(&mut self, child: &mut Child) -> std::process::ExitStatus {
+            stop_process_tree(self.pid).unwrap();
+            // wait() already observed exit; this reap cannot await live work.
+            let status = child.wait().unwrap();
+            self.armed = false;
+            status
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    impl Drop for GroupWaiter {
+        fn drop(&mut self) {
+            if !self.armed { return; }
+            let result = stop_process_tree(self.pid).and_then(|()| {
+                if self.handed_out { return Ok(()); }
+                let mut child = match self.observation_failed_child.take() {
+                    Some(child) => child,
+                    None => {
+                        let (child, observed) = self.exited.recv_timeout(STOP_TIMEOUT)
+                            .map_err(|error| format!("fixture cleanup completion failed: {error}"))?;
+                        if let Err(error) = observed {
+                            eprintln!("FIXTURE CLEANUP: exit observation failed: {error}");
+                        }
+                        child
+                    }
+                };
+                // The group has been signaled while this exact child was still
+                // unreaped. A separate bounded completion retains reap ownership
+                // even when observation failed and exit has not been confirmed.
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let result = child.wait();
+                    if let Err(error) = tx.send(result) {
+                        eprintln!("FIXTURE CLEANUP: reap receiver closed: {error}");
+                    }
+                });
+                rx.recv_timeout(STOP_TIMEOUT)
+                    .map_err(|error| format!("fixture reap completion failed: {error}"))?
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                if std::thread::panicking() {
+                    eprintln!("FIXTURE CLEANUP FAILURE during primary panic: {error}");
+                } else {
+                    panic!("FIXTURE CLEANUP FAILURE: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_tree_fixture() {
+        match std::env::var("MAHOQUOT_TUNNEL_TREE_FIXTURE").as_deref() {
+            Ok("leader") => {
+                let _descendant = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "tunnel::tests::windows_tree_fixture", "--nocapture"])
+                    .env("MAHOQUOT_TUNNEL_TREE_FIXTURE", "descendant")
+                    .stdin(Stdio::null())
+                    .spawn().unwrap();
+                let mut ack = String::new();
+                std::io::stdin().read_line(&mut ack).unwrap();
+                std::process::exit(17);
+            }
+            Ok("descendant") => {
+                println!("https://descendant.trycloudflare.com");
+                std::io::stdout().flush().unwrap();
+                let (_keep_alive, blocked) = std::sync::mpsc::channel::<()>();
+                blocked.recv().unwrap();
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_job_closes_inherited_pipes_after_leader_exit() {
+        for cleanup in ["stop", "reap", "drop"] {
+            // Given: an owned leader and a descendant holding both inherited pipes.
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "tunnel::tests::windows_tree_fixture", "--nocapture"])
+                .env("MAHOQUOT_TUNNEL_TREE_FIXTURE", "leader")
+                .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            let mut child = TunnelChild::spawn(&mut command).unwrap();
+            let found = Arc::new((Mutex::new(None), Condvar::new()));
+            let readers = vec![
+                spawn_url_reader(child.stdout.take().unwrap(), found.clone()),
+                spawn_url_reader(child.stderr.take().unwrap(), found.clone()),
+            ];
+            let mut input = child.stdin.take().unwrap();
+            let (lock, ready) = &*found;
+            let (url, _) = ready.wait_timeout_while(
+                lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none(),
+            ).unwrap();
+            let announced = url.is_some();
+            drop(url);
+            // The process handle retains exit state. Keep the job here so any
+            // write failure or bounded-wait timeout unwinds through its Drop.
+            input.write_all(b"exit\n").unwrap();
+            drop(input);
+            assert_eq!(child.wait_bounded(START_TIMEOUT).unwrap().code(), Some(17));
+            let mut runtime = TunnelRuntime { child: Some(child), public_url: None, readers };
+            // When: cleanup must still terminate the job, not just the dead PID.
+            match cleanup {
+                "stop" => cleanup_runtime(&mut runtime).unwrap(),
+                "reap" => reap_crashed(&mut runtime),
+                "drop" => {
+                    drop(runtime.child.take());
+                    finish_readers(&mut runtime.readers).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            // Then: EOF and joined readers prove descendants released the pipes.
+            assert!(runtime.child.is_none());
+            assert!(runtime.readers.is_empty());
+            assert!(announced);
+        }
+    }
 
     fn test_dir(name: &str) -> PathBuf {
         let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
@@ -606,6 +913,287 @@ mod tests {
         make_executable(path).unwrap();
         let checksum = format!("{:x}", Sha256::digest(script.as_bytes()));
         fs::write(verified_marker_path(path), format!("sha256:{checksum}\n")).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readers_drain_both_streams_after_first_url() {
+        use std::os::unix::process::CommandExt;
+        for log_fd in [1, 2] {
+            let dir = test_dir("drain");
+            let binary = dir.join("cloudflared");
+            let ack_fd = if log_fd == 1 { 2 } else { 1 };
+            write_fake(&binary, &format!(
+                "#!/bin/sh\nset -e\nprintf 'https://first.trycloudflare.com\\n' >&{log_fd}\nread ack\ni=0\nwhile [ $i -lt 16384 ]; do\nprintf '0123456789012345678901234567890123456789012345678901234567890123456789\\n' >&{log_fd}\ni=$((i + 1))\ndone\nprintf 'https://second.trycloudflare.com\\n' >&{log_fd}\nprintf 'drained\\n' >&{ack_fd}\n"
+            ));
+            let mut child = Command::new(&binary)
+                .process_group(0)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+            let (logs, acknowledgment): (Box<dyn Read + Send>, Box<dyn Read + Send>) =
+                if log_fd == 1 {
+                    (Box::new(stdout), Box::new(stderr))
+                } else {
+                    (Box::new(stderr), Box::new(stdout))
+                };
+            let found = Arc::new((Mutex::new(None), Condvar::new()));
+            let reader = spawn_url_reader(logs, Arc::clone(&found));
+            let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+            let acknowledgment = std::thread::spawn(move || {
+                let mut line = String::new();
+                let result = BufReader::new(acknowledgment).read_line(&mut line);
+                ack_tx.send((result, line)).unwrap();
+            });
+            let (lock, ready) = &*found;
+            let (url, _) = ready
+                .wait_timeout_while(lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none())
+                .unwrap();
+            let first = url.clone();
+            drop(url);
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"continue\n")
+                .unwrap();
+            let completed = ack_rx.recv_timeout(START_TIMEOUT);
+            stop_child(&mut child, STOP_TIMEOUT).unwrap();
+            finish_readers(&mut vec![reader]).unwrap();
+            acknowledgment.join().unwrap();
+            fs::remove_dir_all(dir).unwrap();
+            assert_eq!(first.as_deref(), Some("https://first.trycloudflare.com"));
+            let (result, line) = completed.unwrap();
+            result.unwrap();
+            assert_eq!(line, "drained\n");
+            assert_eq!(lock.lock().unwrap().as_deref(), first.as_deref());
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn exited_leader_keeps_descendant_pipe_ownership_until_cleanup() {
+        use std::os::unix::process::CommandExt;
+        for reap in [false, true] {
+            let dir = test_dir("descendant-pipe");
+            let binary = dir.join("cloudflared");
+            write_fake(&binary, "#!/bin/sh\nsh -c 'printf \"https://descendant.trycloudflare.com\\n\"; kill -STOP $$' &\nread ack\nexit 17\n");
+            let mut child = Command::new(&binary)
+                .process_group(0)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+            let mut input = child.stdin.take().unwrap();
+            let mut waiter = GroupWaiter::new(child);
+            let found = Arc::new((Mutex::new(None), Condvar::new()));
+            let readers = vec![
+                spawn_url_reader(stdout, found.clone()),
+                spawn_url_reader(stderr, found.clone()),
+            ];
+            let (lock, ready) = &*found;
+            let (url, _) = ready.wait_timeout_while(
+                lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none()
+            ).unwrap();
+            let announced = url.is_some();
+            drop(url);
+            // Both URL and child-exit subscriptions exist before this trigger.
+            input.write_all(b"exit\n").unwrap();
+            drop(input);
+            let child = waiter.wait();
+            let manager = TunnelManager {
+                runtime: Mutex::new(TunnelRuntime {
+                    child: Some(child),
+                    public_url: None,
+                    readers,
+                }),
+                binary_path: binary,
+                trusted_external: false,
+            };
+            // Transfer cleanup to the manager while its leader is still unreaped.
+            waiter.armed = false;
+            if reap {
+                cleanup_runtime(&mut manager.runtime.lock().unwrap()).unwrap();
+            } else {
+                manager.stop_owned(Some(pid)).unwrap();
+            }
+            let runtime = manager.runtime.lock().unwrap();
+            assert!(runtime.child.is_none());
+            assert!(runtime.readers.is_empty());
+            waiter.armed = false;
+            assert!(announced, "descendant did not announce its inherited pipe");
+            drop(runtime);
+            drop(manager);
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn reader_timeout_retains_ownership_for_later_cleanup() {
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let (completed_tx, completed_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            release_rx.recv_timeout(START_TIMEOUT).unwrap();
+            done_tx.send(()).unwrap();
+            completed_tx.send(()).unwrap();
+        });
+        let mut readers = vec![UrlReader { thread, done }];
+        assert!(finish_readers_by(&mut readers, Instant::now()).is_err());
+        assert_eq!(readers.len(), 1);
+        release_tx.send(()).unwrap();
+        completed_rx.recv_timeout(START_TIMEOUT).unwrap();
+        finish_readers_by(&mut readers, Instant::now()).unwrap();
+        assert!(readers.is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn markerless_managed_binary_is_rejected_without_execution() {
+        let dir = test_dir("markerless");
+        let binary = dir.join("cloudflared");
+        let sentinel = dir.join("executed");
+        write_fake(
+            &binary,
+            &format!("#!/bin/sh\nprintf executed > '{}'\n", sentinel.display()),
+        );
+        fs::remove_file(verified_marker_path(&binary)).unwrap();
+        let manager = TunnelManager::new(binary.clone());
+        assert!(!manager.trusted_external);
+        assert!(!installed_binary_is_verified(&binary));
+        assert!(manager.start("http://127.0.0.1:18840").is_err());
+        assert!(!sentinel.exists());
+        assert!(binary_is_approved(&binary, true));
+        assert!(
+            !sentinel.exists(),
+            "approval must not execute a version probe"
+        );
+        fs::write(verified_marker_path(&binary), "malformed").unwrap();
+        assert!(!binary_is_approved(&binary, true));
+        assert!(!sentinel.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn constructor_provenance_fixture() {
+        let Some(mode) = std::env::var_os("MAHOQUOT_TUNNEL_CONSTRUCTOR_FIXTURE") else { return };
+        let home = crate::tray::current_home().unwrap();
+        let manager = TunnelManager::new(default_cloudflared_path().unwrap());
+        if mode == "external" {
+            assert!(manager.trusted_external);
+            assert!(binary_is_approved(&manager.binary_path, manager.trusted_external));
+            assert!(!home.join("executed").exists());
+        } else {
+            assert!(!manager.trusted_external);
+            assert!(manager.start("http://127.0.0.1:18840").is_err());
+            assert!(!home.join("executed").exists());
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn run_constructor_fixture(home: &Path, binary: &Path, mode: &str) {
+        use std::os::unix::process::CommandExt;
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tunnel::tests::constructor_provenance_fixture", "--nocapture"])
+            .env("HOME", home).env("USERPROFILE", home)
+            .env("MAHOQUOT_CLOUDFLARED_BIN", binary)
+            .env("MAHOQUOT_TUNNEL_CONSTRUCTOR_FIXTURE", mode)
+            .process_group(0).spawn().unwrap();
+        let mut waiter = GroupWaiter::new(child);
+        let mut child = waiter.wait();
+        assert!(waiter.finish(&mut child).success());
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn constructor_rejects_managed_override_aliases_without_valid_marker() {
+        // Given: a private HOME with direct, symlink and dotted exact overrides.
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let bin_dir = home.join(".mahoquot/bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let binary = bin_dir.join("cloudflared");
+        write_fake(&binary, "#!/bin/sh\nprintf executed > \"$HOME/executed\"\n");
+        let alias = home.join("alias");
+        std::os::unix::fs::symlink(&binary, &alias).unwrap();
+        let dotted = bin_dir.join(".").join("cloudflared");
+        for path in [&binary, &alias, &dotted] {
+            for malformed in [false, true] {
+                for marker in [verified_marker_path(&binary), verified_marker_path(&alias)] {
+                    if marker.exists() { fs::remove_file(marker).unwrap(); }
+                }
+                if malformed {
+                    fs::write(verified_marker_path(path), "malformed").unwrap();
+                }
+                // When: use the real constructor in an isolated child environment.
+                run_constructor_fixture(home, path, "managed");
+                // Then: constructor distrust and rejected launch leave no execution.
+                assert!(!home.join("executed").exists());
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn constructor_accepts_explicit_external_override_without_marker() {
+        // Given: an exact override outside the private home's managed destination.
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("external-cloudflared");
+        write_fake(&binary, "#!/bin/sh\nprintf executed > \"$HOME/executed\"\nprintf 'https://constructor.trycloudflare.com\\n'\nkill -STOP $$\n");
+        fs::remove_file(verified_marker_path(&binary)).unwrap();
+        // When/Then: constructor trusts and approves it without executing a nested group.
+        run_constructor_fixture(dir.path(), &binary, "external");
+        assert!(!dir.path().join("executed").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn explicitly_trusted_external_binary_can_start_without_marker() {
+        let dir = test_dir("trusted-external");
+        let binary = dir.join("cloudflared");
+        write_fake(
+            &binary,
+            "#!/bin/sh\nprintf 'https://external.trycloudflare.com\\n'\nkill -STOP $$\n",
+        );
+        fs::remove_file(verified_marker_path(&binary)).unwrap();
+        let manager = TunnelManager {
+            runtime: Mutex::new(TunnelRuntime::default()),
+            binary_path: binary,
+            trusted_external: true,
+        };
+        let started = manager.start("http://127.0.0.1:18840");
+        let stopped = manager.stop();
+        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(
+            started.unwrap().public_url.as_deref(),
+            Some("https://external.trycloudflare.com")
+        );
+        assert!(!stopped.unwrap().running);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn managed_path_aliases_remain_managed() {
+        let dir = test_dir("managed-alias");
+        let binary = dir.join("cloudflared");
+        fs::write(&binary, "fixture").unwrap();
+        let alias = dir.join("alias");
+        std::os::unix::fs::symlink(&binary, &alias).unwrap();
+        assert!(same_binary_path(&binary, &alias));
+        assert!(same_binary_path(
+            &binary,
+            &dir.join(".").join("cloudflared")
+        ));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

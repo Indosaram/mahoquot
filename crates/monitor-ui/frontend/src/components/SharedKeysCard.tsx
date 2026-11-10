@@ -662,9 +662,9 @@ export function SharedKeysCard({
             </Button>
           </div>
 
-          <Field label="Key name" hint="Who or what will use this key, e.g. Study group laptop.">
+          <Field htmlFor={nameInputId} hintId={`${nameInputId}-hint`} label="Key name" hint="Who or what will use this key, e.g. Study group laptop.">
             <Input
-              id={nameInputId}
+              id={nameInputId} aria-describedby={`${nameInputId}-hint`}
               data-autofocus
               value={name}
               placeholder="Name"
@@ -770,9 +770,9 @@ export function SharedKeysCard({
                 </button>
               ))}
             </div>
-            <Field label="Custom limit" hint="Overrides the preset while filled in.">
+            <Field htmlFor={customLimitId} hintId={`${customLimitId}-hint`} label="Custom limit" hint="Overrides the preset while filled in.">
               <Input
-                id={customLimitId}
+                id={customLimitId} aria-describedby={`${customLimitId}-hint`}
                 type="number"
                 min={0}
                 placeholder="Custom token limit"
@@ -876,9 +876,9 @@ export function SharedKeysCard({
               : `${topUpKey.token_used.toLocaleString()} tokens used (unlimited)`}
           </p>
 
-          <Field label="Add tokens" hint="Raises the total limit by this amount.">
+          <Field htmlFor={topUpInputId} hintId={`${topUpInputId}-hint`} label="Add tokens" hint="Raises the total limit by this amount.">
             <Input
-              id={topUpInputId}
+              id={topUpInputId} aria-describedby={`${topUpInputId}-hint`}
               data-autofocus
               type="number"
               min={1}
@@ -914,9 +914,9 @@ export function SharedKeysCard({
             </Button>
           </div>
 
-          <Field label="Key name" hint="Who or what will use this key.">
+          <Field htmlFor={editNameInputId} hintId={`${editNameInputId}-hint`} label="Key name" hint="Who or what will use this key.">
             <Input
-              id={editNameInputId}
+              id={editNameInputId} aria-describedby={`${editNameInputId}-hint`}
               data-autofocus
               value={editName}
               placeholder="Name"
@@ -927,13 +927,13 @@ export function SharedKeysCard({
             />
           </Field>
 
-          <Field
+          <Field htmlFor={editRawKeyInputId} hintId={`${editRawKeyInputId}-hint`}
             label="API Key value"
             hint="You can view, copy, or replace the key secret (e.g. mq-sh-...). Leave untouched to keep current."
           >
             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <Input
-                id={editRawKeyInputId}
+                id={editRawKeyInputId} aria-describedby={`${editRawKeyInputId}-hint`}
                 type={showEditRawKey ? "text" : "password"}
                 autoComplete="off"
                 value={editRawKey}
@@ -1051,9 +1051,9 @@ export function SharedKeysCard({
                 </button>
               ))}
             </div>
-            <Field label="Custom limit" hint="Overrides the preset while filled in.">
+            <Field htmlFor={editCustomLimitId} hintId={`${editCustomLimitId}-hint`} label="Custom limit" hint="Overrides the preset while filled in.">
               <Input
-                id={editCustomLimitId}
+                id={editCustomLimitId} aria-describedby={`${editCustomLimitId}-hint`}
                 type="number"
                 min={0}
                 placeholder="Custom token limit"

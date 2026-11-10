@@ -43,7 +43,7 @@ export interface TelemetrySample {
    */
   readonly providerDeltas?: readonly ProviderTotal[];
   readonly accounts: readonly AccountTotal[];
-  readonly cumulativeAccounts?: readonly AccountTotal[];
+  readonly cumulativeAccounts?: readonly (AccountTotal & { readonly absentPolls?: number })[];
   readonly tokensDerivedFromAccounts?: boolean;
   /**
    * Set on samples hydrated from persisted history buckets. Their top-level
@@ -54,6 +54,9 @@ export interface TelemetrySample {
 }
 
 export type TelemetryRange = "30m" | "1h" | "1d" | "7d" | "30d";
+
+export const ABSENT_ACCOUNT_BASELINE_POLLS = 32;
+export const ABSENT_ACCOUNT_BASELINE_LIMIT = 4096;
 
 const rangeDurationMs: Readonly<Record<TelemetryRange, number>> = {
   "30m": 30 * 60_000,
@@ -108,12 +111,13 @@ export const appendTelemetrySample = (
   const previousCumulativeAccounts = new Map(
     previous?.cumulativeAccounts?.map((account) => [account.id, account]) ?? [],
   );
+  const previousAccountIds = new Set(previous?.accounts.map((account) => account.id));
   const accounts: AccountTotal[] = stats.accounts.map((account) => {
     const prev = previousCumulativeAccounts.get(account.id);
     // Check if this account or token field was observed in the immediate previous sample.
     // If not (e.g. first observation or reappearing after an omission gap), re-establish baseline
     // so historical counter changes across the gap are not attributed to this single interval.
-    const priorInSample = previous?.accounts.some((a) => a.id === account.id);
+    const priorInSample = previousAccountIds.has(account.id);
     const wasAccountOmitted = previous !== undefined && !priorInSample;
     const successes = wasAccountOmitted ? 0 : counterDelta(account.ok, prev?.successes);
     const failures = wasAccountOmitted ? 0 : counterDelta(account.fails, prev?.failures);
@@ -175,11 +179,19 @@ export const appendTelemetrySample = (
     };
   });
 
-  // Preserve cumulative baselines per-account and per-field across historical polls
-  // so temporary omission of a field or account does not reset counter baseline.
-  const cumulativeAccountsMap = new Map(previousCumulativeAccounts);
+  // Only the newest sample owns baselines. Retain short omissions, oldest first
+  // eviction at the cap; expired IDs re-baseline like newly observed accounts.
+  const currentIds = new Set(stats.accounts.map((account) => account.id));
+  const absentAccounts = [...previousCumulativeAccounts.values()]
+    .filter((account) => !currentIds.has(account.id))
+    .map((account) => ({ ...account, absentPolls: (account.absentPolls ?? 0) + 1 }))
+    .filter((account) => account.absentPolls <= ABSENT_ACCOUNT_BASELINE_POLLS)
+    .slice(-ABSENT_ACCOUNT_BASELINE_LIMIT);
+  const cumulativeAccountsMap = new Map<string, AccountTotal & { readonly absentPolls?: number }>(
+    absentAccounts.map((account) => [account.id, account]),
+  );
   for (const account of stats.accounts) {
-    const prev = cumulativeAccountsMap.get(account.id);
+    const prev = previousCumulativeAccounts.get(account.id);
     const inTok = account.input_tokens ?? prev?.inputTokens;
     const outTok = account.output_tokens ?? prev?.outputTokens;
     const hasTok = inTok !== undefined || outTok !== undefined;
@@ -226,7 +238,12 @@ export const appendTelemetrySample = (
     cumulativeAccounts,
     tokensDerivedFromAccounts: hasAnyTokens,
   };
-  return [...samples, next].slice(-43_200);
+  const retained = samples.slice(-43_199);
+  if (last?.cumulativeAccounts && retained.length > 0) {
+    const { cumulativeAccounts: _baseline, ...historical } = last;
+    retained[retained.length - 1] = historical;
+  }
+  return [...retained, next];
 };
 
 export const persistedTelemetrySamples = (

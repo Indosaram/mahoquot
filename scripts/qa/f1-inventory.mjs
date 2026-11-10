@@ -4,6 +4,55 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { bindSource, deriveRouteManifest, deriveSettingsPolicy, nativeSettingEntries, nativeProtocolEntries, nativeTableEntries, validateNativeRun } from './inventory-contract.mjs';
+
+// Uses the exact closure already validated by the audit/build provenance path.
+// No route manifest supplied by the caller can replace source enumeration.
+export async function collectSourceInventory(provenance, getClosure) {
+  const closure = await getClosure(provenance.source_root);
+  const bytes = new Map(await Promise.all(closure.files.map(async file => [file.path, await readFile(join(provenance.source_root, file.path))])));
+  const identity = bindSource({ revision: provenance.gateway_revision, sourceHash: closure.sourceHash, files: closure.files }, bytes);
+  if (identity.sourceHash !== provenance.gateway_source_sha256) throw new Error('inventory source changed since build');
+  return {
+    schema: 'source-inventory/derived-v1',
+    source_revision: identity.revision,
+    source_sha256: identity.sourceHash,
+    ...deriveRouteManifest(bytes),
+    settings_policy: deriveSettingsPolicy(bytes),
+  };
+}
+
+// Assembly is deliberately separate from running native tests. The final-stage
+// owner supplies captured files; this function neither builds nor launches.
+export async function collectSettingsInventory(provenance, getClosure, nativeRun, nativeBytes) {
+  const source = await collectSourceInventory(provenance, getClosure);
+  const fixture = validateNativeRun(nativeRun, provenance, nativeBytes);
+  return {
+    schema: 'source-inventory/settings-v1', kind: 'setting', provenance,
+    source_revision: source.source_revision, source_sha256: source.source_sha256,
+    settings_policy: source.settings_policy,
+    native_run: nativeRun,
+    entries: nativeSettingEntries(fixture, source.settings_policy),
+  };
+}
+
+export async function collectNativeInventoryEvidence(provenance, getClosure, nativeRun, nativeBytes) {
+  const closure = await getClosure(provenance.source_root);
+  const bytes = new Map(await Promise.all(closure.files.map(async file => [file.path, await readFile(join(provenance.source_root, file.path))])));
+  bindSource({ revision: provenance.gateway_revision, sourceHash: closure.sourceHash, files: closure.files }, bytes);
+  if (closure.sourceHash !== provenance.gateway_source_sha256) throw new Error('inventory source changed since build');
+  const source = deriveRouteManifest(bytes);
+  const settingsPolicy = deriveSettingsPolicy(bytes);
+  const fixture = validateNativeRun(nativeRun, provenance, nativeBytes);
+  const routes = [...nativeProtocolEntries(fixture, source), ...nativeTableEntries(fixture, source, bytes)];
+  const observedIds = new Set(routes.map(row => row.id));
+  return {
+    schema: 'source-inventory/native-evidence-v1', provenance,
+    source_revision: provenance.gateway_revision, source_sha256: closure.sourceHash,
+    native_run: nativeRun, routes, settings: nativeSettingEntries(fixture, settingsPolicy),
+    missing_route_ids: source.routes.filter(row => !observedIds.has(row.id)).map(row => row.id),
+  };
+}
 
 const R = "/Volumes/T9-Mac/project/mahoquot-wt/cliproxy-remediation-w1";
 const E = "/Volumes/T9-Mac/project/mahoquot-wt/cliproxy-remediation-w1/.omo/evidence/cliproxy-remediation/6417c774-c554-4c53-880b-d8355082043e";
@@ -223,7 +272,7 @@ async function run() {
       // later probe into a bare 404. They are probed with a body the handler
       // rejects (invalid YAML/JSON), which still proves a registered handler.
       const destructive = /\/config\.yaml$|\/shutdown$|\/api-keys$|\/config$/.test(r.rawPath) && r.rawMethod !== "GET";
-      let status = 0, stamped = false, bodyDigest = "";
+      let status = null, stamped = false, bodyDigest = "", transportError = null;
       try {
         const probePath = destructive && r.rawMethod === "DELETE" ? `${r.fullPath}?value=\u0000` : r.fullPath;
         const res = await fetch(base + probePath, {
@@ -239,14 +288,13 @@ async function run() {
         const bodyText = await res.text();
         bodyDigest = sha256(bodyText);
       } catch (err) {
-        status = 500;
-        bodyDigest = sha256(err.message);
+        transportError = String(err);
       }
 
       // Explicit exclusions from t14 parity test: plugin paths are stubbed or intentionally excluded
       const isExcluded = r.rawPath.includes("/plugins") || r.rawPath.includes("/plugin-store");
       // pass = response from registered handler: not 405, and not bare fallback 404 (stamped or json handler response counts)
-      const isRegistered = !isExcluded && (status !== 405 && !(status === 404 && !stamped));
+      const isRegistered = !isExcluded && routeObserved({ status, transport_error: transportError });
 
       if (isRegistered) {
         routeEntries.push({
@@ -328,8 +376,8 @@ async function run() {
         settingEntries.push({
           id: key,
           source_path: "crates/gateway/src/management/settings.rs",
-          observed: { key, verified: true },
-          pass: true
+          observed: null,
+          pass: false
         });
       }
     }
@@ -355,8 +403,8 @@ async function run() {
         settingEntries.push({
           id: `server.${tok}`,
           source_path: "crates/gateway/src/management/settings.rs",
-          observed: { key: `server.${tok}`, configured: true },
-          pass: true
+          observed: null,
+          pass: false
         });
       }
     }
@@ -405,4 +453,33 @@ async function run() {
   }
 }
 
-await run();
+// Capture adapter only: it cannot certify completeness or launch the historical
+// runner. The isolated caller owns request construction, deadlines and lifecycle.
+// Failed transport is retained as failure, never converted to an HTTP status.
+export async function captureInventoryResponse({ method, path, bodyId }, request) {
+  try {
+    const response = await request();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return {
+      observed: {
+        method, path, body_id: bodyId, status: response.status,
+        content_type: response.headers.get('content-type')?.split(';', 1)[0].trim(),
+        body_sha256: sha256(bytes), transport_error: null,
+      },
+      bytes,
+    };
+  } catch (error) {
+    return {
+      observed: { method, path, body_id: bodyId, status: null, transport_error: String(error) },
+      bytes: null,
+    };
+  }
+}
+
+export function routeObserved(observation) {
+  return observation.transport_error == null && Number.isInteger(observation.status) && observation.status >= 200 && observation.status < 300;
+}
+
+if (import.meta.main) {
+  throw new Error('Historical F1 producer is not current-checkout certification; requires source-bound complete route/setting manifest and captured config readbacks before reuse');
+}

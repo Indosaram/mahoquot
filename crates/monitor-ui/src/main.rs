@@ -78,13 +78,19 @@ struct GatewayFailure {
 #[derive(Clone, Default)]
 struct GatewayProcess {
     pid: std::sync::Arc<std::sync::atomic::AtomicI32>,
-    /// Set to `true` when the user or the app deliberately stops the gateway.
-    /// The watchdog skips respawn when this flag is set.
-    stop_intended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    transitions: std::sync::Arc<std::sync::Mutex<()>>,
+    lifecycle: std::sync::Arc<std::sync::Mutex<Option<GatewayWatchdog>>>,
     /// Last actionable start failure, or `None` while the gateway is healthy.
     last_failure: std::sync::Arc<std::sync::Mutex<Option<GatewayFailure>>>,
     /// Rolling stderr tail of the live child, drained into `last_failure`.
     stderr_tail: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+    #[cfg(test)]
+    backoff_observer: std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<i32>>>>,
+}
+
+struct GatewayWatchdog {
+    gate: std::sync::Arc<gateway_process::SpawnGate>,
+    finished: std::sync::mpsc::Receiver<()>,
 }
 
 #[derive(Default)]
@@ -220,10 +226,17 @@ enum GatewayTargetPolicy {
 }
 
 fn gateway_target_policy(base_url: &str) -> GatewayTargetPolicy {
+    gateway_target_policy_with_qa(
+        base_url,
+        std::env::var_os("MAHOQUOT_QA_LOOPBACK_ONLY").is_some(),
+    )
+}
+
+fn gateway_target_policy_with_qa(base_url: &str, qa_loopback: bool) -> GatewayTargetPolicy {
     if base_url == LOCAL_GATEWAY_URL {
         return GatewayTargetPolicy::ManageLocal;
     }
-    if std::env::var_os("MAHOQUOT_QA_LOOPBACK_ONLY").is_some() {
+    if qa_loopback {
         if let Ok(url) = url::Url::parse(base_url) {
             if matches!(url.host_str(), Some("127.0.0.1" | "localhost")) {
                 return GatewayTargetPolicy::ManageLocal;
@@ -593,6 +606,7 @@ fn terminate_process(
     Err(format!("gateway pid={pid} did not exit after SIGKILL"))
 }
 
+#[cfg(not(windows))]
 fn listener_pids_for(port: u16) -> Vec<i32> {
     let Ok(output) = std::process::Command::new("lsof")
         .args(["-tnP", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
@@ -605,6 +619,37 @@ fn listener_pids_for(port: u16) -> Vec<i32> {
         .filter_map(|line| line.trim().parse::<i32>().ok())
         .filter(|pid| *pid > 1)
         .collect()
+}
+
+#[cfg(windows)]
+fn listener_pids_for(port: u16) -> Vec<i32> {
+    let Ok(output) = std::process::Command::new("netstat")
+        .args(["-ano", "-p", "TCP"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    windows_listener_pids(&String::from_utf8_lossy(&output.stdout), port)
+}
+
+#[cfg(any(windows, test))]
+fn windows_listener_pids(output: &str, port: u16) -> Vec<i32> {
+    output.lines().filter_map(|line| {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() != 5 || fields[0] != "TCP" || fields[3] != "LISTENING" {
+            return None;
+        }
+        let (address, local_port) = fields[1].rsplit_once(':')?;
+        if local_port.parse::<u16>().ok()? != port
+            || !matches!(address, "127.0.0.1" | "0.0.0.0" | "[::1]" | "[::]")
+        {
+            return None;
+        }
+        fields[4].parse::<i32>().ok().filter(|pid| *pid > 1)
+    }).collect()
 }
 
 #[allow(dead_code)]
@@ -695,9 +740,21 @@ fn clear_gateway_pid(process_pid: &std::sync::atomic::AtomicI32, pid: i32) {
 }
 
 /// Spawn the gateway binary once, returning its pid. The child-wait thread is
-/// a watchdog: if the gateway exits while `stop_intended` is false, it
+/// a watchdog: if the gateway exits before its generation is cancelled, it
 /// respawns automatically with exponential backoff.
 fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
+    let _transition = process
+        .transitions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    spawn_gateway_locked(process, base_url)
+}
+
+fn spawn_gateway_locked(process: &GatewayProcess, base_url: &str) -> Option<i32> {
+    if let Err(error) = stop_owned_gateway_locked(process, None) {
+        process.record_failure(error);
+        return None;
+    }
     if gateway_target_policy(base_url) == GatewayTargetPolicy::UseConfigured {
         return None;
     }
@@ -721,11 +778,8 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
         return None;
     }
     let own_gateway_binary = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
-    if gateway_listening_port(port) && !reclaim_gateway_port_on(port, &own_gateway_binary) {
-        tracing::warn!("gateway port is occupied by a listener this app does not own");
-        process.record_failure(format!(
-            "Port {port} is held by a process this app does not own, so it will not adopt it."
-        ));
+    if let Err(error) = require_gateway_port(port, &own_gateway_binary) {
+        process.record_failure(error);
         return None;
     }
 
@@ -758,11 +812,6 @@ fn spawn_gateway(process: &GatewayProcess, base_url: &str) -> Option<i32> {
         return None;
     }
 
-    // Clear the stop-intended flag for this new lifecycle.
-    process
-        .stop_intended
-        .store(false, std::sync::atomic::Ordering::SeqCst);
-
     spawn_gateway_child(process, &bin, &auth_dir, port)
 }
 
@@ -784,6 +833,8 @@ fn launch_gateway_process(
         .args(["--port", &port.to_string()])
         .stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn()?;
+    #[cfg(target_os = "macos")]
+    native_input_probe::lifecycle(child.id() as i32, "spawned");
     let reader = child.stderr.take().map(|stderr| {
         let sink = process.clone();
         std::thread::spawn(move || {
@@ -818,6 +869,11 @@ fn spawn_gateway_child(
             let watchdog_process = process.clone();
             let bin = bin.to_path_buf();
             let auth_dir = auth_dir.to_path_buf();
+            let gate = std::sync::Arc::new(gateway_process::SpawnGate::default());
+            let watchdog_gate = gate.clone();
+            let (finished_tx, finished) = std::sync::mpsc::channel();
+            *process.lifecycle.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(GatewayWatchdog { gate, finished });
             std::thread::spawn(move || {
                 gateway_watchdog_loop(
                     child,
@@ -827,7 +883,11 @@ fn spawn_gateway_child(
                     bin,
                     auth_dir,
                     port,
+                    watchdog_gate,
                 );
+                if let Err(error) = finished_tx.send(()) {
+                    tracing::debug!(%error, "gateway watchdog completion receiver closed");
+                }
             });
             Some(pid)
         }
@@ -849,12 +909,15 @@ fn gateway_watchdog_loop(
     bin: std::path::PathBuf,
     auth_dir: std::path::PathBuf,
     port: u16,
+    gate: std::sync::Arc<gateway_process::SpawnGate>,
 ) {
     let mut policy = gateway_process::RespawnPolicy::new();
 
     loop {
         let spawn_time = std::time::Instant::now();
         let result = child.wait();
+        #[cfg(target_os = "macos")]
+        native_input_probe::lifecycle(pid, if result.is_ok() { "reaped" } else { "wait-error" });
         let uptime = spawn_time.elapsed();
         clear_gateway_pid(&process.pid, pid);
         // The reader ends at pipe EOF, which the exit above guarantees. Joining
@@ -872,10 +935,7 @@ fn gateway_watchdog_loop(
 
         // If stop was deliberate (user clicked stop, app is exiting, or
         // restart_gateway killed the old process), do not respawn.
-        if process
-            .stop_intended
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if gate.run(|| ()).is_none() {
             tracing::info!("gateway stop was intentional; watchdog exiting");
             return;
         }
@@ -884,28 +944,39 @@ fn gateway_watchdog_loop(
         let decision = policy.record_exit(uptime);
         match decision {
             gateway_process::RespawnDecision::Respawn { delay } => {
+                #[cfg(test)]
+                let delay =
+                    if let Some(observer) = process.backoff_observer.lock().unwrap().as_ref() {
+                        observer.send(pid).unwrap();
+                        Duration::from_secs(60)
+                    } else {
+                        delay
+                    };
                 tracing::warn!(
                     ?delay,
                     consecutive_failures = policy.consecutive_failures(),
                     "gateway exited unexpectedly; respawning after backoff"
                 );
-                std::thread::sleep(delay);
-
-                // Check again after sleep — the user may have stopped us.
-                if process
-                    .stop_intended
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                {
+                if !gate.wait(delay) {
                     tracing::info!("gateway stop intended during backoff; watchdog exiting");
                     return;
                 }
 
-                match launch_gateway_process(&bin, &auth_dir, &process, port) {
+                let Some(launched) = gate.run(|| {
+                    let launched = launch_gateway_process(&bin, &auth_dir, &process, port)?;
+                    let next_pid = launched.0.id() as i32;
+                    process
+                        .pid
+                        .store(next_pid, std::sync::atomic::Ordering::SeqCst);
+                    GATEWAY_CHILD_PID.store(next_pid, std::sync::atomic::Ordering::SeqCst);
+                    Ok::<_, std::io::Error>(launched)
+                }) else {
+                    return;
+                };
+                match launched {
                     Ok((new_child, new_reader)) => {
                         pid = new_child.id() as i32;
                         tracing::info!(pid, "mahoquot-gateway respawned");
-                        process.pid.store(pid, std::sync::atomic::Ordering::SeqCst);
-                        GATEWAY_CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
                         install_gateway_signal_guard();
                         child = new_child;
                         stderr_reader = new_reader;
@@ -939,8 +1010,8 @@ fn gateway_watchdog_loop(
 
 fn wait_for_gateway_ready_port(process: &GatewayProcess, port: u16) -> bool {
     wait_until(GATEWAY_READY_TIMEOUT, || {
-        gateway_listening_port(port) || process.pid() <= 1
-    }) && gateway_listening_port(port)
+        owned_gateway_ready(process, port) || process.pid() <= 1
+    }) && owned_gateway_ready(process, port)
 }
 
 #[allow(dead_code)]
@@ -976,43 +1047,58 @@ fn request_gateway_shutdown(config: &Config) {
 }
 
 fn stop_owned_gateway(process: &GatewayProcess, config: Option<&Config>) -> Result<bool, String> {
-    let pid = process.pid();
-    if pid <= 1 {
-        return Ok(false);
+    let _transition = process
+        .transitions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    stop_owned_gateway_locked(process, config)
+}
+
+fn stop_owned_gateway_locked(
+    process: &GatewayProcess,
+    config: Option<&Config>,
+) -> Result<bool, String> {
+    let mut lifecycle = process.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(watchdog) = lifecycle.as_ref() {
+        watchdog.gate.cancel();
     }
-    // Signal the watchdog thread: this stop is intentional, do not respawn.
-    process
-        .stop_intended
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    if let Some(config) = config {
-        request_gateway_shutdown(config);
-        if wait_until(GATEWAY_STOP_TIMEOUT, || !process_is_running(pid)) {
-            clear_gateway_pid(&process.pid, pid);
-            return Ok(true);
+    let pid = process.pid();
+    if pid > 1 {
+        if let Some(config) = config {
+            request_gateway_shutdown(config);
+            wait_until(GATEWAY_STOP_TIMEOUT, || !process_is_running(pid));
+        }
+        if process_is_running(pid) {
+            terminate_process(pid, GATEWAY_STOP_TIMEOUT, || {
+                !process_is_running(pid) || process.pid() != pid
+            })?;
+        }
+        clear_gateway_pid(&process.pid, pid);
+    }
+    if let Some(watchdog) = lifecycle.as_ref() {
+        match watchdog.finished.recv_timeout(GATEWAY_STOP_TIMEOUT) {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+            Err(error) => return Err(format!("gateway watchdog did not finish: {error}")),
         }
     }
-    terminate_process(pid, GATEWAY_STOP_TIMEOUT, || {
-        !process_is_running(pid) || process.pid() != pid
-    })?;
-    clear_gateway_pid(&process.pid, pid);
-    Ok(true)
+    *lifecycle = None;
+    Ok(pid > 1)
 }
 
 #[tauri::command]
-fn native_settings_state(
+async fn native_settings_state(
     app: tauri::AppHandle,
     process: tauri::State<'_, GatewayProcess>,
     config: tauri::State<'_, Config>,
-) -> os_integration::NativeSettingsState {
+) -> Result<os_integration::NativeSettingsState, String> {
     let login_start_enabled = app.autolaunch().is_enabled().unwrap_or(false);
-    let is_running =
-        gateway_listening_port(target_gateway_port(&config.base_url)) || process.pid() > 1;
-    os_integration::NativeSettingsState::new(is_running, notification_service_status(&app))
-        .with_login_start(login_start_enabled)
+    let is_running = gateway_available(&process, &config).await;
+    Ok(os_integration::NativeSettingsState::new(is_running, notification_service_status(&app))
+        .with_login_start(login_start_enabled))
 }
 
 #[tauri::command]
-fn set_login_start(
+async fn set_login_start(
     app: tauri::AppHandle,
     process: tauri::State<'_, GatewayProcess>,
     config: tauri::State<'_, Config>,
@@ -1024,8 +1110,7 @@ fn set_login_start(
         app.autolaunch().disable()
     }
     .map_err(|error| error.to_string())?;
-    let is_running =
-        gateway_listening_port(target_gateway_port(&config.base_url)) || process.pid() > 1;
+    let is_running = gateway_available(&process, &config).await;
     Ok(
         os_integration::NativeSettingsState::new(is_running, notification_service_status(&app))
             .with_login_start(enabled),
@@ -1033,11 +1118,11 @@ fn set_login_start(
 }
 
 #[tauri::command]
-fn request_notification_permission(
+async fn request_notification_permission(
     app: tauri::AppHandle,
     process: tauri::State<'_, GatewayProcess>,
     config: tauri::State<'_, Config>,
-) -> os_integration::NativeSettingsState {
+) -> Result<os_integration::NativeSettingsState, String> {
     let status = match app.notification().request_permission() {
         Ok(tauri::plugin::PermissionState::Denied) => {
             os_integration::NotificationServiceStatus::PermissionDenied
@@ -1048,10 +1133,9 @@ fn request_notification_permission(
             os_integration::NotificationServiceStatus::ServiceUnavailable
         }
     };
-    let is_running =
-        gateway_listening_port(target_gateway_port(&config.base_url)) || process.pid() > 1;
-    os_integration::NativeSettingsState::new(is_running, status)
-        .with_login_start(app.autolaunch().is_enabled().unwrap_or(false))
+    let is_running = gateway_available(&process, &config).await;
+    Ok(os_integration::NativeSettingsState::new(is_running, status)
+        .with_login_start(app.autolaunch().is_enabled().unwrap_or(false)))
 }
 
 #[derive(serde::Serialize)]
@@ -1323,12 +1407,67 @@ fn write_gateway_config(contents: String) -> Result<String, String> {
     Ok(backup.display().to_string())
 }
 
+fn owned_gateway_ready(process: &GatewayProcess, port: u16) -> bool {
+    let pid = process.pid();
+    #[cfg(target_os = "macos")]
+    let qa_generation = native_input_probe::generation(pid);
+    let mut listeners = Vec::new();
+    let ready = pid > 1
+        && process_is_running(pid)
+        && {
+            listeners = listener_pids_for(port);
+            listeners.contains(&pid)
+        }
+        && gateway_listening_port(port)
+        && process.pid() == pid;
+    #[cfg(target_os = "macos")]
+    if ready && listeners.iter().all(|owner| *owner == pid) {
+        native_input_probe::lifecycle_for_generation(pid, "ready", qa_generation);
+    }
+    ready
+}
+
+fn require_gateway_port(port: u16, binary: &std::path::Path) -> Result<(), String> {
+    if gateway_listening_port(port) && !reclaim_gateway_port_on(port, binary) {
+        return Err(format!(
+            "Port {port} is held by a process this app does not own, so it will not adopt it."
+        ));
+    }
+    Ok(())
+}
+
+async fn configured_gateway_available(config: &Config) -> bool {
+    config
+        .client
+        .get(format!(
+            "{}/admin/stats",
+            config.base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(&config.management_key)
+        .timeout(GATEWAY_READY_TIMEOUT)
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
 #[tauri::command]
-fn gateway_status(config: tauri::State<'_, Config>) -> GatewayLifecycleStatus {
-    if gateway_listening_port(target_gateway_port(&config.base_url)) {
+async fn gateway_status(
+    process: tauri::State<'_, GatewayProcess>,
+    config: tauri::State<'_, Config>,
+) -> Result<GatewayLifecycleStatus, String> {
+    Ok(if gateway_available(&process, &config).await {
         GatewayLifecycleStatus::Running
     } else {
         GatewayLifecycleStatus::Stopped
+    })
+}
+
+async fn gateway_available(process: &GatewayProcess, config: &Config) -> bool {
+    match gateway_target_policy(&config.base_url) {
+        GatewayTargetPolicy::ManageLocal => {
+            owned_gateway_ready(&process, target_gateway_port(&config.base_url))
+        }
+        GatewayTargetPolicy::UseConfigured => configured_gateway_available(&config).await,
     }
 }
 
@@ -1346,21 +1485,35 @@ fn start_gateway(
     process: tauri::State<'_, GatewayProcess>,
     config: tauri::State<'_, Config>,
 ) -> Result<GatewayLifecycleStatus, String> {
+    let _transition = process
+        .transitions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if gateway_target_policy(&config.base_url) == GatewayTargetPolicy::UseConfigured {
         return Err("gateway lifecycle is unavailable for a configured remote URL".to_string());
     }
     let port = target_gateway_port(&config.base_url);
-    if gateway_listening_port(port) {
+    start_local_gateway(&process, port, || {
+        spawn_gateway_locked(&process, &config.base_url)
+            .ok_or_else(|| "gateway binary unavailable or local port occupied".to_string())
+    })
+}
+
+fn start_local_gateway(
+    process: &GatewayProcess,
+    port: u16,
+    spawn: impl FnOnce() -> Result<i32, String>,
+) -> Result<GatewayLifecycleStatus, String> {
+    if owned_gateway_ready(&process, port) {
         return Ok(GatewayLifecycleStatus::Running);
     }
     if process.pid() <= 1 {
-        spawn_gateway(&process, &config.base_url)
-            .ok_or_else(|| "gateway binary unavailable or local port occupied".to_string())?;
+        spawn()?;
     }
     if wait_for_gateway_ready_port(&process, port) {
         Ok(GatewayLifecycleStatus::Running)
     } else {
-        let _ = stop_owned_gateway(&process, None);
+        stop_owned_gateway_locked(&process, None)?;
         process.record_child_failure("The gateway did not begin listening within 5 seconds.");
         Err("gateway did not begin listening within 5 seconds".to_string())
     }
@@ -1379,35 +1532,30 @@ fn stop_gateway(
     let _shutdown_policy = gateway_process::shutdown_plan(ownership, false);
     if stop_owned_gateway(&process, Some(&config))? {
         tracing::info!("mahoquot-gateway terminated");
-    } else if gateway_listening_port(target_gateway_port(&config.base_url)) {
-        return Ok(GatewayLifecycleStatus::Running);
     }
     Ok(GatewayLifecycleStatus::Stopped)
 }
 
-/// Restart the gateway: stop the current process (intentionally) then spawn a
-/// fresh one. The watchdog on the old process won't interfere because
-/// `stop_intended` is set during the stop phase.
 #[tauri::command]
 fn restart_gateway(
     process: tauri::State<'_, GatewayProcess>,
     config: tauri::State<'_, Config>,
 ) -> Result<GatewayLifecycleStatus, String> {
+    let _transition = process
+        .transitions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if gateway_target_policy(&config.base_url) == GatewayTargetPolicy::UseConfigured {
         return Err("gateway lifecycle is unavailable for a configured remote URL".to_string());
     }
-    // Stop the old instance (sets stop_intended, so the old watchdog exits).
-    if process.pid() > 1 {
-        let _ = stop_owned_gateway(&process, Some(&config));
-    }
-    // Spawn a new one (clears stop_intended and starts a fresh watchdog).
-    spawn_gateway(&process, &config.base_url)
+    stop_owned_gateway_locked(&process, Some(&config))?;
+    spawn_gateway_locked(&process, &config.base_url)
         .ok_or_else(|| "gateway binary unavailable or local port occupied".to_string())?;
     let port = target_gateway_port(&config.base_url);
     if wait_for_gateway_ready_port(&process, port) {
         Ok(GatewayLifecycleStatus::Running)
     } else {
-        let _ = stop_owned_gateway(&process, None);
+        stop_owned_gateway_locked(&process, None)?;
         process.record_child_failure(
             "The restarted gateway did not begin listening within 5 seconds.",
         );
@@ -1712,13 +1860,7 @@ fn handle_tray_action<R: Runtime>(app: &AppHandle<R>, action: tray::TrayMenuActi
     }
 }
 
-fn toggle_tray_panel<R: Runtime>(
-    app: &AppHandle<R>,
-    icon_x: f64,
-    icon_y: f64,
-    icon_width: f64,
-    icon_height: f64,
-) {
+fn toggle_tray_panel<R: Runtime>(app: &AppHandle<R>, icon_rect: tauri::Rect) {
     let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) else {
         return;
     };
@@ -1727,16 +1869,61 @@ fn toggle_tray_panel<R: Runtime>(
         return;
     }
 
-    let scale = panel.scale_factor().unwrap_or(1.0);
-    let panel_width = (PANEL_WIDTH_LOGICAL * scale).round();
-    let icon_right = icon_x + icon_width;
-    let below_icon = icon_y + icon_height + 6.0;
-    let x = (icon_right - panel_width).max(icon_x);
-    let y = below_icon;
+    let monitors = match app.available_monitors() {
+        Ok(monitors) => monitors,
+        Err(error) => {
+            tracing::error!(%error, "cannot locate tray monitor");
+            return;
+        }
+    };
+    let Some(monitor) = monitors.iter().find(|monitor| {
+        let point = icon_rect
+            .position
+            .to_physical::<f64>(monitor.scale_factor());
+        let origin = monitor.position();
+        let size = monitor.size();
+        point.x >= f64::from(origin.x)
+            && point.x < f64::from(origin.x) + f64::from(size.width)
+            && point.y >= f64::from(origin.y)
+            && point.y < f64::from(origin.y) + f64::from(size.height)
+    }) else {
+        tracing::warn!("tray icon is outside available monitors");
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let icon = icon_rect.position.to_physical::<f64>(scale);
+    let icon_size = icon_rect.size.to_physical::<f64>(scale);
+    let work = monitor.work_area();
+    let height = match (panel.outer_size(), panel.scale_factor()) {
+        (Ok(size), Ok(current_scale)) => f64::from(size.height) / current_scale,
+        _ => {
+            tracing::error!("cannot read tray panel dimensions");
+            return;
+        }
+    };
+    let position = tray::tray_panel_position(
+        &tray::DisplayBounds {
+            origin_x: f64::from(work.position.x),
+            origin_y: f64::from(work.position.y),
+            width: f64::from(work.size.width),
+            height: f64::from(work.size.height),
+        },
+        &tray::DisplayBounds {
+            origin_x: icon.x,
+            origin_y: icon.y,
+            width: icon_size.width,
+            height: icon_size.height,
+        },
+        &tray::WindowDimensions {
+            width: PANEL_WIDTH_LOGICAL,
+            height,
+        },
+        scale,
+    );
     panel
         .set_position(tauri::PhysicalPosition::new(
-            x.round() as i32,
-            y.round() as i32,
+            position.x.round() as i32,
+            position.y.round() as i32,
         ))
         .map_err(|error| tracing::error!(%error, "failed to position tray panel"))
         .ok();
@@ -1788,15 +1975,7 @@ fn initialize_native_ui(app: &mut App) -> Result<(), Box<dyn std::error::Error>>
                 ..
             } = event
             {
-                let (icon_x, icon_y) = match rect.position {
-                    tauri::Position::Physical(point) => (point.x as f64, point.y as f64),
-                    tauri::Position::Logical(point) => (point.x, point.y),
-                };
-                let (icon_width, icon_height) = match rect.size {
-                    tauri::Size::Physical(size) => (size.width as f64, size.height as f64),
-                    tauri::Size::Logical(size) => (size.width, size.height),
-                };
-                toggle_tray_panel(tray.app_handle(), icon_x, icon_y, icon_width, icon_height);
+                toggle_tray_panel(tray.app_handle(), rect);
             }
         });
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -2228,27 +2407,58 @@ async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, S
 /// desktop app can authenticate with the gateway. Returns the master key.
 fn ensure_master_api_key() -> Result<String, String> {
     let auth_dir = tray::default_auth_dir(tray::current_home()?);
-    let config_path = auth_dir.join("config.yaml");
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        if let Some(key) = tray::extract_first_api_key(&content) {
+    ensure_master_api_key_at(&auth_dir.join("config.yaml"), persist_master_config)
+}
+
+fn ensure_master_api_key_at(
+    config_path: &std::path::Path,
+    persist: impl FnOnce(&std::path::Path, &str) -> Result<(), String>,
+) -> Result<String, String> {
+    let existing = match std::fs::read_to_string(config_path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Cannot read {}: {error}", config_path.display())),
+    };
+    if let Some(content) = existing.as_deref() {
+        if let Some(key) = tray::extract_first_api_key(content)? {
             return Ok(key);
         }
     }
-
-    // Generate a fresh secure master key
     let generated = format!("mq-master-{}", uuid::Uuid::new_v4().simple());
-    let existing = std::fs::read_to_string(&config_path).ok();
-    let updated = tray::config_with_master_api_key(existing.as_deref(), &generated);
-    // A silent write failure is the exact failure mode this function exists to
-    // prevent: the app would authenticate with a key the gateway never loaded.
-    if let Err(error) = std::fs::write(&config_path, updated) {
-        tracing::error!(
-            path = %config_path.display(),
-            %error,
-            "failed to persist the master API key; the gateway will not accept it"
-        );
-    }
+    let updated = tray::config_with_master_api_key(existing.as_deref(), &generated)?;
+    persist(config_path, &updated)?;
     Ok(generated)
+}
+
+fn persist_master_config(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    use std::io::Write;
+    let stage = path.with_file_name(format!(".master-{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| -> std::io::Result<()> {
+        let mut file = options.open(&stage)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&stage, path)
+    })();
+    if let Err(error) = result {
+        if let Err(cleanup) = std::fs::remove_file(&stage) {
+            if cleanup.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(%cleanup, "master key staging cleanup failed");
+            }
+        }
+        return Err(format!(
+            "Cannot persist master API key to {}: {error}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn main() {
@@ -2283,7 +2493,13 @@ fn main() {
     // The key must be on disk before the child starts: the gateway loads
     // config.yaml at startup, so spawning first makes it miss a freshly
     // minted key until the next launch.
-    let master_key = ensure_master_api_key().expect("cannot initialize desktop home");
+    let master_key = match ensure_master_api_key() {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::error!(%error, "cannot provision master API key; repair gateway configuration or storage permissions");
+            return;
+        }
+    };
     if let Err(error) = connection::save(&connection_path, &base_url) {
         tracing::error!(%error, "cannot persist gateway connection; refusing local fallback");
         return;
