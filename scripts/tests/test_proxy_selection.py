@@ -20,7 +20,9 @@ def run_fixture(args, *, timeout=60, check=False, **kwargs):
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
+                # macOS returns EPERM for an already-reaped (zombie) process
+                # group, exactly as the Rust supervisor's stop_process_tree does.
                 pass  # The group exited between the deadline and cleanup.
             stdout, stderr = process.communicate(timeout=5)
             raise AssertionError(
@@ -36,7 +38,7 @@ def run_fixture(args, *, timeout=60, check=False, **kwargs):
         if process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         try:
             process.wait(timeout=5)

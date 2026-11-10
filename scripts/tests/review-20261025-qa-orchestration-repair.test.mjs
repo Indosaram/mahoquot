@@ -27,9 +27,9 @@ test('logical replay and wrong credential cannot become success', () => {
 });
 
 test('candidate correctness requires observations, baseline failure remains collectable', () => {
-  const good = { passed: true, unavailable: false, failure: null, errors: 0, request_count: 1, ttfb_ms: 1, content_ttft_ms: 1, completion_ms: 1, rss_bytes: 1, fd_count: 1 };
+  const good = { passed: true, unavailable: false, failure: null, unexpected_errors: 0, request_count: 1, ttfb_ms: 1, content_ttft_ms: 1, completion_ms: 1, rss_bytes: 1, fd_count: 1 };
   expect(candidateTrialObserved(good)).toBe(true);
-  for (const mutation of [{ unavailable: true }, { errors: 1 }, { passed: false }, { request_count: 0 }, { rss_bytes: 0 }, { failure: 'unready' }]) expect(candidateTrialObserved({ ...good, ...mutation })).toBe(false);
+  for (const mutation of [{ unavailable: true }, { unexpected_errors: 1 }, { passed: false }, { request_count: 0 }, { rss_bytes: -1 }, { failure: 'unready' }]) expect(candidateTrialObserved({ ...good, ...mutation })).toBe(false);
   const unavailable = summarize({ suite: 'resilience', requests: [], stats: {}, report: { correctness_passed: false }, failure: 'unsupported' }, 'B10');
   expect(unavailable.unavailable).toBe(true);
   expect(candidateTrialObserved(unavailable)).toBe(false);
@@ -41,7 +41,23 @@ test('transport failures and invented setting observations cannot certify', asyn
   expect(routeObserved({ status: 200 })).toBe(true);
   const dir = await mkdtemp(join(tmpdir(), 'qao-inventory-'));
   try {
-    await writeFile(join(dir, 'setting-inventory.json'), JSON.stringify({ kind: 'setting', source_revision: 'fixture', source_sha256: 'a'.repeat(64), entries: ['proxy', 'retry', 'quota'].map(id => ({ id, source_path: 'settings.rs', observed: { key: id, verified: true }, pass: true })) }));
+    // validateInventory reads both inventories and pins a shared source/build
+    // run before it reaches the kind-specific entries, so the sibling route
+    // document has to be present and jointly identical.
+    const common = {
+      source_revision: 'fixture',
+      source_sha256: 'a'.repeat(64),
+      provenance: { gateway_revision: 'fixture', gateway_source_sha256: 'a'.repeat(64) },
+      native_run: {
+        source_revision: 'fixture',
+        source_sha256: 'a'.repeat(64),
+        run_id: 'fixture-run',
+        binary_sha256: 'b'.repeat(64),
+        stdout_sha256: 'c'.repeat(64),
+      },
+    };
+    await writeFile(join(dir, 'route-inventory.json'), JSON.stringify({ ...common, kind: 'route', entries: ['healthz', 'models', 'chat-completions'].map(id => ({ id, source_path: 'routes.rs', observed: { status: 200 }, pass: true })) }));
+    await writeFile(join(dir, 'setting-inventory.json'), JSON.stringify({ ...common, kind: 'setting', entries: ['proxy', 'retry', 'quota'].map(id => ({ id, source_path: 'settings.rs', observed: { key: id, verified: true }, pass: true })) }));
     await expect(auditInternals.validateInventory(dir, 'setting')).rejects.toThrow('setting readback missing');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

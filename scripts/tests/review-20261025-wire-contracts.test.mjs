@@ -62,8 +62,13 @@ test("successful response cannot certify a disconnected registry", async () => {
   const pending = disconnectCatalog(fixture.worker, fixture.request, () => {
     throw new Error("must not publish a barrier");
   });
-  const rejected = expect(pending).rejects.toThrow();
+  // Await the rejection directly: a held promise rejected after this frame
+  // never settles bun's expect().rejects wrapper within the test deadline.
+  const settled = pending.then(
+    () => { throw new Error("disconnected registry was certified"); },
+    (error) => error,
+  );
   await fixture.close.promise;
   fixture.removed();
-  await rejected;
+  expect((await settled).message).toContain("503");
 });

@@ -14,6 +14,7 @@ const SCHEMA = "cliproxy-parity/task1-v1";
 const VARIANTS = ["happy", "failure"];
 const IS_ROWS = ["IS-1", "IS-2", "IS-3", "IS-4", "IS-5", "IS-6", "IS-7"];
 const BENCHMARKS = Array.from({ length: 14 }, (_, index) => `B${index}`);
+const F4_METRICS = ["ttfb_ms", "content_ttft_ms", "completion_ms", "errors", "rss_bytes", "fd_count"];
 const GATE_TIMEOUT_MS = 30 * 60 * 1000;
 const HASH = /^[a-f0-9]{64}$/i;
 const REQUIRED_F3_CHANNELS = ["app-interaction", "pty-interaction", "media-peer", "wire-peer"];
@@ -756,6 +757,17 @@ async function validateF4(root) {
   }
 
   assert(plainObject(receipt.benchmarks) && BENCHMARKS.every(id => Object.hasOwn(receipt.benchmarks, id)), 'F4 benchmark matrix missing');
+  for (const id of BENCHMARKS) {
+    const pair = receipt.benchmarks[id];
+    assert(plainObject(pair?.baseline) && plainObject(pair?.candidate), `F4 ${id} requires paired baseline/candidate statistics`);
+    for (const side of [pair.baseline, pair.candidate]) {
+      assert(Number.isInteger(side.samples) && side.samples > 0, `F4 ${id} has no samples`);
+      for (const metric of F4_METRICS) {
+        assert(typeof side[metric] === "number" && Number.isFinite(side[metric]) && side[metric] >= 0, `F4 ${id} invalid metric ${metric}`);
+      }
+    }
+    assert(pair.baseline.samples === pair.candidate.samples, `F4 ${id} sample count mismatch between baseline (${pair.baseline.samples}) and candidate (${pair.candidate.samples})`);
+  }
   await validatePairedContract(root, receipt, { validateProvenance, verifyPhase: verifyPairedPhase });
   return receipt;
 }
