@@ -61,9 +61,8 @@ copy_new = (
 )
 
 s = open(yml).read()
-if target_old in s:
+if "PROFILE_FLAG" not in s:
     s = s.replace(target_old, target_new)
-if copy_old in s:
     s = s.replace(copy_old, copy_new)
 open(yml, "w").write(s)
 
@@ -96,9 +95,8 @@ esc_copy_new = (
     'cp \\"${CARGO_TARGET_DIR}/${RUST_TARGET}/${PROFILE_DIR}/libmahoquot_mobile.a\\" '
     '\\"${SRCROOT}/Externals/arm64/${CONFIGURATION}/libapp.a\\"'
 )
-if esc_target_old in t:
+if "PROFILE_FLAG" not in t:
     t = t.replace(esc_target_old, esc_target_new)
-if esc_copy_old in t:
     t = t.replace(esc_copy_old, esc_copy_new)
 open(pbx, "w").write(t)
 PY
