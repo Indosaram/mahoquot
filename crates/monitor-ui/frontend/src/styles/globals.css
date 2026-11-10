@@ -5315,3 +5315,123 @@ h2 {
 :root[data-theme="light"] .gateway-failure-body pre {
   background: rgb(127 29 29 / 8%);
 }
+
+
+.mobile-connect {
+  min-block-size: 100dvh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 24px 20px calc(32px + env(safe-area-inset-bottom));
+  padding-block-start: calc(24px + env(safe-area-inset-top));
+  background: var(--bg);
+}
+
+.mobile-connect-body {
+  inline-size: 100%;
+  max-inline-size: 460px;
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.mobile-connect-body h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.mobile-connect-body > p {
+  margin: 0;
+  max-inline-size: 42ch;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.mobile-connect-body .field {
+  min-inline-size: 0;
+}
+
+.mobile-connect-body .field small {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.mobile-connect-body .input {
+  font-size: 16px;
+}
+
+.mobile-connect-body .button {
+  min-block-size: 42px;
+  inline-size: 100%;
+  border-radius: 10px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #14100a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mobile-connect-body .button:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  filter: brightness(1.08);
+}
+
+.mobile-connect-body .button:disabled {
+  background: var(--panel-3);
+  border-color: var(--line);
+  color: var(--fg-faint);
+  opacity: 1;
+}
+
+.mobile-connect-body .field-error {
+  color: var(--bad);
+  font-size: 12px;
+}
+
+:root[data-theme="light"] .mobile-connect-body .button:not(:disabled) {
+  color: #ffffff;
+}
+
+@media (max-width: 430px) {
+  .mobile-connect {
+    padding-block-start: calc(28px + env(safe-area-inset-top));
+  }
+
+  .mobile-connect-body {
+    padding: 18px;
+    gap: 14px;
+  }
+}
+
+
+.mobile-connect-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.mobile-connect-brand div {
+  display: grid;
+  gap: 1px;
+}
+
+.mobile-connect-brand strong {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.mobile-connect-brand small {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
