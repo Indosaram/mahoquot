@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AdminStats } from "../lib/schemas";
 import {
+  DEFAULT_HISTORY_MINUTES,
   appendTelemetrySample,
   filterTelemetryRange,
   persistedTelemetrySamples,
   providerTotals,
+  rangeHistoryMinutes,
   summarizeTelemetry,
   telemetrySeries,
 } from "../lib/telemetry";
@@ -1077,5 +1079,21 @@ describe("request telemetry sampling", () => {
     expect(codex?.successes).toBe(summary.successes);
     // The first poll only establishes the baseline (delta 0): 10 -> 20 -> 30.
     expect(summary.successes).toBe(20);
+  });
+});
+
+describe("rangeHistoryMinutes", () => {
+  it("maps each chart range to the exact span of minutes it draws", () => {
+    // The gateway keeps a month of buckets; a chart can only draw its own range,
+    // so the width here is the whole bound on the first /admin/stats payload.
+    expect(rangeHistoryMinutes("30m")).toBe(30);
+    expect(rangeHistoryMinutes("1h")).toBe(60);
+    expect(rangeHistoryMinutes("1d")).toBe(1440);
+    expect(rangeHistoryMinutes("7d")).toBe(10_080);
+    expect(rangeHistoryMinutes("30d")).toBe(43_200);
+  });
+
+  it("keeps the default window equal to the default chart range", () => {
+    expect(DEFAULT_HISTORY_MINUTES).toBe(rangeHistoryMinutes("1d"));
   });
 });

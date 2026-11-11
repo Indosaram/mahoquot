@@ -9,6 +9,7 @@ import {
   type ModelRegistryStatus,
 } from "@/lib/schemas";
 import {
+  DEFAULT_HISTORY_MINUTES,
   type TelemetrySample,
   appendTelemetrySample,
   persistedTelemetrySamples,
@@ -25,12 +26,6 @@ type RoundOutcome = "ok" | "failed" | "relay-locked" | "superseded";
 
 const POLL_INTERVAL_MS = 10_000;
 const STARTUP_RETRY_MS = 2_000;
-
-/** Bucket window for the one history-carrying round. The switcher's narrowest
- * useful span is a day, and the gateway's default is its entire retained store:
- * measured 33k one-minute buckets at ~24MB, against 556KB for a day and 171KB
- * for live counters only. */
-export const FIRST_LOAD_HISTORY_MINUTES = 24 * 60;
 
 /** Log lines pulled per poll. The Logs table reads paginated history; this tail
  * only backs the proxy view, so an unbounded reply would re-ship the whole
@@ -62,8 +57,15 @@ const emptyStats: AdminStats = {
 /**
  * Owns the gateway poll. Contract: user-triggered refreshes spin the tray
  * icon; background polls never do, and failed rounds back off exponentially.
+ *
+ * `historyMinutes` is the span of per-minute buckets the first round backfills
+ * for the charts. It follows the chart's selected range so the opening request
+ * never drags the gateway's whole month-long retention across the wire.
  */
-export function useGatewayPolling(clients: GatewayClients) {
+export function useGatewayPolling(
+  clients: GatewayClients,
+  historyMinutes: number = DEFAULT_HISTORY_MINUTES,
+) {
   const [stats, setStats] = useState<AdminStats>(emptyStats);
   const [credentials, setCredentials] = useState<readonly AuthFileItem[]>([]);
   const [logs, setLogs] = useState<readonly LogRecord[]>([]);
@@ -81,6 +83,12 @@ export function useGatewayPolling(clients: GatewayClients) {
   const [gatewayModels, setGatewayModels] = useState<readonly GatewayModelEntry[]>([]);
   const firstLoad = useRef(true);
   const hasSucceeded = useRef(false);
+  // Read through a ref so a chart range change does not invalidate `runRound`, which
+  // would restart the poll loop and abort the round already in flight.
+  const historyMinutesRef = useRef(historyMinutes);
+  useEffect(() => {
+    historyMinutesRef.current = historyMinutes;
+  }, [historyMinutes]);
   const usageRefreshAt = useRef(0);
   const pollGeneration = useRef(0);
   const spinTimerRef = useRef<number | undefined>(undefined);
@@ -194,16 +202,13 @@ export function useGatewayPolling(clients: GatewayClients) {
     // surfaces stayed empty until the whole snapshot finished. Start the
     // snapshot now, but never let it gate the reads.
     //
-    // Only the first round carries bucket history, and it asks for the default
-    // chart range rather than the gateway's whole retained store. The store is
-    // one bucket per minute for 30 days (33k buckets, ~24MB measured) and the
-    // gateway serializes every bucket it is asked for, so an unbounded first
-    // read is the difference between a console that opens in about a second and
-    // one that spends over a minute on a single response. Later rounds ask for
-    // the live counters alone; the charts keep accumulating samples locally.
+    // Only the first round carries the bucket history that feeds the charts,
+    // and only for the selected range. Every later round asks for the live
+    // counters alone: the charts keep accumulating samples locally, while the
+    // response drops from tens of megabytes to a few kilobytes.
     const wantsHistory = firstLoad.current;
     const statsAttempt = clients.admin
-      .stats(wantsHistory ? { historyMinutes: FIRST_LOAD_HISTORY_MINUTES } : { historyMinutes: 0 })
+      .stats(wantsHistory ? { historyMinutes: historyMinutesRef.current } : { historyMinutes: 0 })
       .then(
         (stats) => ({ stats }) as const,
         (error: unknown) => ({ error }) as const,

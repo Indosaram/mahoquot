@@ -489,12 +489,21 @@ pub fn build_view(stats: &AdminStats, now_unix_ms: i64) -> MonitorView {
     }
 }
 
+/// Reads the gateway snapshot the native shell turns into tray and notch state.
+///
+/// The shell only derives counters, health, and TTFT, so it asks for the live
+/// snapshot without bucket history. Unbounded history made every native poll
+/// serialise the gateway's whole month of per-minute buckets, which is tens of
+/// megabytes over the remote tunnel.
 pub async fn fetch_stats(
     client: &reqwest::Client,
     base_url: &str,
     api_key: &str,
 ) -> Result<AdminStats, String> {
-    let url = format!("{}/admin/stats", base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/admin/stats?history_minutes=0",
+        base_url.trim_end_matches('/')
+    );
     let resp = client
         .get(&url)
         .bearer_auth(api_key)
@@ -513,6 +522,66 @@ pub async fn fetch_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The native shell derives only counters and health, so its poll must not
+    /// drag the gateway's whole bucket history across the wire. A defaulted
+    /// request is what made every 30-second tray poll fetch tens of megabytes.
+    #[tokio::test]
+    async fn fetch_stats_requests_live_counters_without_bucket_history() {
+        use std::io::{BufRead, Write};
+        let listener = (18840..=18899)
+            .find_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok())
+            .expect("an available QA port");
+        let base_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            let mut request = String::new();
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                request.push_str(&line);
+            }
+            let body = r#"{"uptime_secs":1,"served":0,"failed_over":0,"ttft":null,"accounts":[]}"#;
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            request_tx.send(request).unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let stats = fetch_stats(&client, &base_url, "fixture-key")
+            .await
+            .unwrap();
+        assert!(stats.accounts.is_empty());
+
+        let request = request_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let request_line = request.lines().next().unwrap_or_default().to_string();
+        assert!(
+            request_line.starts_with("GET /admin/stats?history_minutes=0 "),
+            "native poll must ask for live counters only, got: {request_line}"
+        );
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-key\r\n"));
+        server.join().unwrap();
+    }
 
     fn stats_json() -> AdminStats {
         serde_json::from_str(

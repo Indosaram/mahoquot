@@ -56,6 +56,23 @@ const parsePriceDraft = (text: string): number | null => {
 const TRANSIENT_REJECTION =
   /\b(429|5\d\d)\b|rate.?limit|timed? ?out|timeout|network|connect|unavailable|temporar|unreachable/i;
 
+const describeCatalogSource = (source: ModelRegistryStatus["source"]): string => {
+  switch (source) {
+    case "remote_signed":
+      return "remote signed catalog";
+    case "lkg_cache":
+      return "cached catalog";
+    case "embedded_fallback":
+      return "bundled fallback catalog";
+    case "discovered":
+      return "discovered catalog";
+    case "local_override":
+      return "local override catalog";
+    default:
+      return "active catalog";
+  }
+};
+
 function ModelPriceEstimate({ value }: { readonly value: number | null }) {
   return value === null ? (
     <strong className="unavailable">{UNAVAILABLE_LABEL}</strong>
@@ -385,24 +402,44 @@ export function SettingsSurface({
   const jumpSignature = jumpTargets.map((target) => target.id).join("|");
 
   useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") return;
     const sections = jumpSignature
       .split("|")
       .map((id) => document.getElementById(id))
       .filter((section): section is HTMLElement => section !== null);
     if (sections.length === 0) return;
+    const scroller = sections[0]?.closest("main");
     const sync = () => {
-      const line = window.innerHeight * 0.35;
+      const nav = document.querySelector(".settings-jump");
+      const navClearance = nav ? nav.getBoundingClientRect().bottom + 32 : 0;
+      const line = Math.max(window.innerHeight * 0.35, navClearance);
       let current = sections[0];
       for (const section of sections) {
         if (section.getBoundingClientRect().top <= line) current = section;
       }
-      setActiveSection(current.id);
+      if (
+        scroller &&
+        scroller.scrollHeight > scroller.clientHeight &&
+        Math.ceil(scroller.scrollTop + scroller.clientHeight) >= scroller.scrollHeight - 8
+      ) {
+        current = sections.at(-1) ?? current;
+      }
+      if (current) setActiveSection(current.id);
     };
     sync();
-    const observer = new IntersectionObserver(sync, { threshold: [0, 0.01] });
-    for (const section of sections) observer.observe(section);
-    return () => observer.disconnect();
+    scroller?.addEventListener("scroll", sync, { passive: true });
+    window.addEventListener("scroll", sync, { passive: true });
+    window.addEventListener("resize", sync, { passive: true });
+    const observer =
+      typeof IntersectionObserver !== "undefined"
+        ? new IntersectionObserver(sync, { threshold: [0, 0.01, 0.25, 0.5, 0.75, 1] })
+        : null;
+    for (const section of sections) observer?.observe(section);
+    return () => {
+      scroller?.removeEventListener("scroll", sync);
+      window.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+      observer?.disconnect();
+    };
   }, [jumpSignature]);
 
   return (
@@ -416,8 +453,29 @@ export function SettingsSurface({
                 type="button"
                 className={cn("settings-jump-link", activeSection === target.id && "active")}
                 aria-current={activeSection === target.id ? "location" : undefined}
-                onClick={() => {
-                  document.getElementById(target.id)?.scrollIntoView({ block: "start" });
+                onClick={(event) => {
+                  const section = document.getElementById(target.id);
+                  if (!section) return;
+                  setActiveSection(target.id);
+                  const nav = event.currentTarget.closest("nav");
+                  const scroller = section.closest("main");
+                  if (nav && scroller && scroller.scrollHeight > scroller.clientHeight) {
+                    const scrollerTop = scroller.getBoundingClientRect().top;
+                    const clearance =
+                      Math.ceil(nav.getBoundingClientRect().bottom - scrollerTop) + 8;
+                    const targetTop =
+                      scroller.scrollTop +
+                      (section.getBoundingClientRect().top - scrollerTop) -
+                      Math.max(84, clearance);
+                    scroller.scrollTo({ top: Math.max(0, targetTop) });
+                  } else {
+                    section.scrollIntoView({ block: "start" });
+                  }
+                  const heading = section.querySelector<HTMLElement>("h2");
+                  if (heading) {
+                    if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+                    heading.focus({ preventScroll: true });
+                  }
                 }}
               >
                 {target.label}
@@ -433,7 +491,6 @@ export function SettingsSurface({
           aria-label="Gateway and runtime"
         >
           <header className="settings-section-head">
-            <span className="kicker">CORE RUNTIME</span>
             <h2>Gateway & Connection</h2>
             <p>Local inference proxy lifecycle, address binding, and access credentials.</p>
           </header>
@@ -469,13 +526,15 @@ export function SettingsSurface({
                   <p>{baseUrl || "Same-origin gateway"}</p>
                 </div>
               </header>
-              <div className="connection-fields">
+              <div className="connection-fields connection-fields-grid">
                 <Field
                   label="Gateway URL"
                   hint="Blank uses the current origin. Desktop defaults to http://127.0.0.1:18801."
                 >
                   <Input
                     aria-label="Gateway URL"
+                    type="url"
+                    inputMode="url"
                     aria-invalid={gatewayUrlError !== null && gatewayUrlError !== undefined}
                     value={baseUrl}
                     placeholder="http://127.0.0.1:18801"
@@ -515,91 +574,103 @@ export function SettingsSurface({
               </div>
               <div className="connection-actions">
                 <span>Connection changes apply to this console immediately.</span>
-                <Button onClick={onSaveConnection}>Save & reconnect</Button>
+                <Button className="button-primary" onClick={onSaveConnection}>
+                  Save & reconnect
+                </Button>
               </div>
             </Card>
-            <Card className="settings-card">
-              <header className="settings-card-head">
-                <div className="settings-icon">
-                  <Settings2 size={17} />
-                </div>
-                <div>
-                  <h2>Desktop integration</h2>
-                  <p>Native login startup and observed-state notifications.</p>
-                </div>
-                <Badge tone={nativeSettings?.notifications === "available" ? "ok" : "warn"}>
-                  {nativeSettings?.notifications === "available"
-                    ? "Notifications ready"
-                    : nativeSettings?.notifications === "permission_denied"
-                      ? "Permission denied"
-                      : "Service unavailable"}
-                </Badge>
-              </header>
-              <div className="proxy-settings-grid">
-                <label className="toggle-field">
-                  <input
-                    aria-label="Start Mahoquot at login"
-                    type="checkbox"
-                    checked={nativeSettings?.login_start_enabled ?? false}
-                    disabled={nativeSettingsBusy}
-                    onChange={(event) => void onLoginStartChange(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Start Mahoquot at login</strong>
-                    <small>
-                      Starts the owned gateway, tray, and compact notch while leaving the console
-                      hidden and unfocused.
-                    </small>
-                  </span>
-                </label>
-                <div>
-                  <strong>Native notifications</strong>
-                  <p>
-                    Account isolation, all-account exhaustion, degraded history, update readiness or
-                    failure, and tunnel failure are observed by Rust without hidden-webview polling.
-                  </p>
-                  {nativeSettings?.action ? <p role="alert">{nativeSettings.action}</p> : null}
-                  {nativeSettings?.notifications !== "available" ? (
-                    <Button
+            <div className="settings-card-pair">
+              <Card className="settings-card">
+                <header className="settings-card-head">
+                  <div className="settings-icon">
+                    <Settings2 size={17} />
+                  </div>
+                  <div>
+                    <h2>Desktop integration</h2>
+                    <p>Native login startup and observed-state notifications.</p>
+                  </div>
+                  <Badge tone={nativeSettings?.notifications === "available" ? "ok" : "warn"}>
+                    {nativeSettings?.notifications === "available"
+                      ? "Notifications ready"
+                      : nativeSettings?.notifications === "permission_denied"
+                        ? "Permission denied"
+                        : "Service unavailable"}
+                  </Badge>
+                </header>
+                <div className="settings-toggle-list">
+                  <label className="toggle-field">
+                    <input
+                      aria-label="Start Mahoquot at login"
+                      type="checkbox"
+                      checked={nativeSettings?.login_start_enabled ?? false}
                       disabled={nativeSettingsBusy}
-                      onClick={() => void onRequestNotificationPermission()}
-                    >
-                      {nativeSettingsBusy ? "Checking…" : "Enable notifications"}
+                      onChange={(event) => void onLoginStartChange(event.target.checked)}
+                    />
+                    <span>
+                      <strong>Start Mahoquot at login</strong>
+                      <small>
+                        Starts the owned gateway, tray, and compact notch while leaving the console
+                        hidden and unfocused.
+                      </small>
+                    </span>
+                  </label>
+                  <div className="settings-inline-row">
+                    <div>
+                      <strong>Native notifications</strong>
+                      <p>
+                        Account isolation, all-account exhaustion, degraded history, update
+                        readiness or failure, and tunnel failure are observed by Rust.
+                      </p>
+                      {nativeSettings?.action ? <p role="alert">{nativeSettings.action}</p> : null}
+                    </div>
+                    {nativeSettings?.notifications !== "available" ? (
+                      <Button
+                        disabled={nativeSettingsBusy}
+                        onClick={() => void onRequestNotificationPermission()}
+                      >
+                        {nativeSettingsBusy ? "Checking…" : "Enable notifications"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </Card>
+              <Card className="settings-card">
+                <header className="settings-card-head">
+                  <div className="settings-icon">
+                    <ArrowDownToLine size={17} />
+                  </div>
+                  <div>
+                    <h2>Signed updates</h2>
+                    <p>Desktop and bundled gateway update as one verified release unit.</p>
+                  </div>
+                  <Badge tone={updateStatus?.available ? "warn" : "neutral"}>
+                    {updateStatus?.available
+                      ? updateStatus.version
+                      : updateStatus
+                        ? "Current"
+                        : "Verified"}
+                  </Badge>
+                </header>
+                <p className="settings-card-copy">
+                  Checks release signatures before replacing the desktop bundle and sidecar gateway.
+                </p>
+                <div className="settings-actions">
+                  <Button disabled={updateBusy} onClick={onCheckUpdate}>
+                    {updateBusy && !updateStatus?.available ? "Checking…" : "Check for updates"}
+                  </Button>
+                  {updateStatus?.available ? (
+                    <Button disabled={updateBusy} onClick={onInstallUpdate}>
+                      {updateBusy ? "Installing…" : "Install signed update"}
                     </Button>
                   ) : null}
                 </div>
-              </div>
-            </Card>
-            <Card className="settings-card">
-              <header className="settings-card-head">
-                <div className="settings-icon">
-                  <ArrowDownToLine size={17} />
-                </div>
-                <div>
-                  <h2>Signed updates</h2>
-                  <p>Desktop and bundled gateway update as one verified release unit.</p>
-                </div>
-                <Badge tone={updateStatus?.available ? "warn" : "neutral"}>
-                  {updateStatus?.available ? updateStatus.version : "Current"}
-                </Badge>
-              </header>
-              <div className="settings-actions">
-                <Button disabled={updateBusy} onClick={onCheckUpdate}>
-                  Check for updates
-                </Button>
-                {updateStatus?.available ? (
-                  <Button disabled={updateBusy} onClick={onInstallUpdate}>
-                    Install signed update
-                  </Button>
-                ) : null}
-              </div>
-            </Card>
+              </Card>
+            </div>
           </div>
         </section>
 
         <section id="settings-proxy" className="settings-section" aria-label="Proxy and routing">
           <header className="settings-section-head">
-            <span className="kicker">TRAFFIC & DISCOVERY</span>
             <h2>Proxy & Routing</h2>
             <p>Routing strategy, upstream catalogs, failover scheduling, and ingress tunnel.</p>
           </header>
@@ -615,7 +686,7 @@ export function SettingsSurface({
                 </div>
                 <Badge tone="warn">Saved changes require restart</Badge>
               </header>
-              <div className="proxy-settings-grid">
+              <div className="proxy-scalars-grid">
                 <Field
                   label="Routing strategy"
                   hint="Failover only before the first response byte; cooldowns follow provider direction."
@@ -646,51 +717,16 @@ export function SettingsSurface({
                 <Field label="Upstream proxy URL" hint="Leave blank to connect directly.">
                   <Input
                     aria-label="Upstream proxy URL"
+                    type="url"
+                    inputMode="url"
                     value={proxyUrl}
                     placeholder="http://127.0.0.1:7890"
                     disabled={!scalarsLoaded}
                     onChange={(event) => onProxyUrlChange(event.target.value)}
                   />
                 </Field>
-                <label className="toggle-field">
-                  <input
-                    aria-label="Show remaining quota"
-                    type="checkbox"
-                    checked={showRemaining}
-                    onChange={(event) => onShowRemainingChange(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Show remaining quota</strong>
-                    <small>Show how much quota is left instead of how much was used.</small>
-                  </span>
-                </label>
-                <Field
-                  label="Cline daily quota display"
-                  hint="Which Cline free models show a (Daily limit) row. Choices come from the Cline model list and models this gateway has served."
-                >
-                  {clineQuotaCandidates.length === 0 ? (
-                    <small>Loading Cline model list...</small>
-                  ) : (
-                    clineQuotaCandidates.map(({ slug, label }) => (
-                      <label className="toggle-field" key={slug}>
-                        <input
-                          aria-label={`Show daily quota for ${label}`}
-                          type="checkbox"
-                          checked={clineQuotaDisplay.includes(slug)}
-                          onChange={(event) => {
-                            const next = event.target.checked
-                              ? [...clineQuotaDisplay, slug]
-                              : clineQuotaDisplay.filter((entry) => entry !== slug);
-                            onClineQuotaDisplayChange?.(next);
-                          }}
-                        />
-                        <span>
-                          <strong>{label}</strong>
-                        </span>
-                      </label>
-                    ))
-                  )}
-                </Field>
+              </div>
+              <div className="settings-toggle-list">
                 <label className="toggle-field">
                   <input
                     aria-label="Write logs to file"
@@ -743,14 +779,14 @@ export function SettingsSurface({
                   <Network size={17} />
                 </div>
                 <div>
-                  <h2>Per-Provider Proxy Routing</h2>
+                  <h2>Per-provider proxy routing</h2>
                   <p>
                     Route provider accounts through rotating or sticky upstream proxies (e.g.
                     global-egress).
                   </p>
                 </div>
               </header>
-              <div className="proxy-settings-grid">
+              <div className="provider-proxy-list">
                 {(() => {
                   // Canonical ids only: configured keys and account providers may use
                   // aliases (openai vs codex) that must collapse onto one policy row.
@@ -776,26 +812,8 @@ export function SettingsSurface({
                       url: "",
                     };
                     return (
-                      <div
-                        key={canonical}
-                        style={{
-                          display: "grid",
-                          gap: "8px",
-                          padding: "12px",
-                          border: "1px solid var(--line)",
-                          borderRadius: "8px",
-                          background: "var(--panel-2)",
-                        }}
-                      >
-                        <label
-                          className="toggle-field"
-                          style={{
-                            minHeight: "auto",
-                            padding: "4px 0",
-                            border: "none",
-                            background: "transparent",
-                          }}
-                        >
+                      <div key={canonical} className="provider-proxy-item">
+                        <label className="toggle-field provider-proxy-toggle">
                           <input
                             aria-label={`Enable proxy for ${canonical}`}
                             type="checkbox"
@@ -805,28 +823,13 @@ export function SettingsSurface({
                             }
                           />
                           <span>
-                            <strong style={{ textTransform: "capitalize" }}>{canonical}</strong>
+                            <strong className="provider-proxy-name">{canonical}</strong>
                             <small>Enable upstream proxy for {canonical} accounts</small>
                           </span>
                         </label>
                         {policy.enabled ? (
-                          <div
-                            style={{
-                              display: "grid",
-                              gap: "8px",
-                              paddingLeft: "24px",
-                              paddingTop: "6px",
-                            }}
-                          >
-                            <label
-                              className="toggle-field"
-                              style={{
-                                minHeight: "auto",
-                                padding: "4px 0",
-                                border: "none",
-                                background: "transparent",
-                              }}
-                            >
+                          <div className="provider-proxy-details">
+                            <label className="toggle-field provider-proxy-toggle">
                               <input
                                 aria-label={`Sticky session for ${canonical}`}
                                 type="checkbox"
@@ -844,39 +847,43 @@ export function SettingsSurface({
                                 </small>
                               </span>
                             </label>
-                            <Field
-                              label="Session TTL (seconds)"
-                              hint="0 = pool default (10m in global-egress). Positive = rotate exit IP every N seconds."
-                            >
-                              <Input
-                                aria-label={`Session TTL for ${canonical}`}
-                                type="number"
-                                min="0"
-                                step="60"
-                                value={String(policy["ttl-secs"] ?? 0)}
-                                onChange={(e) =>
-                                  onUpdateProxyProviderPolicy?.(provider, {
-                                    "ttl-secs": Math.max(
-                                      0,
-                                      Number.parseInt(e.target.value, 10) || 0,
-                                    ),
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field
-                              label="Proxy URL override"
-                              hint="Leave blank to use global upstream proxy URL above."
-                            >
-                              <Input
-                                aria-label={`Proxy URL override for ${canonical}`}
-                                placeholder="http://127.0.0.1:3128"
-                                value={policy.url ?? ""}
-                                onChange={(e) =>
-                                  onUpdateProxyProviderPolicy?.(provider, { url: e.target.value })
-                                }
-                              />
-                            </Field>
+                            <div className="provider-proxy-fields">
+                              <Field
+                                label="Session TTL (seconds)"
+                                hint="0 = pool default (10m in global-egress). Positive = rotate exit IP every N seconds."
+                              >
+                                <Input
+                                  aria-label={`Session TTL for ${canonical}`}
+                                  type="number"
+                                  min="0"
+                                  step="60"
+                                  value={String(policy["ttl-secs"] ?? 0)}
+                                  onChange={(e) =>
+                                    onUpdateProxyProviderPolicy?.(provider, {
+                                      "ttl-secs": Math.max(
+                                        0,
+                                        Number.parseInt(e.target.value, 10) || 0,
+                                      ),
+                                    })
+                                  }
+                                />
+                              </Field>
+                              <Field
+                                label="Proxy URL override"
+                                hint="Leave blank to use global upstream proxy URL above."
+                              >
+                                <Input
+                                  aria-label={`Proxy URL override for ${canonical}`}
+                                  type="url"
+                                  inputMode="url"
+                                  placeholder="http://127.0.0.1:3128"
+                                  value={policy.url ?? ""}
+                                  onChange={(e) =>
+                                    onUpdateProxyProviderPolicy?.(provider, { url: e.target.value })
+                                  }
+                                />
+                              </Field>
+                            </div>
                           </div>
                         ) : null}
                       </div>
@@ -908,7 +915,7 @@ export function SettingsSurface({
                     <h2>Model registry</h2>
                     <p>
                       {modelRegistryStatus
-                        ? `Catalog v${modelRegistryStatus["catalog-version"]} · source ${modelRegistryStatus.source} · ${modelRegistryStatus["model-count"]} models`
+                        ? `Catalog v${modelRegistryStatus["catalog-version"]} · ${describeCatalogSource(modelRegistryStatus.source)} · ${modelRegistryStatus["model-count"]} models`
                         : "Active catalog and model resolution status."}
                     </p>
                   </div>
@@ -943,6 +950,18 @@ export function SettingsSurface({
                       Catalog error
                     </output>
                   ) : null}
+                  {onRefreshModelRegistry ? (
+                    <Button
+                      disabled={
+                        blocks(pending, "registry") || modelRegistryStatus?.["refresh-in-flight"]
+                      }
+                      onClick={() => void onRefreshModelRegistry()}
+                    >
+                      {pending === "registry:refresh" || modelRegistryStatus?.["refresh-in-flight"]
+                        ? "Refreshing…"
+                        : "Refresh catalog"}
+                    </Button>
+                  ) : null}
                 </header>
                 {modelRegistryStatus?.["last-refresh"].outcome === "error" &&
                 modelRegistryStatus["last-refresh"]["rejection-reason"] ? (
@@ -961,20 +980,6 @@ export function SettingsSurface({
                 {modelRegistryError ? (
                   <div className="state-panel warning" role="alert">
                     {modelRegistryError}
-                  </div>
-                ) : null}
-                {onRefreshModelRegistry ? (
-                  <div className="settings-actions">
-                    <Button
-                      disabled={
-                        blocks(pending, "registry") || modelRegistryStatus?.["refresh-in-flight"]
-                      }
-                      onClick={() => void onRefreshModelRegistry()}
-                    >
-                      {pending === "registry:refresh" || modelRegistryStatus?.["refresh-in-flight"]
-                        ? "Refreshing…"
-                        : "Refresh catalog"}
-                    </Button>
                   </div>
                 ) : null}
               </Card>
@@ -1107,7 +1112,6 @@ export function SettingsSurface({
         {agentsSlot ? (
           <section id="settings-agents" className="settings-section" aria-label="Developer tools">
             <header className="settings-section-head">
-              <span className="kicker">DEVELOPER WORKSPACES</span>
               <h2>Agents & Tools</h2>
               <p>Local coding agent environment configuration and isolated Codex sessions.</p>
             </header>
@@ -1122,7 +1126,6 @@ export function SettingsSurface({
             aria-label="Security and credentials"
           >
             <header className="settings-section-head">
-              <span className="kicker">KEYRING CREDENTIALS</span>
               <h2>Security & 2FA Vault</h2>
               <p>Encrypted local credential store for two-factor authentication codes.</p>
             </header>
@@ -1136,11 +1139,104 @@ export function SettingsSurface({
           aria-label="Storage and appearance"
         >
           <header className="settings-section-head">
-            <span className="kicker">DATA & PREFERENCES</span>
             <h2>Storage & Appearance</h2>
             <p>Durable request history records, model pricing ledger, and console appearance.</p>
           </header>
           <div className="settings-section-cards">
+            <div className="settings-card-pair">
+              <Card className="settings-card">
+                <header className="settings-card-head">
+                  <div className="settings-icon">
+                    <Settings2 size={17} />
+                  </div>
+                  <div>
+                    <h2>Appearance</h2>
+                    <p>Choose the color scheme and quota display for this console.</p>
+                  </div>
+                </header>
+                <Field label="Theme" hint="Saved on this device and applied to the entire console.">
+                  <select
+                    aria-label="Theme"
+                    className="input"
+                    value={theme}
+                    onChange={(event) => {
+                      const nextTheme = event.currentTarget.value === "light" ? "light" : "dark";
+                      onThemeChange(nextTheme);
+                    }}
+                  >
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                  </select>
+                </Field>
+                <div className="settings-toggle-list">
+                  <label className="toggle-field">
+                    <input
+                      aria-label="Show remaining quota"
+                      type="checkbox"
+                      checked={showRemaining}
+                      onChange={(event) => onShowRemainingChange(event.target.checked)}
+                    />
+                    <span>
+                      <strong>Show remaining quota</strong>
+                      <small>Show how much quota is left instead of how much was used.</small>
+                    </span>
+                  </label>
+                  <Field
+                    label="Cline daily quota display"
+                    hint="Which Cline free models show a (Daily limit) row. Choices come from the Cline model list and models this gateway has served."
+                  >
+                    {clineQuotaCandidates.length === 0 ? (
+                      <small>Loading Cline model list...</small>
+                    ) : (
+                      clineQuotaCandidates.map(({ slug, label }) => (
+                        <label className="toggle-field" key={slug}>
+                          <input
+                            aria-label={`Show daily quota for ${label}`}
+                            type="checkbox"
+                            checked={clineQuotaDisplay.includes(slug)}
+                            onChange={(event) => {
+                              const next = event.target.checked
+                                ? [...clineQuotaDisplay, slug]
+                                : clineQuotaDisplay.filter((entry) => entry !== slug);
+                              onClineQuotaDisplayChange?.(next);
+                            }}
+                          />
+                          <span>
+                            <strong>{label}</strong>
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </Field>
+                </div>
+              </Card>
+              <Card className="settings-card">
+                <header className="settings-card-head">
+                  <div className="settings-icon">
+                    <TerminalSquare size={17} />
+                  </div>
+                  <div>
+                    <h2>Advanced YAML</h2>
+                    <p>
+                      Edit the complete persisted gateway configuration. The document may contain
+                      secrets.
+                    </p>
+                  </div>
+                </header>
+                <p className="settings-card-copy">
+                  Opens the raw gateway configuration in a modal drawer with live validation before
+                  persisting changes.
+                </p>
+                <div className="settings-actions">
+                  <Button
+                    disabled={blocks(pending, "config")}
+                    onClick={() => void onOpenConfigEditor()}
+                  >
+                    {pending === "config:load" ? "Loading…" : "Open YAML editor"}
+                  </Button>
+                </div>
+              </Card>
+            </div>
             {historyHealth || modelPrices.length > 0 ? (
               <Card className="settings-card" aria-label="History and pricing">
                 <header className="settings-card-head">
@@ -1160,7 +1256,7 @@ export function SettingsSurface({
                   ) : null}
                 </header>
                 {historyHealth ? (
-                  <p>
+                  <p className="history-health-summary">
                     {historyHealth["written-events"].toLocaleString("en-US")} events written · queue{" "}
                     {historyHealth["queue-depth"]}/{historyHealth["queue-capacity"]}
                     {historyHealth["dropped-events"] > 0
@@ -1172,129 +1268,95 @@ export function SettingsSurface({
                 {historyActionError ? (
                   <div className="state-panel warning">{historyActionError}</div>
                 ) : null}
-                <div className="settings-actions">
-                  <Input
-                    aria-label="Export authorization secret"
-                    autoComplete="off"
-                    placeholder="Management secret for export"
-                    type="password"
-                    value={exportSecret}
-                    onChange={(event) => setExportSecret(event.currentTarget.value)}
-                  />
-                  <Button
-                    disabled={!exportHistory || exportSecret === "" || historyBusy !== ""}
-                    onClick={() => void runHistoryExport("csv")}
+                <div className="history-export-bar">
+                  <Field
+                    label="Export authorization secret"
+                    hint="Required to export CSV or JSON request records."
                   >
-                    {historyBusy === "csv" ? "Exporting…" : "Export CSV"}
-                  </Button>
-                  <Button
-                    disabled={!exportHistory || exportSecret === "" || historyBusy !== ""}
-                    onClick={() => void runHistoryExport("json")}
-                  >
-                    {historyBusy === "json" ? "Exporting…" : "Export JSON"}
-                  </Button>
-                  <Button
-                    className="danger"
-                    disabled={!clearHistory || historyBusy !== ""}
-                    onClick={() => void requestClearConfirmation()}
-                  >
-                    {historyBusy === "clear" ? "Clearing…" : "Clear history"}
-                  </Button>
+                    <Input
+                      aria-label="Export authorization secret"
+                      autoComplete="off"
+                      placeholder="Management secret for export"
+                      type="password"
+                      value={exportSecret}
+                      onChange={(event) => setExportSecret(event.currentTarget.value)}
+                    />
+                  </Field>
+                  <div className="settings-actions">
+                    <Button
+                      disabled={!exportHistory || exportSecret === "" || historyBusy !== ""}
+                      onClick={() => void runHistoryExport("csv")}
+                    >
+                      {historyBusy === "csv" ? "Exporting…" : "Export CSV"}
+                    </Button>
+                    <Button
+                      disabled={!exportHistory || exportSecret === "" || historyBusy !== ""}
+                      onClick={() => void runHistoryExport("json")}
+                    >
+                      {historyBusy === "json" ? "Exporting…" : "Export JSON"}
+                    </Button>
+                    <Button
+                      className="danger"
+                      disabled={!clearHistory || historyBusy !== ""}
+                      onClick={() => void requestClearConfirmation()}
+                    >
+                      {historyBusy === "clear" ? "Clearing…" : "Clear history"}
+                    </Button>
+                  </div>
                 </div>
-                {modelPrices.map((saved) => {
-                  const draftText = priceDrafts[saved.model];
-                  const parsed =
-                    draftText === undefined
-                      ? saved["input-per-million"]
-                      : parsePriceDraft(draftText);
-                  const price: ModelPrice =
-                    parsed === null ? saved : { ...saved, "input-per-million": parsed };
-                  return (
-                    <div className="model-price-row" key={saved.model}>
-                      <Field
-                        label={`Input price for ${saved.model}`}
-                        hint="USD per million input tokens."
-                      >
-                        <Input
-                          aria-label={`Input price for ${saved.model}`}
-                          aria-invalid={parsed === null}
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={draftText ?? String(saved["input-per-million"])}
-                          onChange={(event) => {
-                            const text = event.target.value;
-                            setPriceDrafts((current) => ({ ...current, [saved.model]: text }));
-                          }}
-                        />
-                        {parsed === null ? (
-                          <small className="field-error">Enter a finite price of 0 or more.</small>
-                        ) : null}
-                      </Field>
-                      <div className="model-price-estimate">
-                        <small>Estimated spend</small>
-                        <ModelPriceEstimate
-                          value={parsed === null ? null : estimatedSpend(price)}
-                        />
-                      </div>
-                      <Button
-                        disabled={parsed === null}
-                        onClick={() => void onSaveModelPrice(price)}
-                      >
-                        Save {saved.model} price
-                      </Button>
-                    </div>
-                  );
-                })}
+                {modelPrices.length > 0 ? (
+                  <div className="model-prices-list">
+                    {modelPrices.map((saved) => {
+                      const draftText = priceDrafts[saved.model];
+                      const parsed =
+                        draftText === undefined
+                          ? saved["input-per-million"]
+                          : parsePriceDraft(draftText);
+                      const price: ModelPrice =
+                        parsed === null ? saved : { ...saved, "input-per-million": parsed };
+                      return (
+                        <div className="model-price-row" key={saved.model}>
+                          <Field
+                            label={`Input price for ${saved.model}`}
+                            hint="USD per million input tokens."
+                          >
+                            <Input
+                              aria-label={`Input price for ${saved.model}`}
+                              aria-invalid={parsed === null}
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={draftText ?? String(saved["input-per-million"])}
+                              onChange={(event) => {
+                                const text = event.target.value;
+                                setPriceDrafts((current) => ({ ...current, [saved.model]: text }));
+                              }}
+                            />
+                            {parsed === null ? (
+                              <small className="field-error">
+                                Enter a finite price of 0 or more.
+                              </small>
+                            ) : null}
+                          </Field>
+                          <div className="model-price-estimate">
+                            <small>Estimated spend</small>
+                            <ModelPriceEstimate
+                              value={parsed === null ? null : estimatedSpend(price)}
+                            />
+                          </div>
+                          <Button
+                            disabled={parsed === null}
+                            onClick={() => void onSaveModelPrice(price)}
+                          >
+                            Save {saved.model} price
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </Card>
             ) : null}
-            <Card className="settings-card">
-              <header className="settings-card-head">
-                <div className="settings-icon">
-                  <Settings2 size={17} />
-                </div>
-                <div>
-                  <h2>Appearance</h2>
-                  <p>Choose the color scheme for this console.</p>
-                </div>
-              </header>
-              <Field label="Theme" hint="Saved on this device and applied to the entire console.">
-                <select
-                  aria-label="Theme"
-                  className="input"
-                  value={theme}
-                  onChange={(event) => {
-                    const nextTheme = event.currentTarget.value === "light" ? "light" : "dark";
-                    onThemeChange(nextTheme);
-                  }}
-                >
-                  <option value="dark">Dark</option>
-                  <option value="light">Light</option>
-                </select>
-              </Field>
-            </Card>
-            <Card className="settings-card">
-              <header className="settings-card-head">
-                <div className="settings-icon">
-                  <TerminalSquare size={17} />
-                </div>
-                <div>
-                  <h2>Advanced YAML</h2>
-                  <p>
-                    Edit the complete persisted gateway configuration. The document may contain
-                    secrets.
-                  </p>
-                </div>
-              </header>
-              <div className="settings-actions">
-                <Button
-                  disabled={blocks(pending, "config")}
-                  onClick={() => void onOpenConfigEditor()}
-                >
-                  {pending === "config:load" ? "Loading…" : "Open YAML editor"}
-                </Button>
-              </div>
-            </Card>
           </div>
         </section>
 

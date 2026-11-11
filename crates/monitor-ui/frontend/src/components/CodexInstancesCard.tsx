@@ -67,6 +67,7 @@ export function CodexInstancesCard({
       <div className="connection-fields">
         <Field label="Account">
           <select
+            className="input"
             aria-label="Codex account"
             value={accountId}
             onChange={(event) => setAccountId(event.target.value)}
@@ -81,6 +82,7 @@ export function CodexInstancesCard({
         <Field label="Model">
           {runtimeModels && runtimeModels.length > 0 ? (
             <select
+              className="input"
               aria-label="Codex model"
               data-testid="runtime-model-selector"
               value={model}
@@ -104,6 +106,7 @@ export function CodexInstancesCard({
         </Field>
         <Field label="Reasoning">
           <select
+            className="input"
             aria-label="Reasoning effort"
             value={reasoningEffort}
             onChange={(event) => setReasoningEffort(event.target.value)}
@@ -121,21 +124,27 @@ export function CodexInstancesCard({
           <Play size={14} /> Launch
         </Button>
       </div>
-      {instances.map((instance) => (
-        <div className="agent-actions" key={instance.instance_id}>
-          <Badge tone={instance.state === "running" ? "ok" : "bad"}>{instance.state}</Badge>
-          <span>
-            {instance.instance_id} · PID {instance.pid}
-          </span>
-          <Button
-            aria-label={`Stop ${instance.instance_id}`}
-            disabled={busy}
-            onClick={() => void onStop(instance.instance_id)}
-          >
-            <Square size={13} /> Stop
-          </Button>
+      {instances.length > 0 ? (
+        <div className="codex-instances-list">
+          {instances.map((instance) => (
+            <div className="codex-instance-row" key={instance.instance_id}>
+              <div className="codex-instance-meta">
+                <Badge tone={instance.state === "running" ? "ok" : "bad"}>{instance.state}</Badge>
+                <span>
+                  {instance.instance_id} · PID {instance.pid}
+                </span>
+              </div>
+              <Button
+                aria-label={`Stop ${instance.instance_id}`}
+                disabled={busy}
+                onClick={() => void onStop(instance.instance_id)}
+              >
+                <Square size={13} /> Stop
+              </Button>
+            </div>
+          ))}
         </div>
-      ))}
+      ) : null}
     </Card>
   );
 }

@@ -391,9 +391,10 @@ describe("useGatewayPolling stats decoupling", () => {
     expect(result.current.logsError).toBe("");
   });
 
-  it("asks for the full history once, then live-only snapshots", async () => {
+  it("asks for one range-bounded history backfill, then live-only snapshots", async () => {
     // The month-long bucket history is what made /admin/stats tens of megabytes.
-    // The charts only need it once to backfill; later polls must not re-fetch it.
+    // The charts only need their own range once to backfill; later polls must not
+    // re-fetch history, and the first poll must not ask for the whole retention.
     const statsUrls: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -418,13 +419,10 @@ describe("useGatewayPolling stats decoupling", () => {
     );
 
     const clients = createGatewayClients("http://127.0.0.1:18801", "test-key");
-    const { result } = renderHook(() => useGatewayPolling(clients));
+    const { result } = renderHook(() => useGatewayPolling(clients, 1440));
 
     await waitFor(() => expect(statsUrls.length).toBeGreaterThan(0));
-    // The gateway's default stats document is its whole retained telemetry
-    // store, so an unbounded first read is what made the console sit empty.
     expect(statsUrls[0]).toContain("history_minutes=1440");
-    expect(statsUrls[0]).not.toContain("history_minutes=0");
 
     await result.current.refreshNow();
     await waitFor(() => expect(statsUrls.length).toBeGreaterThan(1));
