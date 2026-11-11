@@ -56,7 +56,7 @@ it("edits provider defaults and all account modes in Accounts, reloads, and repo
           },
         });
       if (url.endsWith("/warmup")) return Response.json(failed);
-      if (url.endsWith("/admin/stats"))
+      if (url.includes("/admin/stats"))
         return Response.json({
           uptime_secs: 1,
           accounts: [{ id: "codex-1", provider: "codex", health: { status: "available" } }],

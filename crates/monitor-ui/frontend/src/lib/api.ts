@@ -187,7 +187,10 @@ export class GatewayError extends Error {
 
 export interface GatewayClients {
   readonly admin: {
-    stats(): Promise<AdminStats>;
+    /** `historyMinutes` bounds the `history` array the gateway renders: omit it
+     * for the full retained range, or pass `0` to skip the buckets entirely and
+     * receive live counters only. */
+    stats(options?: { readonly historyMinutes?: number }): Promise<AdminStats>;
     health(): Promise<GatewayHealth>;
     warm(id: string): Promise<WarmupResult>;
     reset(id: string): Promise<void>;
@@ -324,6 +327,13 @@ const describeFailure = async (response: Response): Promise<string> => {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
+/** `/admin/stats` is not a small document: the gateway serializes its whole
+ * telemetry store with it unless the caller bounds it (a month of per-minute
+ * buckets, tens of MB on a busy gateway). Twenty seconds is a normal
+ * management deadline, not a stats deadline, so the console's snapshot read
+ * gets its own budget. */
+const STATS_TIMEOUT_MS = 120_000;
+
 declare global {
   interface Window {
     __MAHOQUOT_MANAGEMENT__?: { readonly endpoint: string; readonly key: string };
@@ -418,9 +428,10 @@ const requestBody = async <T>(
   headers: HeadersInit,
   init: RequestInit | undefined,
   read: (response: Response) => Promise<T>,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<T> => {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   // A caller-supplied signal must not displace the timeout: both have to be
   // able to abort the request, so the caller's aborts are forwarded into the
   // same controller the timer owns.
@@ -446,7 +457,7 @@ const requestBody = async <T>(
     return await read(response);
   } catch (error) {
     if (controller.signal.aborted && !(callerSignal?.aborted ?? false)) {
-      throw new GatewayError(`gateway request timed out after ${REQUEST_TIMEOUT_MS}ms`, 0);
+      throw new GatewayError(`gateway request timed out after ${timeoutMs}ms`, 0);
     }
     throw error;
   } finally {
@@ -456,19 +467,40 @@ const requestBody = async <T>(
 };
 
 /** An empty body (204, or a 200 with no content) is `null`, not a parse error. */
-const requestJson = (url: string, headers: HeadersInit, init?: RequestInit): Promise<unknown> =>
-  requestBody(url, headers, init, async (response) => {
-    if (response.status === 204) return null;
-    const text = await response.text();
-    return text.trim() === "" ? null : (JSON.parse(text) as unknown);
-  });
+const requestJson = (
+  url: string,
+  headers: HeadersInit,
+  init?: RequestInit,
+  timeoutMs?: number,
+): Promise<unknown> =>
+  requestBody(
+    url,
+    headers,
+    init,
+    async (response) => {
+      if (response.status === 204) return null;
+      const text = await response.text();
+      return text.trim() === "" ? null : (JSON.parse(text) as unknown);
+    },
+    timeoutMs,
+  );
 
 export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayClients => {
   const base = baseUrl.replace(/\/$/, "");
   const authHeaders: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   return {
     admin: {
-      stats: async () => parseAdminStats(await requestJson(`${base}/admin/stats`, authHeaders)),
+      stats: async (options?: { readonly historyMinutes?: number }) =>
+        parseAdminStats(
+          await requestJson(
+            options?.historyMinutes === undefined
+              ? `${base}/admin/stats`
+              : `${base}/admin/stats?history_minutes=${options.historyMinutes}`,
+            authHeaders,
+            undefined,
+            STATS_TIMEOUT_MS,
+          ),
+        ),
       health: async () => {
         const result = (await requestJson(`${base}/healthz`, authHeaders)) as Record<
           string,

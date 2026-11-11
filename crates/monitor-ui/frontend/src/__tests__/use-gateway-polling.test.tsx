@@ -321,3 +321,113 @@ describe("useGatewayPolling generation guard", () => {
     await waitFor(() => expect(native.unlisten).toHaveBeenCalledOnce());
   });
 });
+
+describe("useGatewayPolling stats decoupling", () => {
+  it("keeps credentials and logs when the stats snapshot fails", async () => {
+    // Regression: the round used to return early when /admin/stats failed, so a
+    // slow or oversized snapshot left Accounts and Logs empty even though the
+    // gateway answered both endpoints.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) {
+          return new Response("upstream exploded", { status: 500 });
+        }
+        if (url.includes("/healthz")) {
+          return new Response(JSON.stringify({ status: "ok", version: "1.0", api_schema: 1 }));
+        }
+        if (url.includes("auth-files")) {
+          return new Response(
+            JSON.stringify({
+              files: [
+                { name: "acct.json", auth_index: "idx-1", label: "acct", provider: "claude" },
+              ],
+            }),
+          );
+        }
+        if (url.includes("/v0/management/logs")) {
+          return new Response(
+            JSON.stringify({
+              records: [{ kind: "request", timestamp: 1, provider: "claude" }],
+              "request-count": 1,
+              "proxy-count": 0,
+            }),
+          );
+        }
+        if (url.includes("model-registry")) {
+          return new Response(
+            JSON.stringify({
+              source: "remote_signed",
+              "catalog-version": 1,
+              generation: 1,
+              "generated-at": 0,
+              "loaded-at": 0,
+              stale: false,
+              "last-refresh": {
+                outcome: "success",
+                "attempted-at": 0,
+                "duration-ms": 0,
+                "rejection-reason": null,
+              },
+              "provider-count": 0,
+              "model-count": 0,
+              "refresh-in-flight": false,
+            }),
+          );
+        }
+        if (url.includes("/v1/models")) return new Response(JSON.stringify({ data: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    const clients = createGatewayClients("http://127.0.0.1:18801", "test-key");
+    const { result } = renderHook(() => useGatewayPolling(clients));
+
+    // The two surfaces that were blank must populate despite the failed stats.
+    await waitFor(() => expect(result.current.credentials).toHaveLength(1));
+    await waitFor(() => expect(result.current.logs.length).toBeGreaterThan(0));
+    expect(result.current.inventoryState).toBe("ready");
+    expect(result.current.logsError).toBe("");
+  });
+
+  it("asks for the full history once, then live-only snapshots", async () => {
+    // The month-long bucket history is what made /admin/stats tens of megabytes.
+    // The charts only need it once to backfill; later polls must not re-fetch it.
+    const statsUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/admin/stats")) {
+          statsUrls.push(url);
+          return new Response(
+            JSON.stringify({
+              uptime_secs: 1,
+              accounts: [],
+              history: [{ minute_unix: 1, requests: 1, successes: 1, failures: 0, providers: [], accounts: [] }],
+            }),
+          );
+        }
+        if (url.includes("/healthz")) {
+          return new Response(JSON.stringify({ status: "ok", version: "1.0", api_schema: 1 }));
+        }
+        if (url.includes("/v1/models")) return new Response(JSON.stringify({ data: [] }));
+        return new Response(JSON.stringify({ ok: true }));
+      }),
+    );
+
+    const clients = createGatewayClients("http://127.0.0.1:18801", "test-key");
+    const { result } = renderHook(() => useGatewayPolling(clients));
+
+    await waitFor(() => expect(statsUrls.length).toBeGreaterThan(0));
+    // The gateway's default stats document is its whole retained telemetry
+    // store, so an unbounded first read is what made the console sit empty.
+    expect(statsUrls[0]).toContain("history_minutes=1440");
+    expect(statsUrls[0]).not.toContain("history_minutes=0");
+
+    await result.current.refreshNow();
+    await waitFor(() => expect(statsUrls.length).toBeGreaterThan(1));
+    expect(statsUrls.every((url, i) => i === 0 || url.includes("history_minutes=0"))).toBe(true);
+  });
+});

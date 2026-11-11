@@ -26,6 +26,12 @@ type RoundOutcome = "ok" | "failed" | "relay-locked" | "superseded";
 const POLL_INTERVAL_MS = 10_000;
 const STARTUP_RETRY_MS = 2_000;
 
+/** Bucket window for the one history-carrying round. The switcher's narrowest
+ * useful span is a day, and the gateway's default is its entire retained store:
+ * measured 33k one-minute buckets at ~24MB, against 556KB for a day and 171KB
+ * for live counters only. */
+export const FIRST_LOAD_HISTORY_MINUTES = 24 * 60;
+
 /** Log lines pulled per poll. The Logs table reads paginated history; this tail
  * only backs the proxy view, so an unbounded reply would re-ship the whole
  * on-disk log on every cycle. */
@@ -182,34 +188,26 @@ export function useGatewayPolling(clients: GatewayClients) {
     if (!mounted.current || prevClientsRef.current !== clients) return "superseded";
     const generation = ++pollGeneration.current;
     if (firstLoad.current) setLoadState("loading");
-    try {
-      const nextStats = await clients.admin.stats();
-      if (generation !== pollGeneration.current) return "superseded";
-      setStats(nextStats);
-      const now = Date.now();
-      setTelemetry((samples) => {
-        if (Array.isArray(nextStats.history)) {
-          return persistedTelemetrySamples(nextStats.history);
-        }
-        return appendTelemetrySample(samples, nextStats, now);
-      });
-      setLoadState("online");
-      setFetchedAt(now);
-      setGatewayLifecycle("running");
-      firstLoad.current = false;
-    } catch (error) {
-      if (generation !== pollGeneration.current) return "superseded";
-      setLoadState(
-        error instanceof GatewayError && error.status === 401
-          ? "relay-locked"
-          : gatewayLifecycleRef.current === "stopped"
-            ? "stopped"
-            : "starting",
+    // One round is a stats snapshot plus four independent reads. They used to
+    // run in sequence, so a slow snapshot also held back credentials and logs:
+    // the gateway answered both in under a second, yet the Accounts and Logs
+    // surfaces stayed empty until the whole snapshot finished. Start the
+    // snapshot now, but never let it gate the reads.
+    //
+    // Only the first round carries bucket history, and it asks for the default
+    // chart range rather than the gateway's whole retained store. The store is
+    // one bucket per minute for 30 days (33k buckets, ~24MB measured) and the
+    // gateway serializes every bucket it is asked for, so an unbounded first
+    // read is the difference between a console that opens in about a second and
+    // one that spends over a minute on a single response. Later rounds ask for
+    // the live counters alone; the charts keep accumulating samples locally.
+    const wantsHistory = firstLoad.current;
+    const statsAttempt = clients.admin
+      .stats(wantsHistory ? { historyMinutes: FIRST_LOAD_HISTORY_MINUTES } : { historyMinutes: 0 })
+      .then(
+        (stats) => ({ stats }) as const,
+        (error: unknown) => ({ error }) as const,
       );
-      firstLoad.current = false;
-      return error instanceof GatewayError && error.status === 401 ? "relay-locked" : "failed";
-    }
-    if (generation !== pollGeneration.current) return "superseded";
     hasSucceeded.current = true;
     // These are independent so failures in optional services do not strip credentials.
     const [credentialResult, logResult, registryResult, modelsResult] = await Promise.allSettled([
@@ -252,7 +250,41 @@ export function useGatewayPolling(clients: GatewayClients) {
     if (modelsResult.status === "fulfilled") {
       setGatewayModels(modelsResult.value);
     }
-    return "ok";
+    // The snapshot finishes last because it is by far the slowest read; the
+    // gateway serializes its whole telemetry store with it.
+    const attempt = await statsAttempt;
+    if (generation !== pollGeneration.current) return "superseded";
+    if ("stats" in attempt) {
+      const nextStats = attempt.stats;
+      setStats(nextStats);
+      const now = Date.now();
+      setTelemetry((samples) => {
+        // A round that asked for history owns the chart state, including an
+        // empty one: that is how a gateway switch clears the previous samples.
+        // A live-only round carries no buckets, so append it to keep the
+        // charts moving between full reads.
+        if (wantsHistory && Array.isArray(nextStats.history)) {
+          return persistedTelemetrySamples(nextStats.history);
+        }
+        return appendTelemetrySample(samples, nextStats, now);
+      });
+      setLoadState("online");
+      setFetchedAt(now);
+      setGatewayLifecycle("running");
+      firstLoad.current = false;
+      return "ok";
+    }
+    const error = attempt.error;
+    const locked = error instanceof GatewayError && error.status === 401;
+    setLoadState(
+      locked
+        ? "relay-locked"
+        : gatewayLifecycleRef.current === "stopped"
+          ? "stopped"
+          : "starting",
+    );
+    firstLoad.current = false;
+    return locked ? "relay-locked" : "failed";
   }, [clients]);
 
   const refresh = useCallback(
