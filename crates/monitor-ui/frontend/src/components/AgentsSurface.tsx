@@ -1,4 +1,4 @@
-import { Bot, RotateCcw, ShieldCheck } from "lucide-react";
+import { Bot, RotateCcw } from "lucide-react";
 import type {
   CliAgentId,
   CliAgentStatus,
@@ -7,7 +7,7 @@ import type {
   CodexLaunchRequest,
 } from "../lib/native";
 import { CodexInstancesCard } from "./CodexInstancesCard";
-import { Badge, Button, Card } from "./ui";
+import { Badge, Button } from "./ui";
 
 export interface AgentsSurfaceProps {
   readonly agents: readonly CliAgentStatus[];
@@ -74,24 +74,16 @@ export function AgentsSurface({
 }: AgentsSurfaceProps) {
   return (
     <div className="agents-content">
-      <Card className="agents-intro">
-        <div className="settings-icon">
-          <ShieldCheck size={18} />
-        </div>
-        <div>
-          <h2>CLI agents</h2>
-          <p>
-            Connect local coding agents without replacing unrelated settings. Mahoquot shows exactly
-            which settings change, keeps a byte-exact backup, and refuses to discard a user edit.
-          </p>
-        </div>
-      </Card>
+      <div className="settings-subgroup-head">
+        <h2>CLI agents</h2>
+        <p>
+          Connect local coding agents with byte-exact backups and conflict detection before writing.
+        </p>
+      </div>
       {(agents?.length ?? 0) > 0 ? (
         <div className="agents-grid">
           {agents.map((agent) => {
             const busy = busyAgent === agent.agent_id;
-            // One agent operation at a time: while any agent is mid-flight the
-            // whole grid locks so a second launch cannot race the first.
             const anyBusy = busyAgent !== null;
             const conflicted = agent.config_state === "modified";
             const preview = pendingPreview?.agent_id === agent.agent_id ? pendingPreview : null;
@@ -99,26 +91,16 @@ export function AgentsSurface({
               <article className="agent-card" key={agent.agent_id}>
                 <header>
                   <span className="agent-glyph" aria-hidden="true">
-                    <Bot size={19} />
+                    <Bot size={18} />
                   </span>
                   <div>
                     <h2>{agent.display_name}</h2>
-                    <p>{agent.installed ? "Installed" : "Not detected"}</p>
+                    <p title={agent.target_path}>{agent.target_path}</p>
                   </div>
                   <Badge tone={stateTone(agent.config_state)}>
                     {stateCopy(agent.config_state)}
                   </Badge>
                 </header>
-                <dl>
-                  <div>
-                    <dt>Platform</dt>
-                    <dd>{agent.platform}</dd>
-                  </div>
-                  <div>
-                    <dt>Configuration</dt>
-                    <dd title={agent.target_path}>{agent.target_path}</dd>
-                  </div>
-                </dl>
                 {conflicted ? (
                   <p role="alert" className="agent-conflict">
                     The file changed after Mahoquot configured it, so restore is blocked. Taking
@@ -134,10 +116,6 @@ export function AgentsSurface({
                 ) : null}
                 {preview ? (
                   <section className="agent-preview" aria-label="Pending configuration">
-                    {/* What this write does is per-file data, so it belongs in the
-                        list beside the byte count. The backup and no-clobber
-                        promises are constant policy and are stated once in the
-                        intro card rather than repeated on every agent. */}
                     <dl>
                       <div>
                         <dt>Writes</dt>
@@ -173,23 +151,26 @@ export function AgentsSurface({
                     </div>
                   </section>
                 ) : (
-                  <div className="agent-actions">
-                    <Button
-                      aria-label={`Configure ${agent.display_name}`}
-                      disabled={anyBusy}
-                      onClick={() => void onPreview(agent.agent_id)}
-                    >
-                      {busy ? "Working…" : actionCopy(agent.config_state)}
-                    </Button>
-                    {agent.backup ? (
+                  <div className="agent-card-foot">
+                    <small>{agent.installed ? "Installed" : "Not detected"}</small>
+                    <div className="agent-actions">
                       <Button
-                        aria-label={`Restore ${agent.display_name}`}
-                        disabled={anyBusy || conflicted}
-                        onClick={() => void onRestore(agent.agent_id)}
+                        aria-label={`Configure ${agent.display_name}`}
+                        disabled={anyBusy}
+                        onClick={() => void onPreview(agent.agent_id)}
                       >
-                        <RotateCcw size={14} /> Restore
+                        {busy ? "Working…" : actionCopy(agent.config_state)}
                       </Button>
-                    ) : null}
+                      {agent.backup ? (
+                        <Button
+                          aria-label={`Restore ${agent.display_name}`}
+                          disabled={anyBusy || conflicted}
+                          onClick={() => void onRestore(agent.agent_id)}
+                        >
+                          <RotateCcw size={14} /> Restore
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 )}
               </article>
