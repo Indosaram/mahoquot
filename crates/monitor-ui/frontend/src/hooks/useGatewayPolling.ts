@@ -209,21 +209,16 @@ export function useGatewayPolling(
     // surfaces stayed empty until the whole snapshot finished. Start the
     // snapshot now, but never let it gate the reads.
     //
-    // Only the first round carries the bucket history that feeds the charts,
-    // and only for the selected range. Every later round asks for the live
-    // counters alone: the charts keep accumulating samples locally, while the
-    // response drops from tens of megabytes to a few kilobytes.
-    // `admin.stats` carries two unrelated things: the live counters every
-    // surface reads, and a bucket history that only backfills the charts when
-    // the dedicated `history/stats` source is unavailable. That history is the
-    // expensive half -- the gateway serializes one bucket per minute of every
-    // minute it is asked for, measured at 556KB for a day and 21.6MB/82s for
-    // the full month of retention -- so a backfill the console normally throws
-    // away must not be allowed to pick the size of the opening request.
+    // Only the first round carries the bucket history that backfills the
+    // charts; every later round asks for the live counters alone.
     //
-    // A day is enough to keep the fallback charts useful, and it always lands
-    // well inside the stats deadline no matter which range the switcher has
-    // stored. Later rounds ask for the live counters alone.
+    // That history is the expensive half of the response -- the gateway
+    // serializes one bucket per minute of every minute it is asked for,
+    // measured at 556KB/5.3s for a day and 21.6MB/82s for its full month of
+    // retention -- and the console only reads it when the dedicated
+    // `history/stats` source fails, so the stored chart range must not size the
+    // opening request. A day keeps the fallback charts useful and lands well
+    // inside the stats deadline whichever range the switcher has stored.
     const wantsHistory = firstLoad.current;
     const statsAttempt = clients.admin
       .stats(
