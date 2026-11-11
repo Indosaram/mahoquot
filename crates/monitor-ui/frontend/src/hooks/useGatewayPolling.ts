@@ -202,10 +202,6 @@ export function useGatewayPolling(
     // surfaces stayed empty until the whole snapshot finished. Start the
     // snapshot now, but never let it gate the reads.
     //
-    // Only the first round carries the month-long bucket history that feeds the
-    // charts. Every later round asks for the live counters alone: the charts
-    // keep accumulating samples locally, while the response drops from tens of
-    // megabytes to a few kilobytes.
     // Only the first round carries the bucket history that feeds the charts,
     // and only for the selected range. Every later round asks for the live
     // counters alone: the charts keep accumulating samples locally, while the

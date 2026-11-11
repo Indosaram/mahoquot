@@ -122,9 +122,22 @@ import sys
 path = sys.argv[1]
 data = plistlib.load(open(path, "rb"))
 data["UIApplicationSceneManifest"] = {"UIApplicationSupportsMultipleScenes": False}
+# The mobile app is remote-only: it reads usage from a gateway the user already
+# runs, typically over a private overlay such as Tailscale, which serves plain
+# HTTP. iOS blocks cleartext by default through App Transport Security, so a
+# release build reaches the gateway URL and gets no response at all. The Android
+# build carries the same allowance in network_security_config.xml.
+data["NSAppTransportSecurity"] = {"NSAllowsArbitraryLoads": True}
+# The gateway is reached over the local network / a private overlay address, so
+# iOS also needs the local-network usage description.
+data.setdefault(
+    "NSLocalNetworkUsageDescription",
+    "Mahoquot reads usage from the gateway you run on your own network.",
+)
 plistlib.dump(data, open(path, "wb"))
 PY
   echo "patch-ios: UIScene manifest declared in Info.plist"
+  echo "patch-ios: ATS cleartext allowance and local-network usage declared"
 else
   echo "patch-ios: $plist not found" >&2
   exit 1
