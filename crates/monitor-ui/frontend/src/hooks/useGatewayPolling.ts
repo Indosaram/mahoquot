@@ -27,6 +27,13 @@ type RoundOutcome = "ok" | "failed" | "relay-locked" | "superseded";
 const POLL_INTERVAL_MS = 10_000;
 const STARTUP_RETRY_MS = 2_000;
 
+/** Upper bound on the one history-carrying round. The history in
+ * `/admin/stats` only backfills the charts when `history/stats` is unavailable,
+ * so it must never size the opening request by the stored chart range: the
+ * gateway's full month of retention is 21.6MB and takes 82s to serialize,
+ * against 556KB and 5.3s for a day. */
+const MAX_BACKFILL_MINUTES = 24 * 60;
+
 /** Log lines pulled per poll. The Logs table reads paginated history; this tail
  * only backs the proxy view, so an unbounded reply would re-ship the whole
  * on-disk log on every cycle. */
@@ -202,13 +209,23 @@ export function useGatewayPolling(
     // surfaces stayed empty until the whole snapshot finished. Start the
     // snapshot now, but never let it gate the reads.
     //
-    // Only the first round carries the bucket history that feeds the charts,
-    // and only for the selected range. Every later round asks for the live
-    // counters alone: the charts keep accumulating samples locally, while the
-    // response drops from tens of megabytes to a few kilobytes.
+    // Only the first round carries the bucket history that backfills the
+    // charts; every later round asks for the live counters alone.
+    //
+    // That history is the expensive half of the response -- the gateway
+    // serializes one bucket per minute of every minute it is asked for,
+    // measured at 556KB/5.3s for a day and 21.6MB/82s for its full month of
+    // retention -- and the console only reads it when the dedicated
+    // `history/stats` source fails, so the stored chart range must not size the
+    // opening request. A day keeps the fallback charts useful and lands well
+    // inside the stats deadline whichever range the switcher has stored.
     const wantsHistory = firstLoad.current;
     const statsAttempt = clients.admin
-      .stats(wantsHistory ? { historyMinutes: historyMinutesRef.current } : { historyMinutes: 0 })
+      .stats(
+        wantsHistory
+          ? { historyMinutes: Math.min(historyMinutesRef.current, MAX_BACKFILL_MINUTES) }
+          : { historyMinutes: 0 },
+      )
       .then(
         (stats) => ({ stats }) as const,
         (error: unknown) => ({ error }) as const,

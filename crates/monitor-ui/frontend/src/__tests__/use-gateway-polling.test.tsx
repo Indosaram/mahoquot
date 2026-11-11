@@ -391,10 +391,11 @@ describe("useGatewayPolling stats decoupling", () => {
     expect(result.current.logsError).toBe("");
   });
 
-  it("asks for one range-bounded history backfill, then live-only snapshots", async () => {
-    // The month-long bucket history is what made /admin/stats tens of megabytes.
-    // The charts only need their own range once to backfill; later polls must not
-    // re-fetch history, and the first poll must not ask for the whole retention.
+  it("caps the one history backfill and then asks for live counters only", async () => {
+    // The history in /admin/stats only backfills the charts when the dedicated
+    // history source is unavailable, so the stored chart range must not size the
+    // opening request: a month of retention is 21.6MB and 82s to serialize,
+    // while a day is 556KB and 5.3s. A 30d selection is therefore capped.
     const statsUrls: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -419,9 +420,10 @@ describe("useGatewayPolling stats decoupling", () => {
     );
 
     const clients = createGatewayClients("http://127.0.0.1:18801", "test-key");
-    const { result } = renderHook(() => useGatewayPolling(clients, 1440));
+    const { result } = renderHook(() => useGatewayPolling(clients, 43_200));
 
     await waitFor(() => expect(statsUrls.length).toBeGreaterThan(0));
+    // 30d is stored, but the backfill is capped at a day.
     expect(statsUrls[0]).toContain("history_minutes=1440");
 
     await result.current.refreshNow();
