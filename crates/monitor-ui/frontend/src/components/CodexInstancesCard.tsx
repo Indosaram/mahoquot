@@ -57,94 +57,106 @@ export function CodexInstancesCard({
   };
 
   return (
-    <Card className="agents-intro codex-launcher-card">
-      <div>
-        <h2>Codex instances</h2>
-        <p>
-          Launch concurrent Codex sessions in isolated homes without changing your global session.
-        </p>
-      </div>
-      <div className="connection-fields">
-        <Field label="Account">
-          <select
-            className="input"
-            aria-label="Codex account"
-            value={accountId}
-            onChange={(event) => setAccountId(event.target.value)}
-          >
-            {availableAccounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Model">
-          {runtimeModels && runtimeModels.length > 0 ? (
+    <div className="settings-section-cards">
+      <Card className="settings-card codex-launcher-card">
+        <header className="settings-card-head">
+          <div>
+            <h2>Codex instances</h2>
+            <p>Launch isolated Codex sessions without changing your global CODEX_HOME.</p>
+          </div>
+        </header>
+        <div className="connection-fields">
+          <Field label="Account">
             <select
               className="input"
-              aria-label="Codex model"
-              data-testid="runtime-model-selector"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
+              aria-label="Codex account"
+              value={accountId}
+              onChange={(event) => setAccountId(event.target.value)}
             >
-              {runtimeModels.map((item) => (
-                <option key={item} value={item}>
-                  {item}
+              {availableAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label}
                 </option>
               ))}
             </select>
-          ) : (
-            <Input
-              aria-label="Codex model"
-              data-testid="runtime-model-selector"
-              placeholder="Model id from the gateway"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            />
-          )}
-        </Field>
-        <Field label="Reasoning">
-          <select
-            className="input"
-            aria-label="Reasoning effort"
-            value={reasoningEffort}
-            onChange={(event) => setReasoningEffort(event.target.value)}
-          >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </Field>
-        <Button
-          aria-label="Launch Codex instance"
-          disabled={busy || availableAccounts.length === 0 || !model}
-          onClick={launch}
-        >
-          <Play size={14} /> Launch
-        </Button>
-      </div>
-      {instances.length > 0 ? (
-        <div className="codex-instances-list">
-          {instances.map((instance) => (
-            <div className="codex-instance-row" key={instance.instance_id}>
-              <div className="codex-instance-meta">
-                <Badge tone={instance.state === "running" ? "ok" : "bad"}>{instance.state}</Badge>
-                <span>
-                  {instance.instance_id} · PID {instance.pid}
-                </span>
-              </div>
-              <Button
-                aria-label={`Stop ${instance.instance_id}`}
-                disabled={busy}
-                onClick={() => void onStop(instance.instance_id)}
+          </Field>
+          <Field label="Model">
+            {runtimeModels && runtimeModels.length > 0 ? (
+              <select
+                className="input"
+                aria-label="Codex model"
+                data-testid="runtime-model-selector"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
               >
-                <Square size={13} /> Stop
-              </Button>
-            </div>
-          ))}
+                {runtimeModels.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                aria-label="Codex model"
+                data-testid="runtime-model-selector"
+                placeholder="Model id from the gateway"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              />
+            )}
+          </Field>
+          <Field label="Reasoning">
+            <select
+              className="input"
+              aria-label="Reasoning effort"
+              value={reasoningEffort}
+              onChange={(event) => setReasoningEffort(event.target.value)}
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </Field>
+          <Button
+            aria-label="Launch Codex instance"
+            disabled={busy || availableAccounts.length === 0 || !model}
+            onClick={launch}
+          >
+            <Play size={14} /> Launch
+          </Button>
         </div>
+      </Card>
+
+      {instances.length > 0 ? (
+        <Card className="settings-card">
+          <header className="settings-card-head">
+            <div>
+              <h2>Active Codex sessions</h2>
+              <p>Running isolated processes launched from this console.</p>
+            </div>
+            <Badge tone="ok">{instances.length} active</Badge>
+          </header>
+          <div className="codex-instances-list">
+            {instances.map((instance) => (
+              <div className="codex-instance-row" key={instance.instance_id}>
+                <div className="codex-instance-meta">
+                  <Badge tone={instance.state === "running" ? "ok" : "bad"}>{instance.state}</Badge>
+                  <span>
+                    {instance.instance_id} · PID {instance.pid}
+                  </span>
+                </div>
+                <Button
+                  aria-label={`Stop ${instance.instance_id}`}
+                  disabled={busy}
+                  onClick={() => void onStop(instance.instance_id)}
+                >
+                  <Square size={13} /> Stop
+                </Button>
+              </div>
+            ))}
+          </div>
+        </Card>
       ) : null}
-    </Card>
+    </div>
   );
 }
