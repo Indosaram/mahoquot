@@ -26,7 +26,7 @@ export function TunnelCard({
           <Cloud size={17} />
         </div>
         <div>
-          <h2>Public tunnel</h2>
+          <h3>Public tunnel</h3>
           <p>Optional cloudflared quick tunnel for this device's local gateway.</p>
         </div>
         <Badge tone={status.running ? "warn" : "neutral"}>

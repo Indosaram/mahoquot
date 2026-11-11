@@ -61,7 +61,7 @@ export function CodexInstancesCard({
       <Card className="settings-card codex-launcher-card">
         <header className="settings-card-head">
           <div>
-            <h2>Codex instances</h2>
+            <h3>Codex instances</h3>
             <p>Launch isolated Codex sessions without changing your global CODEX_HOME.</p>
           </div>
         </header>
@@ -131,7 +131,7 @@ export function CodexInstancesCard({
         <Card className="settings-card">
           <header className="settings-card-head">
             <div>
-              <h2>Active Codex sessions</h2>
+              <h3>Active Codex sessions</h3>
               <p>Running isolated processes launched from this console.</p>
             </div>
             <Badge tone="ok">{instances.length} active</Badge>

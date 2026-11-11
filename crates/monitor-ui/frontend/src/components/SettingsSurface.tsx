@@ -27,6 +27,11 @@ import type {
   ProxyProvidersMap,
   ScopedApiKey,
 } from "../lib/schemas";
+import {
+  SETTINGS_CARD_SELECTOR,
+  matchesSettingsQuery,
+  settingsQueryTokens,
+} from "../lib/settings-filter";
 import { CLINE_QUOTA_DISPLAY_DEFAULT } from "../lib/storage";
 import { SharedKeysCard } from "./SharedKeysCard";
 import { TunnelCard } from "./TunnelCard";
@@ -34,6 +39,9 @@ import { OverlayLayer } from "./layout";
 import { Badge, Button, Card, Field, Input } from "./ui";
 
 const EMPTY_MODEL_PRICES: readonly ModelPrice[] = [];
+
+/** Survives this surface unmounting when the console switches destination. */
+let rememberedScrollTop: number | null = null;
 
 /** A price draft is saveable only when it parses to a finite, non-negative rate. */
 const parsePriceDraft = (text: string): number | null => {
@@ -266,6 +274,13 @@ export function SettingsSurface({
   const [historyBusy, setHistoryBusy] = useState<"" | "csv" | "json" | "clear">("");
   const [historyActionError, setHistoryActionError] = useState("");
   const [activeSection, setActiveSection] = useState("settings-gateway");
+  const [filterQuery, setFilterQuery] = useState("");
+  const [filterState, setFilterState] = useState<{
+    readonly matched: number;
+    readonly total: number;
+  } | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
   // H1: Save and the scalar fields stay gated until the hook's six-scalar read
   // succeeds; the status is exposed by the hook itself (no App.tsx wiring).
   const scalarsStatus = useSettingsScalarsStatus();
@@ -399,11 +414,13 @@ export function SettingsSurface({
     if (sections.length === 0) return;
     const scroller = sections[0]?.closest("main");
     const sync = () => {
+      const visible = sections.filter((section) => !section.hidden);
+      if (visible.length === 0) return;
       const nav = document.querySelector(".settings-jump");
       const navClearance = nav ? nav.getBoundingClientRect().bottom + 32 : 0;
       const line = Math.max(window.innerHeight * 0.35, navClearance);
-      let current = sections[0];
-      for (const section of sections) {
+      let current = visible[0];
+      for (const section of visible) {
         if (section.getBoundingClientRect().top <= line) current = section;
       }
       if (
@@ -411,7 +428,7 @@ export function SettingsSurface({
         scroller.scrollHeight > scroller.clientHeight &&
         Math.ceil(scroller.scrollTop + scroller.clientHeight) >= scroller.scrollHeight - 8
       ) {
-        current = sections.at(-1) ?? current;
+        current = visible.at(-1) ?? current;
       }
       if (current) setActiveSection(current.id);
     };
@@ -432,9 +449,108 @@ export function SettingsSurface({
     };
   }, [jumpSignature]);
 
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const tokens = settingsQueryTokens(filterQuery);
+    const apply = () => {
+      const cards = Array.from(body.querySelectorAll<HTMLElement>(SETTINGS_CARD_SELECTOR));
+      let matched = 0;
+      for (const card of cards) {
+        const match = matchesSettingsQuery(card.textContent ?? "", tokens);
+        if (match) matched += 1;
+        if (card.hidden === match) card.hidden = !match;
+      }
+      for (const section of body.querySelectorAll<HTMLElement>(".settings-section")) {
+        const hasVisibleCard = Array.from(
+          section.querySelectorAll<HTMLElement>(SETTINGS_CARD_SELECTOR),
+        ).some((card) => !card.hidden);
+        const shouldHide = tokens.length > 0 && !hasVisibleCard;
+        if (section.hidden !== shouldHide) section.hidden = shouldHide;
+      }
+      const next = tokens.length === 0 ? null : { matched, total: cards.length };
+      setFilterState((current) =>
+        current === next ||
+        (current !== null &&
+          next !== null &&
+          current.matched === next.matched &&
+          current.total === next.total)
+          ? current
+          : next,
+      );
+    };
+    const scroller = body.closest("main");
+    // Only a real query re-anchors the surface: on mount the restore effect owns
+    // scroll position, and resetting here would undo it for a frame.
+    if (scroller && tokens.length > 0) scroller.scrollTop = 0;
+    apply();
+    if (tokens.length === 0) return;
+    const observer = new MutationObserver(apply);
+    observer.observe(body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [filterQuery]);
+
+  useEffect(() => {
+    const scroller = bodyRef.current?.closest("main");
+    if (!scroller) return;
+    const saved = rememberedScrollTop;
+    if (saved !== null) {
+      requestAnimationFrame(() => {
+        scroller.scrollTop = saved;
+      });
+    }
+    const save = () => {
+      rememberedScrollTop = scroller.scrollTop;
+    };
+    scroller.addEventListener("scroll", save, { passive: true });
+    return () => {
+      // No save() here: React removes these nodes before this cleanup runs, so
+      // the scroller has already collapsed to 0 and would overwrite the real
+      // position the scroll listener captured.
+      scroller.removeEventListener("scroll", save);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div className="settings">
       <nav className="settings-jump" aria-label="Settings sections">
+        <label className="settings-find-field">
+          <input
+            ref={findInputRef}
+            type="search"
+            className="input"
+            placeholder="Find a setting…"
+            aria-label="Find a setting"
+            value={filterQuery}
+            onChange={(event) => setFilterQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || filterQuery === "") return;
+              event.preventDefault();
+              setFilterQuery("");
+            }}
+          />
+        </label>
+        {filterState ? (
+          <output className="settings-find-status">
+            {filterState.matched === 0
+              ? `No card matches “${filterQuery.trim()}”`
+              : `${filterState.matched} of ${filterState.total} cards`}
+            <button type="button" onClick={() => setFilterQuery("")}>
+              Clear
+            </button>
+          </output>
+        ) : null}
         <span className="settings-jump-title">On this page</span>
         <ul className="settings-jump-list">
           {jumpTargets.map((target) => (
@@ -474,7 +590,7 @@ export function SettingsSurface({
           ))}
         </ul>
       </nav>
-      <div className="settings-body">
+      <div className="settings-body" ref={bodyRef}>
         <section
           id="settings-gateway"
           className="settings-section"
@@ -487,7 +603,7 @@ export function SettingsSurface({
           <div className="settings-section-cards">
             <Card className="settings-row-card gateway-process-card">
               <div className="settings-row-copy">
-                <h2>Gateway process</h2>
+                <h3>Gateway process</h3>
                 <p>Starts automatically with Mahoquot; stop or restart the local proxy here.</p>
               </div>
               <div className="gateway-process-action">
@@ -513,7 +629,7 @@ export function SettingsSurface({
                   <Network size={18} />
                 </div>
                 <div>
-                  <h2>Connection & access</h2>
+                  <h3>Connection & access</h3>
                   <p>{baseUrl || "Same-origin gateway"}</p>
                 </div>
               </header>
@@ -570,7 +686,7 @@ export function SettingsSurface({
 
             <Card className="settings-row-card">
               <div className="settings-row-copy">
-                <h2>Desktop integration</h2>
+                <h3>Desktop integration</h3>
                 <p>Launch the gateway, tray, and compact notch automatically when you log in.</p>
               </div>
               <label className="settings-switch-chip">
@@ -588,7 +704,7 @@ export function SettingsSurface({
             <Card className="settings-card settings-compact-card">
               <div className="settings-row-main">
                 <div className="settings-row-copy">
-                  <h2>Native notifications</h2>
+                  <h3>Native notifications</h3>
                   <p>
                     Alert on account exhaustion, isolation, degraded history, or tunnel failure.
                   </p>
@@ -620,7 +736,7 @@ export function SettingsSurface({
 
             <Card className="settings-row-card">
               <div className="settings-row-copy">
-                <h2>Signed updates</h2>
+                <h3>Signed updates</h3>
                 <p>Update the desktop app and bundled gateway as one verified release unit.</p>
               </div>
               <div className="settings-row-controls">
@@ -656,7 +772,7 @@ export function SettingsSurface({
                   <Route size={17} />
                 </div>
                 <div>
-                  <h2>Proxy behavior</h2>
+                  <h3>Proxy behavior</h3>
                   <p>Account rotation strategy, retry count, and global outbound proxy.</p>
                 </div>
                 <Badge tone="warn">Saved changes require restart</Badge>
@@ -721,7 +837,7 @@ export function SettingsSurface({
                   <Settings2 size={17} />
                 </div>
                 <div>
-                  <h2>Runtime & logging flags</h2>
+                  <h3>Runtime & logging flags</h3>
                   <p>File log persistence and Codex priority service tier override.</p>
                 </div>
               </header>
@@ -770,7 +886,7 @@ export function SettingsSurface({
                   <Network size={17} />
                 </div>
                 <div>
-                  <h2>Per-provider proxy routing</h2>
+                  <h3>Per-provider proxy routing</h3>
                   <p>Route individual providers through rotating or sticky upstream proxies.</p>
                 </div>
               </header>
@@ -894,7 +1010,7 @@ export function SettingsSurface({
               <Card className="settings-card settings-compact-card" aria-label="Model registry">
                 <div className="settings-row-main">
                   <div className="settings-row-copy">
-                    <h2>Model registry</h2>
+                    <h3>Model registry</h3>
                     <p>
                       {modelRegistryStatus
                         ? `Catalog v${modelRegistryStatus["catalog-version"]} · ${describeCatalogSource(modelRegistryStatus.source)} · ${modelRegistryStatus["model-count"]} models`
@@ -976,7 +1092,7 @@ export function SettingsSurface({
                   <ListOrdered size={17} />
                 </div>
                 <div>
-                  <h2>Account scheduling</h2>
+                  <h3>Account scheduling</h3>
                   <p>Gateway-owned rotation with a manual priority order override.</p>
                 </div>
                 {schedulerStatus ? (
@@ -1129,7 +1245,7 @@ export function SettingsSurface({
           <div className="settings-section-cards">
             <Card className="settings-row-card">
               <div className="settings-row-copy">
-                <h2>Appearance</h2>
+                <h3>Appearance</h3>
                 <p>Color scheme saved on this device and applied across the console.</p>
               </div>
               <div className="settings-inline-select">
@@ -1154,7 +1270,7 @@ export function SettingsSurface({
                   <Settings2 size={17} />
                 </div>
                 <div>
-                  <h2>Quota display</h2>
+                  <h3>Quota display</h3>
                   <p>Choose meter direction and which Cline daily quota buckets appear.</p>
                 </div>
               </header>
@@ -1212,7 +1328,7 @@ export function SettingsSurface({
                       <Settings2 size={17} />
                     </div>
                     <div>
-                      <h2>Request history</h2>
+                      <h3>Request history</h3>
                       <p>
                         {historyHealth
                           ? `${historyHealth["written-events"].toLocaleString("en-US")} events written · queue ${historyHealth["queue-depth"]}/${historyHealth["queue-capacity"]}${
@@ -1281,7 +1397,7 @@ export function SettingsSurface({
                         <Settings2 size={17} />
                       </div>
                       <div>
-                        <h2>Model pricing</h2>
+                        <h3>Model pricing</h3>
                         <p>Input token rates (USD per 1M tokens) used to estimate spend.</p>
                       </div>
                     </header>
@@ -1346,7 +1462,7 @@ export function SettingsSurface({
 
             <Card className="settings-row-card">
               <div className="settings-row-copy">
-                <h2>Advanced YAML</h2>
+                <h3>Advanced YAML</h3>
                 <p>Edit the complete persisted gateway configuration (may contain secrets).</p>
               </div>
               <Button
