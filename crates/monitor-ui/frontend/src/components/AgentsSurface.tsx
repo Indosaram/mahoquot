@@ -75,7 +75,7 @@ export function AgentsSurface({
   return (
     <div className="agents-content">
       <div className="settings-subgroup-head">
-        <h2>CLI agents</h2>
+        <h3>CLI agents</h3>
         <p>
           Connect local coding agents with byte-exact backups and conflict detection before writing.
         </p>
@@ -94,7 +94,7 @@ export function AgentsSurface({
                     <Bot size={18} />
                   </span>
                   <div>
-                    <h2>{agent.display_name}</h2>
+                    <h4>{agent.display_name}</h4>
                     <p title={agent.target_path}>{agent.target_path}</p>
                   </div>
                   <Badge tone={stateTone(agent.config_state)}>

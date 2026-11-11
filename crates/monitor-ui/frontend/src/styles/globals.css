@@ -446,6 +446,8 @@ main {
 }
 h1,
 h2,
+h3,
+h4,
 p {
   margin: 0;
   min-width: 0;
@@ -685,6 +687,10 @@ h2 {
   margin: 0;
 }
 .totp-vault-surface .section-head p,
+.totp-vault-card-head h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
 .totp-vault-card-head small {
   color: var(--fg-dim);
 }
@@ -3068,6 +3074,7 @@ h2 {
 .settings-card-head p {
   color: var(--fg-dim);
   margin-top: 4px;
+  font-size: 12.5px;
   overflow-wrap: anywhere;
 }
 .connection-fields {
@@ -3145,6 +3152,15 @@ h2 {
 .settings h2 {
   text-wrap: balance;
 }
+.settings h3 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.settings [hidden] {
+  display: none;
+}
 .settings-body {
   display: grid;
   gap: 28px;
@@ -3161,6 +3177,34 @@ h2 {
   padding: 10px 0;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
+}
+.settings-find-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 240px;
+  min-width: 140px;
+}
+.settings-find-field input {
+  font-size: 12px;
+  padding: 5px 9px;
+  min-height: 30px;
+}
+.settings-find-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.settings-find-status button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .settings-jump-title {
   font-size: 12px;
@@ -3224,9 +3268,9 @@ h2 {
   padding-top: 2px;
 }
 .settings-section-head h2 {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   margin: 0;
   color: var(--fg);
 }
@@ -3268,8 +3312,8 @@ h2 {
   display: grid;
   gap: 3px;
 }
-.settings-row-copy h2 {
-  font-size: 14px;
+.settings-row-copy h3 {
+  font-size: 16px;
   font-weight: 600;
   margin: 0;
 }
@@ -3320,8 +3364,8 @@ h2 {
   gap: 3px;
   padding: 2px 2px 4px;
 }
-.settings-subgroup-head h2 {
-  font-size: 14px;
+.settings-subgroup-head h3 {
+  font-size: 16px;
   font-weight: 600;
   margin: 0;
 }
@@ -3429,7 +3473,8 @@ h2 {
 }
 .agents-intro h2,
 .agents-intro p,
-.agent-card h2,
+.agent-card h3,
+.agent-card h4,
 .agent-card p {
   margin: 0;
 }
@@ -3473,6 +3518,10 @@ h2 {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 11px;
+}
+.agent-card header h4 {
+  font-size: 13px;
+  font-weight: 600;
 }
 .agent-glyph {
   width: 36px;
