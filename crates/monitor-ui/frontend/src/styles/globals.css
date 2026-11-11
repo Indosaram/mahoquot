@@ -4794,16 +4794,35 @@ h2 {
   filter: drop-shadow(0 0 5px rgba(248, 81, 73, 0.42));
 }
 
-/* Reachability, not quota: the arc already speaks for usage. */
+/* Reachability, not quota: the arc already speaks for usage. The count is
+   painted only when more than one lane is degraded, so a pool with three bad
+   lanes never reads the same as a pool with one. */
 .notch-health-dot {
   position: absolute;
   top: 1px;
   right: 1px;
+  display: grid;
+  place-items: center;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   border: 2px solid #12131a;
   background: var(--fg-dim);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #0b0c12;
+  font-variant-numeric: tabular-nums;
+}
+.notch-health-dot[data-degraded-count]:not([data-degraded-count="1"]) {
+  top: 0;
+  right: 0;
+  width: auto;
+  min-width: 13px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 6px;
 }
 .notch-health-dot[data-tone="ok"] {
   background: var(--ok);
@@ -4854,8 +4873,9 @@ h2 {
 }
 
 /* Idle affordance: the compact window is otherwise fully transparent, so the
-   island had no visible entry point. A slim pill on the screen edge marks it
-   and carries the worst pool's status. */
+   island had no visible entry point. A slim neutral pill on the screen edge
+   marks it. It deliberately carries no quota tone: a pool at 100% is a
+   normal routing signal, not something to paint on the screen edge. */
 .notch-handle {
   position: absolute;
   top: 50%;
@@ -4869,18 +4889,6 @@ h2 {
   pointer-events: none;
   transform: translateY(-50%);
   transition: opacity 0.18s ease;
-}
-.notch-handle[data-tone="ok"] {
-  background: var(--ok);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(63, 185, 80, 0.45);
-}
-.notch-handle[data-tone="warn"] {
-  background: var(--warn);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(210, 153, 34, 0.45);
-}
-.notch-handle[data-tone="bad"] {
-  background: var(--bad);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(248, 81, 73, 0.45);
 }
 .notch-shell.expanded .notch-handle {
   opacity: 0;

@@ -90,7 +90,7 @@ const installMocks = async (page: Page) => {
       },
     });
   });
-  await page.route("**/admin/stats", (route) => route.fulfill({ json: deterministicStats }));
+  await page.route("**/admin/stats*", (route) => route.fulfill({ json: deterministicStats }));
   await page.route("**/admin/accounts/**", (route) => route.fulfill({ json: { ok: true } }));
   await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, (route) =>
     route.fulfill({ json: { files: [] } }),
@@ -286,7 +286,7 @@ test("suppresses transitions under prefers-reduced-motion while preserving inter
       },
     });
   });
-  await page.route("**/admin/stats", (route) => route.fulfill({ json: emptyStats }));
+  await page.route("**/admin/stats*", (route) => route.fulfill({ json: emptyStats }));
   await page.route("**/admin/accounts/**", (route) => route.fulfill({ json: { ok: true } }));
   await page.route(/\/v0\/management\/auth-files(?:\?.*)?$/, (route) =>
     route.fulfill({ json: { files: [] } }),

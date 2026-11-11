@@ -313,6 +313,28 @@ describe("NotchSurface reachability and reset copy", () => {
     expect(dots[0]?.getAttribute("data-tone")).toBe("bad");
   });
 
+  it("prints the degraded lane count so one bad lane never reads like three", () => {
+    const single = renderGroup([
+      account({ id: "a1", provider: "claude", usedPercent: 20 }),
+      account({ id: "a2", provider: "claude", usedPercent: 30, health: "auth_required" }),
+    ]);
+    const many = renderGroup([
+      account({ id: "b1", provider: "claude", usedPercent: 20 }),
+      account({ id: "b2", provider: "claude", usedPercent: 30, health: "auth_required" }),
+      account({ id: "b3", provider: "claude", usedPercent: 40, health: "error", errorStatus: 500 }),
+      account({ id: "b4", provider: "claude", usedPercent: 50, health: "error", errorStatus: 502 }),
+    ]);
+
+    // A single bad lane stays a plain dot: a numeral would be noise on a 9px mark.
+    const singleDot = single.container.querySelector(".notch-health-dot");
+    expect(singleDot?.getAttribute("data-degraded-count")).toBe("1");
+    expect(singleDot?.textContent).toBe("");
+
+    const manyDot = many.container.querySelector(".notch-health-dot");
+    expect(manyDot?.getAttribute("data-degraded-count")).toBe("3");
+    expect(manyDot?.textContent).toBe("3");
+  });
+
   it("shows banked reset credits and omits the line when there are none", () => {
     const { container } = renderGroup([
       account({ id: "a1", provider: "codex", usedPercent: 20, resetCreditsAvailable: 2 }),
