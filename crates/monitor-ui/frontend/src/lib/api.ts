@@ -379,7 +379,14 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
     !target.pathname.startsWith("/v0/management/") &&
     !target.pathname.startsWith("/v8/management/") &&
     !target.pathname.startsWith("/admin/") &&
-    !target.pathname.startsWith("/api/codex-auth/")
+    !target.pathname.startsWith("/api/codex-auth/") &&
+    // The catalog is a management surface too: the gateway rejects an
+    // unauthenticated `/v1/models` with 401, and the shell holds its key in the
+    // secret store rather than in `relayKey`, so leaving this path out made
+    // every model read anonymous. On mobile that meant the catalog silently
+    // came back empty, and each poll spent one of the gateway's failed-auth
+    // attempts.
+    target.pathname !== "/v1/models"
   )
     return headers;
   const native = window.__MAHOQUOT_MANAGEMENT__;
