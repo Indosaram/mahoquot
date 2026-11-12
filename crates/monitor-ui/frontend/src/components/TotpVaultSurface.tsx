@@ -110,7 +110,7 @@ export const TotpVaultSurface = ({
       <section className="totp-vault-card" aria-label="2FA quick access">
         <div className="totp-vault-card-head">
           <div>
-            <strong>Authenticator entries</strong>
+            <h3>Authenticator entries</h3>
             <small>{entries.length} stored in desktop keyring — click a code to copy</small>
           </div>
           {entries.length > 0 ? <span className="badge badge-neutral">{remaining}s</span> : null}
@@ -199,7 +199,7 @@ export const TotpVaultSurface = ({
       <section className="totp-vault-card" aria-label="Add 2FA entry">
         <div className="totp-vault-card-head">
           <div>
-            <strong>Add authenticator</strong>
+            <h3>Add authenticator</h3>
             <small>Paste a Base32 secret or an otpauth://totp URI.</small>
           </div>
         </div>

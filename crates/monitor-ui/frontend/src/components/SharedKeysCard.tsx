@@ -500,7 +500,7 @@ export function SharedKeysCard({
           <Key size={17} />
         </div>
         <div>
-          <h2>Shared API keys</h2>
+          <h3>Shared API keys</h3>
           <p>Delegate a capped token budget to remote people and devices with scoped access.</p>
         </div>
         <div className="shared-keys-head-actions">

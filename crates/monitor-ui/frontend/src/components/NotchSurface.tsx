@@ -58,12 +58,6 @@ type NotchTone = "ok" | "warn" | "bad" | "idle";
 
 const TONE_RANK: Readonly<Record<NotchTone, number>> = { idle: 0, ok: 1, warn: 2, bad: 3 };
 
-const worstTone = (tones: readonly NotchTone[]): NotchTone =>
-  tones.reduce<NotchTone>(
-    (worst, tone) => (TONE_RANK[tone] > TONE_RANK[worst] ? tone : worst),
-    "idle",
-  );
-
 /** Same thresholds as the tray tiles: 80% used warns, 100% is exhausted. */
 const usageTone = (usedPercent: number | null): NotchTone => quotaTone(usedPercent);
 
@@ -286,18 +280,6 @@ export function NotchSurface({
   // providers the column would otherwise outgrow the island, since the CSS
   // sizes dials only for counts 1-7.
   const visibleNotchGroups = notchGroups.slice(0, MAX_NOTCH_RING_ITEMS);
-  // The idle handle advertises the worst pool so a glance at the screen edge
-  // says whether anything needs attention before the island is opened.
-  const handleTone = worstTone(
-    notchGroups.map((group) =>
-      worstTone([
-        usageTone(dialUsedPercent(group)),
-        // A pool whose lanes are all serving fine is green; one cooling down
-        // must not leave the edge handle reporting all-clear.
-        ...group.accounts.map((entry) => accountStatus(entry)?.tone ?? "ok"),
-      ]),
-    ),
-  );
   const emptyState: NotchEmptyState = loadState === "online" ? "empty" : loadState;
   const emptyCopy = EMPTY_RING_COPY[emptyState];
   const emptyTone: NotchTone =
@@ -401,12 +383,7 @@ export function NotchSurface({
         data-state={emptyState}
       >
         <div className="notch-trigger-strip" data-testid="notch-trigger-strip" />
-        <span
-          className="notch-handle"
-          data-testid="notch-handle"
-          data-tone={handleTone}
-          aria-hidden="true"
-        />
+        <span className="notch-handle" data-testid="notch-handle" aria-hidden="true" />
         <div className="notch-body">
           <div className="notch-island-shape" aria-hidden="true">
             <svg
@@ -531,7 +508,9 @@ export function NotchSurface({
                             data-tone={status.tone}
                             data-degraded-count={degraded.length}
                             aria-hidden="true"
-                          />
+                          >
+                            {degraded.length > 1 ? degraded.length : null}
+                          </span>
                         ) : null}
                       </span>
                       <span className="notch-dial-label">

@@ -111,8 +111,6 @@ const modelRegistryStatus = {
   "refresh-in-flight": false,
 };
 
-
-
 const scopedKey = {
   id: "key-1",
   name: "Shared laptop key",
@@ -200,7 +198,8 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
   });
   void page.route("**/v0/management/history/stats*", (route) =>
     route.fulfill({
-      json: { totals: {
+      json: {
+        totals: {
           requests: 3,
           "successful-requests": 3,
           "failed-requests": 0,
@@ -210,11 +209,17 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
           "reasoning-tokens": 0,
           "total-tokens": 3_750_000,
           "estimated-cost-usd": 12.5,
-        }, groups: [] },
+        },
+        groups: [],
+      },
     }),
   );
   void page.route("**/v0/management/history/events*", (route) =>
-    route.fulfill({ json: { events: [], "next-cursor": null, totals: {
+    route.fulfill({
+      json: {
+        events: [],
+        "next-cursor": null,
+        totals: {
           requests: 3,
           "successful-requests": 3,
           "failed-requests": 0,
@@ -224,7 +229,9 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
           "reasoning-tokens": 0,
           "total-tokens": 3_750_000,
           "estimated-cost-usd": 12.5,
-        } } }),
+        },
+      },
+    }),
   );
   void page.route("**/v0/management/history/count*", (route) => {
     capture(route.request());
@@ -286,7 +293,12 @@ const installMocks = (page: Page, options: { tunnelReady?: boolean } = {}): Call
   });
   void page.route("**/v1/models", (route) =>
     route.fulfill({
-      json: { data: [{ id: "gpt-5-codex", object: "model" }, { id: "claude-sonnet", object: "model" }] },
+      json: {
+        data: [
+          { id: "gpt-5-codex", object: "model" },
+          { id: "claude-sonnet", object: "model" },
+        ],
+      },
     }),
   );
   void page.route("**/v0/management/tunnel**", (route) => {
@@ -436,9 +448,9 @@ test("proxy behavior controls persist through the management API", async ({ page
   await page.getByLabel("Write logs to file").check();
   await page.getByRole("button", { name: "Save proxy settings" }).click();
 
-  await expect.poll(() => captured.filter((call) => call.method === "PUT").length).toBeGreaterThan(
-    3,
-  );
+  await expect
+    .poll(() => captured.filter((call) => call.method === "PUT").length)
+    .toBeGreaterThan(3);
   const puts = captured.filter((call) => call.method === "PUT");
   expect(puts.find((call) => call.url.endsWith("routing/strategy"))?.body).toContain("fill-first");
   expect(puts.find((call) => call.url.endsWith("request-retry"))?.body).toContain("5");
@@ -455,7 +467,10 @@ test("scheduler reorder and toggle reach the gateway", async ({ page }) => {
   await expect(scheduler.getByText("56% remaining")).toBeVisible();
   await expect(scheduler.getByText("Parked")).toBeVisible();
 
-  await scheduler.getByRole("button", { name: /Move .* down/ }).first().click();
+  await scheduler
+    .getByRole("button", { name: /Move .* down/ })
+    .first()
+    .click();
   await expect
     .poll(() => captured.find((call) => call.url.includes("/scheduler/order"))?.body ?? "")
     .toContain("account-b");
@@ -464,9 +479,8 @@ test("scheduler reorder and toggle reach the gateway", async ({ page }) => {
   await expect
     .poll(
       () =>
-        captured.find(
-          (call) => call.url.includes("/scheduler/settings") && call.method === "PUT",
-        )?.body ?? "",
+        captured.find((call) => call.url.includes("/scheduler/settings") && call.method === "PUT")
+          ?.body ?? "",
     )
     .toContain("false");
 });
@@ -481,7 +495,9 @@ test("history export and clear confirmation run the real flows", async ({ page }
   await page.getByLabel("Export authorization secret").fill("export-secret");
   await page.getByRole("button", { name: "Export CSV" }).click();
   await expect
-    .poll(() => captured.some((call) => call.url.includes("/history/export") && call.url.includes("csv")))
+    .poll(() =>
+      captured.some((call) => call.url.includes("/history/export") && call.url.includes("csv")),
+    )
     .toBe(true);
 
   await page.getByRole("button", { name: "Clear history" }).click();
@@ -502,7 +518,9 @@ test("model registry refresh and appearance theme switch work", async ({ page })
   await expect(registry).toContainText("42 models");
   await registry.getByRole("button", { name: "Refresh catalog" }).click();
   await expect
-    .poll(() => captured.some((call) => call.url.includes("model-registry") && call.method === "POST"))
+    .poll(() =>
+      captured.some((call) => call.url.includes("model-registry") && call.method === "POST"),
+    )
     .toBe(true);
 
   await page.getByLabel("Theme").selectOption("light");
@@ -557,4 +575,76 @@ test("settings jump bar pins while scrolling and marks the section it lands on",
   expect(after).toBeLessThan(120);
 
   await expect(storageChip).toHaveAttribute("aria-current", "location");
+});
+
+test("settings find filters cards by their own text", async ({ page }) => {
+  installMocks(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSettings(page);
+
+  const find = page.getByLabel("Find a setting");
+  await expect(find).toBeVisible();
+
+  const visibleCards = () =>
+    page.locator(".settings-card:visible, .settings-row-card:visible").count();
+  const allCards = await visibleCards();
+  expect(allCards).toBeGreaterThan(10);
+
+  // A field label is searchable, not only the card title it sits under.
+  await find.fill("cloudflared");
+  await expect.poll(visibleCards).toBe(1);
+  await expect(page.getByRole("heading", { name: "Public tunnel" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Proxy behavior" })).toHaveCount(0);
+  await expect(page.locator(".settings-find-status")).toContainText("1 of");
+
+  // The sections with no surviving card leave the page rather than printing empty headings.
+  await expect(page.getByRole("heading", { name: "Gateway & Connection" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Storage & Appearance" })).toHaveCount(0);
+
+  await captureSettings(page, "settings-find-tunnel");
+
+  // A query with no match reports it instead of rendering a blank surface.
+  await find.fill("no-such-setting-anywhere");
+  await expect(page.locator(".settings-find-status")).toContainText("No card matches");
+  await expect(page.locator(".settings-card:visible, .settings-row-card:visible")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect.poll(visibleCards).toBe(allCards);
+  await expect(page.getByRole("heading", { name: "Gateway & Connection" })).toBeVisible();
+});
+
+test("settings remembers where the operator was after a destination switch", async ({ page }) => {
+  installMocks(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSettings(page);
+
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Storage & Appearance" })
+    .click();
+  const main = page.locator("main");
+  const deep = await main.evaluate((node) => node.scrollTop);
+  expect(deep).toBeGreaterThan(1000);
+
+  await page.getByRole("button", { name: "Overview" }).click();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Settings" }).click();
+
+  await expect.poll(() => main.evaluate((node) => node.scrollTop)).toBeGreaterThan(deep - 200);
+});
+
+test("settings filter is reachable from the keyboard", async ({ page }) => {
+  installMocks(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSettings(page);
+
+  await page.keyboard.press("Meta+f");
+  const find = page.getByLabel("Find a setting");
+  await expect(find).toBeFocused();
+
+  await find.fill("tunnel");
+  await expect(page.getByRole("heading", { name: "Public tunnel" })).toBeVisible();
+  await find.press("Escape");
+  await expect(find).toHaveValue("");
+  await expect(page.getByRole("heading", { name: "Gateway & Connection" })).toBeVisible();
 });

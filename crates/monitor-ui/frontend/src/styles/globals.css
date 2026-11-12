@@ -446,6 +446,8 @@ main {
 }
 h1,
 h2,
+h3,
+h4,
 p {
   margin: 0;
   min-width: 0;
@@ -685,6 +687,10 @@ h2 {
   margin: 0;
 }
 .totp-vault-surface .section-head p,
+.totp-vault-card-head h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
 .totp-vault-card-head small {
   color: var(--fg-dim);
 }
@@ -3070,6 +3076,7 @@ h2 {
 .settings-card-head p {
   color: var(--fg-dim);
   margin-top: 4px;
+  font-size: 12.5px;
   overflow-wrap: anywhere;
 }
 .connection-fields {
@@ -3147,6 +3154,15 @@ h2 {
 .settings h2 {
   text-wrap: balance;
 }
+.settings h3 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.settings [hidden] {
+  display: none;
+}
 .settings-body {
   display: grid;
   gap: 28px;
@@ -3163,6 +3179,34 @@ h2 {
   padding: 10px 0;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
+}
+.settings-find-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 240px;
+  min-width: 140px;
+}
+.settings-find-field input {
+  font-size: 12px;
+  padding: 5px 9px;
+  min-height: 30px;
+}
+.settings-find-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.settings-find-status button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .settings-jump-title {
   font-size: 12px;
@@ -3226,9 +3270,9 @@ h2 {
   padding-top: 2px;
 }
 .settings-section-head h2 {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   margin: 0;
   color: var(--fg);
 }
@@ -3270,8 +3314,8 @@ h2 {
   display: grid;
   gap: 3px;
 }
-.settings-row-copy h2 {
-  font-size: 14px;
+.settings-row-copy h3 {
+  font-size: 16px;
   font-weight: 600;
   margin: 0;
 }
@@ -3322,8 +3366,8 @@ h2 {
   gap: 3px;
   padding: 2px 2px 4px;
 }
-.settings-subgroup-head h2 {
-  font-size: 14px;
+.settings-subgroup-head h3 {
+  font-size: 16px;
   font-weight: 600;
   margin: 0;
 }
@@ -3431,7 +3475,8 @@ h2 {
 }
 .agents-intro h2,
 .agents-intro p,
-.agent-card h2,
+.agent-card h3,
+.agent-card h4,
 .agent-card p {
   margin: 0;
 }
@@ -3475,6 +3520,10 @@ h2 {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 11px;
+}
+.agent-card header h4 {
+  font-size: 13px;
+  font-weight: 600;
 }
 .agent-glyph {
   width: 36px;
@@ -4747,16 +4796,35 @@ h2 {
   filter: drop-shadow(0 0 5px rgba(248, 81, 73, 0.42));
 }
 
-/* Reachability, not quota: the arc already speaks for usage. */
+/* Reachability, not quota: the arc already speaks for usage. The count is
+   painted only when more than one lane is degraded, so a pool with three bad
+   lanes never reads the same as a pool with one. */
 .notch-health-dot {
   position: absolute;
   top: 1px;
   right: 1px;
+  display: grid;
+  place-items: center;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   border: 2px solid #12131a;
   background: var(--fg-dim);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #0b0c12;
+  font-variant-numeric: tabular-nums;
+}
+.notch-health-dot[data-degraded-count]:not([data-degraded-count="1"]) {
+  top: 0;
+  right: 0;
+  width: auto;
+  min-width: 13px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 6px;
 }
 .notch-health-dot[data-tone="ok"] {
   background: var(--ok);
@@ -4807,8 +4875,9 @@ h2 {
 }
 
 /* Idle affordance: the compact window is otherwise fully transparent, so the
-   island had no visible entry point. A slim pill on the screen edge marks it
-   and carries the worst pool's status. */
+   island had no visible entry point. A slim neutral pill on the screen edge
+   marks it. It deliberately carries no quota tone: a pool at 100% is a
+   normal routing signal, not something to paint on the screen edge. */
 .notch-handle {
   position: absolute;
   top: 50%;
@@ -4822,18 +4891,6 @@ h2 {
   pointer-events: none;
   transform: translateY(-50%);
   transition: opacity 0.18s ease;
-}
-.notch-handle[data-tone="ok"] {
-  background: var(--ok);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(63, 185, 80, 0.45);
-}
-.notch-handle[data-tone="warn"] {
-  background: var(--warn);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(210, 153, 34, 0.45);
-}
-.notch-handle[data-tone="bad"] {
-  background: var(--bad);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(248, 81, 73, 0.45);
 }
 .notch-shell.expanded .notch-handle {
   opacity: 0;
