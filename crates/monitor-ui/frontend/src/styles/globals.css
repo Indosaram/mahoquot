@@ -307,6 +307,9 @@ button {
   display: grid;
   grid-template-columns: 224px minmax(0, 1fr);
 }
+/* The drag strip anchors to the sidebar so it covers only the traffic-light
+   corner; as a window-wide absolute box it painted above the topbar and ate the
+   first 52px of every click, including the surface actions. */
 .titlebar-drag {
   position: absolute;
   top: 0;
@@ -345,6 +348,7 @@ button {
 }
 
 .sidebar {
+  position: relative;
   min-height: 0;
   min-block-size: 0;
   height: 100%;
@@ -432,9 +436,12 @@ main {
   overflow-y: auto;
   padding: 0 28px 40px;
 }
+/* The topbar reserves exactly the band the sidebar leaves for the macOS
+   traffic lights, so the surface title sits on the window's chrome line. It
+   used to be 84px tall with 30px of top padding, which left a dead strip above
+   the title that nothing painted into. */
 .topbar {
-  min-height: 84px;
-  padding-top: 30px;
+  min-height: 52px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1727,7 +1734,7 @@ h2 {
   }
   .mobile-nav + .content.logs-surface {
     padding-top: 0;
-    margin-top: -54px;
+    margin-top: -52px;
   }
   .mobile-nav + .content.logs-surface .durable-logs-head {
     padding-left: 104px;
