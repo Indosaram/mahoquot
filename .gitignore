@@ -28,6 +28,12 @@ crates/monitor-ui/gateways/
 # root workspace install cache (pinned tauri cli shim)
 /node_modules/
 
+# updater signing material must never be committed: whoever holds the private
+# half can sign an update every installed copy trusts
+*.key
+*.key.password
+!*.key.pub
+
 # local gateway runtime state and scratch output
 /accounts/
 /logs/
