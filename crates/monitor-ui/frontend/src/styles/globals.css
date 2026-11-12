@@ -1316,6 +1316,8 @@ h2 {
 .overview-breakdown-chart {
   width: 100%;
   min-width: 0;
+  /* Published by the component so the phone breakpoint can shorten it. */
+  height: var(--chart-height, 250px);
 }
 .minimal-kpis {
   display: grid;
@@ -6068,5 +6070,137 @@ h2 {
 .mobile-connect-brand small {
   color: var(--fg-faint);
   font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   Phone layout
+
+   The console was designed for a desktop window and the phone simply inherited
+   it: the three filter rows stacked into a full screen of chrome above the
+   first number, the activity chart kept its desktop height, and the eight
+   column usage table was wider than the viewport. None of that is a data
+   problem -- the same payload renders fine -- so the fix is layout only.
+
+   Everything here is scoped to the phone breakpoint so the desktop console is
+   untouched.
+   ------------------------------------------------------------------------ */
+@media (max-width: 560px) {
+  /* Two filter rows instead of three: the range strip takes the first row and
+     the two grouping strips split the second. Three stacked rows pushed the
+     first number to the bottom of the screen. */
+  .overview-controls {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .range-selector {
+    flex: 1 1 100%;
+  }
+  .overview-dimension-selector,
+  .overview-metric-selector {
+    flex: 1 1 calc(50% - 3px);
+    min-width: 0;
+  }
+  .range-selector label,
+  .overview-dimension-selector label,
+  .overview-metric-selector label {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* Segments are the primary controls on this screen, so they get a real touch
+     target rather than the 23px desktop row. */
+  .range-selector span,
+  .overview-dimension-selector span,
+  .overview-metric-selector span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 38px;
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  /* Bottom navigation is the main way around the app on a phone. */
+  .mobile-nav button {
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  /* A 250px plotting area is most of a phone screen for a chart read at a
+     glance; the trend still reads at 140px. */
+  .overview-breakdown-chart {
+    height: 140px;
+  }
+  .chart-scale,
+  .chart-frame {
+    height: 140px;
+  }
+  .minimal-chart-section {
+    min-height: 0;
+  }
+
+  .overview-summary header {
+    gap: 2px;
+  }
+
+  /* The usage table is eight columns wide. On a phone it becomes one card per
+     entity: the name keeps the top line, and the numbers read as a label/value
+     grid underneath instead of scrolling off the right edge. */
+  .overview-token-table-wrapper {
+    overflow-x: visible;
+  }
+  .overview-token-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+  .overview-token-table thead {
+    /* The card labels below carry the column names, so the header row would
+       only repeat them off-screen. */
+    display: none;
+  }
+  .overview-token-table tbody {
+    display: grid;
+    gap: 8px;
+  }
+  .overview-token-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
+    padding: 11px 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: 9px;
+    background: var(--panel-2);
+  }
+  .overview-token-table tbody td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    text-align: right;
+  }
+  /* The name spans the card; every other cell becomes "label  value". */
+  .overview-token-table tbody td.overview-token-col-account {
+    grid-column: 1 / -1;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--line-soft);
+    text-align: left;
+  }
+  .overview-token-table tbody td.overview-token-col-num::before {
+    content: attr(data-label);
+    color: var(--fg-faint);
+    font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: left;
+    /* "AVG LATENCY" wrapped onto two lines, which pushed its value out of the
+       label/value row and split "1K" from "ms". */
+    white-space: nowrap;
+    flex: none;
+  }
+  .overview-token-table tbody td.overview-token-col-num {
+    white-space: nowrap;
+  }
 }
 

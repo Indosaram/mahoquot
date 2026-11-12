@@ -207,23 +207,37 @@ export const OverviewBreakdownTable = ({
                           ) : null}
                         </div>
                       </td>
-                      <td className="overview-token-col-num" title={formatExact(row.requests)}>
+                      <td
+                        className="overview-token-col-num"
+                        data-label="Requests"
+                        title={formatExact(row.requests)}
+                      >
                         {compact.format(row.requests)}
                       </td>
                       <td
                         className="overview-token-col-num"
+                        data-label="Success"
                         title={row.requests === 0 ? "—" : formatSuccess(row)}
                       >
                         {formatSuccess(row)}
                       </td>
-                      <td className="overview-token-col-num" title={formatExact(row.inputTokens)}>
+                      <td
+                        className="overview-token-col-num"
+                        data-label="Input"
+                        title={formatExact(row.inputTokens)}
+                      >
                         {compact.format(row.inputTokens)}
                       </td>
-                      <td className="overview-token-col-num" title={formatExact(row.outputTokens)}>
+                      <td
+                        className="overview-token-col-num"
+                        data-label="Output"
+                        title={formatExact(row.outputTokens)}
+                      >
                         {compact.format(row.outputTokens)}
                       </td>
                       <td
                         className="overview-token-col-num overview-token-total"
+                        data-label="Total"
                         title={formatExact(row.totalTokens)}
                       >
                         <strong>
@@ -232,11 +246,19 @@ export const OverviewBreakdownTable = ({
                             : compact.format(row.totalTokens)}
                         </strong>
                       </td>
-                      <td className="overview-token-col-num" title={formatLatencyExact(row)}>
+                      <td
+                        className="overview-token-col-num"
+                        data-label="Avg latency"
+                        title={formatLatencyExact(row)}
+                      >
                         {formatLatency(row)}
                       </td>
                       {analytics.hasCostData ? (
-                        <td className="overview-token-col-num" title={formatCost(row.costUsd)}>
+                        <td
+                          className="overview-token-col-num"
+                          data-label="Cost"
+                          title={formatCost(row.costUsd)}
+                        >
                           {formatCost(row.costUsd)}
                         </td>
                       ) : null}

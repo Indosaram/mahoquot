@@ -301,16 +301,18 @@ describe("OverviewBreakdownChart", () => {
     expect(container.querySelector("canvas")).toBeNull();
   });
 
-  it("applies default height 250 and respects custom height prop", () => {
+  it("publishes the 250px default and the custom height prop for the stylesheet", () => {
     const analytics = createMockAnalytics();
     const { rerender } = render(<OverviewBreakdownChart analytics={analytics} />);
 
+    // The height travels as a custom property so the phone breakpoint can
+    // override it; an inline height would need `!important` to be shortened.
     let wrapper = document.querySelector(".overview-breakdown-chart") as HTMLElement;
-    expect(wrapper.style.height).toBe("250px");
+    expect(wrapper.style.getPropertyValue("--chart-height")).toBe("250px");
 
     rerender(<OverviewBreakdownChart analytics={analytics} height={320} />);
     wrapper = document.querySelector(".overview-breakdown-chart") as HTMLElement;
-    expect(wrapper.style.height).toBe("320px");
+    expect(wrapper.style.getPropertyValue("--chart-height")).toBe("320px");
   });
 
   it("respects reduced motion media query", () => {

@@ -1,6 +1,6 @@
 import { assignDimensionSeeds } from "@/lib/dimension-colors";
 import type { BreakdownRow, OverviewAnalytics } from "@/lib/overview-analytics";
-import { type JSX, useMemo } from "react";
+import { type CSSProperties, type JSX, useMemo } from "react";
 import { Area } from "./dither-kit/area";
 import { AreaChart } from "./dither-kit/area-chart";
 import { BlockLegend } from "./dither-kit/block-legend";
@@ -26,6 +26,10 @@ export const OverviewBreakdownChart = ({
   height = 250,
   loading = false,
 }: OverviewBreakdownChartProps): JSX.Element => {
+  // The plotting height is published as a custom property instead of a raw
+  // inline height so the phone breakpoint can shorten it; an inline height
+  // could only ever be overridden with `!important`.
+  const heightStyle = { "--chart-height": `${height}px` } as CSSProperties;
   // 1. const isEmpty
   const isEmpty =
     analytics.series.length === 0 || analytics.series.every((point) => point.total === 0);
@@ -89,7 +93,7 @@ export const OverviewBreakdownChart = ({
     return (
       <div
         className="overview-breakdown-chart flex items-center justify-center text-xs text-muted-foreground"
-        style={{ height }}
+        style={heightStyle}
       >
         Model breakdown needs request history
       </div>
@@ -101,7 +105,7 @@ export const OverviewBreakdownChart = ({
     return (
       <div
         className="overview-breakdown-chart flex items-center justify-center text-xs text-muted-foreground"
-        style={{ height }}
+        style={heightStyle}
       >
         No traffic in this window
       </div>
@@ -113,7 +117,7 @@ export const OverviewBreakdownChart = ({
   // while the graphic itself was hardcoded "Chart"; the name now lives on the
   // chart graphic through `ariaLabel` (F-M5).
   return (
-    <div className="overview-breakdown-chart flex flex-col gap-2" style={{ height }}>
+    <div className="overview-breakdown-chart flex flex-col gap-2" style={heightStyle}>
       <AreaChart
         data={data}
         config={config}
