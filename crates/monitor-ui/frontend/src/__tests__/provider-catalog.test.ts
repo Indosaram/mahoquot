@@ -270,6 +270,14 @@ describe("provider-catalog", () => {
       expect(PROVIDER_CATALOG_BY_ID.kiro?.authKind).toBe("key");
     });
 
+    it("advertises only the Kiro model the gateway catalog serves", () => {
+      // The gateway declares kiro as a closed provider with a single binding;
+      // anything else here is offered to the operator and then refused upstream.
+      const entry = PROVIDER_CATALOG_BY_ID.kiro;
+      expect(entry?.models).toEqual(["claude-opus-5.5"]);
+      expect(entry?.defaultModel).toBe("claude-opus-5.5");
+    });
+
     it("classifies command-code as OAuth when browser callback onboarding is available", () => {
       // Given: the command-code provider catalog entry
       const entry = PROVIDER_CATALOG_BY_ID["command-code"];
