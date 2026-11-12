@@ -682,6 +682,7 @@ export default function App() {
     [clients],
   );
 
+
   useEffect(() => {
     if (surface !== "settings") return;
     let active = true;
@@ -798,7 +799,40 @@ export default function App() {
     refreshNow,
     setCredentials,
     setLoadState,
-  } = useGatewayPolling(clients, rangeHistoryMinutes(overviewRange));
+  } = useGatewayPolling(clients, rangeHistoryMinutes(overviewRange), surface === "logs");
+
+  // The tray's Refresh Usage asks the console to refresh instead of reloading
+  // the webview: a reload re-parses the whole bundle and repeats every window's
+  // opening reads, while this path keeps state and costs one quota pass.
+  useEffect(() => {
+    const bridge = (
+      window as {
+        __TAURI__?: {
+          event?: {
+            listen: (
+              event: string,
+              handler: (message: { payload: unknown }) => void,
+            ) => Promise<() => void>;
+          };
+        };
+      }
+    ).__TAURI__?.event;
+    if (!bridge) return;
+    let cancelled = false;
+    const releases: Array<() => void> = [];
+    void bridge
+      .listen("mahoquot://refresh-usage", () => {
+        void refreshNow();
+      })
+      .then((release) => {
+        if (cancelled) release();
+        else releases.push(release);
+      });
+    return () => {
+      cancelled = true;
+      for (const release of releases) release();
+    };
+  }, [refreshNow]);
 
   const agentRequest = useCallback(
     (agentId: CliAgentId) => ({

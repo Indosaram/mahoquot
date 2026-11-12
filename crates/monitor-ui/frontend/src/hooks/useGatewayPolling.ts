@@ -72,6 +72,10 @@ const emptyStats: AdminStats = {
 export function useGatewayPolling(
   clients: GatewayClients,
   historyMinutes: number = DEFAULT_HISTORY_MINUTES,
+  /** The log tail is only rendered by the Logs surface. It is a fifth of every
+   * round (measured 137KB), so a background poll must not ship it while that
+   * surface is closed. */
+  includeLogTail = true,
 ) {
   const [stats, setStats] = useState<AdminStats>(emptyStats);
   const [credentials, setCredentials] = useState<readonly AuthFileItem[]>([]);
@@ -234,7 +238,9 @@ export function useGatewayPolling(
     // These are independent so failures in optional services do not strip credentials.
     const [credentialResult, logResult, registryResult, modelsResult] = await Promise.allSettled([
       clients.management.credentials(),
-      clients.management.logs(LOG_TAIL_LIMIT),
+      // Undefined means this round skipped the tail: the previous records stay
+      // as they are instead of being replaced with an empty list.
+      includeLogTail ? clients.management.logs(LOG_TAIL_LIMIT) : Promise.resolve(undefined),
       clients.management.modelRegistryStatus(),
       clients.management.models(),
     ]);
@@ -254,8 +260,10 @@ export function useGatewayPolling(
       );
     }
     if (logResult.status === "fulfilled") {
-      setLogs(logResult.value.records);
-      setLogsError("");
+      if (logResult.value) {
+        setLogs(logResult.value.records);
+        setLogsError("");
+      }
     } else {
       setLogs([]);
       setLogsError(logResult.reason instanceof Error ? logResult.reason.message : "unknown error");
@@ -307,7 +315,7 @@ export function useGatewayPolling(
     );
     firstLoad.current = false;
     return locked ? "relay-locked" : "failed";
-  }, [clients]);
+  }, [clients, includeLogTail]);
 
   const refresh = useCallback(
     async (): Promise<boolean> => (await runRound()) === "ok",

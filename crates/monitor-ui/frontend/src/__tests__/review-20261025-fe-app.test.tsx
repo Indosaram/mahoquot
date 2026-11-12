@@ -179,7 +179,7 @@ it("UX08 distinguishes rejected inventory and successful recovery", async () => 
   expect(document.querySelector('[data-inventory-state="ready"]')).not.toBeNull();
 });
 
-it.each(["/logs", "/model-registry"])("UX08 waits for accepted credential-only inventory with held %s", async (sibling) => {
+it.each(["/model-registry"])("UX08 waits for accepted credential-only inventory with held %s", async (sibling) => {
   vi.useFakeTimers();
   const siblingResponse = () => json(sibling === "/logs" ? { records: [] } : {
     source: "embedded_fallback", "catalog-version": 1, generation: 1,
@@ -202,6 +202,20 @@ it.each(["/logs", "/model-registry"])("UX08 waits for accepted credential-only i
   await click("Refresh snapshot");
   expect(screen.getByRole("button", { name: "More actions for a@example.test" })).toBeInTheDocument();
   await act(async () => { gate.resolve(siblingResponse()); await gate.promise; });
+});
+
+it("UX08 skips the log tail until the Logs surface is open", async () => {
+  const reads: string[] = [];
+  setup((url) => {
+    if (url.pathname.endsWith("/logs")) reads.push(url.pathname);
+    return undefined;
+  });
+  await mount();
+  // The tail is 137KB of every round and only the Logs surface renders it, so
+  // an accounts round must not carry it.
+  expect(reads).toHaveLength(0);
+  await click("Logs");
+  expect(reads.length).toBeGreaterThan(0);
 });
 
 it("UX08 keeps accounts readable when a refresh's stats snapshot is superseded or fails", async () => {

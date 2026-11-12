@@ -33,7 +33,7 @@ use stats::{build_view, fetch_stats, MonitorView};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    App, AppHandle, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewWindow,
+    App, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewWindow,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
@@ -1841,20 +1841,28 @@ fn collapse_notch(app: tauri::AppHandle, state: tauri::State<'_, NotchHoverState
     resize_notch(&app, notch::COMPACT.width, notch::COMPACT.height);
 }
 
-fn refresh_windows<R: Runtime>(app: &AppHandle<R>) {
-    for label in [MAIN_WINDOW_LABEL, NOTCH_WINDOW_LABEL] {
-        if let Some(window) = app.get_webview_window(label) {
-            if let Err(error) = window.eval("window.location.reload()") {
-                tracing::error!(label, %error, "failed to refresh Mahoquot window");
-            }
-        }
+/// Ask a surface to run its own refresh instead of reloading the webview.
+/// A reload re-parses the whole bundle and makes every window repeat its
+/// opening history read; the console already has a refresh path that keeps
+/// state and costs one quota pass.
+fn refresh_console<R: Runtime>(app: &AppHandle<R>) {
+    // The console owns the refresh; the notch reads the result on its next
+    // poll. A closed console window leaves the notch as the only surface, so
+    // that is where the request goes then.
+    let target = if app.get_webview_window(MAIN_WINDOW_LABEL).is_some() {
+        MAIN_WINDOW_LABEL
+    } else {
+        NOTCH_WINDOW_LABEL
+    };
+    if let Err(error) = app.emit_to(target, "mahoquot://refresh-usage", ()) {
+        tracing::error!(target, %error, "failed to ask the console to refresh");
     }
 }
 
 fn handle_tray_action<R: Runtime>(app: &AppHandle<R>, action: tray::TrayMenuAction) {
     match action {
         tray::TrayMenuAction::ToggleNotch => toggle_notch_window(app),
-        tray::TrayMenuAction::RefreshUsage => refresh_windows(app),
+        tray::TrayMenuAction::RefreshUsage => refresh_console(app),
         tray::TrayMenuAction::ToggleConsole => toggle_operations_console(app),
         tray::TrayMenuAction::Quit => app.exit(0),
     }
@@ -2389,13 +2397,23 @@ async fn warm_all(state: tauri::State<'_, Config>) -> Result<serde_json::Value, 
 
 #[tauri::command]
 async fn refresh_usage(state: tauri::State<'_, Config>) -> Result<MonitorView, String> {
-    post_admin(&state, "/admin/usage/refresh").await?;
-    let auth_key = if !state.management_key.is_empty() {
-        &state.management_key
-    } else {
-        &state.api_key
+    // The refresh endpoint answers with the post-refresh snapshot itself, so
+    // that body is reused instead of following it with a second stats read.
+    // The GET stays as the fallback for a gateway that answers the refresh with
+    // a body this shell cannot read (older builds shipped the full bucket
+    // history, which a truncated transfer turns into unparseable JSON).
+    let body = post_admin(&state, "/admin/usage/refresh").await?;
+    let raw = match serde_json::from_value(body) {
+        Ok(stats) => stats,
+        Err(_) => {
+            let auth_key = if !state.management_key.is_empty() {
+                &state.management_key
+            } else {
+                &state.api_key
+            };
+            fetch_stats(&state.client, &state.base_url, auth_key).await?
+        }
     };
-    let raw = fetch_stats(&state.client, &state.base_url, auth_key).await?;
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)

@@ -847,8 +847,11 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
           body: JSON.stringify({ file: document }),
         });
       },
+      // The refresh waits on every account's upstream quota call, so it is not
+      // a normal management deadline. Without the stats budget this always
+      // aborted at 20s and the browser fallback could never refresh at all.
       usageRefresh: async () => {
-        await requestJson(`${base}/admin/usage/refresh`, authHeaders, { method: "POST" });
+        await requestJson(`${base}/admin/usage/refresh`, authHeaders, { method: "POST" }, STATS_TIMEOUT_MS);
       },
       registryModels: async () =>
         parseRegistryModels(
