@@ -72,7 +72,11 @@ export const AccountResetCredits = ({ account }: AccountResetCreditsProps) => {
   // list degrades to dateless rows rather than inventing expiries.
   const credits: readonly ResetCreditView[] = account.resetCredits.length
     ? account.resetCredits
-    : Array.from({ length: count }, () => ({ grantedAtUnix: null, expiresAtUnix: null }));
+    : Array.from({ length: count }, () => ({
+        grantedAtUnix: null,
+        expiresAtUnix: null,
+        label: null,
+      }));
   const soonestDays = daysUntil(credits[0]?.expiresAtUnix ?? null, nowUnix);
 
   return (
@@ -115,7 +119,10 @@ export const AccountResetCredits = ({ account }: AccountResetCreditsProps) => {
                   data-urgency={urgencyOf(days)}
                 >
                   <i />
-                  <span>Expires {formatDate(credit.expiresAtUnix)}</span>
+                  <span title={credit.label ?? undefined}>
+                    {credit.label ?? "Reset"}
+                    <em>Expires {formatDate(credit.expiresAtUnix)}</em>
+                  </span>
                   <strong>{formatDaysLeft(days)}</strong>
                 </li>
               );

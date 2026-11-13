@@ -131,8 +131,16 @@ describe("AccountsSurface component", () => {
       ...mockAccount,
       resetCreditsAvailable: 2,
       resetCredits: [
-        { grantedAtUnix: nowUnix - 25 * DAY_SECONDS, expiresAtUnix: nowUnix + 5 * DAY_SECONDS },
-        { grantedAtUnix: nowUnix - 10 * DAY_SECONDS, expiresAtUnix: nowUnix + 20 * DAY_SECONDS },
+        {
+          grantedAtUnix: nowUnix - 25 * DAY_SECONDS,
+          expiresAtUnix: nowUnix + 5 * DAY_SECONDS,
+          label: "One full limit reset (November 2026)",
+        },
+        {
+          grantedAtUnix: nowUnix - 10 * DAY_SECONDS,
+          expiresAtUnix: nowUnix + 20 * DAY_SECONDS,
+          label: "New model launch: one Fable reset",
+        },
       ],
     } as NormalizedAccount;
     render(
@@ -149,6 +157,10 @@ describe("AccountsSurface component", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("5 days left");
     expect(rows[1]).toHaveTextContent("20 days left");
+    // Anthropic hands out differently-scoped grants at once, so the popover
+    // has to name which reset a spend would use.
+    expect(rows[0]).toHaveTextContent("One full limit reset (November 2026)");
+    expect(rows[1]).toHaveTextContent("New model launch: one Fable reset");
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTestId("account-reset-credits-list")).not.toBeInTheDocument();

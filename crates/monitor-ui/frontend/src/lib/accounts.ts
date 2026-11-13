@@ -8,10 +8,11 @@ import {
   devinCredentialFileName,
 } from "./schemas";
 
-/** One banked reset credit, with the dates the gateway could resolve. */
+/** One banked reset credit, with the dates and grant name the gateway resolved. */
 export interface ResetCreditView {
   readonly grantedAtUnix: number | null;
   readonly expiresAtUnix: number | null;
+  readonly label: string | null;
 }
 
 export type AccountHealth =
@@ -415,6 +416,7 @@ const normalizeResetCredits = (
     .map((credit) => ({
       grantedAtUnix: credit.granted_at_unix ?? null,
       expiresAtUnix: credit.expires_at_unix ?? null,
+      label: credit.label ?? null,
     }))
     .sort(
       (left, right) =>

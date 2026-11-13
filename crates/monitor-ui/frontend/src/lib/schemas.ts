@@ -124,6 +124,7 @@ export const ResetCreditSchema = z.object({
   granted_at_unix: z.number().nullable().optional(),
   expires_at_unix: z.number().nullable().optional(),
   status: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
 });
 export type ResetCredit = z.infer<typeof ResetCreditSchema>;
 

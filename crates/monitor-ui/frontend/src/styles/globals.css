@@ -2999,6 +2999,17 @@ h2 {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.reset-credits-popover li span {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reset-credits-popover li em {
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-style: normal;
+}
 .reset-credits-popover li i {
   width: 5px;
   height: 5px;
