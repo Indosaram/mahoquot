@@ -41,6 +41,11 @@ import { ProviderGlyph } from "./ProviderGlyph";
 import type { WarmupControlsState } from "./WarmupControls";
 import { Badge, Button, Card } from "./ui";
 
+const compact = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
+
 export const HealthBadge = ({ account }: { readonly account: NormalizedAccount }) => {
   const tone =
     account.health === "healthy"
@@ -703,13 +708,7 @@ export const AccountCard = ({
             ) : null}
             <strong>{account.usage.totals.requests.toLocaleString("en")}</strong> req
             <span>·</span>
-            <strong>
-              {new Intl.NumberFormat("en", {
-                notation: "compact",
-                maximumFractionDigits: 2,
-              }).format(account.usage.totals.tokens)}
-            </strong>{" "}
-            tok
+            <strong>{compact.format(account.usage.totals.tokens)}</strong> tok
             {account.usage.totals.total_cost_usd != null ? (
               <>
                 <span>·</span>
@@ -735,7 +734,9 @@ export const AccountCard = ({
         {rows.length ? (
           <div
             className={
-              hasQuotaRefreshError(account.usage) ? "quota-list quota-list-unverified" : "quota-list"
+              hasQuotaRefreshError(account.usage)
+                ? "quota-list quota-list-unverified"
+                : "quota-list"
             }
             data-testid="account-quota-list"
           >

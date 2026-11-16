@@ -102,6 +102,7 @@ const ScopePicker = ({
   onSelectAll,
   scrollable = false,
 }: ScopePickerProps) => {
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
   const allSelected = options.length > 0 && selected.length === options.length;
   return (
     <section className="scope-picker" aria-label={title}>
@@ -124,7 +125,7 @@ const ScopePicker = ({
       ) : (
         <div className={scrollable ? "scope-options scope-options-scroll" : "scope-options"}>
           {options.map((option) => {
-            const checked = selected.includes(option.value);
+            const checked = selectedSet.has(option.value);
             return (
               <label key={option.value} className="scope-chip" data-checked={checked}>
                 <input type="checkbox" checked={checked} onChange={() => onToggle(option.value)} />

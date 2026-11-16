@@ -35,7 +35,9 @@ impl Lifecycle {
             }
             "ready" => {
                 let (generation, ready) = self.active.get_mut(&pid)?;
-                if *ready { return None; }
+                if *ready {
+                    return None;
+                }
                 *ready = true;
                 *generation
             }
@@ -51,7 +53,13 @@ impl Lifecycle {
 static LIFECYCLE: std::sync::OnceLock<std::sync::Mutex<Lifecycle>> = std::sync::OnceLock::new();
 
 pub(crate) fn generation(pid: i32) -> Option<u64> {
-    LIFECYCLE.get()?.lock().unwrap_or_else(|e| e.into_inner()).active.get(&pid).map(|entry| entry.0)
+    LIFECYCLE
+        .get()?
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .active
+        .get(&pid)
+        .map(|entry| entry.0)
 }
 
 pub(crate) fn lifecycle(pid: i32, event: &str) {
@@ -60,14 +68,24 @@ pub(crate) fn lifecycle(pid: i32, event: &str) {
 
 pub(crate) fn lifecycle_for_generation(pid: i32, event: &str, expected: Option<u64>) {
     if std::env::var_os("MAHOQUOT_NATIVE_QA").is_none()
-        || std::env::var_os("MAHOQUOT_QA_LOOPBACK_ONLY").is_none() { return; }
-    let mut state = LIFECYCLE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
-    if event == "ready" && (expected.is_none() || state.active.get(&pid).map(|entry| entry.0) != expected) {
+        || std::env::var_os("MAHOQUOT_QA_LOOPBACK_ONLY").is_none()
+    {
+        return;
+    }
+    let mut state = LIFECYCLE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if event == "ready"
+        && (expected.is_none() || state.active.get(&pid).map(|entry| entry.0) != expected)
+    {
         return;
     }
     if let Some(value) = state.record(pid, event) {
         let mut stdout = std::io::stdout().lock();
-        if let Err(error) = writeln!(stdout, "MAHOQUOT_NATIVE_LIFECYCLE {value}").and_then(|_| stdout.flush()) {
+        if let Err(error) =
+            writeln!(stdout, "MAHOQUOT_NATIVE_LIFECYCLE {value}").and_then(|_| stdout.flush())
+        {
             tracing::error!(%error, "native QA lifecycle output failed");
         }
     }
@@ -80,13 +98,28 @@ mod lifecycle_contract {
     fn generations_readiness_and_wait_outcomes_are_exact() {
         let mut state = Lifecycle::default();
         assert_eq!(state.record(42, "ready"), None);
-        assert_eq!(state.record(42, "spawned"), Some(json!({"generation":1,"pid":42,"event":"spawned"})));
-        assert_eq!(state.record(42, "ready"), Some(json!({"generation":1,"pid":42,"event":"ready"})));
+        assert_eq!(
+            state.record(42, "spawned"),
+            Some(json!({"generation":1,"pid":42,"event":"spawned"}))
+        );
+        assert_eq!(
+            state.record(42, "ready"),
+            Some(json!({"generation":1,"pid":42,"event":"ready"}))
+        );
         assert_eq!(state.record(42, "ready"), None);
-        assert_eq!(state.record(42, "wait-error"), Some(json!({"generation":1,"pid":42,"event":"wait-error"})));
+        assert_eq!(
+            state.record(42, "wait-error"),
+            Some(json!({"generation":1,"pid":42,"event":"wait-error"}))
+        );
         assert_eq!(state.record(42, "reaped"), None);
-        assert_eq!(state.record(42, "spawned"), Some(json!({"generation":2,"pid":42,"event":"spawned"})));
-        assert_eq!(state.record(42, "reaped"), Some(json!({"generation":2,"pid":42,"event":"reaped"})));
+        assert_eq!(
+            state.record(42, "spawned"),
+            Some(json!({"generation":2,"pid":42,"event":"spawned"}))
+        );
+        assert_eq!(
+            state.record(42, "reaped"),
+            Some(json!({"generation":2,"pid":42,"event":"reaped"}))
+        );
         assert_eq!(state.record(42, "ready"), None);
     }
 }

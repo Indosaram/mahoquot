@@ -1,4 +1,4 @@
-import { type JSX, useState } from "react";
+import { type JSX, useMemo, useState } from "react";
 import type { BreakdownRow, OverviewAnalytics } from "../lib/overview-analytics";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { Button } from "./ui";
@@ -65,7 +65,7 @@ export const OverviewBreakdownTable = ({
   // The rows identity is the pagination contract: a group-by, range, sort, or
   // filter change that alters the row set rewinds to the first page, and a
   // shrink below the current page clamps instead of stranding an empty view.
-  const rowSignature = rows.map((row) => row.key).join("\u0000");
+  const rowSignature = useMemo(() => rows.map((row) => row.key).join("\u0000"), [rows]);
   const [prevRowSignature, setPrevRowSignature] = useState(rowSignature);
   if (prevRowSignature !== rowSignature) {
     setPrevRowSignature(rowSignature);

@@ -343,14 +343,21 @@ pub fn notch_screen_rect<R: Runtime>(window: &WebviewWindow<R>) -> Option<Rect> 
     })
 }
 
-fn x11_cursor_location() -> Option<CursorPoint> {
-    let (connection, screen) = RustConnection::connect(None).ok()?;
-    let root = connection.setup().roots[screen].root;
-    let reply = connection.query_pointer(root).ok()?.reply().ok()?;
-    Some(CursorPoint {
-        x: f64::from(reply.root_x),
-        y: f64::from(reply.root_y),
-    })
+fn x11_cursor_location(cached: &mut Option<(RustConnection, usize)>) -> Option<CursorPoint> {
+    let query = |(connection, screen): &(RustConnection, usize)| {
+        let root = connection.setup().roots[*screen].root;
+        let reply = connection.query_pointer(root).ok()?.reply().ok()?;
+        Some(CursorPoint {
+            x: f64::from(reply.root_x),
+            y: f64::from(reply.root_y),
+        })
+    };
+    if let Some(cursor) = cached.as_ref().and_then(&query) {
+        return Some(cursor);
+    }
+    // A failed cached connection must not delay reconnecting until another sample.
+    *cached = RustConnection::connect(None).ok();
+    cached.as_ref().and_then(query)
 }
 
 pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) {
@@ -364,6 +371,7 @@ pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) 
     let handle = app.clone();
     let expanded = state.expanded.clone();
     let generation = state.generation.clone();
+    let mut connection = None;
     std::thread::spawn(move || loop {
         std::thread::sleep(HOVER_SAMPLE_INTERVAL);
         let Some(window) = handle.get_webview_window(crate::NOTCH_WINDOW_LABEL) else {
@@ -375,7 +383,7 @@ pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) 
         let Some(rect) = notch_screen_rect(&window) else {
             continue;
         };
-        let Some(cursor) = x11_cursor_location() else {
+        let Some(cursor) = x11_cursor_location(&mut connection) else {
             continue;
         };
         let was_open = expanded.load(Ordering::Relaxed);

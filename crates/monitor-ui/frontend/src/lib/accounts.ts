@@ -465,10 +465,22 @@ const pairAccountsWithCredentials = (
     const provider = providers[position];
     const stem = credential.name.replace(/\.json$/i, "");
     const withoutPlan = stem.replace(/-(?:plus|prolite|pro|team|free|enterprise)$/i, "");
-    const names = new Set([credential.name, stem, withoutPlan, withoutPlan.replace(/^[a-zA-Z0-9]+-/, "")]);
-    add(provider, "email", extractEmail(credential.email || credential.account || credential.name), position);
+    const names = new Set([
+      credential.name,
+      stem,
+      withoutPlan,
+      withoutPlan.replace(/^[a-zA-Z0-9]+-/, ""),
+    ]);
+    add(
+      provider,
+      "email",
+      extractEmail(credential.email || credential.account || credential.name),
+      position,
+    );
     for (const name of names) add(provider, "name", name, position);
-    const slug = credential.identity_slug || ((credential as Record<string, unknown>).identity as string | undefined);
+    const slug =
+      credential.identity_slug ||
+      ((credential as Record<string, unknown>).identity as string | undefined);
     if (slug) add(provider, "devin", slug, position);
     else {
       for (const name of names) add(provider, "devin", name, position);
@@ -477,21 +489,30 @@ const pairAccountsWithCredentials = (
   });
   const first = (provider: string | null, kind: string, value: string): number => {
     const queue = index.get(keyOf(provider, kind, value));
-    if (!queue) return Infinity;
+    if (!queue) return Number.POSITIVE_INFINITY;
     while (queue.cursor < queue.indices.length) {
       const position = queue.indices[queue.cursor];
       if (!matched.has(credentialFiles[position].name)) return position;
       queue.cursor += 1;
     }
-    return Infinity;
+    return Number.POSITIVE_INFINITY;
   };
-  const runtimeProviders = runtimeAccounts.map((account) => providerOf(account.provider || "unknown"));
+  const runtimeProviders = runtimeAccounts.map((account) =>
+    providerOf(account.provider || "unknown"),
+  );
   runtimeAccounts.forEach((account, position) => {
     const provider = runtimeProviders[position];
-    const identities = provider === "devin"
-      ? [["devin", account.id], ["devin-file", devinCredentialFileName(account.id)]]
-      : [["email", extractEmail(account.id)], ["name", account.id]];
-    let candidate = Infinity;
+    const identities =
+      provider === "devin"
+        ? [
+            ["devin", account.id],
+            ["devin-file", devinCredentialFileName(account.id)],
+          ]
+        : [
+            ["email", extractEmail(account.id)],
+            ["name", account.id],
+          ];
+    let candidate = Number.POSITIVE_INFINITY;
     for (const [kind, value] of identities) {
       candidate = Math.min(candidate, first(provider || null, kind, value), first("", kind, value));
     }

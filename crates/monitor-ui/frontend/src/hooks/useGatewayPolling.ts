@@ -108,7 +108,9 @@ export function useGatewayPolling(
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, []);
   if (prevClientsRef.current !== clients) {
     prevClientsRef.current = clients;
@@ -307,11 +309,7 @@ export function useGatewayPolling(
     const error = attempt.error;
     const locked = error instanceof GatewayError && error.status === 401;
     setLoadState(
-      locked
-        ? "relay-locked"
-        : gatewayLifecycleRef.current === "stopped"
-          ? "stopped"
-          : "starting",
+      locked ? "relay-locked" : gatewayLifecycleRef.current === "stopped" ? "stopped" : "starting",
     );
     firstLoad.current = false;
     return locked ? "relay-locked" : "failed";
@@ -331,7 +329,8 @@ export function useGatewayPolling(
   // A click while a round is in flight is dropped instead of stacking another
   // full quota pass.
   const refreshNow = useCallback(async () => {
-    if (!mounted.current || prevClientsRef.current !== clients || manualRefreshInFlight.current) return;
+    if (!mounted.current || prevClientsRef.current !== clients || manualRefreshInFlight.current)
+      return;
     manualRefreshInFlight.current = clients;
     setRefreshing(true);
     window.clearTimeout(spinTimerRef.current);
@@ -342,7 +341,11 @@ export function useGatewayPolling(
       await refreshUsage(true);
       await refresh();
     } finally {
-      if (mounted.current && prevClientsRef.current === clients && manualRefreshInFlight.current === clients) {
+      if (
+        mounted.current &&
+        prevClientsRef.current === clients &&
+        manualRefreshInFlight.current === clients
+      ) {
         manualRefreshInFlight.current = null;
         const elapsed = Date.now() - start;
         const minSpinMs = 500;

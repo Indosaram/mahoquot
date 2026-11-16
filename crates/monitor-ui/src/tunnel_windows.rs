@@ -12,8 +12,7 @@ use windows::Win32::{
     Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
     System::{
         Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
-            TH32CS_SNAPTHREAD,
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
         },
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -44,8 +43,8 @@ impl OwnedChild {
         };
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        let size = u32::try_from(std::mem::size_of_val(&limits))
-            .map_err(|error| error.to_string())?;
+        let size =
+            u32::try_from(std::mem::size_of_val(&limits)).map_err(|error| error.to_string())?;
         // SAFETY: FFI layout/lifetime: initialized Windows structure, exact size;
         // job and structure remain alive for the synchronous call.
         unsafe {
@@ -58,14 +57,16 @@ impl OwnedChild {
         }
         .map_err(|error| format!("failed to configure tunnel job: {error}"))?;
         command.creation_flags(CREATE_NO_WINDOW.0 | CREATE_SUSPENDED.0);
-        let child = command.spawn()
+        let child = command
+            .spawn()
             .map_err(|error| format!("failed to start cloudflared: {error}"))?;
         let mut owned = Self { child, job };
         // SAFETY: both kernel handles are owned and live. The leader is still
         // suspended; assignment failure cannot release unowned executable code.
         let assigned = unsafe {
             AssignProcessToJobObject(
-                HANDLE(owned.job.as_raw_handle()), HANDLE(owned.child.as_raw_handle()),
+                HANDLE(owned.job.as_raw_handle()),
+                HANDLE(owned.child.as_raw_handle()),
             )
         }
         .map_err(|error| format!("failed to assign tunnel job: {error}"));
@@ -110,7 +111,10 @@ impl OwnedChild {
                 };
                 // SAFETY: live thread handle with THREAD_SUSPEND_RESUME access.
                 if unsafe { ResumeThread(HANDLE(thread.as_raw_handle())) } == u32::MAX {
-                    return Err(format!("failed to resume tunnel thread: {}", std::io::Error::last_os_error()));
+                    return Err(format!(
+                        "failed to resume tunnel thread: {}",
+                        std::io::Error::last_os_error()
+                    ));
                 }
                 return Ok(());
             }
@@ -130,11 +134,16 @@ impl OwnedChild {
         // mutable borrow keeps it and the job alive throughout this finite wait.
         // A process stays signaled after exit, so no exit notification is lost.
         match unsafe { WaitForSingleObject(HANDLE(self.child.as_raw_handle()), milliseconds) } {
-            WAIT_OBJECT_0 => self.child.try_wait()
+            WAIT_OBJECT_0 => self
+                .child
+                .try_wait()
                 .map_err(|error| format!("failed to reap cloudflared: {error}"))?
                 .ok_or_else(|| "signaled cloudflared process has no exit status".to_string()),
             WAIT_TIMEOUT => Err("cloudflared did not exit before wait timeout".to_string()),
-            WAIT_FAILED => Err(format!("failed to wait for cloudflared: {}", std::io::Error::last_os_error())),
+            WAIT_FAILED => Err(format!(
+                "failed to wait for cloudflared: {}",
+                std::io::Error::last_os_error()
+            )),
             result => Err(format!("unexpected cloudflared wait result: {}", result.0)),
         }
     }
@@ -148,11 +157,15 @@ impl OwnedChild {
 
 impl Deref for OwnedChild {
     type Target = Child;
-    fn deref(&self) -> &Child { &self.child }
+    fn deref(&self) -> &Child {
+        &self.child
+    }
 }
 
 impl DerefMut for OwnedChild {
-    fn deref_mut(&mut self) -> &mut Child { &mut self.child }
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
 }
 
 impl Drop for OwnedChild {

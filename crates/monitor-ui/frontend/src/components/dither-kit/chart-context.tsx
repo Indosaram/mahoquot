@@ -295,8 +295,14 @@ export function useChartController({
   // The d3 scale factories are memoized so `y` keeps a stable identity: the
   // canvas `targets` memo (cartesian-canvas / bar-canvas) deps on ctx.y, and
   // xCenter/indexAtX/barSlot below close over these.
-  const xPoint = useMemo(() => buildXScale(data.length, plotWidth), [data.length, plotWidth]);
-  const xBand = useMemo(() => buildBandScale(data.length, plotWidth), [data.length, plotWidth]);
+  const xPoint = useMemo(
+    () => buildXScale(isBar ? 0 : data.length, plotWidth),
+    [isBar, data.length, plotWidth],
+  );
+  const xBand = useMemo(
+    () => buildBandScale(isBar ? data.length : 0, plotWidth),
+    [isBar, data.length, plotWidth],
+  );
   const bandwidth = isBar ? xBand.bandwidth() : 0;
   const xCenter = useCallback(
     (i: number) => (isBar ? (xBand(i) ?? 0) + xBand.bandwidth() / 2 : (xPoint(i) ?? 0)),
@@ -328,6 +334,19 @@ export function useChartController({
   // Stable so `common` and the value stay stable; re-created only on config.
   const seedOf = useCallback((key: string) => seedOfColor(config[key]?.color ?? "grey"), [config]);
 
+  // Horizontal cursor tracking does not change the highest hovered node.
+  const tooltipTop = useMemo(() => {
+    const floor = mTop + 44;
+    if (hoverIndex == null) return floor;
+    let minY = Number.POSITIVE_INFINITY;
+    for (const key of configKeys) {
+      const b = bands[key]?.[hoverIndex];
+      if (b) minY = Math.min(minY, y(b[1]));
+    }
+    if (!Number.isFinite(minY)) return floor;
+    return Math.max(floor, mTop + minY);
+  }, [hoverIndex, configKeys, bands, y, mTop]);
+
   // Memoized: this is the value handed to CommonChartContext (Legend/Tooltip),
   // so it needs its own stable identity independent of the parent value.
   const common: CommonChart = useMemo(
@@ -344,17 +363,7 @@ export function useChartController({
       tooltipLeft: Math.max(48, Math.min(plotWidth + mLeft - 48, cursorX)),
       // Follow the highest hovered node so the card rides the data path, but
       // keep enough headroom that the upward-lifted card never clips the top.
-      tooltipTop: (() => {
-        const floor = mTop + 44;
-        if (hoverIndex == null) return floor;
-        let minY = Number.POSITIVE_INFINITY;
-        for (const key of configKeys) {
-          const b = bands[key]?.[hoverIndex];
-          if (b) minY = Math.min(minY, y(b[1]));
-        }
-        if (!Number.isFinite(minY)) return floor;
-        return Math.max(floor, mTop + minY);
-      })(),
+      tooltipTop,
       heading: (i, labelKey) => (labelKey ? String(data[i]?.[labelKey] ?? "") : null),
       itemsAt: (i) =>
         configKeys.map((name) => {
@@ -382,10 +391,8 @@ export function useChartController({
       ready,
       plotWidth,
       mLeft,
-      mTop,
       cursorX,
-      bands,
-      y,
+      tooltipTop,
       data,
     ],
   );

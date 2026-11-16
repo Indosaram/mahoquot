@@ -81,10 +81,11 @@ async function start() {
   const child = gateway;
   await new Promise((resolve, reject) => {
     let log = '';
+    let listening = false;
     const timeout = setTimeout(() => reject(new Error('gateway listening event timeout')), 10000);
     const data = chunk => {
       log += chunk.toString();
-      if (/listening/.test(log)) { clearTimeout(timeout); resolve(); }
+      if (!listening && /listening/.test(log)) { listening = true; clearTimeout(timeout); resolve(); }
     };
     child.stdout.on('data', data);
     child.stderr.on('data', data);

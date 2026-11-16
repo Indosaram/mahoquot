@@ -637,19 +637,22 @@ fn listener_pids_for(port: u16) -> Vec<i32> {
 
 #[cfg(any(windows, test))]
 fn windows_listener_pids(output: &str, port: u16) -> Vec<i32> {
-    output.lines().filter_map(|line| {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        if fields.len() != 5 || fields[0] != "TCP" || fields[3] != "LISTENING" {
-            return None;
-        }
-        let (address, local_port) = fields[1].rsplit_once(':')?;
-        if local_port.parse::<u16>().ok()? != port
-            || !matches!(address, "127.0.0.1" | "0.0.0.0" | "[::1]" | "[::]")
-        {
-            return None;
-        }
-        fields[4].parse::<i32>().ok().filter(|pid| *pid > 1)
-    }).collect()
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            if fields.len() != 5 || fields[0] != "TCP" || fields[3] != "LISTENING" {
+                return None;
+            }
+            let (address, local_port) = fields[1].rsplit_once(':')?;
+            if local_port.parse::<u16>().ok()? != port
+                || !matches!(address, "127.0.0.1" | "0.0.0.0" | "[::1]" | "[::]")
+            {
+                return None;
+            }
+            fields[4].parse::<i32>().ok().filter(|pid| *pid > 1)
+        })
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -880,10 +883,12 @@ fn spawn_gateway_child(
                     stderr_reader,
                     pid,
                     watchdog_process,
-                    bin,
-                    auth_dir,
-                    port,
-                    watchdog_gate,
+                    WatchdogSpec {
+                        bin,
+                        auth_dir,
+                        port,
+                        gate: watchdog_gate,
+                    },
                 );
                 if let Err(error) = finished_tx.send(()) {
                     tracing::debug!(%error, "gateway watchdog completion receiver closed");
@@ -899,6 +904,15 @@ fn spawn_gateway_child(
     }
 }
 
+/// Everything a respawn needs: the launch inputs plus the gate that tells the
+/// watchdog whether a stop was intentional.
+struct WatchdogSpec {
+    bin: std::path::PathBuf,
+    auth_dir: std::path::PathBuf,
+    port: u16,
+    gate: std::sync::Arc<gateway_process::SpawnGate>,
+}
+
 /// Watchdog loop: waits for the gateway to exit, and respawns it unless the
 /// stop was intentional or the backoff policy gives up.
 fn gateway_watchdog_loop(
@@ -906,18 +920,28 @@ fn gateway_watchdog_loop(
     mut stderr_reader: Option<std::thread::JoinHandle<()>>,
     mut pid: i32,
     process: GatewayProcess,
-    bin: std::path::PathBuf,
-    auth_dir: std::path::PathBuf,
-    port: u16,
-    gate: std::sync::Arc<gateway_process::SpawnGate>,
+    spec: WatchdogSpec,
 ) {
+    let WatchdogSpec {
+        bin,
+        auth_dir,
+        port,
+        gate,
+    } = spec;
     let mut policy = gateway_process::RespawnPolicy::new();
 
     loop {
         let spawn_time = std::time::Instant::now();
         let result = child.wait();
         #[cfg(target_os = "macos")]
-        native_input_probe::lifecycle(pid, if result.is_ok() { "reaped" } else { "wait-error" });
+        native_input_probe::lifecycle(
+            pid,
+            if result.is_ok() {
+                "reaped"
+            } else {
+                "wait-error"
+            },
+        );
         let uptime = spawn_time.elapsed();
         clear_gateway_pid(&process.pid, pid);
         // The reader ends at pipe EOF, which the exit above guarantees. Joining
@@ -1093,8 +1117,10 @@ async fn native_settings_state(
 ) -> Result<os_integration::NativeSettingsState, String> {
     let login_start_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let is_running = gateway_available(&process, &config).await;
-    Ok(os_integration::NativeSettingsState::new(is_running, notification_service_status(&app))
-        .with_login_start(login_start_enabled))
+    Ok(
+        os_integration::NativeSettingsState::new(is_running, notification_service_status(&app))
+            .with_login_start(login_start_enabled),
+    )
 }
 
 #[tauri::command]
@@ -1465,9 +1491,9 @@ async fn gateway_status(
 async fn gateway_available(process: &GatewayProcess, config: &Config) -> bool {
     match gateway_target_policy(&config.base_url) {
         GatewayTargetPolicy::ManageLocal => {
-            owned_gateway_ready(&process, target_gateway_port(&config.base_url))
+            owned_gateway_ready(process, target_gateway_port(&config.base_url))
         }
-        GatewayTargetPolicy::UseConfigured => configured_gateway_available(&config).await,
+        GatewayTargetPolicy::UseConfigured => configured_gateway_available(config).await,
     }
 }
 
@@ -1504,16 +1530,16 @@ fn start_local_gateway(
     port: u16,
     spawn: impl FnOnce() -> Result<i32, String>,
 ) -> Result<GatewayLifecycleStatus, String> {
-    if owned_gateway_ready(&process, port) {
+    if owned_gateway_ready(process, port) {
         return Ok(GatewayLifecycleStatus::Running);
     }
     if process.pid() <= 1 {
         spawn()?;
     }
-    if wait_for_gateway_ready_port(&process, port) {
+    if wait_for_gateway_ready_port(process, port) {
         Ok(GatewayLifecycleStatus::Running)
     } else {
-        stop_owned_gateway_locked(&process, None)?;
+        stop_owned_gateway_locked(process, None)?;
         process.record_child_failure("The gateway did not begin listening within 5 seconds.");
         Err("gateway did not begin listening within 5 seconds".to_string())
     }

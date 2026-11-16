@@ -407,7 +407,16 @@ describe("useGatewayPolling stats decoupling", () => {
             JSON.stringify({
               uptime_secs: 1,
               accounts: [],
-              history: [{ minute_unix: 1, requests: 1, successes: 1, failures: 0, providers: [], accounts: [] }],
+              history: [
+                {
+                  minute_unix: 1,
+                  requests: 1,
+                  successes: 1,
+                  failures: 0,
+                  providers: [],
+                  accounts: [],
+                },
+              ],
             }),
           );
         }

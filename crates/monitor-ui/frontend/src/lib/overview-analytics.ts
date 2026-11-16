@@ -232,6 +232,24 @@ const withMetricShares = (
   });
 };
 
+const createAccountIdentityResolver = (accounts: readonly NormalizedAccount[]) => {
+  const accountsById = new Map<string, NormalizedAccount>();
+  for (const account of accounts) {
+    // Match Array.find's first-account precedence even if IDs are duplicated.
+    if (!accountsById.has(account.id)) accountsById.set(account.id, account);
+  }
+  return (identifier: string) => {
+    const account = accountsById.get(identifier);
+    return account
+      ? {
+          label: account.label || account.email || identifier,
+          provider: account.provider,
+          isUnlinked: false,
+        }
+      : resolveAccountIdentity(identifier, accounts);
+  };
+};
+
 export const buildAnalytics = ({
   ranking,
   series,
@@ -252,6 +270,7 @@ export const buildAnalytics = ({
   accounts: readonly NormalizedAccount[];
 }): OverviewAnalytics => {
   const aggregates = new Map<string, AggregateAccumulator>();
+  const identityOfAccount = createAccountIdentityResolver(dimension === "account" ? accounts : []);
 
   for (const group of ranking.groups) {
     const rawKey =
@@ -269,7 +288,7 @@ export const buildAnalytics = ({
       label = rawKey;
       provider = resolveProviderIdentity(group.provider ?? "unknown");
     } else if (dimension === "account") {
-      const identity = resolveAccountIdentity(rawKey, accounts);
+      const identity = identityOfAccount(rawKey);
       label = identity.label;
       provider = identity.provider;
       isUnlinked = identity.isUnlinked;
@@ -576,6 +595,7 @@ export const telemetryAnalytics = ({
 
   const filtered = filterTelemetryRange(samples, range, nowMs);
   const summary = summarizeTelemetry(filtered);
+  const identityOfAccount = createAccountIdentityResolver(accounts);
 
   const duration = rangeDurations[range];
   const bucketCount = Math.max(1, Math.floor(duration / bucketMs));
@@ -590,7 +610,7 @@ export const telemetryAnalytics = ({
   const providerOfAccount = (id: string): string => {
     let provider = accountProviders.get(id);
     if (provider === undefined) {
-      provider = normalizeToQuotioProviderId(resolveAccountIdentity(id, accounts).provider);
+      provider = normalizeToQuotioProviderId(identityOfAccount(id).provider);
       accountProviders.set(id, provider);
     }
     return provider;
@@ -712,7 +732,7 @@ export const telemetryAnalytics = ({
     }
 
     const accRows: BreakdownRow[] = [...accountMap.entries()].map(([id, data]) => {
-      const identity = resolveAccountIdentity(id, accounts);
+      const identity = identityOfAccount(id);
       return {
         key: id,
         label: identity.label,

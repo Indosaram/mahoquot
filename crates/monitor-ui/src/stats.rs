@@ -223,15 +223,15 @@ fn cline_free_cooldown_deadline(usage: &Usage, now_unix_ms: i64) -> Option<(i64,
     for bucket in &group.buckets {
         let is_free_model = if let Some(id) = bucket.bucket_id.as_deref().filter(|s| !s.is_empty())
         {
-            id.to_ascii_lowercase().contains("gemini")
-                || id.to_ascii_lowercase().contains("deepseek")
+            let id = id.to_ascii_lowercase();
+            id.contains("gemini") || id.contains("deepseek")
         } else {
             bucket.display_name.as_deref().is_some_and(|name| {
-                name.to_ascii_lowercase().contains("gemini")
-                    || name.to_ascii_lowercase().contains("deepseek")
+                let name = name.to_ascii_lowercase();
+                name.contains("gemini") || name.contains("deepseek")
             }) || bucket.window.as_deref().is_some_and(|w| {
-                w.to_ascii_lowercase().contains("gemini")
-                    || w.to_ascii_lowercase().contains("deepseek")
+                let w = w.to_ascii_lowercase();
+                w.contains("gemini") || w.contains("deepseek")
             })
         };
         if !is_free_model {
@@ -1135,6 +1135,41 @@ mod tests {
         let v = build_view(&s, 1000 * 1000);
         assert_eq!(v.accounts[0].status, "cooldown");
         assert_eq!(v.accounts[0].cooldown_remaining_secs, Some(1000));
+    }
+
+    #[test]
+    fn cline_free_model_matching_preserves_field_fallback_and_id_precedence() {
+        for (id, name, window, expected) in [
+            (Some("free/GeMiNi"), None, None, true),
+            (Some("free/DeEpSeEk"), None, None, true),
+            (None, Some("free/DeEpSeEk"), None, true),
+            (None, Some("other"), Some("GeMiNi daily"), true),
+            (Some(""), None, Some("DeEpSeEk daily"), true),
+            (Some("other"), Some("Gemini"), Some("DeepSeek"), false),
+            (None, Some("other"), Some("daily"), false),
+            (None, None, None, false),
+        ] {
+            let usage = Usage {
+                groups: vec![QuotaGroup {
+                    display_name: Some("Cline Free Limits".into()),
+                    buckets: vec![QuotaBucket {
+                        bucket_id: id.map(str::to_owned),
+                        display_name: name.map(str::to_owned),
+                        window: window.map(str::to_owned),
+                        used_percent: Some(100.0),
+                        reset_at_unix: Some(2000),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            assert_eq!(
+                cline_free_cooldown_deadline(&usage, 1_000_000),
+                expected.then_some((2_000_000, 1000, true)),
+                "id={id:?} name={name:?} window={window:?}"
+            );
+        }
     }
 
     #[test]

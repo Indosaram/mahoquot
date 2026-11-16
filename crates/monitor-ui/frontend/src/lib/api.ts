@@ -52,7 +52,6 @@ import {
   WarmupStatusResponseSchema,
   parseAdminStats,
   parseAuthFiles,
-  parseExcludedModels,
   parseGatewayModels,
   parseLogRecordLine,
   parseLogs,
@@ -394,9 +393,11 @@ const managementHeaders = async (url: string, headers: HeadersInit): Promise<Hea
   const endpoint = native?.endpoint ?? storedGatewayEndpoint();
   if (!endpoint || target.origin !== new URL(endpoint).origin) return headers;
   const stripAuth = (): Record<string, string> => {
-    const resolved = toHeaderRecord(headers);
-    delete resolved.Authorization;
-    delete resolved.authorization;
+    const {
+      Authorization: _upperAuth,
+      authorization: _lowerAuth,
+      ...resolved
+    } = toHeaderRecord(headers);
     return resolved;
   };
   // A management bridge owns this boundary: its key replaces whatever the
@@ -617,7 +618,8 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
             }
           } catch (error: unknown) {
             if (!controller.signal.aborted) console.error("Gateway log stream failed", error);
-            terminal = error instanceof GatewayError && (error.status === 401 || error.status === 403);
+            terminal =
+              error instanceof GatewayError && (error.status === 401 || error.status === 403);
           } finally {
             if (!controller.signal.aborted) {
               if (!terminal) {
@@ -851,17 +853,20 @@ export const createGatewayClients = (baseUrl: string, apiKey: string): GatewayCl
       // a normal management deadline. Without the stats budget this always
       // aborted at 20s and the browser fallback could never refresh at all.
       usageRefresh: async () => {
-        await requestJson(`${base}/admin/usage/refresh`, authHeaders, { method: "POST" }, STATS_TIMEOUT_MS);
+        await requestJson(
+          `${base}/admin/usage/refresh`,
+          authHeaders,
+          { method: "POST" },
+          STATS_TIMEOUT_MS,
+        );
       },
       registryModels: async () =>
         parseRegistryModels(
           await requestJson(`${base}/v0/management/model-registry/models`, authHeaders),
         ).models,
       excludedModels: async () =>
-        parseExcludedModels(
-          excludedModelsResponseSchema.parse(
-            await requestJson(`${base}/v0/management/oauth-excluded-models`, authHeaders),
-          ),
+        excludedModelsResponseSchema.parse(
+          await requestJson(`${base}/v0/management/oauth-excluded-models`, authHeaders),
         ),
       // The endpoint reads the bare map and falls back to an empty document for
       // anything else, so a wrapped body would silently disable every model.

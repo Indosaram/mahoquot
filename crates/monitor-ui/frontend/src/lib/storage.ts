@@ -32,7 +32,8 @@ export const resolveGatewayEndpoint = (value: string): string => {
   return window.location.origin;
 };
 
-export const migrateStoredGatewayUrl = (): string => {  const current = localStorage.getItem("mahoquot.base");
+export const migrateStoredGatewayUrl = (): string => {
+  const current = localStorage.getItem("mahoquot.base");
   if (current === OBSOLETE_GATEWAY_URL) {
     localStorage.setItem("mahoquot.base", DEFAULT_GATEWAY_URL);
     return DEFAULT_GATEWAY_URL;

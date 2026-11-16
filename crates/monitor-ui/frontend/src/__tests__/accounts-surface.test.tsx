@@ -1551,7 +1551,6 @@ describe("Cline pool quota summary", () => {
       expect(rows[1]?.usedPercent).toBe(25);
     });
 
-    
     it("suppresses synthetic flat windows when Relay limits or Grok groups are present and omits lapsed reset countdowns", () => {
       const relayAccount: NormalizedAccount = {
         ...mockAccount,
@@ -1560,15 +1559,43 @@ describe("Cline pool quota summary", () => {
         plan: "opus-standard",
         usage: {
           plan_type: "relay",
-          primary: { limit_name: "3h", window_minutes: 180, used_percent: 0, reset_at_unix: 1900000000 },
-          secondary: { limit_name: "Weekly", window_minutes: 10080, used_percent: 100, reset_at_unix: 1900000000 },
+          primary: {
+            limit_name: "3h",
+            window_minutes: 180,
+            used_percent: 0,
+            reset_at_unix: 1900000000,
+          },
+          secondary: {
+            limit_name: "Weekly",
+            window_minutes: 10080,
+            used_percent: 100,
+            reset_at_unix: 1900000000,
+          },
           groups: [
             {
               display_name: "Relay limits",
               buckets: [
-                { bucket_id: "cost_usd-3h", display_name: "3h", window: "3h", used_percent: 0, reset_at_unix: 1900000000 },
-                { bucket_id: "cost_usd-daily", display_name: "Daily", window: "daily", used_percent: 0, reset_at_unix: 1900000000 },
-                { bucket_id: "cost_usd-weekly", display_name: "Weekly", window: "weekly", used_percent: 100, reset_at_unix: 1000 },
+                {
+                  bucket_id: "cost_usd-3h",
+                  display_name: "3h",
+                  window: "3h",
+                  used_percent: 0,
+                  reset_at_unix: 1900000000,
+                },
+                {
+                  bucket_id: "cost_usd-daily",
+                  display_name: "Daily",
+                  window: "daily",
+                  used_percent: 0,
+                  reset_at_unix: 1900000000,
+                },
+                {
+                  bucket_id: "cost_usd-weekly",
+                  display_name: "Weekly",
+                  window: "weekly",
+                  used_percent: 100,
+                  reset_at_unix: 1000,
+                },
               ],
             },
           ],

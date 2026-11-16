@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NormalizedAccount } from "../lib/accounts";
+import { resolveAccountIdentity } from "../lib/dimension-identity";
 import {
   EMPTY_ANALYTICS,
   OTHER_KEY,
@@ -168,6 +169,139 @@ describe("overview-analytics queries and ranges", () => {
     expect(accountQueries.series.accounts).toEqual(["a1", "a2"]);
     expect(accountQueries.series.models).toBeUndefined();
     expect(accountQueries.series.providers).toBeUndefined();
+  });
+});
+
+describe("analytics account identity indexing", () => {
+  const nowMs = 1700000000000;
+  const historyFor = (ids: readonly string[], accounts: readonly NormalizedAccount[]) =>
+    buildAnalytics({
+      ranking: makeResponse(
+        ids.map((id) => ({
+          "bucket-start-ms": null,
+          account: id,
+          provider: null,
+          model: null,
+          "key-label": null,
+          status: null,
+          totals: { ...defaultTotals, requests: 1 },
+        })),
+      ),
+      series: makeResponse(),
+      totalSeries: makeResponse(),
+      dimension: "account",
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    });
+  const sampleFor = (ids: readonly string[]): TelemetrySample => ({
+    timestamp: nowMs,
+    served: ids.length,
+    requests: ids.length,
+    successes: ids.length,
+    failures: 0,
+    inFlight: 0,
+    p50Ms: 0,
+    p90Ms: 0,
+    providers: ["codex", "claude", "qwen", "zcode", "unknown"].map((provider) => ({
+      provider,
+      requests: 1,
+      successes: 1,
+      failures: 0,
+    })),
+    accounts: ids.map((id) => ({
+      id,
+      requests: 1,
+      successes: 1,
+      failures: 0,
+      inputTokens: 10,
+      outputTokens: 2,
+      totalTokens: 12,
+    })),
+  });
+
+  it("preserves exact-ID precedence, duplicate order, label fallbacks, and fuzzy matches", () => {
+    const accounts = [
+      makeAccount("email-shadow", "duplicate", "claude"),
+      { ...makeAccount("duplicate", "", "codex"), label: "" },
+      makeAccount("duplicate", "later@example.com", "claude"),
+      { ...makeAccount("lowercase", "CASE@EXAMPLE.COM", "qwen"), label: "" },
+      makeAccount("shared-first", "shared@example.com", "codex"),
+      makeAccount("shared-second", "shared@example.com", "claude"),
+      { ...makeAccount("credential", "cred@example.com", "zcode"), credentialName: "Custom.JSON" },
+      { ...makeAccount("no-label", "no-label@example.com", "codex"), label: "" },
+    ];
+    const ids = [
+      "duplicate",
+      "shared@example.com",
+      "CASE_example.com",
+      "claude-shared@example.com",
+      "custom",
+      "codex-custom",
+      "no-label",
+      "missing",
+      `generic-${"a".repeat(64)}`,
+    ];
+    const expected = ids.map((id) => ({ key: id, ...resolveAccountIdentity(id, accounts) }));
+    const args = {
+      samples: [sampleFor(ids)],
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    } as const;
+    for (const analytics of [
+      historyFor(ids, accounts),
+      telemetryAnalytics({ ...args, dimension: "account" }),
+    ]) {
+      const rows = analytics.allRows ?? [];
+      expect(rows.map((row) => row.key)).toEqual([...ids].sort((a, b) => a.localeCompare(b)));
+      for (const identity of expected) {
+        expect(rows.find((row) => row.key === identity.key)).toMatchObject(identity);
+      }
+    }
+    const providers = telemetryAnalytics({ ...args, dimension: "provider" }).allRows ?? [];
+    for (const row of providers) {
+      const count = expected.filter((identity) => identity.provider === row.key).length;
+      expect(row).toMatchObject({
+        inputTokens: count * 10,
+        outputTokens: count * 2,
+        totalTokens: count * 12,
+      });
+    }
+  });
+
+  it("indexes exact IDs once per build in history and both telemetry dimensions", () => {
+    const ids = Array.from({ length: 128 }, (_, i) => `account-${i}`);
+    let idReads = 0;
+    const accounts = ids.map((id) =>
+      Object.defineProperty(makeAccount(id, "", "codex"), "id", {
+        get: () => {
+          idReads++;
+          return id;
+        },
+      }),
+    );
+    const args = {
+      samples: [sampleFor(ids)],
+      metric: "requests",
+      range: "1h",
+      nowMs,
+      accounts,
+    } as const;
+    const builds = [
+      () => historyFor(ids, accounts),
+      () => telemetryAnalytics({ ...args, dimension: "account" }),
+      () => telemetryAnalytics({ ...args, dimension: "provider" }),
+    ];
+    for (const build of builds) {
+      idReads = 0;
+      const analytics = build();
+      expect(analytics.allRows?.length).toBeGreaterThan(0);
+      expect(idReads).toBeGreaterThanOrEqual(ids.length);
+      expect(idReads).toBeLessThanOrEqual(2 * ids.length);
+    }
   });
 });
 
@@ -396,6 +530,9 @@ describe("buildAnalytics ranking, folding, and series", () => {
     // Rank 8 (20 requests) is folded out of the plotted rows but kept in allRows.
     expect(analytics.rows.some((row) => row.key === "acc-2")).toBe(false);
     expect(analytics.allRows?.find((row) => row.key === "acc-2")?.requests).toBe(20);
+    // Even an idle raw-key bucket exposes an explicit zero in the returned record.
+    expect(analytics.series[0].allValues).toHaveProperty("acc-2", 0);
+    expect(analytics.series.at(-1)?.allValues).toHaveProperty("acc-2", 20);
 
     // Before F-H1 focusAnalytics searched only `rows`, found nothing, and
     // returned the analytics untouched — KPIs/chart/mix never narrowed.
@@ -904,6 +1041,8 @@ describe("telemetryAnalytics", () => {
 
     expect(analytics.rows.some((row) => row.key === "prov-2")).toBe(false);
     expect(analytics.allRows?.find((row) => row.key === "prov-2")?.requests).toBe(2);
+    expect(analytics.series[0].allValues).toHaveProperty("prov-2", 0);
+    expect(analytics.series.some((point) => point.allValues?.["prov-2"] === 2)).toBe(true);
 
     const focused = focusAnalytics(analytics, "prov-2");
     expect(focused.totals.requests).toBe(2);

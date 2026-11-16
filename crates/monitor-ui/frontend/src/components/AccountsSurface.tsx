@@ -533,7 +533,10 @@ export const AccountsSurface = ({
       ? accounts.find((account) => account.id === warmup.selection?.id)
       : undefined;
   const popupProvider = warmup?.selection?.type === "provider" ? warmup.selection.id : undefined;
-  const poolSummary = clinePoolQuotaSummary(accounts, Date.now(), clineQuotaDisplay);
+  const poolSummary =
+    selectedProvider === "cline"
+      ? clinePoolQuotaSummary(accounts, Date.now(), clineQuotaDisplay)
+      : [];
   // One pass over the inventory feeds every tab's count, health dot, and
   // accessible name; re-filtering per attribute scanned the whole list three
   // times per tab on every render.
@@ -586,9 +589,14 @@ export const AccountsSurface = ({
                 checked={selectedProvider === item}
                 onChange={(event) => onSelectProvider(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (onProviderContextMenu && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                  if (
+                    onProviderContextMenu &&
+                    (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+                  ) {
                     event.preventDefault();
-                    event.currentTarget.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+                    event.currentTarget.dispatchEvent(
+                      new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+                    );
                     return;
                   }
                   if (!onMoveProvider || !event.altKey) return;
@@ -822,9 +830,19 @@ export const AccountsSurface = ({
         })}
       </div>
       {!visibleAccounts.length ? (
-        <div className="state-panel" role="status" data-inventory-state={inventoryState} aria-busy={inventoryState === "loading"}>
-          {accounts.length ? "No accounts match this filter." : inventoryState === "loading" ? "Loading accounts…" : inventoryState === "error" || credentialsError ? "Account inventory unavailable." : "No accounts or credentials found."}
-        </div>
+        <output
+          className="state-panel"
+          data-inventory-state={inventoryState}
+          aria-busy={inventoryState === "loading"}
+        >
+          {accounts.length
+            ? "No accounts match this filter."
+            : inventoryState === "loading"
+              ? "Loading accounts…"
+              : inventoryState === "error" || credentialsError
+                ? "Account inventory unavailable."
+                : "No accounts or credentials found."}
+        </output>
       ) : null}
     </Stack>
   );

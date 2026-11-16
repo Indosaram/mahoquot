@@ -20,10 +20,7 @@ import { DurableLogs } from "./components/DurableLogs";
 import { type NotchLocalPoint, NotchSurface } from "./components/NotchSurface";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ProviderGlyph, providerLabel } from "./components/ProviderGlyph";
-import {
-  ProviderModelsPanel,
-  withModelDisabled,
-} from "./components/ProviderModelsPanel";
+import { ProviderModelsPanel, withModelDisabled } from "./components/ProviderModelsPanel";
 import { SettingsSurface } from "./components/SettingsSurface";
 import { ToastStack, useToasts } from "./components/Toasts";
 import { TotpVaultSurface } from "./components/TotpVaultSurface";
@@ -117,7 +114,6 @@ import {
   normalizeDevinManualCredential,
 } from "./lib/schemas";
 import {
-  resolveGatewayEndpoint,
   clineQuotaSlug,
   getClineQuotaDisplay,
   getGatewayBaseUrl,
@@ -132,6 +128,7 @@ import {
   setClineQuotaDisplay as persistClineQuotaDisplay,
   setTheme as persistTheme,
   removeLegacyRelayKey,
+  resolveGatewayEndpoint,
   setGatewayBaseUrl,
   setOverviewDimension,
   setOverviewMetric,
@@ -295,7 +292,7 @@ export default function App() {
     setDiscoveredModels([]);
     setAuthorization(null);
     setAuthCode("");
-    setPending((current) => current.startsWith("auth") ? "" : current);
+    setPending((current) => (current.startsWith("auth") ? "" : current));
     setDiscoveringModels(false);
   }, [onboardingOpen]);
   useEffect(() => {
@@ -338,10 +335,7 @@ export default function App() {
   const [nativeSettingsBusy, setNativeSettingsBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const totp = useTotpVault(
-    endpoint,
-    surface !== "notch" && surface !== "tray",
-  );
+  const totp = useTotpVault(endpoint, surface !== "notch" && surface !== "tray");
 
   const reloadCliAgents = useCallback(async () => {
     const agents = await listCliAgents();
@@ -409,7 +403,6 @@ export default function App() {
     [reloadCliAgents, setNotice],
   );
 
-
   const [warmupSettings, setWarmupSettings] = useState<WarmupSettings | null>(null);
   const [warmupProviderDrafts, setWarmupProviderDrafts] = useState<
     Record<string, WarmupProviderPolicy>
@@ -433,7 +426,9 @@ export default function App() {
   const latestClients = useRef<GatewayClients | null>(null);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, []);
   const clients = useMemo(() => {
     const next = createGatewayClients(endpoint, relayKey);
@@ -446,7 +441,9 @@ export default function App() {
 
         warmupStatus: () => {
           if (!statusRequest) {
-            statusRequest = next.management.warmupStatus().finally(() => { statusRequest = null; });
+            statusRequest = next.management.warmupStatus().finally(() => {
+              statusRequest = null;
+            });
           }
           return statusRequest;
         },
@@ -464,7 +461,6 @@ export default function App() {
   // popup, which the gateway-switch tests pin.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the dep is a memo and is load-bearing
   useEffect(() => {
-
     setPending("");
     setAuthorization(null);
     setAuthCode("");
@@ -564,7 +560,9 @@ export default function App() {
             setWarmupError(error instanceof Error ? error.message : "Status unavailable");
           }
         })
-        .finally(() => { inFlight = false; });
+        .finally(() => {
+          inFlight = false;
+        });
     };
     const timer = window.setInterval(poll, 15000);
     document.addEventListener("visibilitychange", poll);
@@ -682,7 +680,6 @@ export default function App() {
     [clients],
   );
 
-
   useEffect(() => {
     if (surface !== "settings") return;
     let active = true;
@@ -730,8 +727,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      setSchedulerPending(false);
+      if (mounted.current && latestClients.current === clients) {
+        setSchedulerPending(false);
+      }
     }
   };
 
@@ -746,8 +744,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      setSchedulerPending(false);
+      if (mounted.current && latestClients.current === clients) {
+        setSchedulerPending(false);
+      }
     }
   };
 
@@ -893,7 +892,8 @@ export default function App() {
     } catch (error) {
       if (mounted.current && latestClients.current === clients) setNotice(actionFailed(error));
     } finally {
-      if (mounted.current && latestClients.current === clients) releasePending(pendingKey.registryRefresh);
+      if (mounted.current && latestClients.current === clients)
+        releasePending(pendingKey.registryRefresh);
     }
   }, [clients, refresh, releasePending, setNotice]);
 
@@ -904,12 +904,15 @@ export default function App() {
     setExcludedModels(next);
   }, []);
 
-  const modelWrites = useMemo(() => ({
-    client: clients,
-    acknowledged: {} as ExcludedModels,
-    intents: [] as { provider: string; modelId: string; disabled: boolean }[],
-    tail: Promise.resolve(),
-  }), [clients]);
+  const modelWrites = useMemo(
+    () => ({
+      client: clients,
+      acknowledged: {} as ExcludedModels,
+      intents: [] as { provider: string; modelId: string; disabled: boolean }[],
+      tail: Promise.resolve(),
+    }),
+    [clients],
+  );
   const openProviderModels = useCallback(
     async (provider: string) => {
       const request = ++modelsRequest.current;
@@ -961,7 +964,12 @@ export default function App() {
       modelWrites.tail = modelWrites.tail.then(async () => {
         if (!current()) return;
         try {
-          const next = withModelDisabled(modelWrites.acknowledged, intent.provider, modelId, disabled);
+          const next = withModelDisabled(
+            modelWrites.acknowledged,
+            intent.provider,
+            modelId,
+            disabled,
+          );
           await clients.management.saveExcludedModels(next);
           if (!current()) return;
           modelWrites.acknowledged = next;
@@ -1114,12 +1122,7 @@ export default function App() {
     void secretRetry;
     let active = true;
     const legacyValue = getLegacyRelayKey();
-    void migrateLegacyDesktopSecret(
-      endpoint,
-      "default",
-      "management_key",
-      legacyValue,
-    )
+    void migrateLegacyDesktopSecret(endpoint, "default", "management_key", legacyValue)
       .then((outcome) => {
         if (!active) return;
         if (outcome.remove_legacy) removeLegacyRelayKey();
@@ -1290,9 +1293,19 @@ export default function App() {
     [accounts, providerOrder],
   );
   const selectedProvider = providers.includes(provider) ? provider : providers[0];
-  const visibleAccounts = orderClaudeSubscriptionsForDisplay(
-    accounts.filter((account) => account.provider === selectedProvider),
+  const providerAccounts = useMemo(
+    () => accounts.filter((account) => account.provider === selectedProvider),
+    [accounts, selectedProvider],
   );
+  // Claude reset boundaries can change display order without changing accounts.
+  const visibleAccounts = orderClaudeSubscriptionsForDisplay(providerAccounts);
+  const providerAccountCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const account of accounts) {
+      counts.set(account.provider, (counts.get(account.provider) ?? 0) + 1);
+    }
+    return counts;
+  }, [accounts]);
 
   // Observed Cline daily buckets (the gateway reports every model it served);
   // combined with the live remote list into the Settings candidate set.
@@ -1352,8 +1365,9 @@ export default function App() {
       if (action === "warm" && warmupClient.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      if (action !== "warm" || warmupClient.current === clients) releasePending(key);
+      if (mounted.current && latestClients.current === clients) {
+        if (action !== "warm" || warmupClient.current === clients) releasePending(key);
+      }
     }
   };
 
@@ -1383,8 +1397,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      if (creditsClient.current === clients) releasePending(pendingKey.credits(account.id));
+      if (mounted.current && latestClients.current === clients) {
+        if (creditsClient.current === clients) releasePending(pendingKey.credits(account.id));
+      }
     }
   };
 
@@ -1409,9 +1424,10 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.remove(account.id));
-      setConfirmRemove("");
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.remove(account.id));
+        setConfirmRemove("");
+      }
     }
   };
 
@@ -1438,7 +1454,8 @@ export default function App() {
     } catch (reason) {
       if (mounted.current && latestClients.current === clients) setNotice(actionFailed(reason));
     } finally {
-      if (mounted.current && latestClients.current === clients) releasePending(pendingKey.status(account.id));
+      if (mounted.current && latestClients.current === clients)
+        releasePending(pendingKey.status(account.id));
     }
   };
 
@@ -1522,22 +1539,31 @@ export default function App() {
       // Re-sync from the server's saved order: a render-stale capture or an
       // interleaved poll must not be able to resurrect a reverted order.
       const order = saved.length ? saved : names;
+      const ranks = new Map<string, number>();
+      order.forEach((name, index) => {
+        if (!ranks.has(name)) ranks.set(name, index);
+      });
       setCredentials((prev) =>
-        [...prev].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)),
+        [...prev].sort((a, b) => (ranks.get(a.name) ?? -1) - (ranks.get(b.name) ?? -1)),
       );
       setNotice("Account priority saved. Top accounts are used first in Fill-first routing.");
     } catch (error) {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.order(accountId));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.order(accountId));
+      }
     }
   };
 
   const beginOnboarding = async (methodId: string, credentialName?: string) => {
     const generation = ++authGeneration.current;
-    const current = () => mounted.current && latestClients.current === clients && generation === authGeneration.current && onboardingOpenRef.current;
+    const current = () =>
+      mounted.current &&
+      latestClients.current === clients &&
+      generation === authGeneration.current &&
+      onboardingOpenRef.current;
     setAuthorization(null);
     setAuthCode("");
     setPending(pendingKey.auth(methodId));
@@ -1641,8 +1667,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.auth(form.provider));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.auth(form.provider));
+      }
     }
   };
 
@@ -1722,8 +1749,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.auth(form.provider));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.auth(form.provider));
+      }
     }
   };
 
@@ -1731,11 +1759,18 @@ export default function App() {
     if (step.kind !== "generic") return;
     const form = step;
     const request = ++discoveryRequest.current;
-    const current = () => mounted.current && latestClients.current === clients && onboardingOpenRef.current && stepRef.current === form && discoveryRequest.current === request;
+    const current = () =>
+      mounted.current &&
+      latestClients.current === clients &&
+      onboardingOpenRef.current &&
+      stepRef.current === form &&
+      discoveryRequest.current === request;
     setDiscoveringModels(true);
     try {
       const discovered = await discoverProviderModels(
-        form.baseUrl.trim(), form.apiKey.trim() || undefined, form.provider.staticHeaders,
+        form.baseUrl.trim(),
+        form.apiKey.trim() || undefined,
+        form.provider.staticHeaders,
       );
       if (!current()) return;
       discoveryCache.current = { form, models: discovered };
@@ -1751,7 +1786,11 @@ export default function App() {
   const submitGenericCredential = async () => {
     if (step.kind !== "generic") return;
     const form = step;
-    const current = () => mounted.current && latestClients.current === clients && onboardingOpenRef.current && stepRef.current === form;
+    const current = () =>
+      mounted.current &&
+      latestClients.current === clients &&
+      onboardingOpenRef.current &&
+      stepRef.current === form;
     setPending(pendingKey.auth(`generic:${form.provider.id}`));
     setNotice("");
     try {
@@ -1803,7 +1842,8 @@ export default function App() {
     } catch (error) {
       if (current()) setNotice(actionFailed(error));
     } finally {
-      if (mounted.current && latestClients.current === clients) releasePending(pendingKey.auth(`generic:${form.provider.id}`));
+      if (mounted.current && latestClients.current === clients)
+        releasePending(pendingKey.auth(`generic:${form.provider.id}`));
     }
   };
 
@@ -1825,8 +1865,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.auth("zcode-key"));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.auth("zcode-key"));
+      }
     }
   };
 
@@ -1866,8 +1907,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.auth("devin-token"));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.auth("devin-token"));
+      }
     }
   };
 
@@ -1887,16 +1929,17 @@ export default function App() {
         finishOnboarding("devin");
         setNotice("Devin CLI credentials imported from proxy host.");
         await refreshUsage(true);
-      if (!mounted.current || latestClients.current !== clients) return;
+        if (!mounted.current || latestClients.current !== clients) return;
         await refresh();
-      if (!mounted.current || latestClients.current !== clients) return;
+        if (!mounted.current || latestClients.current !== clients) return;
       }
     } catch (error) {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.auth("devin-cli-import"));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.auth("devin-cli-import"));
+      }
     }
   };
 
@@ -1915,16 +1958,17 @@ export default function App() {
       } else {
         setNotice(`Devin CLI credentials re-imported for ${account.label}.`);
         await refreshUsage(true);
-      if (!mounted.current || latestClients.current !== clients) return;
+        if (!mounted.current || latestClients.current !== clients) return;
         await refresh();
-      if (!mounted.current || latestClients.current !== clients) return;
+        if (!mounted.current || latestClients.current !== clients) return;
       }
     } catch (error) {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.reimport(account.id));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.reimport(account.id));
+      }
     }
   };
 
@@ -1976,8 +2020,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.discovery(account.id));
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.discovery(account.id));
+      }
     }
   };
 
@@ -2024,14 +2069,24 @@ export default function App() {
    * a completion can never be handled twice with two slightly different
    * success paths.
    */
-  // States whose terminal outcome was already applied. The 3s poller can
-  // overlap a slow read or the manual check, so both consult this first.
+  // Only the current terminal state needs retention: older callbacks are
+  // rejected by the client/session guards before consulting this set.
   const settledAuthStates = useRef(new Set<string>());
   const settleAuthorization = useCallback(
     async (session: AuthorizationSession, result: ProviderAuthStatus): Promise<void> => {
-      if (!mounted.current || latestClients.current !== clients || !onboardingOpenRef.current || authorizationRef.current?.state !== session.state || authorizationRef.current?.provider !== session.provider) return;
+      if (
+        !mounted.current ||
+        latestClients.current !== clients ||
+        !onboardingOpenRef.current ||
+        authorizationRef.current?.state !== session.state ||
+        authorizationRef.current?.provider !== session.provider
+      )
+        return;
       if (settledAuthStates.current.has(session.state)) return;
-      if (result.status !== "pending") settledAuthStates.current.add(session.state);
+      if (result.status !== "pending") {
+        settledAuthStates.current.clear();
+        settledAuthStates.current.add(session.state);
+      }
       setAuthorization({
         provider: session.provider,
         state: session.state,
@@ -2087,7 +2142,12 @@ export default function App() {
     if (!authorization) return;
     const session = authorization;
     const generation = authGeneration.current;
-    const current = () => mounted.current && latestClients.current === clients && onboardingOpenRef.current && generation === authGeneration.current && authorizationRef.current?.state === session.state;
+    const current = () =>
+      mounted.current &&
+      latestClients.current === clients &&
+      onboardingOpenRef.current &&
+      generation === authGeneration.current &&
+      authorizationRef.current?.state === session.state;
     if (settledAuthStates.current.has(session.state)) return;
     setPending(pendingKey.authStatus(session.provider));
     try {
@@ -2214,8 +2274,9 @@ export default function App() {
       if (!mounted.current || latestClients.current !== clients) return;
       setNotice(actionFailed(error));
     } finally {
-      if (!mounted.current || latestClients.current !== clients) return;
-      releasePending(pendingKey.configLoad);
+      if (mounted.current && latestClients.current === clients) {
+        releasePending(pendingKey.configLoad);
+      }
     }
   };
 
@@ -2258,7 +2319,8 @@ export default function App() {
 
   const saveConfig = async () => {
     // Local repair belongs to the native gateway, not the selected remote client.
-    const current = () => mounted.current && (configSource === "local" || latestClients.current === clients);
+    const current = () =>
+      mounted.current && (configSource === "local" || latestClients.current === clients);
     setPending(pendingKey.configSave);
     setNotice("");
     try {
@@ -2495,7 +2557,11 @@ export default function App() {
             showRemaining={showRemaining}
             clineQuotaDisplay={clineQuotaDisplay}
             pending={pending}
-            inventoryState={inventoryState === "loading" && loadState !== "loading" && loadState !== "online" ? "error" : inventoryState}
+            inventoryState={
+              inventoryState === "loading" && loadState !== "loading" && loadState !== "online"
+                ? "error"
+                : inventoryState
+            }
             credentialsError={credentialsError}
             dragging={dragging}
             confirmRemove={confirmRemove}
@@ -2662,12 +2728,7 @@ export default function App() {
                 setSecretStoreError(null);
               }}
               onRelayKeyBlur={() => {
-                void writeDesktopSecret(
-                  endpoint,
-                  "default",
-                  "management_key",
-                  relayKey.trim(),
-                )
+                void writeDesktopSecret(endpoint, "default", "management_key", relayKey.trim())
                   .then(() => setSecretStoreError(null))
                   .catch((error: unknown) => {
                     const typed =
@@ -2775,7 +2836,11 @@ export default function App() {
       </main>
 
       {onboardingOpen ? (
-        <ModalLayer className="layout-overlay-layer drawer-backdrop" aria-labelledby="onboarding-title" onClose={() => setOnboardingOpen(false)}>
+        <ModalLayer
+          className="layout-overlay-layer drawer-backdrop"
+          aria-labelledby="onboarding-title"
+          onClose={() => setOnboardingOpen(false)}
+        >
           <aside className="drawer onboarding-drawer" aria-label="Provider onboarding">
             <div className="section-head">
               <div>
@@ -2884,7 +2949,9 @@ export default function App() {
                     onChange={(event) => setStep({ ...step, baseUrl: event.target.value })}
                   />
                 </label>
-                {discoveredModels.length > 0 || step.provider.models.length > 0 || step.provider.defaultModel ? (
+                {discoveredModels.length > 0 ||
+                step.provider.models.length > 0 ||
+                step.provider.defaultModel ? (
                   <div className="provider-preset-models" aria-label="Suggested models">
                     <span>Suggested models</span>
                     <small>
@@ -3281,7 +3348,7 @@ export default function App() {
                   )
                   .map((provider) => {
                     const glyph = normalizeToQuotioProviderId(provider.glyph);
-                    const owned = accounts.filter((account) => account.provider === glyph).length;
+                    const owned = providerAccountCounts.get(glyph) ?? 0;
                     return (
                       <button
                         type="button"
@@ -3303,7 +3370,11 @@ export default function App() {
         </ModalLayer>
       ) : null}
       {configOpen ? (
-        <ModalLayer className="layout-overlay-layer drawer-backdrop" aria-labelledby="config-title" onClose={() => setConfigOpen(false)}>
+        <ModalLayer
+          className="layout-overlay-layer drawer-backdrop"
+          aria-labelledby="config-title"
+          onClose={() => setConfigOpen(false)}
+        >
           <aside className="drawer config-drawer" aria-label="Advanced configuration editor">
             <div className="section-head">
               <div>

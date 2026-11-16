@@ -102,18 +102,26 @@ export const ProviderModelsPanel = ({
   }, []);
 
   const owned = useMemo(() => modelsOwnedBy(models, provider), [models, provider]);
+  const sorted = useMemo(() => [...owned].sort((a, b) => a.id.localeCompare(b.id)), [owned]);
+  const disabledIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [key, models] of Object.entries(excluded)) {
+      if (sameProvider(key, provider)) {
+        for (const model of models) ids.add(model);
+      }
+    }
+    return ids;
+  }, [excluded, provider]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const filtered = needle
-      ? owned.filter((model) => model.id.toLowerCase().includes(needle))
-      : owned;
-    return [...filtered].sort((a, b) => a.id.localeCompare(b.id));
-  }, [owned, query]);
+    return needle ? sorted.filter((model) => model.id.toLowerCase().includes(needle)) : sorted;
+  }, [sorted, query]);
 
-  const disabledCount = owned.filter((model) =>
-    isModelDisabled(excluded, provider, model.id),
-  ).length;
+  const disabledCount = useMemo(
+    () => owned.filter((model) => disabledIds.has(model.id)).length,
+    [owned, disabledIds],
+  );
 
   return (
     <OverlayLayer className="drawer-backdrop">
@@ -185,7 +193,7 @@ export const ProviderModelsPanel = ({
         ) : (
           <Card className="models-list">
             {visible.map((model) => {
-              const disabled = isModelDisabled(excluded, provider, model.id);
+              const disabled = disabledIds.has(model.id);
               const busy = pendingModel === model.id;
               return (
                 <label className="models-row" key={model.id}>

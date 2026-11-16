@@ -256,7 +256,8 @@ export const appendTelemetrySample = (
     const { cumulativeAccounts: _baseline, ...historical } = last;
     retained[retained.length - 1] = historical;
   }
-  return [...retained, next];
+  retained.push(next);
+  return retained;
 };
 
 export const persistedTelemetrySamples = (

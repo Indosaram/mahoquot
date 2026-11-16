@@ -68,6 +68,8 @@ export function paintColumn(
     return;
   }
   const bias = (variant === "dotted" ? 0.12 : 0) + (stacked ? 0.2 : 0) - sparse;
+  const [r, g, b] = seed.fill;
+  const color = `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},`;
   for (let y = t; y < f; y++) {
     // Inverted falloff: 0 at the top line, 1 at the floor — dense at the
     // bottom, thinning as it rises toward the outline.
@@ -82,7 +84,7 @@ export function paintColumn(
     // Density → alpha (see the colour-vs-opacity note above).
     const k = (0.3 + density * 0.7) * (1 + 0.22 * intensity);
     const alpha = clamp01((lit ? k : k * OFF_TIER) * dim);
-    octx.fillStyle = rgb(seed.fill, 1, alpha);
+    octx.fillStyle = `${color}${alpha})`;
     octx.fillRect(x, y, 1, 1);
   }
   // Top border outline — the shape's edge now that the fill fades out here.

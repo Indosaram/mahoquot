@@ -777,10 +777,13 @@ fn parse_json_object(
     }
     let value: JsonValue = serde_json::from_slice(existing)
         .map_err(|error| CliConfigError::malformed(agent_id, error))?;
-    value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| CliConfigError::malformed(agent_id, "root must be an object"))
+    match value {
+        JsonValue::Object(object) => Ok(object),
+        _ => Err(CliConfigError::malformed(
+            agent_id,
+            "root must be an object",
+        )),
+    }
 }
 
 fn pretty_json(object: JsonMap<String, JsonValue>) -> Result<Vec<u8>, CliConfigError> {
@@ -966,29 +969,14 @@ fn generate_omo(
 ) -> Result<Vec<u8>, CliConfigError> {
     let mut root = parse_json_object(CliAgentId::Omo, existing)?;
     let providers = object_entry(&mut root, "providers", CliAgentId::Omo)?;
-    // omo builds its model picker from this array, so an empty one leaves the
-    // provider selectable but unusable. Merge rather than replace: existing
-    // entries keep the fields a user tuned by hand, and only ids the gateway
-    // reports for the first time are appended, so a new upstream model shows up
-    // without a curated catalog being flattened.
-    let mut models = providers
-        .get("mahoquot")
-        .and_then(|provider| provider.get("models"))
-        .and_then(JsonValue::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for id in gateway_models {
-        let known = models
-            .iter()
-            .any(|model| model.get("id").and_then(JsonValue::as_str) == Some(id.as_str()));
-        if !known {
-            models.push(serde_json::json!({ "id": id, "name": id }));
-        }
-    }
+    // Keep the provider's map slot so insertion-ordered JSON keeps its order.
+    let provider_slot = providers
+        .entry("mahoquot".to_string())
+        .or_insert(JsonValue::Null);
     // Overwrite only the keys this feature owns; compat, headers and anything
     // else the user or omo added stays. A fresh provider gets the default compat.
-    let mut provider = match providers.get("mahoquot") {
-        Some(JsonValue::Object(existing)) => existing.clone(),
+    let mut provider = match provider_slot.take() {
+        JsonValue::Object(existing) => existing,
         _ => {
             let mut fresh = serde_json::Map::new();
             fresh.insert(
@@ -1002,6 +990,25 @@ fn generate_omo(
             fresh
         }
     };
+    // omo builds its model picker from this array, so an empty one leaves the
+    // provider selectable but unusable. Merge rather than replace: existing
+    // entries keep the fields a user tuned by hand, and only ids the gateway
+    // reports for the first time are appended, so a new upstream model shows up
+    // without a curated catalog being flattened.
+    let mut models = match provider.get_mut("models").map(JsonValue::take) {
+        Some(JsonValue::Array(models)) => models,
+        _ => Vec::new(),
+    };
+    let mut known_ids: std::collections::HashSet<&str> = models
+        .iter()
+        .filter_map(|model| model.get("id").and_then(JsonValue::as_str))
+        .collect();
+    let new_models: Vec<_> = gateway_models
+        .iter()
+        .filter(|id| known_ids.insert(id.as_str()))
+        .map(|id| serde_json::json!({ "id": id, "name": id }))
+        .collect();
+    models.extend(new_models);
     provider.insert("name".to_string(), serde_json::json!("Mahoquot"));
     provider.insert("api".to_string(), serde_json::json!("openai-completions"));
     provider.insert("apiKey".to_string(), serde_json::json!(token));
@@ -1010,7 +1017,7 @@ fn generate_omo(
         serde_json::json!(format!("{gateway}/v1")),
     );
     provider.insert("models".to_string(), JsonValue::Array(models));
-    providers.insert("mahoquot".to_string(), JsonValue::Object(provider));
+    *provider_slot = JsonValue::Object(provider);
     pretty_json(root)
 }
 
@@ -1671,6 +1678,74 @@ mod tests {
                 config["providers"]["mahoquot"]["models"],
                 serde_json::json!([{ "id": "kept", "cost": { "input": 7 } }])
             );
+        }
+    }
+
+    #[test]
+    fn omo_merge_preserves_irregular_entries_and_first_seen_append_order() {
+        let existing = br#"{"before":1,"providers":{"first":{"keep":true},"mahoquot":{"models":[null,{"id":7},{"id":"kept","name":"first"},{"id":"kept","name":"duplicate"},{"id":""}],"headers":{"keep":"yes"}},"last":{"keep":false}},"after":2}"#;
+        let ids = ["kept", "new-z", "new-a", "new-z", "", "new-a"].map(str::to_owned);
+        let generated = generate_omo(existing, "http://127.0.0.1:18840", TEST_TOKEN, &ids).unwrap();
+        let mut expected: JsonValue = serde_json::from_slice(existing).unwrap();
+        let provider = expected["providers"]["mahoquot"].as_object_mut().unwrap();
+        provider.insert("name".into(), serde_json::json!("Mahoquot"));
+        provider.insert("api".into(), serde_json::json!("openai-completions"));
+        provider.insert("apiKey".into(), serde_json::json!(TEST_TOKEN));
+        provider.insert(
+            "baseUrl".into(),
+            serde_json::json!("http://127.0.0.1:18840/v1"),
+        );
+        provider["models"].as_array_mut().unwrap().extend([
+            serde_json::json!({ "id": "new-z", "name": "new-z" }),
+            serde_json::json!({ "id": "new-a", "name": "new-a" }),
+        ]);
+        let mut expected_bytes = serde_json::to_vec_pretty(&expected).unwrap();
+        expected_bytes.push(b'\n');
+        assert_eq!(generated, expected_bytes);
+    }
+
+    #[test]
+    fn omo_non_object_provider_and_non_array_models_keep_existing_defaults() {
+        for existing in [
+            br#"{"providers":{"mahoquot":null}}"#.as_slice(),
+            br#"{"providers":{"mahoquot":[{"models":[]}]}}"#.as_slice(),
+        ] {
+            assert_eq!(
+                generate_omo(existing, "http://127.0.0.1:18840", TEST_TOKEN, &[]).unwrap(),
+                generate_omo(b"{}", "http://127.0.0.1:18840", TEST_TOKEN, &[]).unwrap()
+            );
+        }
+        for models in [
+            JsonValue::Null,
+            serde_json::json!({"id":"kept"}),
+            serde_json::json!(5),
+        ] {
+            let existing = serde_json::to_vec(&serde_json::json!({
+                "providers": {"mahoquot": {"headers": {"keep": "yes"}, "models": models}}
+            }))
+            .unwrap();
+            let generated =
+                generate_omo(&existing, "http://127.0.0.1:18840", TEST_TOKEN, &[]).unwrap();
+            let config: JsonValue = serde_json::from_slice(&generated).unwrap();
+            assert_eq!(
+                config["providers"]["mahoquot"]["models"],
+                serde_json::json!([])
+            );
+            assert_eq!(
+                config["providers"]["mahoquot"]["headers"],
+                serde_json::json!({"keep":"yes"})
+            );
+            assert!(config["providers"]["mahoquot"].get("compat").is_none());
+        }
+    }
+
+    #[test]
+    fn json_non_object_roots_still_report_malformed() {
+        for agent in [CliAgentId::ClaudeCode, CliAgentId::Omo] {
+            for existing in [b"null".as_slice(), b"[]", b"42", br#""text""#] {
+                let error = parse_json_object(agent, existing).unwrap_err();
+                assert_eq!(error.kind, CliConfigErrorKind::Malformed);
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   BAYER,
   OFF_TIER,
@@ -32,13 +32,20 @@ export function PieCanvas() {
   const { width, height } = ctx.plot;
   const { cols, rows } = backingSize(width, height);
 
+  const paintSignature = useMemo(
+    () => `${ctx.innerRadius}|${ctx.pie?.map((sl) => ctx.variantOf(sl.name)).join(",")}`,
+    [ctx.innerRadius, ctx.pie, ctx.variantOf],
+  );
+
   // The RAF loop reads the latest ctx through a ref; written in an effect
   // (never during render) — mutating a ref mid-render tears under Strict Mode /
   // concurrent rendering.
   const state = useRef(ctx);
+  const paintSignatureRef = useRef(paintSignature);
   const wakeRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     state.current = ctx;
+    paintSignatureRef.current = paintSignature;
     wakeRef.current?.();
   });
 
@@ -88,7 +95,7 @@ export function PieCanvas() {
           const dx = px - cx;
           const dy = py - cy;
           const r = Math.hypot(dx, dy);
-          if (r < innerR) continue;
+          if (r < innerR || r > outerR + POP) continue;
           const angle = Math.atan2(dy, dx);
           let na = angle;
           while (na < TOP) na += TAU;
@@ -175,16 +182,14 @@ export function PieCanvas() {
       }
 
       // Live tweak repaint (variant, donut inner radius) without re-sweeping.
-      const paintSig = `${s.innerRadius}|${s.pie.map((sl) => s.variantOf(sl.name)).join(",")}`;
+      const paintSig = paintSignatureRef.current;
       if (paintSig !== lastPaintSig) {
         lastPaintSig = paintSig;
         needsFill = true;
       }
 
       const keepAlive =
-        prog < 1 ||
-        Math.abs(intensity - itTarget) > 0.001 ||
-        Math.abs(popEase - popTarget) > 0.001;
+        prog < 1 || Math.abs(intensity - itTarget) > 0.001 || Math.abs(popEase - popTarget) > 0.001;
       if (needsFill) {
         paint(prog);
         if (bloomCtx) {

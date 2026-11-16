@@ -43,7 +43,9 @@ export const ContextMenu = ({ menu, onClose }: { menu: MenuState | null; onClose
       return;
     }
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+    const items = [
+      ...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []),
+    ];
     items[0]?.focus();
     const dismiss = () => closeRef.current();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -53,8 +55,12 @@ export const ContextMenu = ({ menu, onClose }: { menu: MenuState | null; onClose
       } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
         event.preventDefault();
         const index = items.findIndex((item) => item === document.activeElement);
-        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 :
-          (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        const next =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? items.length - 1
+              : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items[next]?.focus();
       }
     };

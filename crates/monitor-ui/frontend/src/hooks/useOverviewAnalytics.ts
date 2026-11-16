@@ -84,9 +84,15 @@ interface BuiltFrom {
 // label/provider from the match, so only those fields can change a rebuild's
 // output. Everything else (quota, health, counters) is presentation-only.
 const accountIdentityKey = (accounts: readonly NormalizedAccount[]): string =>
-  JSON.stringify(accounts.map((account) => [
-    account.id, account.email, account.label, account.provider, account.credentialName,
-  ]));
+  JSON.stringify(
+    accounts.map((account) => [
+      account.id,
+      account.email,
+      account.label,
+      account.provider,
+      account.credentialName,
+    ]),
+  );
 
 const buildsMatch = (last: BuiltFrom | null, built: BuiltFrom): boolean =>
   last !== null &&
@@ -163,12 +169,21 @@ export function useOverviewAnalytics({
   const [error, setError] = useState<string>("");
 
   const [previousInputs, setPreviousInputs] = useState({
-    cacheKey, metric, accounts, samples, enabled, nowMs, clients,
+    cacheKey,
+    metric,
+    accounts,
+    samples,
+    enabled,
+    nowMs,
+    clients,
   });
   if (
-    previousInputs.cacheKey !== cacheKey || previousInputs.metric !== metric ||
-    previousInputs.accounts !== accounts || previousInputs.samples !== samples ||
-    previousInputs.enabled !== enabled || previousInputs.nowMs !== nowMs ||
+    previousInputs.cacheKey !== cacheKey ||
+    previousInputs.metric !== metric ||
+    previousInputs.accounts !== accounts ||
+    previousInputs.samples !== samples ||
+    previousInputs.enabled !== enabled ||
+    previousInputs.nowMs !== nowMs ||
     previousInputs.clients !== clients
   ) {
     setPreviousInputs({ cacheKey, metric, accounts, samples, enabled, nowMs, clients });
@@ -176,8 +191,12 @@ export function useOverviewAnalytics({
       const cached = cacheRef.current.get(cacheKey);
       if (cached) {
         const built: BuiltFrom = {
-          cacheKey, metric, ranking: cached.ranking, series: cached.series,
-          totalSeries: cached.totalSeries, nowMs: cached.nowMs,
+          cacheKey,
+          metric,
+          ranking: cached.ranking,
+          series: cached.series,
+          totalSeries: cached.totalSeries,
+          nowMs: cached.nowMs,
           accountsKey: accountIdentityKey(accounts),
         };
         if (!buildsMatch(lastBuildRef.current, built)) {
@@ -188,9 +207,16 @@ export function useOverviewAnalytics({
         setIsLoading(false);
       } else if (analytics.source === "telemetry" && previousInputs.clients === clients) {
         lastBuildRef.current = null;
-        setAnalytics(telemetryAnalytics({
-          samples, dimension, metric, range, nowMs: nowMs ?? Date.now(), accounts,
-        }));
+        setAnalytics(
+          telemetryAnalytics({
+            samples,
+            dimension,
+            metric,
+            range,
+            nowMs: nowMs ?? Date.now(),
+            accounts,
+          }),
+        );
       } else {
         setIsLoading(true);
       }

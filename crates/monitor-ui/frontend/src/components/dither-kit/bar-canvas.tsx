@@ -52,15 +52,22 @@ export function BarCanvas() {
     return out;
   }, [ready, configKeys, bands, y, height, rows]);
 
+  const paintSignature = useMemo(
+    () => `${ctx.stackType}|${configKeys.map((k) => ctx.seriesSpecs[k]?.variant ?? "").join(",")}`,
+    [ctx.stackType, configKeys, ctx.seriesSpecs],
+  );
+
   // The RAF loop reads these through refs so it always sees the latest values;
   // refs are written in an effect (never during render) — mutating a ref
   // mid-render tears under Strict Mode / concurrent rendering.
   const state = useRef(ctx);
   const targetsRef = useRef(targets);
+  const paintSignatureRef = useRef(paintSignature);
   const wakeRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     state.current = ctx;
     targetsRef.current = targets;
+    paintSignatureRef.current = paintSignature;
     wakeRef.current?.();
   });
 
@@ -185,16 +192,13 @@ export function BarCanvas() {
       } else intensity = itTarget;
 
       // Live tweak repaint (variant, stacking) without replaying the wave.
-      const paintSig = `${s.stackType}|${s.configKeys
-        .map((k) => s.seriesSpecs[k]?.variant ?? "")
-        .join(",")}`;
+      const paintSig = paintSignatureRef.current;
       if (paintSig !== lastPaintSig) {
         lastPaintSig = paintSig;
         needsFill = true;
       }
 
-      const keepAlive =
-        prog < 1 || Math.abs(intensity - itTarget) > 0.001;
+      const keepAlive = prog < 1 || Math.abs(intensity - itTarget) > 0.001;
       if (needsFill) {
         paint(prog);
         if (bloomCtx) {

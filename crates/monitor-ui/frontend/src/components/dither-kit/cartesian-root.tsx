@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, type ComponentType, type ReactNode, isValidElement } from "react";
+import { Children, type ComponentType, type ReactNode, isValidElement, useMemo } from "react";
 import {
   type ChartConfig,
   ChartContext,
@@ -124,15 +124,18 @@ export function CartesianRoot<TData extends Row>({
     yMax,
   });
 
-  const backChildren: ReactNode[] = [];
-  const svgChildren: ReactNode[] = [];
-  const domChildren: ReactNode[] = [];
-  Children.forEach(children, (child) => {
-    const layer = layerOf(child);
-    if (layer === "back") backChildren.push(child);
-    else if (layer === "dom") domChildren.push(child);
-    else svgChildren.push(child);
-  });
+  const { backChildren, svgChildren, domChildren } = useMemo(() => {
+    const backChildren: ReactNode[] = [];
+    const svgChildren: ReactNode[] = [];
+    const domChildren: ReactNode[] = [];
+    Children.forEach(children, (child) => {
+      const layer = layerOf(child);
+      if (layer === "back") backChildren.push(child);
+      else if (layer === "dom") domChildren.push(child);
+      else svgChildren.push(child);
+    });
+    return { backChildren, svgChildren, domChildren };
+  }, [children]);
 
   const onMove = (clientX: number) => {
     const el = ref.current;

@@ -205,7 +205,9 @@ function startCartesianLoop({
       lastPaintSig = paintSig;
       needsFill = true;
     }
-    if (!(needsFill || moving || settling || winkDue || markerChanged || progChanged || sigChanged)) {
+    if (
+      !(needsFill || moving || settling || winkDue || markerChanged || progChanged || sigChanged)
+    ) {
       if (hoverActive && !reduce) requestDraw();
       return;
     }

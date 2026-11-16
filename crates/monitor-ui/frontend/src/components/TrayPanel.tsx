@@ -46,8 +46,8 @@ const tilesOf = (
     resetIn: row.resetSeconds !== null ? formatResetTime(row.resetSeconds) : null,
   }));
 
-const formatCompact = (value: number): string =>
-  new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 });
+const formatCompact = (value: number): string => compact.format(value);
 
 const formatUsd = (value: number): string =>
   `$${value.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

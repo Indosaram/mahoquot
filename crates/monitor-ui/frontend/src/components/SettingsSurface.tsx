@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Copy, ListOrdered, Network, Route, Settings2 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useSettingsScalarsStatus } from "../hooks/useConnectionSettings";
 import type { HistoryStatsQuery } from "../lib/api";
 import { UNAVAILABLE_LABEL, nonCachedInputTokens } from "../lib/cache-usage";
@@ -286,6 +286,28 @@ export function SettingsSurface({
   const scalarsStatus = useSettingsScalarsStatus();
   const scalarsLoaded = scalarsStatus === "loaded";
   const clearDialogRef = useRef<HTMLDialogElement>(null);
+  const pricesByModel = useMemo(() => {
+    const prices = new Map<string, ModelPrice>();
+    for (const price of modelPrices) {
+      if (!prices.has(price.model)) prices.set(price.model, price);
+    }
+    return prices;
+  }, [modelPrices]);
+  const schedulerAccountsById = useMemo(() => {
+    const accounts = new Map<string, NonNullable<typeof schedulerStatus>["accounts"][number]>();
+    for (const account of schedulerStatus?.accounts ?? []) {
+      if (!accounts.has(account.id)) accounts.set(account.id, account);
+    }
+    return accounts;
+  }, [schedulerStatus?.accounts]);
+  const proxyKeysByProvider = useMemo(() => {
+    const keys = new Map<string, string>();
+    for (const key of Object.keys(proxyProviders)) {
+      const provider = normalizeToQuotioProviderId(key);
+      if (!keys.has(provider)) keys.set(provider, key);
+    }
+    return keys;
+  }, [proxyProviders]);
 
   // M6: mount-only dialog focus management, mirroring WarmupDialog — capture
   // the trigger for focus restore, move focus in, and handle Escape once.
@@ -313,7 +335,7 @@ export function SettingsSurface({
       const next: Record<string, string> = {};
       let changed = false;
       for (const [model, text] of Object.entries(current)) {
-        const saved = modelPrices.find((item) => item.model === model);
+        const saved = pricesByModel.get(model);
         if (!saved || parsePriceDraft(text) === saved["input-per-million"]) {
           changed = true;
         } else {
@@ -322,7 +344,7 @@ export function SettingsSurface({
       }
       return changed ? next : current;
     });
-  }, [modelPrices]);
+  }, [pricesByModel]);
 
   const downloadBlob = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -386,7 +408,7 @@ export function SettingsSurface({
 
   const estimatedSpend = (price: ModelPrice): number | null => {
     const totals = historyStats?.totals;
-    const savedPrice = modelPrices.find((item) => item.model === price.model);
+    const savedPrice = pricesByModel.get(price.model);
     if (!totals || !savedPrice) return null;
     const nonCached = nonCachedInputTokens(totals);
     if (nonCached.state !== "measured") return null;
@@ -901,10 +923,7 @@ export function SettingsSurface({
                   ).sort();
 
                   return allProviders.map((canonical) => {
-                    const provider =
-                      Object.keys(proxyProviders).find(
-                        (key) => normalizeToQuotioProviderId(key) === canonical,
-                      ) ?? canonical;
+                    const provider = proxyKeysByProvider.get(canonical) ?? canonical;
                     const policy = proxyProviders[provider] ?? {
                       enabled: false,
                       sticky: true,
@@ -1136,7 +1155,7 @@ export function SettingsSurface({
                 schedulerStatus.order.length ? (
                   <div className="scheduler-order" aria-label="Scheduler order">
                     {schedulerStatus.order.map((id, index) => {
-                      const account = schedulerStatus.accounts.find((item) => item.id === id);
+                      const account = schedulerAccountsById.get(id);
                       const label = schedulerAccountLabels[id] ?? id;
                       return (
                         <div className="scheduler-order-row" key={id}>

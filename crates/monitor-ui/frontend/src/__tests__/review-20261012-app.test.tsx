@@ -234,16 +234,26 @@ describe("App review 2026-10-12 regressions", () => {
         return undefined;
       },
     });
-    await act(async () => { render(<App />); });
-    await act(async () => { await openAccounts(); });
+    await act(async () => {
+      render(<App />);
+    });
+    await act(async () => {
+      await openAccounts();
+    });
     await act(async () => {
       fireEvent.contextMenu(document.querySelector(".provider-tab") as HTMLElement);
     });
-    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Models…" })); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Models…" }));
+    });
 
-    await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-a" })); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-a" }));
+    });
     expect(saves).toHaveLength(1);
-    await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-b" })); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: "Disable m-b" }));
+    });
     expect(saves).toHaveLength(1);
 
     await act(async () => {
@@ -343,7 +353,9 @@ describe("App review 2026-10-12 regressions", () => {
     Object.assign(window, { __TAURI__: {}, __TAURI_INTERNALS__: { invoke: nativeInvoke() } });
     window.history.pushState({}, "", "/management.html?surface=tray");
     stubGateway();
-    await act(async () => { render(<App />); });
+    await act(async () => {
+      render(<App />);
+    });
     expect(screen.getByText("http://127.0.0.1:18801")).toBeInTheDocument();
     expect(screen.queryByText("Same-origin gateway")).not.toBeInTheDocument();
   });
@@ -437,9 +449,7 @@ describe("App review 2026-10-12 regressions", () => {
           return new Response("<html>ok</html>", { status: 200 });
         }
         if (url.includes("get-auth-status")) {
-          return json(
-            callbacks.length ? { status: "ok", provider: "xai" } : { status: "pending" },
-          );
+          return json(callbacks.length ? { status: "ok", provider: "xai" } : { status: "pending" });
         }
         return undefined;
       },

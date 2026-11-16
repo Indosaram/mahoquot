@@ -116,11 +116,9 @@ export function DurableLogs({
   const [tab, setTab] = useState<"requests" | "proxy">("requests");
   const [provider, setProvider] = useState("all");
   const [query, setQuery] = useState("");
-  const initialEvents = useMemo(
-    () => records.filter((record) => record.kind === "request").map(toHistoryEvent),
-    [records],
+  const [events, setEvents] = useState<readonly HistoryEvent[]>(() =>
+    records.filter((record) => record.kind === "request").map(toHistoryEvent),
   );
-  const [events, setEvents] = useState<readonly HistoryEvent[]>(initialEvents);
   const [totals, setTotals] = useState<HistoryTotals | null>(null);
   const [providerOptions, setProviderOptions] = useState<readonly string[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(() =>
@@ -155,12 +153,8 @@ export function DurableLogs({
   const pendingActionRef = useRef<number | null>(null);
 
   const proxyRecords = useMemo(
-    () =>
-      records
-        .filter((record) => record.kind === "proxy")
-        .slice()
-        .reverse(),
-    [records],
+    () => (tab === "proxy" ? records.filter((record) => record.kind === "proxy").reverse() : []),
+    [records, tab],
   );
 
   const fetchLatestPage = useCallback(
@@ -211,13 +205,14 @@ export function DurableLogs({
     if (
       loadHistory &&
       !historyUnavailable &&
-      (settledSeqRef.current > 0 || initialEvents.length === 0)
+      (settledSeqRef.current > 0 || !records.some((record) => record.kind === "request"))
     )
       return;
+    const initialEvents = records.filter((record) => record.kind === "request").map(toHistoryEvent);
     setEvents(initialEvents);
     setNextCursor(initialEvents.length ? 1 : null);
     setProviderOptions([...new Set(initialEvents.map((event) => event.provider))].sort());
-  }, [historyUnavailable, initialEvents, loadHistory]);
+  }, [historyUnavailable, records, loadHistory]);
 
   // Initial load
   useEffect(() => {

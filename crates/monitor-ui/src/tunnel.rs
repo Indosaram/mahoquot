@@ -71,7 +71,7 @@ impl TunnelManager {
             .as_ref()
             .is_ok_and(|path| !same_binary_path(path, &binary_path))
             && (std::env::var_os("MAHOQUOT_CLOUDFLARED_BIN")
-                .is_some_and(|path| PathBuf::from(path) == binary_path)
+                .is_some_and(|path| path == binary_path)
                 || SYSTEM_CLOUDFLARED_PATHS
                     .iter()
                     .any(|path| Path::new(path) == binary_path));
@@ -88,9 +88,10 @@ impl TunnelManager {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         reap_crashed(&mut runtime);
-        let running = runtime.child.as_mut().is_some_and(|child| {
-            matches!(child.try_wait(), Ok(None))
-        });
+        let running = runtime
+            .child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
         TunnelStatus {
             enabled: running,
             running,
@@ -191,11 +192,7 @@ impl TunnelManager {
             .runtime
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !runtime
-            .child
-            .as_ref()
-            .is_some_and(|child| child.id() == pid)
-        {
+        if runtime.child.as_ref().is_none_or(|child| child.id() != pid) {
             return Err("cloudflared startup was superseded".to_string());
         }
         runtime.public_url = public_url;
@@ -399,11 +396,14 @@ fn install_verified_bytes(
             "cloudflared checksum mismatch: expected {expected_checksum}, got {actual}"
         ));
     }
-    let binary = match format {
-        ArchiveFormat::Binary => archive.to_vec(),
-        ArchiveFormat::Tgz => extract_cloudflared_tgz(archive)?,
+    let (binary, binary_checksum) = match format {
+        ArchiveFormat::Binary => (std::borrow::Cow::Borrowed(archive), actual),
+        ArchiveFormat::Tgz => {
+            let binary = extract_cloudflared_tgz(archive)?;
+            let checksum = format!("{:x}", Sha256::digest(&binary));
+            (std::borrow::Cow::Owned(binary), checksum)
+        }
     };
-    let binary_checksum = format!("{:x}", Sha256::digest(&binary));
     let parent = dest
         .parent()
         .ok_or_else(|| "cloudflared destination has no parent directory".to_string())?;
@@ -595,12 +595,24 @@ fn spawn_url_reader<R: Read + Send + 'static>(
 ) -> UrlReader {
     let (done_tx, done) = std::sync::mpsc::channel();
     let thread = std::thread::spawn(move || {
+        let mut drain_only = false;
         for line in BufReader::new(reader).lines() {
             let Ok(line) = line else { break };
+            if drain_only {
+                continue;
+            }
+            let (value, ready) = &*found;
+            if value
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_some()
+            {
+                drain_only = true;
+                continue;
+            }
             let Some(url) = extract_tunnel_url(&line) else {
                 continue;
             };
-            let (value, ready) = &*found;
             let mut value = value
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -608,6 +620,7 @@ fn spawn_url_reader<R: Read + Send + 'static>(
                 *value = Some(url);
                 ready.notify_all();
             }
+            drain_only = true;
         }
         if let Err(error) = done_tx.send(()) {
             eprintln!("cloudflared log reader completion receiver closed: {error}");
@@ -630,7 +643,9 @@ fn cleanup_runtime(runtime: &mut TunnelRuntime) -> Result<(), String> {
 }
 
 fn reap_crashed(runtime: &mut TunnelRuntime) {
-    let Some(child) = runtime.child.as_mut() else { return };
+    let Some(child) = runtime.child.as_mut() else {
+        return;
+    };
     match child.try_wait() {
         Ok(None) => {}
         Ok(Some(_)) => {
@@ -753,9 +768,16 @@ mod tests {
                     // aligned output storage. waitid writes it; we never read it.
                     // P_PID selects our owned child; WNOWAIT preserves its zombie.
                     let rc = unsafe {
-                        libc::waitid(libc::P_PID, pid, info.as_mut_ptr(), libc::WEXITED | libc::WNOWAIT)
+                        libc::waitid(
+                            libc::P_PID,
+                            pid,
+                            info.as_mut_ptr(),
+                            libc::WEXITED | libc::WNOWAIT,
+                        )
                     };
-                    if rc == 0 { break Ok(()); }
+                    if rc == 0 {
+                        break Ok(());
+                    }
                     let error = std::io::Error::last_os_error();
                     if error.kind() != std::io::ErrorKind::Interrupted {
                         break Err(error.to_string());
@@ -765,7 +787,13 @@ mod tests {
                     eprintln!("fixture exit receiver closed: {error}");
                 }
             });
-            Self { pid, armed: true, handed_out: false, observation_failed_child: None, exited }
+            Self {
+                pid,
+                armed: true,
+                handed_out: false,
+                observation_failed_child: None,
+                exited,
+            }
         }
 
         fn wait(&mut self) -> Child {
@@ -790,14 +818,20 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl Drop for GroupWaiter {
         fn drop(&mut self) {
-            if !self.armed { return; }
+            if !self.armed {
+                return;
+            }
             let result = stop_process_tree(self.pid).and_then(|()| {
-                if self.handed_out { return Ok(()); }
+                if self.handed_out {
+                    return Ok(());
+                }
                 let mut child = match self.observation_failed_child.take() {
                     Some(child) => child,
                     None => {
-                        let (child, observed) = self.exited.recv_timeout(STOP_TIMEOUT)
-                            .map_err(|error| format!("fixture cleanup completion failed: {error}"))?;
+                        let (child, observed) =
+                            self.exited.recv_timeout(STOP_TIMEOUT).map_err(|error| {
+                                format!("fixture cleanup completion failed: {error}")
+                            })?;
                         if let Err(error) = observed {
                             eprintln!("FIXTURE CLEANUP: exit observation failed: {error}");
                         }
@@ -835,10 +869,15 @@ mod tests {
         match std::env::var("MAHOQUOT_TUNNEL_TREE_FIXTURE").as_deref() {
             Ok("leader") => {
                 let _descendant = Command::new(std::env::current_exe().unwrap())
-                    .args(["--exact", "tunnel::tests::windows_tree_fixture", "--nocapture"])
+                    .args([
+                        "--exact",
+                        "tunnel::tests::windows_tree_fixture",
+                        "--nocapture",
+                    ])
                     .env("MAHOQUOT_TUNNEL_TREE_FIXTURE", "descendant")
                     .stdin(Stdio::null())
-                    .spawn().unwrap();
+                    .spawn()
+                    .unwrap();
                 let mut ack = String::new();
                 std::io::stdin().read_line(&mut ack).unwrap();
                 std::process::exit(17);
@@ -859,9 +898,16 @@ mod tests {
         for cleanup in ["stop", "reap", "drop"] {
             // Given: an owned leader and a descendant holding both inherited pipes.
             let mut command = Command::new(std::env::current_exe().unwrap());
-            command.args(["--exact", "tunnel::tests::windows_tree_fixture", "--nocapture"])
+            command
+                .args([
+                    "--exact",
+                    "tunnel::tests::windows_tree_fixture",
+                    "--nocapture",
+                ])
                 .env("MAHOQUOT_TUNNEL_TREE_FIXTURE", "leader")
-                .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
             let mut child = TunnelChild::spawn(&mut command).unwrap();
             let found = Arc::new((Mutex::new(None), Condvar::new()));
             let readers = vec![
@@ -870,9 +916,9 @@ mod tests {
             ];
             let mut input = child.stdin.take().unwrap();
             let (lock, ready) = &*found;
-            let (url, _) = ready.wait_timeout_while(
-                lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none(),
-            ).unwrap();
+            let (url, _) = ready
+                .wait_timeout_while(lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none())
+                .unwrap();
             let announced = url.is_some();
             drop(url);
             // The process handle retains exit state. Keep the job here so any
@@ -880,7 +926,11 @@ mod tests {
             input.write_all(b"exit\n").unwrap();
             drop(input);
             assert_eq!(child.wait_bounded(START_TIMEOUT).unwrap().code(), Some(17));
-            let mut runtime = TunnelRuntime { child: Some(child), public_url: None, readers };
+            let mut runtime = TunnelRuntime {
+                child: Some(child),
+                public_url: None,
+                readers,
+            };
             // When: cleanup must still terminate the job, not just the dead PID.
             match cleanup {
                 "stop" => cleanup_runtime(&mut runtime).unwrap(),
@@ -1000,9 +1050,9 @@ mod tests {
                 spawn_url_reader(stderr, found.clone()),
             ];
             let (lock, ready) = &*found;
-            let (url, _) = ready.wait_timeout_while(
-                lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none()
-            ).unwrap();
+            let (url, _) = ready
+                .wait_timeout_while(lock.lock().unwrap(), START_TIMEOUT, |url| url.is_none())
+                .unwrap();
             let announced = url.is_some();
             drop(url);
             // Both URL and child-exit subscriptions exist before this trigger.
@@ -1085,12 +1135,17 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn constructor_provenance_fixture() {
-        let Some(mode) = std::env::var_os("MAHOQUOT_TUNNEL_CONSTRUCTOR_FIXTURE") else { return };
+        let Some(mode) = std::env::var_os("MAHOQUOT_TUNNEL_CONSTRUCTOR_FIXTURE") else {
+            return;
+        };
         let home = crate::tray::current_home().unwrap();
         let manager = TunnelManager::new(default_cloudflared_path().unwrap());
         if mode == "external" {
             assert!(manager.trusted_external);
-            assert!(binary_is_approved(&manager.binary_path, manager.trusted_external));
+            assert!(binary_is_approved(
+                &manager.binary_path,
+                manager.trusted_external
+            ));
             assert!(!home.join("executed").exists());
         } else {
             assert!(!manager.trusted_external);
@@ -1103,11 +1158,18 @@ mod tests {
     fn run_constructor_fixture(home: &Path, binary: &Path, mode: &str) {
         use std::os::unix::process::CommandExt;
         let child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "tunnel::tests::constructor_provenance_fixture", "--nocapture"])
-            .env("HOME", home).env("USERPROFILE", home)
+            .args([
+                "--exact",
+                "tunnel::tests::constructor_provenance_fixture",
+                "--nocapture",
+            ])
+            .env("HOME", home)
+            .env("USERPROFILE", home)
             .env("MAHOQUOT_CLOUDFLARED_BIN", binary)
             .env("MAHOQUOT_TUNNEL_CONSTRUCTOR_FIXTURE", mode)
-            .process_group(0).spawn().unwrap();
+            .process_group(0)
+            .spawn()
+            .unwrap();
         let mut waiter = GroupWaiter::new(child);
         let mut child = waiter.wait();
         assert!(waiter.finish(&mut child).success());
@@ -1129,7 +1191,9 @@ mod tests {
         for path in [&binary, &alias, &dotted] {
             for malformed in [false, true] {
                 for marker in [verified_marker_path(&binary), verified_marker_path(&alias)] {
-                    if marker.exists() { fs::remove_file(marker).unwrap(); }
+                    if marker.exists() {
+                        fs::remove_file(marker).unwrap();
+                    }
                 }
                 if malformed {
                     fs::write(verified_marker_path(path), "malformed").unwrap();
@@ -1229,6 +1293,30 @@ mod tests {
         let stopped = manager.stop().unwrap();
         assert!(!stopped.running);
         assert!(stopped.public_url.is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn raw_binary_install_preserves_bytes_and_verification_marker() {
+        let dir = test_dir("raw-install");
+        let dest = dir.join("cloudflared");
+        let binary = b"fixture executable\0\xff";
+        let checksum = format!("{:x}", Sha256::digest(binary));
+
+        install_verified_bytes(
+            &dest,
+            ArchiveFormat::Binary,
+            binary,
+            &checksum.to_uppercase(),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&dest).unwrap(), binary);
+        assert_eq!(
+            fs::read_to_string(verified_marker_path(&dest)).unwrap(),
+            format!("sha256:{checksum}\n")
+        );
+        assert!(installed_binary_is_verified(&dest));
         fs::remove_dir_all(dir).unwrap();
     }
 

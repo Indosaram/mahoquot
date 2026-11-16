@@ -418,7 +418,10 @@ fn windows_listener_ownership_requires_exact_port_state_and_pid() {
       TCP 192.0.2.1:18849 0.0.0.0:0 LISTENING 48\n\
       UDP 127.0.0.1:18849 *:* LISTENING 49\n\
       TCP 127.0.0.1:18849 0.0.0.0:0 LISTENING invalid\n";
-    assert_eq!(crate::windows_listener_pids(output, 18849), vec![42, 43, 44, 45]);
+    assert_eq!(
+        crate::windows_listener_pids(output, 18849),
+        vec![42, 43, 44, 45]
+    );
     assert!(crate::windows_listener_pids(output, 18850).is_empty());
 }
 

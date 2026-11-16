@@ -53,6 +53,35 @@ describe("request telemetry sampling", () => {
     expect(second).toHaveLength(2);
   });
 
+  it("appends to a private bounded array without changing inputs or baseline ownership", () => {
+    const first = appendTelemetrySample([], snapshot(10, 9, 1), 1_000);
+    const baseline = first[0];
+    Object.freeze(baseline);
+    const prior = Object.freeze(Array.from({ length: 43_201 }, () => baseline));
+    const nextStats = snapshot(14, 12, 2);
+    const beforeStats = structuredClone(nextStats);
+
+    const appended = appendTelemetrySample(prior, nextStats, 2_000);
+
+    expect(appended).not.toBe(prior);
+    expect(appended).toHaveLength(43_200);
+    expect(prior).toHaveLength(43_201);
+    expect(prior.at(-1)).toBe(baseline);
+    expect(baseline.cumulativeAccounts).toBeDefined();
+    expect(appended[0]).toBe(baseline);
+    expect(appended.at(-2)).not.toHaveProperty("cumulativeAccounts");
+    const { cumulativeAccounts: _baseline, ...historical } = baseline;
+    expect(appended.at(-2)).toEqual(historical);
+    expect(appended.at(-1)).toMatchObject({
+      timestamp: 2_000,
+      requests: 4,
+      successes: 3,
+      failures: 1,
+    });
+    expect(appended.at(-1)?.cumulativeAccounts).toBeDefined();
+    expect(nextStats).toEqual(beforeStats);
+  });
+
   it("treats process counter resets as a fresh interval", () => {
     const first = appendTelemetrySample([], snapshot(50, 48, 2), 1_000);
     const reset = appendTelemetrySample(first, snapshot(2, 2, 0), 11_000);

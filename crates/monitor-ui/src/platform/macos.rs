@@ -263,9 +263,8 @@ pub fn start_notch_hover_watch(app: &AppHandle, state: &crate::NotchHoverState) 
         ])));
     }
     tracing::info!("notch hover watch and screen parameter observer armed");
-    std::mem::forget(global_handler);
-    std::mem::forget(local_handler);
-    std::mem::forget(observer_handler);
+    // Native registrations copy the heap blocks and retain them until removal.
+    // Drop our RcBlock owners here so cleanup can release the captured handles.
 }
 
 pub fn cleanup_notch_hover_watch(app: &AppHandle) {

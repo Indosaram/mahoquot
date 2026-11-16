@@ -6028,7 +6028,6 @@ h2 {
   background: rgb(127 29 29 / 8%);
 }
 
-
 .mobile-connect {
   min-block-size: 100dvh;
   display: grid;
@@ -6123,7 +6122,6 @@ h2 {
     gap: 14px;
   }
 }
-
 
 .mobile-connect-brand {
   display: flex;
@@ -6278,4 +6276,3 @@ h2 {
     white-space: nowrap;
   }
 }
-

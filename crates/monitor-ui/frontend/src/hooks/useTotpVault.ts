@@ -42,15 +42,61 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
   const active = useRef(false);
   useEffect(() => {
     active.current = enabled;
-    return () => { active.current = false; };
+    return () => {
+      active.current = false;
+    };
   }, [enabled]);
   const isCurrent = useCallback(() => active.current && currentVault.current === vault, [vault]);
+  const cachedCodes = useRef(
+    new WeakMap<
+      TotpEntry,
+      {
+        counter: number;
+        code: Promise<string>;
+      }
+    >(),
+  );
+  const cachedBatch = useRef<{
+    entries: readonly TotpEntry[];
+    counters: string;
+    codes: Promise<Record<string, string>>;
+  } | null>(null);
+  const generateCodes = useCallback((entries: readonly TotpEntry[], timestamp: number) => {
+    const counters = entries.map((entry) => Math.floor(timestamp / 1000 / entry.period)).join(",");
+    const previous = cachedBatch.current;
+    if (previous?.entries === entries && previous.counters === counters) return previous.codes;
+    const cache = cachedCodes.current;
+    const codes = Promise.all(
+      entries.map(async (entry) => {
+        const counter = Math.floor(timestamp / 1000 / entry.period);
+        let cached = cache.get(entry);
+        if (!cached || cached.counter !== counter) {
+          const code = generateTotp(entry, timestamp);
+          cached = { counter, code };
+          cache.set(entry, cached);
+          const attempt = cached;
+          void code.catch(() => {
+            if (cache.get(entry) === attempt) cache.delete(entry);
+          });
+        }
+        return [entry.id, await cached.code] as const;
+      }),
+    ).then((pairs) => Object.fromEntries(pairs));
+    const batch = { entries, counters, codes };
+    cachedBatch.current = batch;
+    void codes.catch(() => {
+      if (cachedBatch.current === batch) cachedBatch.current = null;
+    });
+    return codes;
+  }, []);
 
   // A new endpoint is a different vault: never keep showing (or generating
   // codes for) the previous endpoint's entries while the new one loads.
   const [prevVault, setPrevVault] = useState(vault);
   if (prevVault !== vault) {
     setPrevVault(vault);
+    cachedCodes.current = new WeakMap();
+    cachedBatch.current = null;
     setEntries([]);
     setCodes({});
     setError(null);
@@ -74,17 +120,15 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
     if (!isCurrent() || generation !== loadGeneration.current) return;
     setPoisoned(false);
     try {
-      const generated = await Promise.all(
-        loaded.map(async (entry) => [entry.id, await generateTotp(entry)] as const),
-      );
+      const generated = await generateCodes(loaded, Date.now());
       if (!isCurrent() || generation !== loadGeneration.current) return;
       setEntries(loaded);
-      setCodes(Object.fromEntries(generated));
+      setCodes(generated);
       setError(null);
     } catch (reason) {
       if (isCurrent() && generation === loadGeneration.current) setError(errorMessage(reason));
     }
-  }, [isCurrent, vault]);
+  }, [generateCodes, isCurrent, vault]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -122,11 +166,9 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    void Promise.all(
-      entries.map(async (entry) => [entry.id, await generateTotp(entry, now)] as const),
-    )
-      .then((pairs) => {
-        if (active) setCodes(Object.fromEntries(pairs));
+    void generateCodes(entries, now)
+      .then((generated) => {
+        if (active) setCodes(generated);
       })
       .catch((reason) => {
         if (active) setError(errorMessage(reason));
@@ -134,7 +176,7 @@ export const useTotpVault = (endpoint: string, enabled: boolean) => {
     return () => {
       active = false;
     };
-  }, [enabled, entries, now]);
+  }, [enabled, entries, generateCodes, now]);
 
   const changed = useCallback(async () => {
     if (isCurrent()) {

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type HTMLAttributes } from "react";
+import { type HTMLAttributes, useLayoutEffect, useRef } from "react";
 import { cn } from "../lib/cn";
 
 export type LayoutPrimitiveProps = HTMLAttributes<HTMLDivElement>;
@@ -32,7 +32,11 @@ export const OverlayLayer = ({ className, ...props }: LayoutPrimitiveProps) => (
 );
 
 /** Mount only while open. The wrapper owns focus and modality, not drawer styling. */
-export function ModalLayer({ onClose, children, ...props }: LayoutPrimitiveProps & {
+export function ModalLayer({
+  onClose,
+  children,
+  ...props
+}: LayoutPrimitiveProps & {
   onClose: () => void;
   "aria-labelledby": string;
 }) {
@@ -55,9 +59,17 @@ export function ModalLayer({ onClose, children, ...props }: LayoutPrimitiveProps
       branch = branch.parentElement;
       if (branch === document.body) break;
     }
-    const controls = () => [...dialog.querySelectorAll<HTMLElement>(
-      'button, input, select, textarea, a[href], [tabindex]',
-    )].filter((node) => node.tabIndex >= 0 && !node.matches(':disabled, [hidden], input[type="hidden"]') && !node.closest('[hidden], [inert]'));
+    const controls = () =>
+      [
+        ...dialog.querySelectorAll<HTMLElement>(
+          "button, input, select, textarea, a[href], [tabindex]",
+        ),
+      ].filter(
+        (node) =>
+          node.tabIndex >= 0 &&
+          !node.matches(':disabled, [hidden], input[type="hidden"]') &&
+          !node.closest("[hidden], [inert]"),
+      );
     (controls()[0] ?? dialog).focus();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -68,15 +80,19 @@ export function ModalLayer({ onClose, children, ...props }: LayoutPrimitiveProps
         const items = controls();
         const first = items[0] ?? dialog;
         const last = items.at(-1) ?? dialog;
-        if (!dialog.contains(document.activeElement) || document.activeElement === dialog ||
-          (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        if (
+          !dialog.contains(document.activeElement) ||
+          document.activeElement === dialog ||
+          (event.shiftKey ? document.activeElement === first : document.activeElement === last)
+        ) {
           event.preventDefault();
           (event.shiftKey ? last : first).focus();
         }
       }
     };
     const focusin = (event: FocusEvent) => {
-      if (event.target instanceof Node && !dialog.contains(event.target)) (controls()[0] ?? dialog).focus();
+      if (event.target instanceof Node && !dialog.contains(event.target))
+        (controls()[0] ?? dialog).focus();
     };
     document.addEventListener("keydown", keydown, true);
     document.addEventListener("focusin", focusin);
@@ -87,5 +103,16 @@ export function ModalLayer({ onClose, children, ...props }: LayoutPrimitiveProps
       if (opener?.isConnected) opener.focus();
     };
   }, []);
-  return <div {...props} ref={ref} role="dialog" aria-modal="true" tabIndex={-1}>{children}</div>;
+  return (
+    <div
+      {...props}
+      ref={ref}
+      // biome-ignore lint/a11y/useSemanticElements: Native dialog changes display, focus, and top-layer behavior of this managed modal.
+      role="dialog"
+      aria-modal="true"
+      tabIndex={-1}
+    >
+      {children}
+    </div>
+  );
 }

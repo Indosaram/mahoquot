@@ -10,13 +10,22 @@ const stylesheet = postcss.parse(readFileSync(resolve(__dirname, "../styles/glob
 function mountTheme(theme: "dark" | "light", historical: boolean) {
   const tokens = new Map<string, string>();
   stylesheet.walkRules((rule) => {
-    if (rule.selector === ":root" || (theme === "light" && rule.selector === ':root[data-theme="light"]')) {
-      rule.walkDecls(/^--/, (decl) => { tokens.set(decl.prop, decl.value); });
+    if (
+      rule.selector === ":root" ||
+      (theme === "light" && rule.selector === ':root[data-theme="light"]')
+    ) {
+      rule.walkDecls(/^--/, (decl) => {
+        tokens.set(decl.prop, decl.value);
+      });
     }
   });
   const style = document.createElement("style");
   stylesheet.walkRules((rule) => {
-    if (rule.parent?.type !== "root" || !/(quota-|models-search|^:focus-visible$)/.test(rule.selector)) return;
+    if (
+      rule.parent?.type !== "root" ||
+      !/(quota-|models-search|^:focus-visible$)/.test(rule.selector)
+    )
+      return;
     const copy = rule.clone();
     copy.walkDecls((decl) => {
       decl.value = decl.value.replace(/var\((--[\w-]+)\)/g, (_, token: string) => {
@@ -52,8 +61,11 @@ function luminance(color: string): number {
   if (rgb.length !== 3) throw new Error(`Expected opaque RGB: ${color}`);
   return rgb.reduce((sum, channel, index) => {
     const linear = channel / 255;
-    return sum + (linear <= 0.04045 ? linear / 12.92 : ((linear + 0.055) / 1.055) ** 2.4)
-      * ([0.2126, 0.7152, 0.0722][index] ?? 0);
+    return (
+      sum +
+      (linear <= 0.04045 ? linear / 12.92 : ((linear + 0.055) / 1.055) ** 2.4) *
+        ([0.2126, 0.7152, 0.0722][index] ?? 0)
+    );
   }, 0);
 }
 
@@ -64,7 +76,7 @@ function contrast(a: string, b: string): number {
 }
 
 afterEach(() => {
-  document.head.querySelectorAll("style").forEach((style) => style.remove());
+  for (const style of document.head.querySelectorAll("style")) style.remove();
   document.body.replaceChildren();
 });
 
@@ -75,7 +87,13 @@ describe.each(["dark", "light"] as const)("historical quota and model focus: %s"
     const panel = tokens.get("--panel");
     if (!panel) throw new Error("Missing panel token");
     // When: resolving text and ancestor styles through the production rules.
-    for (const selector of [".quota-name", ".quota-meta strong", ".quota-meta small", ".quota-group", ".quota-unverified-note"]) {
+    for (const selector of [
+      ".quota-name",
+      ".quota-meta strong",
+      ".quota-meta small",
+      ".quota-group",
+      ".quota-unverified-note",
+    ]) {
       const text = element(selector);
       let opacity = 1;
       for (let node: HTMLElement | null = text; node; node = node.parentElement) {
@@ -104,7 +122,11 @@ describe.each(["dark", "light"] as const)("historical quota and model focus: %s"
     expect(getComputedStyle(input).outlineStyle).not.toBe("none");
     const suppression = Array.from(document.styleSheets)
       .flatMap((sheet) => {
-        try { return Array.from(sheet.cssRules); } catch { return []; }
+        try {
+          return Array.from(sheet.cssRules);
+        } catch {
+          return [];
+        }
       })
       .filter((rule): rule is CSSStyleRule => "selectorText" in rule)
       .filter((rule) => rule.selectorText.includes("models-search"))
