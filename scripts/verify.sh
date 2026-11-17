@@ -48,7 +48,7 @@ if [ "$mode" = --all ]; then
 fi
 
 step "script contract regressions (fixtures, not certification)"
-node --test scripts/tests/ci-delivery.test.mjs scripts/tests/updater-manifest.test.mjs scripts/tests/review-20261025-gate-docs.test.mjs
+node --test scripts/tests/ci-delivery.test.mjs scripts/tests/updater-manifest.test.mjs scripts/tests/review-20261025-gate-docs.test.mjs scripts/tests/remote-proxy-relay.test.mjs
 python3 -m unittest discover -s scripts/tests -p test_proxy_selection.py
 python3 scripts/tests/review-20261025-evidence-harness.test.py -v
 bun test scripts/tests/cliproxy-parity.test.mjs scripts/tests/multimodal.test.mjs scripts/tests/review-20261025-qa-orchestration-repair.test.mjs scripts/tests/review-20261025-qa-case-repair.test.mjs scripts/tests/review-20261025-wire-contracts.test.mjs scripts/tests/review-20261025-cancel-observations.test.mjs scripts/tests/review-20261025-expiry-quota.test.mjs scripts/tests/review-20261025-resilience-observations.test.mjs scripts/tests/review-20261025-desktop-disposable-harness.test.mjs scripts/tests/review-20261025-paired-contract.test.mjs scripts/tests/review-20261025-discovery-pty.test.mjs scripts/tests/review-20261025-interaction-extra-contract.test.mjs scripts/tests/review-20261025-stat-process-ownership.test.mjs scripts/tests/review-20261025-management-method-schemas.test.mjs scripts/tests/review-20261025-inventory-contract.test.mjs scripts/tests/review-20261025-phase-benchmark-raw.test.mjs scripts/qa/cliproxy-audit.test.mjs scripts/qa/cases/options.test.mjs scripts/qa/cases/usage.test.mjs scripts/omo-profile-sync
