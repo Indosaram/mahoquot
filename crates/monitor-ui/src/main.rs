@@ -17,6 +17,7 @@ mod native_input_probe;
 #[cfg(test)]
 mod native_reservation_tests;
 mod notch;
+mod oauth_callback;
 mod os_integration;
 mod platform;
 mod secrets;
@@ -1503,7 +1504,9 @@ fn save_gateway_connection(base_url: String) -> Result<(), String> {
     connection::save(
         &connection::store_path(std::path::Path::new(&home)),
         &base_url,
-    )
+    )?;
+    oauth_callback::apply(&base_url);
+    Ok(())
 }
 
 #[tauri::command]
@@ -2584,6 +2587,11 @@ fn main() {
     {
         let _ = spawn_gateway(&gateway, &base_url);
     }
+    // The gateway binds the OAuth callback ports on its own loopback, so the app
+    // forwards them whenever it did not spawn the gateway itself. A URL cannot
+    // answer this: the relay also serves a loopback address for a gateway that
+    // runs elsewhere, and that gateway's callback ports are on the far machine.
+    oauth_callback::apply(&base_url);
     let api_key = std::env::var("MAHOQUOT_API_KEY").unwrap_or_else(|_| master_key.clone());
     let mut init_script = bootstrap::console_initialization_script(&base_url, &api_key);
     if gateway_target_policy(&base_url) == GatewayTargetPolicy::ManageLocal {
