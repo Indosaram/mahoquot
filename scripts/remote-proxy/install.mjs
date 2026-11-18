@@ -20,6 +20,20 @@ const INSTALLED = path.join(homedir(), ".omo", "bin", "mahoquot-remote-proxy.mjs
 const PLIST = path.join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
 const LOG = path.join(homedir(), ".mahoquot", "remote-proxy.log");
 
+// The gateway binds its browser-redirect OAuth callback listeners to 127.0.0.1 on the
+// host it runs on (management/oauth.rs: bind_callback_listener), and the redirect_uri it
+// hands the browser is `localhost:<port>` because the client IDs are registered with the
+// providers. With a remote gateway those two loopbacks are different machines, so the
+// ports have to be tunnelled for a login to complete. Managed here, not by hand.
+const FORWARD_LABEL = "ai.indo.mahoquot-remote-forward";
+const FORWARD_PLIST = path.join(homedir(), "Library", "LaunchAgents", `${FORWARD_LABEL}.plist`);
+const OAUTH_CALLBACK_PORTS = [
+  ["antigravity", 51121],
+  ["codex", 1455],
+  ["anthropic", 54545],
+  ["command-code", 5959],
+];
+
 const argv = process.argv.slice(2);
 const flag = (name) => argv.includes(`--${name}`);
 const value = (name, fallback) => {
@@ -35,6 +49,7 @@ const cfg = {
   fdMax: value("fd-max", "65536"),
   statsEvery: value("stats-every", "4"),
   watchdogMs: value("watchdog-ms", "30000"),
+  sshTarget: value("ssh-target", `indo@100.91.254.71`),
   dryRun: flag("dry-run"),
 };
 
@@ -87,8 +102,44 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
+const forwardArgs = [
+  "/usr/bin/ssh",
+  "-N",
+  "-F",
+  "/dev/null",
+  "-o",
+  "ExitOnForwardFailure=yes",
+  "-o",
+  "ServerAliveInterval=15",
+  "-o",
+  "ServerAliveCountMax=3",
+  "-o",
+  "BatchMode=yes",
+];
+for (const [, port] of OAUTH_CALLBACK_PORTS) {
+  forwardArgs.push("-L", `127.0.0.1:${port}:127.0.0.1:${port}`);
+}
+forwardArgs.push(cfg.sshTarget);
+
+const forwardPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${esc(FORWARD_LABEL)}</string>
+  <key>ProgramArguments</key>
+  <array>
+${forwardArgs.map((a) => `    <string>${esc(a)}</string>`).join("\n")}
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+</dict>
+</plist>
+`;
+
 if (cfg.dryRun) {
   console.log(plist);
+  console.log(forwardPlist);
   process.exit(0);
 }
 
@@ -99,20 +150,53 @@ mkdirSync(path.dirname(LOG), { recursive: true });
 copyFileSync(SOURCE, INSTALLED);
 chmodSync(INSTALLED, 0o755);
 writeFileSync(PLIST, plist);
+writeFileSync(FORWARD_PLIST, forwardPlist);
 
 const uid = process.getuid();
 const domain = `gui/${uid}`;
-try {
-  execFileSync("launchctl", ["bootout", `${domain}/${LABEL}`], { stdio: "ignore" });
-} catch {
-  // not loaded yet — first install
-}
-execFileSync("launchctl", ["bootstrap", domain, PLIST], { stdio: "inherit" });
-execFileSync("launchctl", ["kickstart", "-k", `${domain}/${LABEL}`], { stdio: "inherit" });
 
-const summary = execFileSync("launchctl", ["print", `${domain}/${LABEL}`], { encoding: "utf8" });
-for (const line of summary.split("\n")) {
-  if (/state = |maxfiles|last exit code|\.mjs/.test(line)) console.log(line.trim());
+function load(label, plistPath) {
+  try {
+    execFileSync("launchctl", ["bootout", `${domain}/${label}`], { stdio: "ignore" });
+  } catch {
+    // not loaded yet — first install
+  }
+  // `bootstrap` immediately after `bootout` can fail with EIO (5) while launchd is still
+  // tearing the previous instance down, so wait for the label to disappear first.
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      execFileSync("launchctl", ["print", `${domain}/${label}`], { stdio: "ignore" });
+      execFileSync("sleep", ["0.2"], { stdio: "ignore" });
+    } catch {
+      break;
+    }
+  }
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      execFileSync("launchctl", ["bootstrap", domain, plistPath], { stdio: "inherit" });
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+      execFileSync("sleep", ["0.5"], { stdio: "ignore" });
+    }
+  }
+  if (lastError) throw lastError;
+  execFileSync("launchctl", ["kickstart", "-k", `${domain}/${label}`], { stdio: "inherit" });
+  const summary = execFileSync("launchctl", ["print", `${domain}/${label}`], { encoding: "utf8" });
+  for (const line of summary.split("\n")) {
+    if (/state = |maxfiles|last exit code|\.mjs/.test(line)) console.log(line.trim());
+  }
 }
+
+load(LABEL, PLIST);
+load(FORWARD_LABEL, FORWARD_PLIST);
+
 console.log(`installed ${INSTALLED} -> ${cfg.targetHost}:${cfg.targetPort}`);
 console.log(`log: ${LOG}`);
+console.log(
+  `forward ${FORWARD_LABEL} -> ${cfg.sshTarget} ports ${OAUTH_CALLBACK_PORTS.map(([n, p]) => `${n}:${p}`).join(", ")}`,
+);
+console.log("oauth callbacks need this mac's key in the remote authorized_keys and the host in known_hosts");

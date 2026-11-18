@@ -38,20 +38,44 @@ against the previous implementation.
 ## Install
 
 ```bash
-node scripts/remote-proxy/install.mjs            # writes the LaunchAgent and bootstraps it
-node scripts/remote-proxy/install.mjs --dry-run  # print the plist only
+node scripts/remote-proxy/install.mjs            # writes both LaunchAgents and bootstraps them
+node scripts/remote-proxy/install.mjs --dry-run  # print the plists only
 ```
 
-Options: `--target-host`, `--target-port`, `--listen-host`, `--listen-port`, `--fd-max`.
+Options: `--target-host`, `--target-port`, `--listen-host`, `--listen-port`, `--fd-max`,
+`--ssh-target`.
 
-The installer copies `relay.mjs` to `~/.omo/bin/mahoquot-remote-proxy.mjs` and loads
-`ai.indo.mahoquot-remote-proxy` with `NumberOfFiles = FD_MAX`. Logs go to
-`~/.mahoquot/remote-proxy.log`.
+The installer copies `relay.mjs` to `~/.omo/bin/mahoquot-remote-proxy.mjs` and loads **two**
+agents with `NumberOfFiles = FD_MAX`: the relay `ai.indo.mahoquot-remote-proxy` and the OAuth
+callback tunnel `ai.indo.mahoquot-remote-forward`. Logs go to `~/.mahoquot/remote-proxy.log`.
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/ai.indo.mahoquot-remote-proxy   # restart
-launchctl bootout gui/$(id -u)/ai.indo.mahoquot-remote-proxy        # stop
+launchctl kickstart -k gui/$(id -u)/ai.indo.mahoquot-remote-proxy   # restart relay
+launchctl bootout gui/$(id -u)/ai.indo.mahoquot-remote-forward      # stop tunnel
 ```
+
+## The OAuth callback tunnel
+
+The gateway binds its browser-redirect callback listeners to `127.0.0.1` on the host it runs
+on (`crates/gateway/src/management/oauth.rs`, `bind_callback_listener`), and the
+`redirect_uri` it hands the browser is `localhost:<port>` because those client IDs are
+registered with the providers. With a remote gateway those are two different loopbacks, so a
+local browser can never reach the listener without a tunnel. Ports: `antigravity` 51121,
+`codex` 1455, `anthropic` 54545, `command-code` 5959.
+
+The listeners are per-login and expire after `OAUTH_SESSION_TTL` (1800s), so the tunnel is idle
+most of the time. It stays resident because an `ssh -N` with four `-L` flags is one process and
+no browser login completes without it.
+
+### A second machine
+
+The tunnel targets `indo@100.91.254.71` regardless of which machine runs it, so a new Mac needs
+only: that machine's SSH key in the remote `~/.ssh/authorized_keys` (the agent uses
+`BatchMode=yes`, so a passphrase prompt fails instead of hanging) and the remote host in its
+`known_hosts`. Then run the installer there with the same `--ssh-target`.
+
+Check it: `launchctl print gui/$(id -u)/ai.indo.mahoquot-remote-forward` shows
+`state = running`, and `nc -vz 127.0.0.1 1455` connects.
 
 ## Verify
 
