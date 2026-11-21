@@ -167,7 +167,7 @@ const buildHistoryStatsMock = (url: URL) => {
           "bucket-start-ms": bStart,
           account: null,
           provider: "antigravity",
-          model: "gemini-3.8-flash-high",
+          model: "gemini-4-neon-high",
           "key-label": null,
           status: null,
           totals: {
@@ -268,7 +268,7 @@ const buildHistoryStatsMock = (url: URL) => {
         "bucket-start-ms": null,
         account: null,
         provider: "antigravity",
-        model: "gemini-3.8-flash-high",
+        model: "gemini-4-neon-high",
         "key-label": null,
         status: null,
         totals: geminiTotals,
@@ -418,7 +418,7 @@ test.beforeAll(async () => {
   await mkdir(evidenceDir, { recursive: true });
 });
 
-test("Test one: on Overview surface, click radio Model in Group by radiogroup and assert gemini-3.8-flash-high visible in breakdown table", async ({
+test("Test one: on Overview surface, click radio Model in Group by radiogroup and assert gemini-4-neon-high visible in breakdown table", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
@@ -434,7 +434,7 @@ test("Test one: on Overview surface, click radio Model in Group by radiogroup an
 
   const breakdownTable = page.locator(".overview-breakdown table");
   await expect(breakdownTable).toBeVisible();
-  await expect(breakdownTable.getByText("gemini-3.8-flash-high")).toBeVisible();
+  await expect(breakdownTable.getByText("gemini-4-neon-high")).toBeVisible();
 
   await page.screenshot({
     path: resolve(evidenceDir, "overview-breakdown-model.png"),
@@ -519,17 +519,17 @@ test("Test five: clicking a breakdown row narrows the dashboard to that entity",
   await groupBy.getByText("Model", { exact: true }).click();
 
   const mixLabels = page.locator(".provider-mix-labels");
-  await expect(mixLabels).toContainText("gemini-3.8-flash-high");
+  await expect(mixLabels).toContainText("gemini-4-neon-high");
   const labelsBefore = await mixLabels.locator("span").count();
   expect(labelsBefore).toBeGreaterThan(1);
 
   await page
-    .locator(".overview-breakdown-focus", { hasText: "gemini-3.8-flash-high" })
+    .locator(".overview-breakdown-focus", { hasText: "gemini-4-neon-high" })
     .first()
     .click();
 
   // The chart, mix bar and KPIs must all describe the one selected model.
-  await expect(page.locator(".overview-focus-chip")).toContainText("gemini-3.8-flash-high");
+  await expect(page.locator(".overview-focus-chip")).toContainText("gemini-4-neon-high");
   await expect(page.locator(".overview-breakdown-row-selectable.is-focused")).toHaveCount(1);
   await expect(mixLabels).not.toContainText("glm-5.3-flash");
 

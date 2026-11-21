@@ -142,11 +142,11 @@ describe("OverviewBreakdownChart", () => {
     const analyticsSupported = createMockAnalytics({
       dimension: "model",
       supportsModelDimension: true,
-      seriesKeys: ["google/gemini-3.8-flash-high"],
+      seriesKeys: ["google/gemini-4-neon-high"],
       rows: [
         {
-          key: "google/gemini-3.8-flash-high",
-          label: "gemini-3.8-flash-high",
+          key: "google/gemini-4-neon-high",
+          label: "gemini-4-neon-high",
           provider: "google",
           requests: 20,
           successes: 20,
@@ -165,13 +165,13 @@ describe("OverviewBreakdownChart", () => {
         {
           startMs: 1000,
           total: 20,
-          values: { "google/gemini-3.8-flash-high": 20 },
+          values: { "google/gemini-4-neon-high": 20 },
         },
       ],
     });
 
     const { rerender } = render(<OverviewBreakdownChart analytics={analyticsSupported} />);
-    expect(screen.getByText("gemini-3.8-flash-high")).toBeInTheDocument();
+    expect(screen.getByText("gemini-4-neon-high")).toBeInTheDocument();
     expect(document.querySelector("canvas")).toBeInTheDocument();
 
     // Re-rendering with unsupported returns early: hooks must not be violated
@@ -181,7 +181,7 @@ describe("OverviewBreakdownChart", () => {
 
     // Re-rendering back to supported
     rerender(<OverviewBreakdownChart analytics={analyticsSupported} />);
-    expect(screen.getByText("gemini-3.8-flash-high")).toBeInTheDocument();
+    expect(screen.getByText("gemini-4-neon-high")).toBeInTheDocument();
     expect(document.querySelector("canvas")).toBeInTheDocument();
   });
 
@@ -230,14 +230,14 @@ describe("OverviewBreakdownChart", () => {
     expect(antigravityColor).not.toBe(clineColor);
   });
 
-  it("renders model name (e.g. gemini-3.8-flash-high) as legend text when dimension is model", () => {
+  it("renders model name (e.g. gemini-4-neon-high) as legend text when dimension is model", () => {
     const analytics = createMockAnalytics({
       dimension: "model",
-      seriesKeys: ["google/gemini-3.8-flash-high", "anthropic/claude-3-5-sonnet"],
+      seriesKeys: ["google/gemini-4-neon-high", "anthropic/claude-3-5-sonnet"],
       rows: [
         {
-          key: "google/gemini-3.8-flash-high",
-          label: "gemini-3.8-flash-high",
+          key: "google/gemini-4-neon-high",
+          label: "gemini-4-neon-high",
           provider: "google",
           requests: 25,
           successes: 25,
@@ -273,7 +273,7 @@ describe("OverviewBreakdownChart", () => {
           startMs: 1000,
           total: 35,
           values: {
-            "google/gemini-3.8-flash-high": 25,
+            "google/gemini-4-neon-high": 25,
             "anthropic/claude-3-5-sonnet": 10,
           },
         },
@@ -282,7 +282,7 @@ describe("OverviewBreakdownChart", () => {
 
     render(<OverviewBreakdownChart analytics={analytics} />);
 
-    expect(screen.getByText("gemini-3.8-flash-high")).toBeInTheDocument();
+    expect(screen.getByText("gemini-4-neon-high")).toBeInTheDocument();
     expect(screen.getByText("claude-3-5-sonnet")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Activity by model" })).toBeInTheDocument();
   });

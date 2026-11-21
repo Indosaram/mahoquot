@@ -399,9 +399,9 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     authKind: "oauth",
     adapter: "google",
     baseUrl: "https://daily-cloudcode-pa.googleapis.com",
-    defaultModel: "gemini-3.8-flash-high",
+    defaultModel: "gemini-4-neon-high",
     models: [
-      "gemini-3.8-flash-high",
+      "gemini-4-neon-high",
       "gemini-3.7-flash-high",
       "gemini-3.6-flash-high",
       "gemini-3.5-flash-low",

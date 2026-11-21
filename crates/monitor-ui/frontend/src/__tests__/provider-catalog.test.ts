@@ -141,7 +141,7 @@ describe("provider-catalog", () => {
     expect(antigravity?.label).toBe("Google Antigravity");
     expect(antigravity?.authKind).toBe("oauth");
     expect(antigravity?.adapter).toBe("google");
-    expect(antigravity?.defaultModel).toBe("gemini-3.8-flash-high");
+    expect(antigravity?.defaultModel).toBe("gemini-4-neon-high");
     expect(antigravity?.models).toContain("gemini-3.7-flash-high");
 
     const zai = PROVIDER_CATALOG_BY_ID.zai;

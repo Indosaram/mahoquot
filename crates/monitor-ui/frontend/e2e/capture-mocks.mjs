@@ -542,7 +542,7 @@ export const installMocks = async (page, allowedOrigin) => {
       json({
         prices: [
           {
-            model: "gemini-3.8-flash",
+            model: "gemini-4-neon",
             version: "2026-11-01",
             "input-per-million": 0.3,
             "output-per-million": 2.5,
