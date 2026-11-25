@@ -4,34 +4,28 @@ import { canonicalJson, hashUnit, merge, type Profile, type UnitState } from "./
 const compatA = { sendSessionAffinityHeaders: true, sessionAffinityFormat: "openrouter" };
 const compatB = { sendSessionAffinityHeaders: false, sessionAffinityFormat: "openrouter" };
 const modelA = { id: "probe-model-a", name: "Probe A", contextWindow: 8192, maxTokens: 1024 };
-const modelA2 = { id: "probe-model-a", name: "Probe A v2", contextWindow: 16384, maxTokens: 2048 };
-const modelB = { id: "probe-model-b", name: "Probe B", contextWindow: 4096, maxTokens: 512 };
+const modelA2 = { ...modelA, name: "Probe A v2", contextWindow: 16384 };
+const modelB = { id: "probe-model-b", name: "Probe B" };
 const modelC = { id: "probe-model-c", name: "Probe C" };
 
-function root(mahoquot: Record<string, unknown> | undefined, extra: Record<string, unknown> = {}) {
-  const providers: Record<string, unknown> = {
-    other: { api: "openai-completions", apiKey: "k-other", baseUrl: "https://other.invalid", models: [{ id: "other-model" }] },
+function root(models: unknown[], compat: unknown = compatA) {
+  return {
+    disabledProviders: ["gone-provider"],
+    unknown: { keep: true },
+    providers: {
+      other: { models: [{ id: "other-model" }] },
+      mahoquot: { api: "openai-completions", apiKey: "secret", baseUrl: "http://gw.invalid/v1", name: "mahoquot", compat, models },
+    },
   };
-  if (mahoquot) providers.mahoquot = mahoquot;
-  return { disabledProviders: ["gone-provider"], providers, ...extra };
 }
-
-function mq(models: unknown[], compat: unknown = compatA) {
-  return { api: "openai-completions", apiKey: "mq-secret", baseUrl: "http://gw.invalid:1/v1", name: "mahoquot", compat, models };
-}
-
 function profile(over: Partial<Profile> = {}): Profile {
   return { revision: 1, compat: compatA, models: [modelA], remove: [], ...over };
 }
-
 function state(units: Record<string, unknown> = {}): UnitState {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(units)) out[k] = hashUnit(v);
-  return { units: out };
+  return { units: Object.fromEntries(Object.entries(units).map(([k, v]) => [k, hashUnit(v)])) };
 }
-
-function ids(r: { root: unknown }): string[] {
-  return ((r.root as any).providers.mahoquot.models as Array<{ id: string }>).map((m) => m.id);
+function models(r: { root: unknown }): unknown[] {
+  return (r.root as ReturnType<typeof root>).providers.mahoquot.models;
 }
 
 describe("hashing", () => {
@@ -42,205 +36,224 @@ describe("hashing", () => {
   });
 });
 
-describe("add / update / no-op", () => {
-  test("adds an absent model and compat at the end in SOT order and records hashes", () => {
-    const local = root({ ...mq([{ id: "local-only" }]), compat: undefined });
-    delete (local.providers.mahoquot as any).compat;
+describe("SOT-authoritative decision table", () => {
+  test("adds absent models in SOT order without adding absent compat", () => {
+    const local: any = root([]);
+    delete local.providers.mahoquot.compat;
     const r = merge(local, profile({ models: [modelB, modelA] }), state());
-    expect(ids(r)).toEqual(["local-only", "probe-model-b", "probe-model-a"]);
+    expect(models(r)).toEqual([modelB, modelA]);
+    expect(r.changes.map((c) => c.action)).toEqual(["add", "add"]);
+    expect((r.root as any).providers.mahoquot).not.toHaveProperty("compat");
+    expect(r.hashes.compat).toBeNull();
+  });
+
+  test("does not mutate the input root, SOT, or hash state", () => {
+    const local = root([modelA2, modelB]);
+    const sot = profile({ remove: [modelB.id] });
+    const previous = state({ [`model:${modelA.id}`]: modelA });
+    const before = JSON.stringify([local, sot, previous]);
+    merge(local, sot, previous);
+    expect(JSON.stringify([local, sot, previous])).toBe(before);
+  });
+
+  test("updates an unedited managed model without changing compat", () => {
+    const r = merge(root([modelA]), profile({ models: [modelA2], compat: compatB }), state({ compat: compatA, [`model:${modelA.id}`]: modelA }));
+    expect(models(r)).toEqual([modelA2]);
     expect((r.root as any).providers.mahoquot.compat).toEqual(compatA);
-    expect(r.changes.map((c) => `${c.action}:${c.key}`)).toEqual([
-      "add:compat",
-      "add:model:probe-model-b",
-      "add:model:probe-model-a",
+    expect(r.changes.map((c) => c.action)).toEqual(["update"]);
+    expect(r.conflicts).toEqual([]);
+  });
+
+  test("unchanged profile is a no-op", () => {
+    const local = root([modelA]);
+    const r = merge(local, profile(), state({ compat: compatA, [`model:${modelA.id}`]: modelA }));
+    expect(r.changes).toEqual([]);
+    expect(r.conflicts).toEqual([]);
+    expect(canonicalJson(r.root)).toBe(canonicalJson(local));
+  });
+
+  test("seed machine records matching units without changes", () => {
+    const r = merge(root([modelA]), profile(), state());
+    expect(r.changes).toEqual([]);
+    expect(r.conflicts).toEqual([]);
+    expect(r.hashes).toEqual({ compat: hashUnit(compatA), [`model:${modelA.id}`]: hashUnit(modelA) });
+  });
+
+  test("locally-removed is re-added with no revision gate", () => {
+    for (const revision of [0, 1, 19]) {
+      const r = merge(root([]), profile({ revision }), state({ [`model:${modelA.id}`]: modelA }));
+      expect(models(r)).toEqual([modelA]);
+      expect(r.conflicts).toContainEqual({ key: `model:${modelA.id}`, kind: "locally-removed" });
+      expect(r.hashes[`model:${modelA.id}`]).toBe(hashUnit(modelA));
+    }
+  });
+
+  test("same-revision deletion after a successful merge is restored", () => {
+    const first = merge(root([]), profile(), state());
+    const second = merge(root([]), profile(), { units: first.hashes as Record<string, string> });
+    expect(models(second)).toEqual([modelA]);
+    expect(second.changes[0]?.action).toBe("add");
+  });
+
+  test("unmanaged-differs is overwritten rather than pruned", () => {
+    const r = merge(root([modelA2]), profile(), state());
+    expect(models(r)).toEqual([modelA]);
+    expect(r.conflicts).toEqual([{ key: `model:${modelA.id}`, kind: "unmanaged-differs", resolution: "overwritten" }]);
+    expect(r.changes[0]?.action).toBe("update");
+  });
+
+  test("local-only entries are retained unless proven unroutable", () => {
+    const r = merge(root([modelB, modelC]), profile(), state());
+    expect(models(r)).toEqual([modelB, modelC, modelA]);
+    expect(r.changes.filter((c) => c.action === "remove")).toEqual([]);
+    expect(r.retained).toEqual([
+      { key: `model:${modelB.id}`, id: modelB.id },
+      { key: `model:${modelC.id}`, id: modelC.id },
     ]);
-    expect(r.conflicts).toEqual([]);
-    expect(r.hashes["model:probe-model-a"]).toBe(hashUnit(modelA));
-    expect(r.hashes.compat).toBe(hashUnit(compatA));
   });
 
-  test("does not mutate the input root", () => {
-    const local = root(mq([]));
-    const before = canonicalJson(local);
-    merge(local, profile(), state());
-    expect(canonicalJson(local)).toBe(before);
+  test("a proven-unroutable local-only entry is the only thing deleted", () => {
+    const r = merge(root([modelB, modelC]), profile(), state(), { pruneable: new Set([modelC.id]) });
+    expect(models(r)).toEqual([modelB, modelA]);
+    expect(r.changes.filter((c) => c.action === "remove")).toEqual([
+      { key: `model:${modelC.id}`, action: "remove", before: modelC, reason: "local-only" },
+    ]);
+    expect(r.retained).toEqual([{ key: `model:${modelB.id}`, id: modelB.id }]);
+    expect(r.hashes[`model:${modelC.id}`]).toBeNull();
   });
 
-  test("updates a managed unit whose local copy still equals the last applied hash", () => {
-    const local = root(mq([modelA]));
-    const r = merge(local, profile({ models: [modelA2], compat: compatB }), state({ compat: compatA, "model:probe-model-a": modelA }));
-    expect((r.root as any).providers.mahoquot.models[0]).toEqual(modelA2);
-    expect((r.root as any).providers.mahoquot.compat).toEqual(compatB);
-    expect(r.changes.map((c) => c.action)).toEqual(["update", "update"]);
-    expect(r.conflicts).toEqual([]);
-    expect(r.hashes["model:probe-model-a"]).toBe(hashUnit(modelA2));
-  });
-
-  test("unchanged profile is a no-op with equal canonical output", () => {
-    const local = root(mq([modelA]));
-    const r = merge(local, profile(), state({ compat: compatA, "model:probe-model-a": modelA }));
-    expect(r.changes).toEqual([]);
-    expect(r.conflicts).toEqual([]);
-    expect(canonicalJson(r.root)).toBe(canonicalJson(local));
-  });
-
-  test("seed machine: local equals SOT and no hash yet records hashes without changes", () => {
-    const local = root(mq([modelA]));
-    const r = merge(local, profile(), state());
-    expect(r.changes).toEqual([]);
-    expect(r.conflicts).toEqual([]);
-    expect(r.hashes).toEqual({ compat: hashUnit(compatA), "model:probe-model-a": hashUnit(modelA) });
-  });
-});
-
-describe("conflicts", () => {
-  test("locally-removed: managed unit absent locally is not re-added", () => {
-    const r = merge(root(mq([])), profile(), state({ compat: compatA, "model:probe-model-a": modelA }));
-    expect(r.conflicts).toEqual([{ key: "model:probe-model-a", kind: "locally-removed" }]);
-    expect(ids(r)).toEqual([]);
-    expect("model:probe-model-a" in r.hashes).toBe(false);
-  });
-
-  test("unmanaged-differs: local copy differs and was never managed", () => {
-    const r = merge(root(mq([{ ...modelA, name: "hand" }])), profile(), state({ compat: compatA }));
-    expect(r.conflicts).toEqual([{ key: "model:probe-model-a", kind: "unmanaged-differs" }]);
-    expect((r.root as any).providers.mahoquot.models[0].name).toBe("hand");
-    expect(r.changes).toEqual([]);
-  });
-
-  test("local-edit: hand edit after the last sync is kept for a model and for compat", () => {
+  test("local-edit is overwritten and reported as overwritten", () => {
     const edited = { ...modelA, name: "hand" };
-    const local = root(mq([edited], { ...compatA, extra: 1 }));
-    const r = merge(local, profile({ models: [modelA2], compat: compatB }), state({ compat: compatA, "model:probe-model-a": modelA }));
-    expect(r.conflicts.map((c) => `${c.kind}:${c.key}`).sort()).toEqual(["local-edit:compat", "local-edit:model:probe-model-a"]);
-    expect(canonicalJson(r.root)).toBe(canonicalJson(local));
-    expect(r.changes).toEqual([]);
+    const r = merge(root([edited]), profile({ models: [modelA2] }), state({ [`model:${modelA.id}`]: modelA }));
+    expect(models(r)).toEqual([modelA2]);
+    expect(r.conflicts).toEqual([{ key: `model:${modelA.id}`, kind: "local-edit", resolution: "overwritten" }]);
+    expect(r.hashes[`model:${modelA.id}`]).toBe(hashUnit(modelA2));
   });
 
-  test("duplicate-local-id: first occurrence is the unit, later copies untouched, reported once", () => {
-    const dup1 = { ...modelA };
-    const dup2 = { ...modelA, name: "dup-second" };
-    const dup3 = { ...modelA, name: "dup-third" };
-    const local = root(mq([dup1, dup2, dup3]));
-    const r = merge(local, profile({ models: [modelA2] }), state({ compat: compatA, "model:probe-model-a": modelA }));
-    const models = (r.root as any).providers.mahoquot.models;
-    expect(models[0]).toEqual(modelA2);
-    expect(models[1]).toEqual(dup2);
-    expect(models[2]).toEqual(dup3);
-    expect(r.conflicts).toEqual([{ key: "model:probe-model-a", kind: "duplicate-local-id" }]);
+  test("hashes cover all final units and drop every stale tracked model", () => {
+    const r = merge(root([modelA2, modelC], compatB), profile({ models: [modelA, modelB] }), state({ "model:already-gone": {}, [`model:${modelA.id}`]: modelA }), { pruneable: new Set([modelC.id]) });
+    expect(r.hashes).toEqual({ compat: hashUnit(compatB), [`model:${modelA.id}`]: hashUnit(modelA), [`model:${modelB.id}`]: hashUnit(modelB), [`model:${modelC.id}`]: null, "model:already-gone": null });
+  });
+
+  test("a second merge using final hashes is a no-op", () => {
+    const first = merge(root([modelA2, modelB]), profile(), state());
+    const units = Object.fromEntries(Object.entries(first.hashes).filter((entry): entry is [string, string] => entry[1] !== null));
+    const second = merge(first.root, profile(), { units });
+    expect(second.changes).toEqual([]);
+    expect(second.conflicts).toEqual([]);
+  });
+
+  test("existing models keep their order and new models append", () => {
+    const r = merge(root([modelB, modelA, { id: "local-only" }]), profile({ models: [modelA2, modelB, modelC] }), state());
+    expect(models(r)).toEqual([modelB, modelA2, { id: "local-only" }, modelC]);
   });
 });
 
-describe("adoptSot", () => {
-  test("overrides unmanaged-differs and local-edit but keeps a locally-removed conflict", () => {
-    const local = root(mq([{ ...modelA, name: "hand" }], { sendSessionAffinityHeaders: "x" }));
-    const r = merge(local, profile({ models: [modelA, modelB] }), state({ "model:probe-model-b": modelB }), { adoptSot: true });
-    expect((r.root as any).providers.mahoquot.models[0]).toEqual(modelA);
-    expect((r.root as any).providers.mahoquot.compat).toEqual(compatA);
-    expect(ids(r)).toEqual(["probe-model-a"]);
-    expect(r.conflicts).toEqual([{ key: "model:probe-model-b", kind: "locally-removed" }]);
-    expect(r.hashes.compat).toBe(hashUnit(compatA));
+describe("duplicates", () => {
+  test("every SOT duplicate is updated, with a report for each extra occurrence", () => {
+    const r = merge(root([modelA, { ...modelA, name: "second" }, { ...modelA, name: "third" }]), profile({ models: [modelA2] }), state({ [`model:${modelA.id}`]: modelA }));
+    expect(models(r)).toEqual([modelA2, modelA2, modelA2]);
+    expect(r.changes).toHaveLength(3);
+    expect(r.conflicts.filter((c) => c.kind === "duplicate-local-id")).toHaveLength(2);
+    expect(r.hashes[`model:${modelA.id}`]).toBe(hashUnit(modelA2));
   });
 
-  test("local-edit on a managed model is overwritten and rehashed", () => {
-    const r = merge(root(mq([{ ...modelA, name: "hand" }])), profile(), state({ compat: compatA, "model:probe-model-a": modelA }), { adoptSot: true });
-    expect((r.root as any).providers.mahoquot.models[0]).toEqual(modelA);
-    expect(r.conflicts).toEqual([]);
+  test("local-only duplicates are retained unless proven unroutable", () => {
+    const r = merge(root([modelB, { ...modelB, name: "second" }, modelB]), profile({ models: [] }), state());
+    expect(models(r)).toHaveLength(3);
+    expect(r.changes.filter((c) => c.reason === "local-only")).toHaveLength(0);
+    expect(r.conflicts.filter((c) => c.kind === "duplicate-local-id")).toHaveLength(2);
+    expect(r.retained).toHaveLength(3);
   });
 
-  test("tombstone removes an edited or unmanaged model", () => {
-    const local = root(mq([{ ...modelC, name: "hand" }, modelB]));
-    const r = merge(local, profile({ models: [], remove: ["probe-model-c"] }), state({ "model:probe-model-c": modelC }), { adoptSot: true });
-    expect(ids(r)).toEqual(["probe-model-b"]);
-    expect(r.hashes["model:probe-model-c"]).toBeNull();
+  test("all proven-unroutable local-only duplicates are deleted", () => {
+    const r = merge(root([modelB, { ...modelB, name: "second" }, modelB]), profile({ models: [] }), state(), { pruneable: new Set([modelB.id]) });
+    expect(models(r)).toEqual([]);
+    expect(r.changes.filter((c) => c.reason === "local-only")).toHaveLength(3);
+    expect(r.conflicts.filter((c) => c.kind === "duplicate-local-id")).toHaveLength(2);
+  });
+
+  test("all tombstoned duplicates are deleted regardless of hashes", () => {
+    const r = merge(root([modelB, { ...modelB, name: "edited" }, modelB]), profile({ models: [], remove: [modelB.id] }), state({ [`model:${modelB.id}`]: modelB }));
+    expect(models(r)).toEqual([]);
+    expect(r.changes.filter((c) => c.reason === "tombstone")).toHaveLength(3);
+    expect(r.hashes[`model:${modelB.id}`]).toBeNull();
   });
 });
 
 describe("tombstones", () => {
-  test("removes an unedited managed model and drops its hash", () => {
-    const r = merge(root(mq([modelB, modelC])), profile({ models: [], remove: ["probe-model-c"] }), state({ "model:probe-model-c": modelC }));
-    expect(ids(r)).toEqual(["probe-model-b"]);
-    expect(r.changes).toEqual([{ key: "model:probe-model-c", action: "remove", before: modelC }]);
-    expect(r.hashes["model:probe-model-c"]).toBeNull();
+  test("deletes unedited, edited, and never-managed models unconditionally", () => {
+    for (const previous of [state(), state({ [`model:${modelC.id}`]: modelC }), state({ [`model:${modelC.id}`]: { ...modelC, name: "previous" } })]) {
+      const r = merge(root([modelC]), profile({ models: [], remove: [modelC.id] }), previous);
+      expect(models(r)).toEqual([]);
+      expect(r.conflicts).toEqual([]);
+      expect(r.changes).toEqual([{ key: `model:${modelC.id}`, action: "remove", before: modelC, reason: "tombstone" }]);
+      expect(r.hashes[`model:${modelC.id}`]).toBeNull();
+    }
   });
 
-  test("a locally edited managed model is kept with a local-edit conflict", () => {
-    const edited = { ...modelC, name: "hand" };
-    const r = merge(root(mq([edited])), profile({ models: [], remove: ["probe-model-c"] }), state({ "model:probe-model-c": modelC }));
-    expect(ids(r)).toEqual(["probe-model-c"]);
-    expect(r.conflicts).toEqual([{ key: "model:probe-model-c", kind: "local-edit" }]);
-    expect("model:probe-model-c" in r.hashes).toBe(false);
-  });
-
-  test("a never-managed local model is kept with an unmanaged-differs conflict", () => {
-    const r = merge(root(mq([modelC])), profile({ models: [], remove: ["probe-model-c"] }), state());
-    expect(ids(r)).toEqual(["probe-model-c"]);
-    expect(r.conflicts).toEqual([{ key: "model:probe-model-c", kind: "unmanaged-differs" }]);
-  });
-
-  test("an id already absent locally just drops its hash", () => {
-    const r = merge(root(mq([modelB])), profile({ models: [], remove: ["probe-model-c"] }), state({ "model:probe-model-c": modelC }));
+  test("an absent tombstone drops its hash without changes", () => {
+    const r = merge(root([]), profile({ models: [], remove: [modelC.id] }), state({ [`model:${modelC.id}`]: modelC }));
     expect(r.changes).toEqual([]);
-    expect(r.conflicts).toEqual([]);
-    expect(r.hashes["model:probe-model-c"]).toBeNull();
+    expect(r.hashes[`model:${modelC.id}`]).toBeNull();
   });
 
-  test("local ids absent from both models and remove are never touched", () => {
-    const local = root(mq([modelB, { id: "local-only" }]));
-    const r = merge(local, profile({ models: [modelA], remove: [] }), state());
-    expect(ids(r)).toEqual(["probe-model-b", "local-only", "probe-model-a"]);
-  });
-
-  test("an id listed in both models and remove is never deleted", () => {
-    const r = merge(root(mq([modelA])), profile({ models: [modelA], remove: ["probe-model-a"] }), state({ compat: compatA, "model:probe-model-a": modelA }));
-    expect(ids(r)).toEqual(["probe-model-a"]);
+  test("models takes precedence when an id also occurs in remove", () => {
+    const r = merge(root([modelA]), profile({ remove: [modelA.id] }), state());
+    expect(models(r)).toEqual([modelA]);
+    expect(r.changes).toEqual([]);
   });
 });
 
-describe("unowned content stays equal", () => {
-  test("other providers, apiKey, baseUrl, name, api, disabledProviders, unknown keys and local-only models", () => {
-    const local = root(
-      { ...mq([{ id: "local-only", custom: { z: 1, a: 2 } }]), unknownKey: { keep: true } },
-      { someTopLevel: [1, 2, 3] },
-    );
-    const r = merge(local, profile({ models: [modelA, modelB], compat: compatB }), state());
-    const strip = (x: any) => {
-      const c = structuredClone(x);
-      delete c.providers.mahoquot.models;
-      delete c.providers.mahoquot.compat;
-      return c;
+describe("read-only compat and unowned content", () => {
+  test("compat is returned byte-identical even when SOT differs and adoptSot is enabled", () => {
+    const compat = { z: { custom: [3, 1] }, supportsReasoningEffort: false, ...compatB };
+    for (const adoptSot of [false, true]) {
+      const r = merge(root([modelA2], compat), profile(), state({ compat: compatA }), { adoptSot });
+      expect(JSON.stringify((r.root as any).providers.mahoquot.compat)).toBe(JSON.stringify(compat));
+      expect(r.hashes.compat).toBe(hashUnit(compat));
+      expect(r.changes.some((c) => c.key === "compat")).toBe(false);
+    }
+  });
+
+  test("compat retains local-edit conflict detection", () => {
+    const r = merge(root([modelA], compatB), profile(), state({ compat: compatA }));
+    expect(r.conflicts).toEqual([{ key: "compat", kind: "local-edit" }]);
+  });
+
+  test("adoptSot still restores missing models and reports overwritten local edits", () => {
+    const r = merge(root([modelA2]), profile({ models: [modelA, modelB] }), state({ [`model:${modelA.id}`]: modelA, [`model:${modelB.id}`]: modelB }), { adoptSot: true });
+    expect(models(r)).toEqual([modelA, modelB]);
+    expect(r.conflicts).toContainEqual({ key: `model:${modelA.id}`, kind: "local-edit", resolution: "overwritten" });
+  });
+
+  test("other providers and non-model fields remain unchanged", () => {
+    const local = root([modelB]);
+    const r = merge(local, profile(), state());
+    const withoutModels = (value: unknown) => {
+      const copy = structuredClone(value) as ReturnType<typeof root>;
+      copy.providers.mahoquot.models = [];
+      return copy;
     };
-    expect(canonicalJson(strip(r.root))).toBe(canonicalJson(strip(local)));
-    expect((r.root as any).providers.mahoquot.models[0]).toEqual({ id: "local-only", custom: { z: 1, a: 2 } });
-    expect(Object.keys((r.root as any).providers.mahoquot)).toEqual(Object.keys(local.providers.mahoquot));
+    expect(withoutModels(r.root)).toEqual(withoutModels(local));
   });
-});
 
-describe("missing provider", () => {
-  test("skips with no-mahoquot-provider and never creates it", () => {
-    for (const bad of [undefined, "str", [], null]) {
-      const local = root(undefined);
-      if (bad !== undefined) (local.providers as any).mahoquot = bad;
+  test("missing or invalid provider is skipped and never created", () => {
+    for (const provider of [undefined, "str", [], null]) {
+      const local = { providers: { mahoquot: provider } };
       const r = merge(local, profile(), state());
       expect(r.skipped).toBe("no-mahoquot-provider");
-      expect(r.changes).toEqual([]);
+      expect(r.root).toBe(local);
       expect(r.hashes).toEqual({});
-      expect(canonicalJson(r.root)).toBe(canonicalJson(local));
     }
     expect(merge({}, profile(), state()).skipped).toBe("no-mahoquot-provider");
     expect(merge(null, profile(), state()).skipped).toBe("no-mahoquot-provider");
   });
-});
 
-describe("order preservation", () => {
-  test("existing models keep their order when updated and new ones are appended", () => {
-    const local = root(mq([modelB, modelA, { id: "local-only" }]));
-    const r = merge(
-      local,
-      profile({ models: [modelA2, modelB, modelC] }),
-      state({ compat: compatA, "model:probe-model-a": modelA, "model:probe-model-b": modelB }),
-    );
-    expect(ids(r)).toEqual(["probe-model-b", "probe-model-a", "local-only", "probe-model-c"]);
-    expect((r.root as any).providers.mahoquot.models[1]).toEqual(modelA2);
+  test("invalid models array is skipped", () => {
+    const local = { providers: { mahoquot: { models: {} } } };
+    const r = merge(local, profile(), state());
+    expect(r.skipped).toBe("invalid-models-array");
+    expect(r.root).toBe(local);
   });
 });

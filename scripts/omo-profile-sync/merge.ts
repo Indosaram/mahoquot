@@ -1,6 +1,6 @@
 // Pure merge of the shared omo profile (SOT) into one local models.json root.
-// No I/O. Owned units: `providers.mahoquot.compat` and each
-// `providers.mahoquot.models[]` entry keyed by `id`. Nothing else is touched.
+// No I/O. Owned units: each `providers.mahoquot.models[]` entry keyed by `id`.
+// compat is observed and hashed, never written. Nothing else is touched.
 import { createHash } from "node:crypto";
 
 export interface Profile {
@@ -26,26 +26,35 @@ export interface Change {
   action: "add" | "update" | "remove";
   before?: unknown;
   after?: unknown;
+  reason?: "local-only" | "tombstone";
 }
 
 export interface Conflict {
   key: string;
   kind: ConflictKind;
+  resolution?: "overwritten";
 }
 
 export interface MergeOptions {
   adoptSot?: boolean;
+  /**
+   * Ids the caller has proven unroutable. Only these local-only entries are
+   * deleted; every other local-only entry is preserved and reported. Absence
+   * from the SOT is not evidence of death, so the default is to delete nothing.
+   */
+  pruneable?: ReadonlySet<string>;
 }
 
 export interface MergeResult {
   root: unknown;
   changes: Change[];
   conflicts: Conflict[];
+  /** Local-only ids kept because they were not proven unroutable. */
+  retained?: Array<{ key: string; id: string }>;
   skipped?: string;
   /**
-   * Hash decisions for units that were applied, matched, or dropped in this
-   * target: string = record as H, null = drop H. A unit that conflicted has no
-   * entry, so its old H is kept.
+   * Every final-state unit is hashed, including read-only compat.
+   * Removed or absent previously tracked units have null to drop their old hash.
    */
   hashes: Record<string, string | null>;
 }
@@ -73,10 +82,6 @@ export function hashUnit(x: unknown): string {
   return createHash("sha256").update(canonicalJson(x)).digest("hex");
 }
 
-function findFirst(models: unknown[], id: string): number {
-  return models.findIndex((m) => isPlainObject(m) && m.id === id);
-}
-
 export function merge(
   localRoot: unknown,
   profile: Profile,
@@ -84,6 +89,7 @@ export function merge(
   opts: MergeOptions = {},
 ): MergeResult {
   const adopt = opts.adoptSot === true;
+  const pruneable = opts.pruneable ?? new Set<string>();
   const providers = isPlainObject(localRoot) ? localRoot.providers : undefined;
   const probe = isPlainObject(providers) ? providers.mahoquot : undefined;
   if (!isPlainObject(probe)) {
@@ -110,15 +116,12 @@ export function merge(
     return mq.models as unknown[];
   };
 
-  // Duplicate local ids: the first occurrence is the unit; report each managed id once.
-  const managed = new Set<string>([...modelIds, ...tombstones]);
+  // Report every extra occurrence, including local-only and tombstoned ids.
   if (Array.isArray(mq.models)) {
     const seen = new Set<string>();
-    const reported = new Set<string>();
     for (const m of mq.models) {
       if (!isPlainObject(m) || typeof m.id !== "string") continue;
-      if (seen.has(m.id) && managed.has(m.id) && !reported.has(m.id)) {
-        reported.add(m.id);
+      if (seen.has(m.id)) {
         conflicts.push({ key: `model:${m.id}`, kind: "duplicate-local-id" });
       }
       seen.add(m.id);
@@ -136,13 +139,10 @@ export function merge(
     const h = units[key];
     const sh = hashUnit(sot);
     if (!present) {
-      if (h === undefined) {
-        write("add");
-        changes.push({ key, action: "add", after: sot });
-        hashes[key] = sh;
-      } else {
-        conflicts.push({ key, kind: "locally-removed" });
-      }
+      if (h !== undefined) conflicts.push({ key, kind: "locally-removed" });
+      write("add");
+      changes.push({ key, action: "add", after: sot });
+      hashes[key] = sh;
       return;
     }
     const lh = hashUnit(localValue);
@@ -153,56 +153,74 @@ export function merge(
       }
       hashes[key] = sh;
     };
-    if (h === undefined) {
-      if (lh === sh || adopt) overwrite();
-      else conflicts.push({ key, kind: "unmanaged-differs" });
-      return;
+    if (lh !== sh) {
+      if (h === undefined) conflicts.push({ key, kind: "unmanaged-differs", resolution: "overwritten" });
+      else if (lh !== h) conflicts.push({ key, kind: "local-edit", resolution: "overwritten" });
     }
-    if (lh === h || adopt) overwrite();
-    else conflicts.push({ key, kind: "local-edit" });
+    overwrite();
   };
 
-  // compat
-  applyUnit("compat", "compat" in mq && mq.compat !== undefined, mq.compat, profile.compat, () => {
-    mq.compat = structuredClone(profile.compat);
-  });
+  // Observe compat using its existing conflict policy, but never write it.
+  if ("compat" in mq && mq.compat !== undefined) {
+    const lh = hashUnit(mq.compat);
+    const h = units.compat;
+    hashes.compat = lh;
+    if (!adopt) {
+      if (h === undefined && lh !== hashUnit(profile.compat)) conflicts.push({ key: "compat", kind: "unmanaged-differs" });
+      else if (h !== undefined && lh !== h) conflicts.push({ key: "compat", kind: "local-edit" });
+    }
+  } else {
+    hashes.compat = null;
+    if (units.compat !== undefined) conflicts.push({ key: "compat", kind: "locally-removed" });
+  }
 
   // models in SOT order
   for (const sot of profile.models) {
-    const idx = Array.isArray(mq.models) ? findFirst(mq.models, sot.id) : -1;
-    applyUnit(
-      `model:${sot.id}`,
-      idx >= 0,
-      idx >= 0 ? (mq.models as unknown[])[idx] : undefined,
-      sot,
-      (action) => {
-        if (action === "add") localModels().push(structuredClone(sot));
-        else (mq.models as unknown[])[idx] = structuredClone(sot);
-      },
-    );
+    const indices = Array.isArray(mq.models)
+      ? mq.models.flatMap((m, idx) => isPlainObject(m) && m.id === sot.id ? [idx] : [])
+      : [];
+    if (indices.length === 0) indices.push(-1);
+    for (const idx of indices) {
+      applyUnit(
+        `model:${sot.id}`,
+        idx >= 0,
+        idx >= 0 ? (mq.models as unknown[])[idx] : undefined,
+        sot,
+        (action) => {
+          if (action === "add") localModels().push(structuredClone(sot));
+          else (mq.models as unknown[])[idx] = structuredClone(sot);
+        },
+      );
+    }
   }
 
-  // tombstones
-  for (const id of tombstones) {
-    const key = `model:${id}`;
-    const idx = Array.isArray(mq.models) ? findFirst(mq.models, id) : -1;
-    if (idx < 0) {
+  // Classify each deletion in memory; the caller owns backups and file writes.
+  // A tombstone is an explicit operator decision and is always honored. A
+  // local-only entry is deleted only when the caller proved it unroutable.
+  const removedIds = new Set(tombstones);
+  const retained: Array<{ key: string; id: string }> = [];
+  if (Array.isArray(mq.models)) {
+    mq.models = mq.models.filter((local) => {
+      if (!isPlainObject(local) || typeof local.id !== "string" || modelIds.has(local.id)) return true;
+      const key = `model:${local.id}`;
+      if (removedIds.has(local.id)) {
+        changes.push({ key, action: "remove", before: local, reason: "tombstone" });
+        hashes[key] = null;
+        return false;
+      }
+      if (!pruneable.has(local.id)) {
+        retained.push({ key, id: local.id });
+        return true;
+      }
+      changes.push({ key, action: "remove", before: local, reason: "local-only" });
       hashes[key] = null;
-      continue;
-    }
-    const models = mq.models as unknown[];
-    const local = models[idx];
-    const h = units[key];
-    if (h !== undefined && hashUnit(local) === h) {
-      // fall through to removal
-    } else if (!adopt) {
-      conflicts.push({ key, kind: h === undefined ? "unmanaged-differs" : "local-edit" });
-      continue;
-    }
-    models.splice(idx, 1);
-    changes.push({ key, action: "remove", before: local });
-    hashes[key] = null;
+      return false;
+    });
+  }
+  for (const id of tombstones) hashes[`model:${id}`] = null;
+  for (const key of Object.keys(units)) {
+    if (key.startsWith("model:") && !modelIds.has(key.slice("model:".length))) hashes[key] = null;
   }
 
-  return { root, changes, conflicts, hashes };
+  return { root, changes, conflicts, retained, hashes };
 }

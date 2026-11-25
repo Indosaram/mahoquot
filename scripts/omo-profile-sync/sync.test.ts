@@ -5,15 +5,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { hashUnit } from "./merge.ts";
 import {
-  BACKUP_MARK,
-  backupFile,
+  createBackupDirectory,
   loadTargets,
   main,
   parseArgs,
-  pruneBackups,
+  pruneBackupDirectories,
   renameWithRetry,
   rotateLog,
   syncPaths,
+  validateModelsRoot,
   writeTargets,
 } from "./sync.ts";
 
@@ -44,12 +44,11 @@ class FakeGateway {
     contentType: string | null;
     body?: string;
   }> = [];
-  server: ReturnType<typeof Bun.serve>;
+  originalFetch = globalThis.fetch;
 
   constructor() {
-    this.server = Bun.serve({
-      port: 0,
-      fetch: async (req) => {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const req = new Request(input, init);
         const url = new URL(req.url);
         this.requests.push({
           path: url.pathname,
@@ -60,6 +59,15 @@ class FakeGateway {
           contentType: req.headers.get("content-type"),
           body: req.method === "PUT" ? await req.text() : undefined,
         });
+        if (url.pathname === "/v1/models") {
+          if (req.headers.get("authorization") !== `Bearer ${API_KEY}`) {
+            return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+          }
+          return new Response(JSON.stringify({ data: this.catalogIds.map((id) => ({ id })) }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
         if (url.pathname !== PROFILE_PATH) return new Response("not found", { status: 404 });
         if (req.headers.get("authorization") !== `Bearer ${API_KEY}`) {
           return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
@@ -75,12 +83,11 @@ class FakeGateway {
         if (req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers: { etag } });
         const body = this.state.rawBody ?? JSON.stringify(this.state.body);
         return new Response(body, { status: 200, headers: { etag, "content-type": "application/json" } });
-      },
-    });
+    }) as typeof fetch;
   }
 
   get baseUrl(): string {
-    return `http://127.0.0.1:${this.server.port}/v1`;
+    return "http://gateway.invalid/v1";
   }
 
   publish(over: { compat?: unknown; models?: unknown[]; remove?: string[]; revision?: number }): void {
@@ -92,8 +99,16 @@ class FakeGateway {
     };
   }
 
+  /** Ids the gateway can route, as reported by GET /v1/models. */
+  catalogIds: string[] = [];
+
+  /** Publish the routable model catalog (`GET /v1/models`). */
+  catalog(ids: string[]): void {
+    this.catalogIds = ids;
+  }
+
   stop(): void {
-    this.server.stop(true);
+    globalThis.fetch = this.originalFetch;
   }
 }
 
@@ -108,7 +123,7 @@ beforeEach(() => {
 afterEach(() => {
   gw.stop();
   fs.rmSync(home, { recursive: true, force: true });
-  for (const r of gw.requests) expect(r.path).toBe(PROFILE_PATH);
+  for (const r of gw.requests) expect([PROFILE_PATH, "/v1/models"]).toContain(r.path);
 });
 
 const paths = () => syncPaths(home);
@@ -141,11 +156,16 @@ const readJson = (f: string): any => JSON.parse(fs.readFileSync(f, "utf8"));
 const mqOf = (f: string): any => readJson(f).providers.mahoquot;
 const stateOf = (): any => readJson(paths().stateFile);
 const logText = (): string => fs.readFileSync(paths().logFile, "utf8");
-const backups = (f: string): string[] =>
-  fs
-    .readdirSync(path.dirname(f))
-    .filter((n) => n.startsWith(path.basename(f) + BACKUP_MARK))
-    .sort();
+const backupDirs = (): string[] => fs.existsSync(paths().backupRoot)
+  ? fs.readdirSync(paths().backupRoot).filter((name) => fs.lstatSync(path.join(paths().backupRoot, name)).isDirectory()).sort()
+  : [];
+const backups = (f: string): string[] => backupDirs().flatMap((name) => {
+  const directory = path.join(paths().backupRoot, name);
+  const manifest = path.join(directory, "manifest.json");
+  if (!fs.existsSync(manifest)) return [];
+  return readJson(manifest).filter((entry: any) => entry.path === fs.realpathSync(f))
+    .map((entry: any) => path.join(directory, entry.file));
+});
 
 async function run(...flags: string[]): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
@@ -218,11 +238,10 @@ describe("fetch outcomes leave files untouched", () => {
   test("an unreachable gateway writes nothing", async () => {
     writeBoth(localRoot([]));
     const before = sha(fileA());
-    gw.stop();
+    globalThis.fetch = Object.assign(async () => { throw new Error("connection refused"); }, { preconnect: gw.originalFetch.preconnect });
     expect((await run()).code).toBe(0);
     expect(sha(fileA())).toBe(before);
     expect(logText()).toContain("unreachable");
-    gw = new FakeGateway();
   });
 
   test("revision 0 (unset profile) writes nothing", async () => {
@@ -240,19 +259,21 @@ describe("successful runs", () => {
     const original = localRoot([{ id: "local-only" }]);
     writeBoth(original);
     gw.publish({ models: [modelA] });
-    const { code, lines } = await run();
+    // The local-only id is not in the gateway catalog, so explicit pruning removes it.
+    gw.catalog([]);
+    const { code, lines } = await run("--prune");
     expect(code).toBe(0);
-    expect(mqOf(fileA()).models.map((m: any) => m.id)).toEqual(["local-only", "probe-model-a"]);
+    expect(mqOf(fileA()).models.map((m: any) => m.id)).toEqual(["probe-model-a"]);
     expect(sha(fileA())).toBe(sha(fileB()));
     expect(backups(fileA())).toHaveLength(1);
     expect(backups(fileB())).toHaveLength(1);
-    expect(JSON.parse(fs.readFileSync(backups(fileA()).map((n) => path.join(path.dirname(fileA()), n))[0]!, "utf8"))).toEqual(original);
+    expect(readJson(backups(fileA())[0]!)).toEqual(original);
     const after = readJson(fileA());
     expect(after.providers.other).toEqual(original.providers.other);
     expect(after.disabledProviders).toEqual(original.disabledProviders);
     expect(after.providers.mahoquot.apiKey).toBe(API_KEY);
     expect(fs.readdirSync(path.dirname(fileA())).filter((n) => n.includes(".tmp-profilesync-"))).toEqual([]);
-    expect(lines.some((l) => l.includes("revision=1 changed=2 conflicts=0 skipped=0"))).toBe(true);
+    expect(lines.some((l) => l.includes("revision=1 changed=4 skipped=0 applied=2 pruned=2 overwritten=0 conflicts=0"))).toBe(true);
     expect(stateOf().units["model:probe-model-a"]).toBe(hashUnit(modelA));
     expect(stateOf().etag).toBe('"r1"');
   });
@@ -267,6 +288,7 @@ describe("successful runs", () => {
     expect(stateOf()).toEqual({
       etag: '"r1"',
       units: { compat: hashUnit(compatA), "model:probe-model-a": hashUnit(modelA) },
+      profile: { revision: 1, compat: compatA, models: [modelA], remove: [] },
     });
 
     gw.publish({ revision: 2, models: [modelA2] });
@@ -295,7 +317,7 @@ describe("successful runs", () => {
     expect(logText()).toContain("conflicts=2");
   });
 
-  test("a run with a conflict saves units without etag, so a reverted edit is re-evaluated and applied", async () => {
+  test("an overwritten conflict converges immediately and the next run refreshes persisted hashes", async () => {
     writeBoth(localRoot([]));
     gw.publish({ revision: 1, models: [modelA] });
     await run();
@@ -306,9 +328,9 @@ describe("successful runs", () => {
     await run();
     expect(stateOf().etag).toBeUndefined();
     expect(stateOf().units["model:probe-model-a"]).toBe(hashUnit(modelA));
-    expect(mqOf(fileA()).models[0].name).toBe("hand");
+    expect(mqOf(fileA()).models[0]).toEqual(modelA2);
+    expect(mqOf(fileB()).models[0]).toEqual(modelA2);
 
-    writeBoth(localRoot([modelA]));
     const requestsBefore = gw.requests.length;
     expect((await run()).code).toBe(0);
     expect(gw.requests.length).toBe(requestsBefore + 1);
@@ -318,29 +340,28 @@ describe("successful runs", () => {
     expect(stateOf().etag).toBe('"r2"');
   });
 
-  test("a reverted local edit also lets a pending tombstone apply on the next cycle", async () => {
+  test("a tombstone deletes a local edit on the first cycle", async () => {
     writeBoth(localRoot([modelC]));
     gw.publish({ revision: 1, models: [modelC] });
     await run();
     writeBoth(localRoot([{ ...modelC, name: "hand" }]));
     gw.publish({ revision: 2, models: [], remove: ["probe-model-c"] });
     await run();
-    expect(mqOf(fileA()).models).toHaveLength(1);
-    expect(stateOf().etag).toBeUndefined();
-    writeBoth(localRoot([modelC]));
-    await run();
     expect(mqOf(fileA()).models).toEqual([]);
+    expect(mqOf(fileB()).models).toEqual([]);
     expect(stateOf().units["model:probe-model-c"]).toBeUndefined();
     expect(stateOf().etag).toBe('"r2"');
   });
 
-  test("a duplicate local id is reported and does not block the first occurrence or the etag", async () => {
+  test("a duplicate local id is reported and every occurrence converges", async () => {
     writeBoth(localRoot([modelA, { ...modelA, name: "dup" }]));
     gw.publish({ revision: 1, models: [modelA] });
     const { lines } = await run();
     expect(lines.some((l) => l.includes("probe-model-a duplicate-local-id") || l.includes("model:probe-model-a duplicate-local-id"))).toBe(true);
     expect(mqOf(fileA()).models).toHaveLength(2);
-    expect(mqOf(fileA()).models[1].name).toBe("dup");
+    expect(mqOf(fileA()).models).toEqual([modelA, modelA]);
+    expect(mqOf(fileB()).models).toEqual([modelA, modelA]);
+    await run();
     expect(stateOf().units["model:probe-model-a"]).toBe(hashUnit(modelA));
     expect(stateOf().etag).toBe('"r1"');
   });
@@ -367,12 +388,12 @@ describe("successful runs", () => {
     expect(logText()).toContain("target missing, skipped");
   });
 
-  test("--adopt-sot overwrites a differing unmanaged model and keeps a backup", async () => {
+  test("a differing unmanaged model is overwritten before adopt-sot and keeps a backup", async () => {
     writeBoth(localRoot([{ ...modelA, name: "hand" }]));
     gw.publish({});
     await run();
     expect(logText()).toContain("unmanaged-differs");
-    expect(mqOf(fileA()).models[0].name).toBe("hand");
+    expect(mqOf(fileA()).models[0]).toEqual(modelA);
     expect((await run("--adopt-sot")).code).toBe(0);
     expect(mqOf(fileA()).models[0]).toEqual(modelA);
     expect(mqOf(fileB()).models[0]).toEqual(modelA);
@@ -405,14 +426,13 @@ describe("successful runs", () => {
 });
 
 describe("dry run", () => {
-  test("--dry-run prints the diff and writes nothing, including state and log", async () => {
+  test("--dry-run prints the report and writes nothing, including state and log", async () => {
     writeBoth(localRoot([]));
     const before = sha(fileA());
     gw.publish({});
     const { code, lines } = await run("--dry-run");
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("model:probe-model-a (add)");
-    expect(lines.join("\n")).toContain("dry-run: nothing written");
+    expect(JSON.parse(lines.join("\n")).applied.map((entry: any) => entry.key)).toEqual(["model:probe-model-a", "model:probe-model-a"]);
     expect(sha(fileA())).toBe(before);
     expect(sha(fileB())).toBe(before);
     expect(fs.existsSync(paths().stateDir)).toBe(false);
@@ -447,19 +467,12 @@ describe("lock", () => {
 });
 
 describe("file-safety helpers", () => {
-  test("backups keep only the newest 10 per file", () => {
-    const f = path.join(home, "m.json");
-    fs.writeFileSync(f, "{}");
-    const other = path.join(home, "other.json");
-    fs.writeFileSync(other, "{}");
-    for (let i = 0; i < 13; i++) backupFile(f, 10, new Date(Date.UTC(2026, 0, 1, 0, 0, i)));
-    backupFile(other, 10, new Date(Date.UTC(2026, 0, 1)));
-    const kept = backups(f);
-    expect(kept).toHaveLength(10);
-    expect(kept[0]).toBe(`m.json${BACKUP_MARK}2026-01-01T00-00-03.000Z`);
-    expect(kept.at(-1)).toBe(`m.json${BACKUP_MARK}2026-01-01T00-00-12.000Z`);
-    expect(backups(other)).toHaveLength(1);
-    expect(pruneBackups(f, 10)).toEqual([]);
+  test("backups keep only the newest 20 run directories", () => {
+    for (let i = 0; i < 21; i++) createBackupDirectory(home, new Date(Date.UTC(2026, 0, 1, 0, 0, i)));
+    expect(pruneBackupDirectories(home)).toEqual(["20260101T000000Z"]);
+    expect(backupDirs()).toHaveLength(20);
+    expect(backupDirs()[0]).toBe("20260101T000001Z");
+    expect(pruneBackupDirectories(home)).toEqual([]);
   });
 
   test("log rotates to sync.log.1 at the size limit and not before", () => {
@@ -501,6 +514,7 @@ describe("file-safety helpers", () => {
         { path: second, original, next: original.replace("mahoquot", "changed-b") },
       ],
       (_l, m) => logs.push(m),
+      createBackupDirectory(home),
       {
         sleep: async () => {},
         rename: (from, to) => {
@@ -520,10 +534,143 @@ describe("file-safety helpers", () => {
     const original = fs.readFileSync(fileA(), "utf8");
     const target = fs.realpathSync(fileA());
     const logs: string[] = [];
-    const ok = await writeTargets([{ path: target, original, next: "{ broken" }], (l, m) => logs.push(`${l} ${m}`));
+    const ok = await writeTargets([{ path: target, original, next: "{ broken" }], (l, m) => logs.push(`${l} ${m}`), createBackupDirectory(home));
     expect(ok).toBe(false);
     expect(fs.readFileSync(fileA(), "utf8")).toBe(original);
     expect(logs.some((l) => l.startsWith("ERROR"))).toBe(true);
+  });
+});
+
+describe("run backups and reports", () => {
+  test("all targets have byte-identical backups in one run directory", async () => {
+    writeBoth(localRoot([{ id: "prune-me" }]));
+    const original = fs.readFileSync(fileA());
+    gw.publish({});
+    expect((await run()).code).toBe(0);
+    expect(backupDirs()).toHaveLength(1);
+    expect(backupDirs()[0]).toMatch(/^\d{8}T\d{6}Z$/);
+    for (const file of [fileA(), fileB()]) {
+      expect(fs.readFileSync(backups(file)[0]!)).toEqual(original);
+      expect(path.dirname(backups(file)[0]!)).toBe(path.join(paths().backupRoot, backupDirs()[0]!));
+    }
+  });
+
+  test("report records pruned, overwritten, tombstoned and applied entries with target paths", async () => {
+    writeBoth(localRoot([{ ...modelA, name: "local edit" }, { id: "extra" }, modelC]));
+    gw.publish({ remove: [modelC.id] });
+    gw.catalog([]);
+    const { code, lines } = await run("--prune");
+    expect(code).toBe(0);
+    const report = readJson(path.join(paths().backupRoot, backupDirs()[0]!, "report.json"));
+    expect(report.sotRevision).toBe(1);
+    expect(Number.isNaN(Date.parse(report.timestamp))).toBe(false);
+    expect(report.pruned.map((entry: any) => entry.key)).toEqual(["model:extra", "model:extra"]);
+    expect(report.overwritten).toHaveLength(2);
+    expect(report.overwritten.every((entry: any) => entry.resolution === "overwritten")).toBe(true);
+    expect(report.removed).toHaveLength(4);
+    expect(report.applied).toHaveLength(2);
+    expect(report.retained).toEqual([]);
+    expect(report.conflicts).toEqual(report.overwritten);
+    expect(report.pruned.map((entry: any) => entry.path)).toEqual([fs.realpathSync(fileA()), fs.realpathSync(fileB())]);
+    expect(lines.filter((line) => line.includes("applied=2 pruned=2 overwritten=2 conflicts=2"))).toHaveLength(1);
+  });
+
+  test("a written file with an unsupported thinkingLevelMap key is rolled back", async () => {
+    writeBoth(localRoot([]));
+    const before = sha(fileA());
+    gw.publish({ models: [{ ...modelA, thinkingLevelMap: { off: null, false: "low" } }] });
+    const { code } = await run();
+    expect(code).toBe(1);
+    expect(sha(fileA())).toBe(before);
+    expect(logText()).toMatch(/unsupported level "false"/);
+  });
+
+  test("validateModelsRoot accepts the closed enum and rejects stale keys", () => {
+    expect(validateModelsRoot({ providers: { m: { models: [{ id: "a", thinkingLevelMap: { off: null, max: "max" } }] } } })).toBeUndefined();
+    expect(validateModelsRoot({ providers: { m: { models: [{ id: "a", thinkingLevelMap: { false: "low" } }] } } })).toBe(
+      'm/a: thinkingLevelMap has unsupported level "false"',
+    );
+    expect(validateModelsRoot({ providers: {} })).toBeUndefined();
+    expect(validateModelsRoot(42)).toBe("root is not an object");
+  });
+
+  test("dry-run leaves mtimes untouched and creates no backup directory, returning the same report structure", async () => {
+    writeBoth(localRoot([{ ...modelA, name: "hand" }, { id: "extra" }]));
+    const before = [fileA(), fileB()].map((file) => fs.statSync(file).mtimeMs);
+    gw.publish({});
+    const dry = await run("--dry-run");
+    expect(dry.code).toBe(0);
+    const preview = JSON.parse(dry.lines.join("\n"));
+    expect([fileA(), fileB()].map((file) => fs.statSync(file).mtimeMs)).toEqual(before);
+    expect(fs.existsSync(paths().backupRoot)).toBe(false);
+    expect(fs.existsSync(paths().stateDir)).toBe(false);
+    expect((await run()).code).toBe(0);
+    const report = readJson(path.join(paths().backupRoot, backupDirs()[0]!, "report.json"));
+    expect({ ...preview, timestamp: report.timestamp }).toEqual(report);
+  });
+
+  test("backup failure aborts before any target write and produces no report", async () => {
+    writeBoth(localRoot([]));
+    const original = fs.readFileSync(fileA());
+    const directory = createBackupDirectory(home);
+    fs.mkdirSync(path.join(directory, "1-models.json"));
+    const logs: string[] = [];
+    expect(await writeTargets([fileA(), fileB()].map((file) => ({
+      path: file, original: original.toString(), next: JSON.stringify(localRoot([modelA])),
+    })), (_level, message) => logs.push(message), directory)).toBe(false);
+    expect(logs.some((line) => line.includes("backup failed"))).toBe(true);
+    for (const file of [fileA(), fileB()]) expect(fs.readFileSync(file)).toEqual(original);
+    expect(fs.existsSync(path.join(directory, "report.json"))).toBe(false);
+  });
+
+  test("retention ignores unrelated directories and symlinks, never deleting outside backups", () => {
+    const outside = path.join(home, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "keep"), "untouched");
+    for (let i = 0; i < 21; i++) createBackupDirectory(home, new Date(Date.UTC(2026, 0, 1, 0, 0, i)));
+    fs.symlinkSync(outside, path.join(paths().backupRoot, "20250101T000000Z"));
+    fs.mkdirSync(path.join(paths().backupRoot, "unrelated"));
+    expect(pruneBackupDirectories(home)).toEqual(["20260101T000000Z"]);
+    expect(fs.readFileSync(path.join(outside, "keep"), "utf8")).toBe("untouched");
+    expect(fs.existsSync(path.join(paths().backupRoot, "unrelated"))).toBe(true);
+  });
+
+  test("--restore restores bytes and file mode and the next cycle converges even with unchanged SOT", async () => {
+    writeBoth(localRoot([{ id: "extra" }]));
+    fs.chmodSync(fileA(), 0o640);
+    const original = fs.readFileSync(fileA());
+    gw.publish({});
+    expect((await run()).code).toBe(0);
+    const directory = path.join(paths().backupRoot, backupDirs()[0]!);
+    fs.chmodSync(fileA(), 0o600);
+    const requestCount = gw.requests.length;
+    expect((await run("--restore", directory)).code).toBe(0);
+    expect(gw.requests).toHaveLength(requestCount);
+    for (const file of [fileA(), fileB()]) expect(fs.readFileSync(file)).toEqual(original);
+    expect(fs.statSync(fileA()).mode & 0o777).toBe(0o640);
+    expect(stateOf().etag).toBeUndefined();
+    expect((await run()).code).toBe(0);
+    // `extra` is local-only and not proven unroutable, so it is preserved;
+    // the SOT model is appended after it.
+    expect(mqOf(fileA()).models).toEqual([{ id: "extra" }, modelA]);
+    expect(mqOf(fileB()).models).toEqual([{ id: "extra" }, modelA]);
+  });
+
+  test("same-second run directories do not overwrite backups and retain numeric order", () => {
+    const date = new Date("2026-01-01T00:00:00Z");
+    for (let i = 0; i < 21; i++) createBackupDirectory(home, date);
+    expect(pruneBackupDirectories(home)).toEqual(["20260101T000000Z"]);
+    expect(backupDirs()).toHaveLength(20);
+    expect(fs.existsSync(path.join(paths().backupRoot, "20260101T000000Z-20"))).toBe(true);
+  });
+
+  test("restore arguments are validated", () => {
+    expect(parseArgs(["--restore", "/tmp/backup"]).restore).toBe("/tmp/backup");
+    expect(() => parseArgs(["--restore"])).toThrow("requires a backup directory");
+    expect(() => parseArgs(["--restore", "--dry-run"])).toThrow();
+    for (const flags of [["--dry-run"], ["--adopt-sot"], ["--export-seed"], ["--push-seed", "seed.json"]]) {
+      expect(() => parseArgs(["--restore", "/tmp/backup", ...flags])).toThrow();
+    }
   });
 });
 
@@ -623,7 +770,7 @@ describe("seed tooling", () => {
 
 describe("cli parsing", () => {
   test("flags and --home", () => {
-    expect(parseArgs(["--dry-run", "--adopt-sot", "--home", "/tmp/h"])).toEqual({ dryRun: true, adoptSot: true, home: "/tmp/h" });
+    expect(parseArgs(["--dry-run", "--adopt-sot", "--home", "/tmp/h"])).toEqual({ dryRun: true, adoptSot: true, prune: false, home: "/tmp/h" });
     expect(parseArgs(["--home=/tmp/g"]).home).toBe("/tmp/g");
     expect(() => parseArgs(["--nope"])).toThrow("unknown argument");
     expect(() => parseArgs(["--home"])).toThrow("--home requires");

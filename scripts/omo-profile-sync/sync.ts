@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  canonicalJson,
   isPlainObject,
   merge,
   type Change,
@@ -15,26 +16,33 @@ import {
 export const FETCH_TIMEOUT_MS = 10_000;
 export const LOG_MAX_BYTES = 1024 * 1024;
 export const LOCK_STALE_MS = 10 * 60 * 1000;
-export const BACKUPS_KEPT = 10;
+export const BACKUPS_KEPT = 20;
 export const RENAME_RETRIES = 3;
 export const RENAME_BACKOFF_MS = 100;
-export const BACKUP_MARK = ".bak-profilesync-";
 
 export interface Args {
   dryRun: boolean;
   adoptSot: boolean;
+  /** Delete local-only ids proven unroutable. Off by default: absence from the SOT is not death. */
+  prune: boolean;
   home: string;
   exportSeed?: boolean;
   pushSeed?: string;
+  restore?: string;
 }
 
 export function parseArgs(argv: string[]): Args {
-  const args: Args = { dryRun: false, adoptSot: false, home: os.homedir() };
+  const args: Args = { dryRun: false, adoptSot: false, prune: false, home: os.homedir() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--dry-run") args.dryRun = true;
     else if (a === "--adopt-sot") args.adoptSot = true;
-    else if (a === "--home") {
+    else if (a === "--prune") args.prune = true;
+    else if (a === "--restore") {
+      const v = argv[++i];
+      if (!v || v.startsWith("--")) throw new Error("--restore requires a backup directory");
+      args.restore = v;
+    } else if (a === "--home") {
       const v = argv[++i];
       if (!v) throw new Error("--home requires a directory");
       args.home = v;
@@ -55,6 +63,9 @@ export function parseArgs(argv: string[]): Args {
   if ((args.exportSeed || args.pushSeed !== undefined) && (args.dryRun || args.adoptSot)) {
     throw new Error("--export-seed/--push-seed cannot be combined with --dry-run or --adopt-sot");
   }
+  if (args.restore && (args.dryRun || args.adoptSot || args.exportSeed || args.pushSeed !== undefined)) {
+    throw new Error("--restore cannot be combined with other operation flags");
+  }
   return args;
 }
 
@@ -64,6 +75,7 @@ export interface SyncPaths {
   stateFile: string;
   lockFile: string;
   logFile: string;
+  backupRoot: string;
 }
 
 export function syncPaths(home: string): SyncPaths {
@@ -71,6 +83,7 @@ export function syncPaths(home: string): SyncPaths {
   return {
     targets: [path.join(home, ".omo", "agent", "models.json"), path.join(home, ".omo", "models.json")],
     stateDir,
+    backupRoot: path.join(home, ".omo", "backups"),
     stateFile: path.join(stateDir, "state.json"),
     lockFile: path.join(stateDir, "lock"),
     logFile: path.join(stateDir, "sync.log"),
@@ -158,6 +171,9 @@ export function acquireLock(lockFile: string, now = Date.now()): (() => void) | 
 export interface UnitsState {
   etag?: string;
   units: Record<string, string>;
+  // The last profile seen at `etag`, replayed on a 304 so an unchanged SOT
+  // still overwrites local drift instead of being skipped forever.
+  profile?: Profile;
 }
 
 export function readState(stateFile: string, log: Logger): UnitsState {
@@ -173,7 +189,12 @@ export function readState(stateFile: string, log: Logger): UnitsState {
     if (isPlainObject(v) && isPlainObject(v.units)) {
       const units: Record<string, string> = {};
       for (const [k, h] of Object.entries(v.units)) if (typeof h === "string") units[k] = h;
-      return { etag: typeof v.etag === "string" ? v.etag : undefined, units };
+      const cached = validateProfile(v.profile, false);
+      return {
+        etag: typeof v.etag === "string" ? v.etag : undefined,
+        units,
+        ...(typeof cached === "string" ? {} : { profile: cached }),
+      };
     }
   } catch {
     // fall through to the warning
@@ -232,25 +253,70 @@ export async function writeFileAtomic(
   }
 }
 
-export function backupFile(file: string, keep = BACKUPS_KEPT, now = new Date()): string {
-  const stamp = now.toISOString().replace(/:/g, "-");
-  let dest = `${file}${BACKUP_MARK}${stamp}`;
-  for (let n = 1; fs.existsSync(dest); n++) dest = `${file}${BACKUP_MARK}${stamp}-${n}`;
-  fs.copyFileSync(file, dest);
-  pruneBackups(file, keep);
-  return dest;
+const RUN_DIRECTORY = /^\d{8}T\d{6}Z(?:-\d+)?$/;
+
+export function createBackupDirectory(home: string, now = new Date()): string {
+  const root = syncPaths(home).backupRoot;
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  if (fs.lstatSync(root).isSymbolicLink()) throw new Error("backup root must not be a symlink");
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  for (let n = 0; ; n++) {
+    const dir = path.join(root, stamp + (n ? `-${n}` : ""));
+    try {
+      fs.mkdirSync(dir, { mode: 0o700 });
+      return dir;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+  }
 }
 
-export function pruneBackups(file: string, keep = BACKUPS_KEPT): string[] {
-  const dir = path.dirname(file);
-  const prefix = path.basename(file) + BACKUP_MARK;
-  const all = fs
-    .readdirSync(dir)
-    .filter((n) => n.startsWith(prefix))
-    .sort();
+export function pruneBackupDirectories(home: string, keep = BACKUPS_KEPT): string[] {
+  const root = syncPaths(home).backupRoot;
+  if (fs.lstatSync(root).isSymbolicLink()) throw new Error("backup root must not be a symlink");
+  const all = fs.readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && RUN_DIRECTORY.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.slice(0, 16).localeCompare(b.slice(0, 16)) || Number(a.slice(17) || 0) - Number(b.slice(17) || 0));
   const drop = all.slice(0, Math.max(0, all.length - keep));
-  for (const n of drop) fs.rmSync(path.join(dir, n), { force: true });
+  for (const name of drop) fs.rmSync(path.join(root, name), { recursive: true });
   return drop;
+}
+
+interface BackupEntry {
+  path: string;
+  file: string;
+  mode: number;
+}
+
+export function backupFile(file: string, directory: string, index: number): BackupEntry {
+  const entry = { path: path.resolve(file), file: `${index}-models.json`, mode: fs.statSync(file).mode & 0o7777 };
+  const dest = path.join(directory, entry.file);
+  fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(dest, entry.mode);
+  return entry;
+}
+
+async function restoreBackup(directory: string, paths: SyncPaths, log: Logger): Promise<number> {
+  const entries: unknown = JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"));
+  if (!Array.isArray(entries) || entries.length === 0) throw new Error("invalid backup manifest");
+  const files = entries.map((entry: unknown) => {
+    if (!isPlainObject(entry) || typeof entry.path !== "string" || !path.isAbsolute(entry.path)
+      || typeof entry.file !== "string" || !/^\d+-models\.json$/.test(entry.file)
+      || typeof entry.mode !== "number" || !Number.isInteger(entry.mode) || entry.mode < 0 || entry.mode > 0o7777) {
+      throw new Error("invalid backup manifest entry");
+    }
+    return { path: entry.path, mode: entry.mode, bytes: fs.readFileSync(path.join(directory, entry.file)) };
+  });
+  // A restored local file must be reconsidered even when SOT's ETag is unchanged.
+  const state = readState(paths.stateFile, log);
+  await writeFileAtomic(
+    paths.stateFile,
+    JSON.stringify({ units: state.units, ...(state.profile ? { profile: state.profile } : {}) }, null, 2) + "\n",
+  );
+  for (const file of files) await writeFileAtomic(file.path, file.bytes, {}, file.mode);
+  log("INFO", `restored ${files.length} file(s) from ${directory}; next cycle re-converges to SOT`);
+  return 0;
 }
 
 function stripBom(s: string): string {
@@ -259,6 +325,39 @@ function stripBom(s: string): string {
 
 export function parseModelsFile(text: string): unknown {
   return JSON.parse(stripBom(text));
+}
+
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * Reject a models.json the client would refuse to load. The client validates
+ * `thinkingLevelMap` keys against a closed enum; a stale key such as "false"
+ * (from an older schema) makes it reject the whole file, so a write that
+ * introduces one must be rolled back instead of committed.
+ */
+export function validateModelsRoot(root: unknown): string | undefined {
+  if (!isPlainObject(root)) return "root is not an object";
+  const providers = root.providers;
+  if (providers !== undefined && !isPlainObject(providers)) return "providers is not an object";
+  if (!isPlainObject(providers)) return undefined;
+  const allowed = new Set<string>(THINKING_LEVELS);
+  for (const [name, provider] of Object.entries(providers)) {
+    if (!isPlainObject(provider)) continue;
+    const models = provider.models;
+    if (!Array.isArray(models)) continue;
+    for (const m of models) {
+      if (!isPlainObject(m)) continue;
+      const map = m.thinkingLevelMap;
+      if (map === undefined) continue;
+      if (!isPlainObject(map)) return `${name}/${String(m.id)}: thinkingLevelMap is not an object`;
+      for (const key of Object.keys(map)) {
+        if (!allowed.has(key)) {
+          return `${name}/${String(m.id)}: thinkingLevelMap has unsupported level ${JSON.stringify(key)}`;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Serialize with the original file's BOM, indent, EOL and trailing newline. */
@@ -303,6 +402,41 @@ export function validateProfile(body: unknown, requireRevision = true): Profile 
 
 export function gatewayBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+/**
+ * Routable ids from the gateway's own catalog (`GET /v1/models`).
+ * This is a management read, not provider traffic, so it is a safe oracle:
+ * an id present here can be served, so deleting it locally would be wrong.
+ */
+export async function fetchRoutableIds(
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<{ ok: true; ids: Set<string> } | { ok: false; detail: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`${gatewayBase(baseUrl)}/v1/models`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    return { ok: false, detail: `unreachable: ${errMsg(e)}` };
+  }
+  if (!res.ok) return { ok: false, detail: `gateway returned ${res.status}` };
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (e) {
+    return { ok: false, detail: `response is not JSON: ${errMsg(e)}` };
+  }
+  const list = isPlainObject(body) && Array.isArray(body.data) ? body.data : undefined;
+  if (!list) return { ok: false, detail: "response lacks a data array" };
+  const ids = new Set<string>();
+  for (const entry of list) {
+    if (isPlainObject(entry) && typeof entry.id === "string" && entry.id !== "") ids.add(entry.id);
+  }
+  return { ok: true, ids };
 }
 
 export async function fetchProfile(
@@ -397,22 +531,30 @@ export interface WritePlan {
 }
 
 /** Phase (b): back up, atomically write, re-read; roll every written target back on any failure. */
-export async function writeTargets(plans: WritePlan[], log: Logger, deps: RenameDeps = {}): Promise<boolean> {
+export async function writeTargets(
+  plans: WritePlan[], log: Logger, directory: string, deps: RenameDeps = {}, onWritten: () => void = () => {},
+): Promise<boolean> {
   const written: Array<{ plan: WritePlan; backup: string }> = [];
-  for (const plan of plans) {
-    let backup: string;
-    try {
-      backup = backupFile(plan.path);
-    } catch (e) {
-      log("ERROR", `backup of ${plan.path} failed: ${errMsg(e)}`);
-      await rollback(written, log, deps);
-      return false;
-    }
+  let entries: BackupEntry[];
+  try {
+    entries = plans.map((plan, i) => backupFile(plan.path, directory, i));
+    await writeFileAtomic(path.join(directory, "manifest.json"), JSON.stringify(entries, null, 2) + "\n");
+  } catch (e) {
+    log("ERROR", `backup failed: ${errMsg(e)}`);
+    return false;
+  }
+  for (const [i, plan] of plans.entries()) {
+    const backup = path.join(directory, entries[i]!.file);
     written.push({ plan, backup });
     try {
       const mode = fs.statSync(plan.path).mode & 0o777;
       await writeFileAtomic(plan.path, plan.next, deps, mode);
-      parseModelsFile(fs.readFileSync(plan.path, "utf8"));
+      onWritten();
+      const writtenRoot = parseModelsFile(fs.readFileSync(plan.path, "utf8"));
+      const invalid = validateModelsRoot(writtenRoot);
+      if (invalid) {
+        throw new Error(`written file would be rejected by the client: ${invalid}`);
+      }
     } catch (e) {
       log("ERROR", `write of ${plan.path} failed: ${errMsg(e)}`);
       await rollback(written, log, deps);
@@ -429,19 +571,12 @@ async function rollback(
 ): Promise<void> {
   for (const { plan, backup } of written) {
     try {
-      await writeFileAtomic(plan.path, fs.readFileSync(backup), deps, fs.statSync(plan.path).mode & 0o777);
+      await writeFileAtomic(plan.path, fs.readFileSync(backup), deps, fs.statSync(backup).mode & 0o7777);
       log("WARN", `restored ${plan.path} from ${backup}`);
     } catch (e) {
       log("ERROR", `could not restore ${plan.path} from ${backup}: ${errMsg(e)}`);
     }
   }
-}
-
-function describeChange(c: Change): string[] {
-  const lines = [`  ${c.action === "add" ? "+" : c.action === "remove" ? "-" : "~"} ${c.key} (${c.action})`];
-  if (c.before !== undefined) lines.push(`      before: ${JSON.stringify(c.before)}`);
-  if (c.after !== undefined) lines.push(`      after:  ${JSON.stringify(c.after)}`);
-  return lines;
 }
 
 export function describeConflict(file: string, c: Conflict): string {
@@ -453,10 +588,25 @@ export interface Summary {
   changed: number;
   conflicts: number;
   skipped: number;
+  applied: number;
+  pruned: number;
+  overwritten: number;
+}
+
+export interface RunReport {
+  timestamp: string;
+  sotRevision: number;
+  applied: Array<Change & { path: string }>;
+  pruned: Array<Change & { path: string }>;
+  overwritten: Array<Conflict & { path: string }>;
+  removed: Array<Change & { path: string }>;
+  /** Local-only entries kept because they were not proven unroutable. */
+  retained: Array<{ key: string; id: string; path: string }>;
+  conflicts: Array<Conflict & { path: string }>;
 }
 
 export function formatSummary(s: Summary): string {
-  return `revision=${s.revision} changed=${s.changed} conflicts=${s.conflicts} skipped=${s.skipped}`;
+  return `revision=${s.revision} changed=${s.changed} skipped=${s.skipped} applied=${s.applied} pruned=${s.pruned} overwritten=${s.overwritten} conflicts=${s.conflicts}`;
 }
 
 async function runSync(
@@ -490,21 +640,59 @@ async function runSync(
   const state = readState(paths.stateFile, log);
   const forceFetch = args.dryRun || args.adoptSot;
   const fetched = await fetchProfile(baseUrl, apiKey, forceFetch ? undefined : state.etag);
+  let profile: Profile;
+  let etag: string;
   if (fetched.kind === "not-modified") {
-    log("INFO", "profile not modified (304)");
-    return 0;
-  }
-  if (fetched.kind === "error") {
+    // The SOT did not change, but this machine may have drifted since the last
+    // run. Replaying the cached profile keeps the SOT authoritative instead of
+    // letting a local edit survive indefinitely because the ETag matched.
+    if (!state.profile) {
+      log("INFO", "profile not modified (304) and no cached profile; nothing to do");
+      return 0;
+    }
+    profile = state.profile;
+    etag = state.etag!;
+  } else if (fetched.kind === "error") {
     log(fetched.reason === "auth" || fetched.reason === "invalid" ? "ERROR" : "WARN", `${fetched.reason}: ${fetched.detail}`);
     return 0;
+  } else {
+    profile = fetched.profile;
+    etag = fetched.etag;
   }
-  const { profile, etag } = fetched;
   if (profile.revision === 0) {
     log("INFO", "profile is unset (revision 0); nothing to do");
     return 0;
   }
 
-  const results = loaded.targets.map((t) => merge(t.root, profile, state, { adoptSot: args.adoptSot }));
+  // Decide which local-only ids may be deleted. Absence from the SOT is not
+  // evidence of death: aliases and curated ids can route without SOT metadata.
+  // Only ids the gateway catalog does not list are pruneable, and only when
+  // pruning was explicitly requested.
+  const sotIds = new Set(profile.models.map((m) => m.id));
+  const pruneable = new Set<string>();
+  if (args.prune) {
+    const catalog = await fetchRoutableIds(baseUrl, apiKey);
+    if (!catalog.ok) {
+      log("WARN", `catalog unavailable (${catalog.detail}); pruning nothing this run`);
+    } else {
+      const localIds = new Set<string>();
+      for (const t of loaded.targets) {
+        const p = mahoquotProvider(t.root);
+        const models = isPlainObject(p) && Array.isArray(p.models) ? p.models : [];
+        for (const m of models) {
+          if (isPlainObject(m) && typeof m.id === "string") localIds.add(m.id);
+        }
+      }
+      for (const id of localIds) {
+        if (!catalog.ids.has(id) && !sotIds.has(id)) pruneable.add(id);
+      }
+      log("INFO", `prune candidates proven unroutable: ${pruneable.size} of ${localIds.size} local ids`);
+    }
+  }
+
+  const results = loaded.targets.map((t) =>
+    merge(t.root, profile, state, { adoptSot: args.adoptSot, pruneable }),
+  );
   const plans: WritePlan[] = [];
   let changed = 0;
   let conflicts = 0;
@@ -524,15 +712,22 @@ async function runSync(
       if (next !== t.text) plans.push({ path: t.path, original: t.text, next });
     }
   });
-  const summary = formatSummary({ revision: profile.revision, changed, conflicts, skipped });
+  const changes = results.flatMap((r, i) => r.changes.map((c) => ({ ...c, path: loaded.targets[i]!.path })));
+  const reportedConflicts = results.flatMap((r, i) => r.conflicts.map((c) => ({ ...c, path: loaded.targets[i]!.path })));
+  const report: RunReport = {
+    timestamp: new Date().toISOString(), sotRevision: profile.revision,
+    applied: changes.filter((c) => c.action !== "remove"),
+    pruned: changes.filter((c) => c.reason === "local-only"),
+    overwritten: reportedConflicts.filter((c) => c.resolution === "overwritten"),
+    removed: changes.filter((c) => c.action === "remove"),
+    retained: results.flatMap((r, i) => (r.retained ?? []).map((x) => ({ ...x, path: loaded.targets[i]!.path }))),
+    conflicts: reportedConflicts,
+  };
+  const summary = formatSummary({ revision: profile.revision, changed, conflicts, skipped,
+    applied: report.applied.length, pruned: report.pruned.length, overwritten: report.overwritten.length });
 
   if (args.dryRun) {
-    results.forEach((r, i) => {
-      if (r.skipped || r.changes.length === 0) return;
-      out(`--- ${loaded.targets[i]!.path}`);
-      for (const c of r.changes) for (const l of describeChange(c)) out(l);
-    });
-    out(`dry-run: nothing written. ${summary}`);
+    out(JSON.stringify(report, null, 2));
     return 0;
   }
 
@@ -540,12 +735,29 @@ async function runSync(
     log("INFO", summary);
     return 0;
   }
-  if (!(await writeTargets(plans, log))) return 1;
+  if (plans.length > 0) {
+    const directory = createBackupDirectory(args.home);
+    let wrote = false;
+    try {
+      if (!(await writeTargets(plans, log, directory, {}, () => { wrote = true; }))) return 1;
+    } finally {
+      if (wrote) await writeFileAtomic(path.join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
+      pruneBackupDirectories(args.home);
+    }
+  }
   const hadConflict = results.some((r) => r.conflicts.some((c) => c.kind !== "duplicate-local-id"));
   const clean = !hadConflict && skipped === 0;
   const next: UnitsState = { units: aggregateUnits(state.units, results) };
-  if (clean) next.etag = etag;
-  await writeFileAtomic(paths.stateFile, JSON.stringify(next, null, 2) + "\n");
+  if (clean) {
+    next.etag = etag;
+    next.profile = profile;
+  }
+  // Skip the write when nothing changed, so a steady-state tick leaves
+  // state.json untouched and the file system stays quiet.
+  const serialized = JSON.stringify(next, null, 2) + "\n";
+  if (canonicalJson(next) !== canonicalJson(state)) {
+    await writeFileAtomic(paths.stateFile, serialized);
+  }
   log("INFO", summary);
   return 0;
 }
@@ -666,7 +878,7 @@ export async function main(
   const paths = syncPaths(args.home);
   if (args.exportSeed) return runExportSeed(paths, out, err);
   if (args.pushSeed !== undefined) return runPushSeed(args.pushSeed, paths, env, out, err);
-  const log = createLogger(paths, args.dryRun, out);
+  const log = createLogger(paths, args.dryRun, args.dryRun ? err : out);
   if (args.dryRun) return runSync(args, paths, log, env, out);
 
   const release = acquireLock(paths.lockFile);
@@ -675,6 +887,7 @@ export async function main(
     return 0;
   }
   try {
+    if (args.restore) return await restoreBackup(args.restore, paths, log);
     return await runSync(args, paths, log, env, out);
   } catch (e) {
     log("ERROR", `run failed: ${errMsg(e)}`);

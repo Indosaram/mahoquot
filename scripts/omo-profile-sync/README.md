@@ -8,10 +8,9 @@ Keeps the mahoquot model settings of every machine's omo install identical, from
   `GET` / `PUT /v0/management/omo-profile`. The response carries `{revision, updated_at, compat, models, remove}`
   and an `ETag: "r<revision>"`. `PUT` requires `If-Match` (lost updates are rejected with 412).
 - The agent (`sync.ts`, bun) runs on each machine every 60 s. It fetches the profile (conditional on the last
-  ETag, so an unchanged profile is a cheap 304) and merges **only** these two things into both
-  `~/.omo/agent/models.json` and `~/.omo/models.json`:
-  - `providers.mahoquot.compat` (one unit, the whole object)
-  - `providers.mahoquot.models[]` (one unit per entry, keyed by `id`, the whole object)
+  ETag, so an unchanged profile is a cheap 304) and merges `providers.mahoquot.models[]` into both
+  `~/.omo/agent/models.json` and `~/.omo/models.json` (one unit per entry, keyed by `id`, the whole object).
+  `providers.mahoquot.compat` is read and hashed but never written by merge.
 - Gateway URL and key come from the first existing target's `providers.mahoquot.baseUrl` (a trailing `/v1` is
   stripped) and `apiKey`. `MAHOQUOT_URL` overrides the URL.
 - Both files are parsed and merged in memory first; if either fails to parse, nothing is written.
@@ -20,35 +19,40 @@ Keeps the mahoquot model settings of every machine's omo install identical, from
 
 - Any provider other than `mahoquot`, and `providers.mahoquot.apiKey`, `baseUrl`, `name`, `api`.
 - `disabledProviders`, unknown keys, `settings.json`, `omo.json`, `auth.json`.
-- Models that exist only locally (ids that are in neither the SOT `models` nor `remove`).
+- `providers.mahoquot.compat`, including its absence and any custom fields.
 - It never creates `providers.mahoquot` (the file is skipped and logged), and it never prunes or decides
   anything from `/v1/models`.
 
 ## Deleting a model
 
-A model is removed only when its id is in the SOT `remove` list, and only if the local copy is still exactly what
-the agent last applied. A model that merely stops being advertised is left alone. An id listed in both `models`
-and `remove` is kept.
+The merge returns a deletion change for every local model absent from SOT `models`, regardless of its hash.
+Changes have `reason: "tombstone"` for ids in `remove`, or `reason: "local-only"` otherwise.
+An id listed in both `models` and `remove` is kept. Merge performs no file I/O; its caller owns backups and writes.
 
 ## Conflicts
 
-The agent records a hash of every unit it applied. A unit it cannot safely overwrite is skipped, left exactly as it
-is locally, and logged as a `WARN` line: `CONFLICT <file> <unit> <kind>` (unit is `compat` or `model:<id>`).
-The summary line counts it under `conflicts=`.
+Merge returns hashes for every final-state unit, including read-only local `compat`, and null hashes for removed
+units. Model conflicts describe resolved differences, not vetoes. Conflicts are logged as
+`CONFLICT <file> <unit> <kind>` and counted under `conflicts=`.
 
-| Kind | Meaning | Resolve |
+| Condition | Model decision | Report |
 | --- | --- | --- |
-| `local-edit` | The unit was changed by hand after the last sync (or a tombstoned model was). | Keep the edit: copy it into the SOT. Discard it: run `--adopt-sot` once. |
-| `unmanaged-differs` | The id/`compat` exists locally, was never synced from the SOT, and differs from it (typical on first rollout). Also raised for a `remove` id that was never synced. | Edit the SOT to match the local copy, or run `--adopt-sot` once (local entry is overwritten, or deleted for a `remove` id). |
-| `locally-removed` | The unit was synced earlier but is now missing locally. `--adopt-sot` does not re-add it. | To accept the removal, add the id to the SOT `remove` list. To get it back, re-add the entry by hand, then run `--adopt-sot` once if it now reports `local-edit`. |
-| `duplicate-local-id` | A managed id appears more than once in the local `models[]`. The first entry is the unit; the later ones are left untouched. | Delete the extra entries by hand. |
+| SOT present, local absent | Add unconditionally, independent of revision | `locally-removed` if previously tracked |
+| SOT present, local equals SOT | No change; record final hash | None |
+| SOT present, local equals recorded hash | Update to SOT | None |
+| SOT present, local differs, no recorded hash | Overwrite with SOT | `unmanaged-differs`, `resolution: "overwritten"` |
+| SOT present, local differs from SOT and recorded hash | Overwrite with SOT | `local-edit`, `resolution: "overwritten"` |
+| Local present, absent from SOT models and remove | Delete | Change reason `local-only` |
+| Local present, tombstoned (not in models) | Delete unconditionally | Change reason `tombstone` |
+| Duplicate local id | Apply the same decision to every occurrence | `duplicate-local-id` for every extra occurrence |
 
-`--adopt-sot` is a one-shot "SOT wins" run: `sync.ts --adopt-sot` overwrites conflicting `compat` and model units
-(backups are kept) and always refetches regardless of the ETag. Run it manually, not from the service.
-Review a `--dry-run` first.
+`compat` is never added, overwritten, or removed; its existing conflict detection remains observational.
+`--adopt-sot` remains a manual forced-refetch option; models already use SOT-authoritative decisions without it,
+and it does not authorize writing `compat`. Review a `--dry-run` first.
 
 After a run with conflicts the agent does not store the ETag, so it re-evaluates every cycle until the conflict is
-resolved.
+resolved. When the gateway answers 304, the agent replays the profile cached in `state.json`, so a local edit made
+between runs is still overwritten by the unchanged SOT instead of surviving until the SOT's next revision.
 
 ## Files
 
@@ -56,16 +60,37 @@ All under `~/.omo/omo-profile-sync/` unless noted (`C:/Users/<user>/...` on Wind
 
 | File | Purpose |
 | --- | --- |
-| `state.json` | Last ETag plus the per-unit applied hashes (shared by both models files). |
+| `state.json` | Last ETag, the last applied profile, and the per-unit applied hashes (shared by both models files). The file is only rewritten when its canonical contents change. |
 | `lock` | pid lock so runs never overlap; stale when the pid is dead or older than 10 min. |
 | `sync.log`, `sync.log.1` | Run log; rotated to `.1` at 1 MiB. |
-| `<models file>.bak-profilesync-<ISO time>` | Backup taken next to each file before every write. The newest 10 per file are kept. |
+| `~/.omo/backups/<YYYYMMDDTHHMMSSZ>/` | One directory for all targets in a write run; newest 20 run directories retained, oldest deleted first. Same-second runs get a numeric suffix. |
+| `manifest.json` (inside the backup directory) | Original absolute paths, backup filenames and file modes used by restore. |
+| `report.json` (inside the backup directory) | `{timestamp, sotRevision, applied[], pruned[], overwritten[], removed[], conflicts[]}` with a target `path` on each entry. |
 | `launchd.log` | macOS only: stdout/stderr of the LaunchAgent. |
 
 Every write is atomic (temp file, fsync, rename) and re-parsed afterwards; a failed write restores the backups.
 Gateway unreachable, 401/403, an invalid payload, or revision 0 leaves the files untouched.
 
-`--dry-run` prints the per-file changes and conflicts and writes nothing: no models files, no state, no log file.
+`--dry-run` prints the same report JSON to stdout, with diagnostics on stderr, and writes nothing:
+no models files, state, log, backup directory, or report file. `applied` lists additions and updates;
+`pruned` lists local-only deletions; `removed` lists all deletions, including tombstones;
+`overwritten` lists conflicts resolved by SOT overwrite. Counters count entries across all targets.
+The daemon emits one summary line:
+`revision=R changed=C skipped=S applied=N pruned=M overwritten=K conflicts=J`.
+A run aborted before any target write produces no report. If a later write fails, the attempted-change
+report remains beside the backups; the log records the failure and rollback outcome.
+
+## Restore a backup
+
+```sh
+bun scripts/omo-profile-sync/sync.ts --restore ~/.omo/backups/20260101T000000Z
+```
+
+This restores every file in `manifest.json` to its original path, including its saved mode, under the
+same run lock. It makes no gateway request and clears the cached ETag so the next daemon cycle
+re-converges to SOT even if its revision has not changed. Restore is a **temporary bypass**, not a
+permanent rollback: edit the SOT for a lasting change. `--adopt-sot` remains a one-shot manual option.
+Restore cannot be combined with dry-run, adopt, or seed flags.
 
 ## Install / uninstall
 
@@ -97,6 +122,10 @@ On Linux the timer only runs while your user manager is up; enable lingering (`l
 
 ## Editing the SOT
 
+The gateway derives the SOT itself from its routable catalog every 300 s, so the normal way to change it is to
+change what the gateway can route (register a provider, remove a model). Manual edits below still work for a
+one-off correction, but the next derivation tick will overwrite `models` with the catalog projection.
+
 ```sh
 bun scripts/omo-profile-sync/sync.ts --export-seed > p.json   # edit p.json
 bun scripts/omo-profile-sync/sync.ts --push-seed p.json
@@ -108,7 +137,7 @@ bun scripts/omo-profile-sync/sync.ts --push-seed p.json
   exits 1 and explains. Re-export, re-apply your edit, and push again.
 
 To delete a model everywhere, move its id into `remove` (and drop it from `models`). To change one, edit its entry
-in `models`; machines pick it up within about a minute, except where a `local-edit` conflict is reported.
+in `models`; local model edits are overwritten on the next merge and reported with `resolution: "overwritten"`.
 
 ## Troubleshooting
 
@@ -117,4 +146,4 @@ in `models`; machines pick it up within about a minute, except where a `local-ed
 - `profile is unset (revision 0)`: the SOT has not been seeded yet. Export from a machine and `--push-seed` it.
 - `no providers.mahoquot with baseUrl and apiKey`: that machine has no mahoquot provider; the agent will not create one.
 - `another run holds the lock`: a previous run is still going; it exits 0. A dead or 10-minute-old lock is replaced.
-- Something looks wrong after a write: restore the matching `.bak-profilesync-*` file next to the models file.
+- Something looks wrong after a write: use `--restore <backup-dir>` with the matching directory under `~/.omo/backups/` (temporary until the next sync).
