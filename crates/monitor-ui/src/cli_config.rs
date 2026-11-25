@@ -171,9 +171,8 @@ impl std::error::Error for CliConfigError {}
 pub struct ConfigureCliAgentRequest {
     pub agent_id: CliAgentId,
     pub gateway_url: String,
-    /// Model ids the gateway currently serves. Adapters that must enumerate
-    /// models to be usable write these; an empty list keeps whatever the
-    /// existing configuration already listed.
+    /// Retained for request compatibility. Model catalogs are managed by sync,
+    /// not by connection configuration.
     #[serde(default)]
     pub models: Vec<String>,
     /// Adopt the file exactly as it is on disk right now, replacing the
@@ -965,7 +964,7 @@ fn generate_omo(
     existing: &[u8],
     gateway: &str,
     token: &str,
-    gateway_models: &[String],
+    _gateway_models: &[String],
 ) -> Result<Vec<u8>, CliConfigError> {
     let mut root = parse_json_object(CliAgentId::Omo, existing)?;
     let providers = object_entry(&mut root, "providers", CliAgentId::Omo)?;
@@ -974,11 +973,12 @@ fn generate_omo(
         .entry("mahoquot".to_string())
         .or_insert(JsonValue::Null);
     // Overwrite only the keys this feature owns; compat, headers and anything
-    // else the user or omo added stays. A fresh provider gets the default compat.
+    // else the user or omo added stays. Only a fresh file gets defaults.
     let mut provider = match provider_slot.take() {
         JsonValue::Object(existing) => existing,
-        _ => {
+        _ if existing.is_empty() => {
             let mut fresh = serde_json::Map::new();
+            fresh.insert("models".to_string(), serde_json::json!([]));
             fresh.insert(
                 "compat".to_string(),
                 serde_json::json!({
@@ -989,26 +989,8 @@ fn generate_omo(
             );
             fresh
         }
+        _ => serde_json::Map::new(),
     };
-    // omo builds its model picker from this array, so an empty one leaves the
-    // provider selectable but unusable. Merge rather than replace: existing
-    // entries keep the fields a user tuned by hand, and only ids the gateway
-    // reports for the first time are appended, so a new upstream model shows up
-    // without a curated catalog being flattened.
-    let mut models = match provider.get_mut("models").map(JsonValue::take) {
-        Some(JsonValue::Array(models)) => models,
-        _ => Vec::new(),
-    };
-    let mut known_ids: std::collections::HashSet<&str> = models
-        .iter()
-        .filter_map(|model| model.get("id").and_then(JsonValue::as_str))
-        .collect();
-    let new_models: Vec<_> = gateway_models
-        .iter()
-        .filter(|id| known_ids.insert(id.as_str()))
-        .map(|id| serde_json::json!({ "id": id, "name": id }))
-        .collect();
-    models.extend(new_models);
     provider.insert("name".to_string(), serde_json::json!("Mahoquot"));
     provider.insert("api".to_string(), serde_json::json!("openai-completions"));
     provider.insert("apiKey".to_string(), serde_json::json!(token));
@@ -1016,7 +998,6 @@ fn generate_omo(
         "baseUrl".to_string(),
         serde_json::json!(format!("{gateway}/v1")),
     );
-    provider.insert("models".to_string(), JsonValue::Array(models));
     *provider_slot = JsonValue::Object(provider);
     pretty_json(root)
 }
@@ -1487,8 +1468,8 @@ mod tests {
     }
 
     /// The states the adapters exist to produce. Determinism and "differs from
-    /// the fixture" cannot catch a wrong key, a wrong wire protocol, or an
-    /// empty model list, which is exactly how a config that reads as
+    /// the fixture" cannot catch a wrong key or a wrong wire protocol,
+    /// which is exactly how a config that reads as
     /// `Configured` can still fail on the first request.
     #[test]
     fn generated_configs_point_each_agent_at_the_gateway() {
@@ -1554,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn omo_provider_is_usable_and_merges_new_models_into_a_curated_list() {
+    fn omo_provider_updates_connections_without_adding_models() {
         let (manager, _, _) = manager("omo-models", CliPlatform::Linux);
         let target = manager.target_path(CliAgentId::Omo);
         write_fixture(&target, fixture(CliAgentId::Omo));
@@ -1570,15 +1551,10 @@ mod tests {
         assert_eq!(provider["api"], "openai-completions");
         assert_eq!(provider["apiKey"], TEST_TOKEN);
         assert_eq!(provider["baseUrl"], "http://127.0.0.1:18840/v1");
-        // An empty array leaves the provider selectable but unusable.
-        assert_eq!(
-            provider["models"],
-            serde_json::json!([{ "id": "gpt-5.6-codex", "name": "gpt-5.6-codex" }])
-        );
+        assert!(provider.get("models").is_none());
         assert_eq!(config["provider"]["custom"]["name"], "Keep");
 
-        // Hand-tuned entries survive verbatim, a model the gateway repeats is
-        // not duplicated, and a newly served one is appended.
+        // Hand-tuned entries survive verbatim; gateway models are ignored.
         let curated = br#"{"providers":{"mahoquot":{"models":[{"id":"kept","name":"Kept","contextWindow":123}]}}}"#;
         write_fixture(&target, curated);
         let bytes = manager
@@ -1596,14 +1572,13 @@ mod tests {
         assert_eq!(
             config["providers"]["mahoquot"]["models"],
             serde_json::json!([
-                { "id": "kept", "name": "Kept", "contextWindow": 123 },
-                { "id": "brand-new", "name": "brand-new" }
+                { "id": "kept", "name": "Kept", "contextWindow": 123 }
             ])
         );
     }
 
     #[test]
-    fn omo_configure_preserves_existing_provider_keys_and_merges_models() {
+    fn omo_configure_preserves_existing_provider_keys_and_models() {
         let (manager, _, _) = manager("omo-preserve-keys", CliPlatform::Linux);
         let target = manager.target_path(CliAgentId::Omo);
         let existing = br#"{"providers":{"mahoquot":{"apiKey":"stale","compat":{"supportsReasoningEffort":false},"headers":{"x":"1"},"models":[{"id":"kept","name":"Kept"}]}}}"#;
@@ -1630,8 +1605,7 @@ mod tests {
         assert_eq!(
             provider["models"],
             serde_json::json!([
-                { "id": "kept", "name": "Kept" },
-                { "id": "brand-new", "name": "brand-new" }
+                { "id": "kept", "name": "Kept" }
             ])
         );
     }
@@ -1639,8 +1613,6 @@ mod tests {
     #[test]
     fn omo_configure_on_a_fresh_file_writes_the_default_compat() {
         let (manager, _, _) = manager("omo-fresh-compat", CliPlatform::Linux);
-        let target = manager.target_path(CliAgentId::Omo);
-        write_fixture(&target, b"{}");
 
         let bytes = manager
             .preview(request(CliAgentId::Omo))
@@ -1655,6 +1627,76 @@ mod tests {
                 "supportsReasoningEffort": true
             })
         );
+    }
+
+    #[test]
+    fn omo_fresh_generate_writes_empty_models_even_with_gateway_models() {
+        let (manager, _, _) = manager("omo-fresh-models", CliPlatform::Linux);
+        let target = manager.target_path(CliAgentId::Omo);
+        assert!(!target.exists());
+        let result = manager
+            .configure(ConfigureCliAgentRequest {
+                models: vec!["gateway-model".into()],
+                ..request(CliAgentId::Omo)
+            })
+            .unwrap();
+        assert_eq!(result.outcome, CliAgentActionOutcome::Applied);
+        let config: JsonValue = serde_json::from_slice(&fs::read(target).unwrap()).unwrap();
+        assert_eq!(config["providers"]["mahoquot"]["models"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn omo_generate_preserves_all_user_models_on_disk() {
+        let (manager, _, _) = manager("omo-user-models", CliPlatform::Linux);
+        let target = manager.target_path(CliAgentId::Omo);
+        let models = serde_json::json!([
+            {"id": "kept", "name": "Custom", "contextWindow": 123},
+            {"id": "second", "cost": {"input": 7}},
+            {"id": "third", "reasoning": true, "input": ["text", "image"]}
+        ]);
+        let existing = serde_json::json!({"providers": {"mahoquot": {"models": models}}});
+        write_fixture(&target, &serde_json::to_vec(&existing).unwrap());
+        manager
+            .configure(ConfigureCliAgentRequest {
+                models: vec!["kept".into(), "new-model".into()],
+                ..request(CliAgentId::Omo)
+            })
+            .unwrap();
+        let config: JsonValue = serde_json::from_slice(&fs::read(target).unwrap()).unwrap();
+        assert_eq!(config["providers"]["mahoquot"]["models"], models);
+    }
+
+    #[test]
+    fn omo_generate_injects_compat_defaults_only_for_a_new_file() {
+        let gateway = "http://127.0.0.1:18840";
+        let fresh: JsonValue =
+            serde_json::from_slice(&generate_omo(b"", gateway, TEST_TOKEN, &[]).unwrap()).unwrap();
+        assert_eq!(
+            fresh["providers"]["mahoquot"]["compat"],
+            serde_json::json!({
+                "sendSessionAffinityHeaders": true,
+                "sessionAffinityFormat": "openrouter",
+                "supportsReasoningEffort": true
+            })
+        );
+        for existing in [
+            serde_json::json!({}),
+            serde_json::json!({"providers": {"mahoquot": {}}}),
+            serde_json::json!({"providers": {"mahoquot": {"compat": null}}}),
+            serde_json::json!({"providers": {"mahoquot": {"compat": {
+                "supportsReasoningEffort": false, "custom": true
+            }}}}),
+        ] {
+            let generated = generate_omo(
+                &serde_json::to_vec(&existing).unwrap(), gateway, TEST_TOKEN, &[],
+            ).unwrap();
+            let config: JsonValue = serde_json::from_slice(&generated).unwrap();
+            assert_eq!(
+                config["providers"]["mahoquot"].get("compat"),
+                existing["providers"]["mahoquot"].get("compat")
+            );
+            assert!(config["providers"]["mahoquot"].get("models").is_none());
+        }
     }
 
     #[test]
@@ -1682,7 +1724,7 @@ mod tests {
     }
 
     #[test]
-    fn omo_merge_preserves_irregular_entries_and_first_seen_append_order() {
+    fn omo_configure_preserves_irregular_entries_and_provider_order() {
         let existing = br#"{"before":1,"providers":{"first":{"keep":true},"mahoquot":{"models":[null,{"id":7},{"id":"kept","name":"first"},{"id":"kept","name":"duplicate"},{"id":""}],"headers":{"keep":"yes"}},"last":{"keep":false}},"after":2}"#;
         let ids = ["kept", "new-z", "new-a", "new-z", "", "new-a"].map(str::to_owned);
         let generated = generate_omo(existing, "http://127.0.0.1:18840", TEST_TOKEN, &ids).unwrap();
@@ -1695,17 +1737,13 @@ mod tests {
             "baseUrl".into(),
             serde_json::json!("http://127.0.0.1:18840/v1"),
         );
-        provider["models"].as_array_mut().unwrap().extend([
-            serde_json::json!({ "id": "new-z", "name": "new-z" }),
-            serde_json::json!({ "id": "new-a", "name": "new-a" }),
-        ]);
         let mut expected_bytes = serde_json::to_vec_pretty(&expected).unwrap();
         expected_bytes.push(b'\n');
         assert_eq!(generated, expected_bytes);
     }
 
     #[test]
-    fn omo_non_object_provider_and_non_array_models_keep_existing_defaults() {
+    fn omo_non_object_provider_and_non_array_models_preserve_existing_values() {
         for existing in [
             br#"{"providers":{"mahoquot":null}}"#.as_slice(),
             br#"{"providers":{"mahoquot":[{"models":[]}]}}"#.as_slice(),
@@ -1727,10 +1765,7 @@ mod tests {
             let generated =
                 generate_omo(&existing, "http://127.0.0.1:18840", TEST_TOKEN, &[]).unwrap();
             let config: JsonValue = serde_json::from_slice(&generated).unwrap();
-            assert_eq!(
-                config["providers"]["mahoquot"]["models"],
-                serde_json::json!([])
-            );
+            assert_eq!(config["providers"]["mahoquot"]["models"], models);
             assert_eq!(
                 config["providers"]["mahoquot"]["headers"],
                 serde_json::json!({"keep":"yes"})

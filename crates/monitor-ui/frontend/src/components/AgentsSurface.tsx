@@ -77,7 +77,8 @@ export function AgentsSurface({
       <div className="settings-subgroup-head">
         <h3>CLI agents</h3>
         <p>
-          Connect local coding agents with byte-exact backups and conflict detection before writing.
+          Point local coding agents at this gateway. Model lists are maintained by the gateway
+          catalog, not by this panel.
         </p>
       </div>
       {(agents?.length ?? 0) > 0 ? (
@@ -122,6 +123,10 @@ export function AgentsSurface({
                         <dd>
                           {preview.format} · {preview.app_written_bytes.length} bytes
                         </dd>
+                      </div>
+                      <div>
+                        <dt>Connection</dt>
+                        <dd>Gateway URL and API key only</dd>
                       </div>
                       <div>
                         <dt>Replaces</dt>
