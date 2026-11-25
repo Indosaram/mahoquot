@@ -2,6 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- The console talks to a gateway the operator already runs, usually over a
+       private overlay (Tailscale) that serves plain HTTP. App Transport
+       Security blocks cleartext by default while loopback stays exempt, so a
+       local build looks healthy and every remote webview request fails with
+       -1022 "ATS requires TLS". Verified by A/B on the affected machine: the
+       same bundle without this key returns "Load failed" and with it returns
+       HTTP 401 from the gateway. Removing this reintroduces the failure. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+  </dict>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
